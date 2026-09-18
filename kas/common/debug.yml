@@ -1,0 +1,9 @@
+header:
+  version: 16
+
+local_conf_header:
+  20_common-debug: |
+    # Enables common debug features: debug-tweaks leaves the root password
+    # empty and lets root log in over SSH, so this gives passwordless root
+    # on the console and over the network. Development images only.
+    EXTRA_IMAGE_FEATURES += "debug-tweaks ssh-server-dropbear"

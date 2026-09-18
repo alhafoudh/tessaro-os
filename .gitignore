@@ -1,0 +1,20 @@
+# Repositories cloned and checked out by kas. Their revisions are pinned in
+# kas/*.yml, so they are build inputs rather than content of this repo.
+/bitbake/
+/openembedded-core/
+/meta-moonforge/
+/meta-openembedded/
+/meta-raspberrypi/
+/meta-virtualization/
+/meta-webkit/
+/meta-rauc/
+/meta-rauc-community/
+/meta-lts-mixins/
+
+# Build output and shared caches
+/build/
+/cache/
+
+# kas and bitbake scratch
+/.config.yaml
+/.kas_shell_history

@@ -1,0 +1,85 @@
+[tools]
+python = "3.12.11"
+
+[env]
+_.path = "/opt/homebrew/opt/coreutils/libexec/gnubin"
+KAS_CONTAINER_ENGINE = "docker"
+DL_DIR = "{{config_root}}/cache/downloads"
+SSTATE_DIR = "{{config_root}}/cache/sstate-cache"
+
+# kas fragments that describe the qemux86-64 target. Both live in this repo,
+# which is the kas root repo; meta-moonforge is cloned by kas from the pin in
+# kas/tessaro-image-base-qemux86-64.yml.
+KAS_CONFIG = "kas/tessaro-image-base-qemux86-64.yml:kas/common/debug.yml"
+
+# Relative to the kas build dir (build/ on the host, /build in the container),
+# so the same value works on both sides of the mount.
+WIC = "tmp/deploy/images/qemux86-64/moonforge-image-base-qemux86-64.rootfs.wic"
+
+[tasks.build]
+description = "Build the qemux86-64 image and the OVMF firmware"
+dir = "{{config_root}}"
+run = "kas-container build --target moonforge-image-base --target ovmf $KAS_CONFIG"
+
+[tasks.shell]
+description = "Drop into the kas build environment (cwd is the build dir)"
+dir = "{{config_root}}"
+raw = true
+run = "kas-container shell $KAS_CONFIG"
+
+[tasks.unpack]
+description = "Decompress the built .wic so runqemu can boot it"
+dir = "{{config_root}}/build"
+run = '''
+if [ -f "$WIC.bz2" ] && [ ! "$WIC" -nt "$WIC.bz2" ]; then
+    bzip2 -dc "$WIC.bz2" > "$WIC"
+fi
+[ -f "$WIC" ] || { echo "$WIC not found - run 'mise run build' first" >&2; exit 1; }
+'''
+
+[tasks.run]
+description = "Boot the image in QEMU with the serial console on this terminal"
+dir = "{{config_root}}"
+depends = ["unpack"]
+raw = true
+run = '''
+# /dev/kvm is root:kvm 0660. The kas entrypoint drops to the "builder" user
+# via gosu, which rebuilds supplementary groups from the container's
+# /etc/group - so "--group-add" is discarded. Overriding GROUP_ID instead
+# makes the kvm gid builder's *primary* group, which survives gosu.
+if [ -e /dev/kvm ]; then
+    KVM_RUNTIME="--device /dev/kvm -e GROUP_ID=$(stat -c %g /dev/kvm)"
+    KVM_OPT="kvm"
+else
+    KVM_RUNTIME=""
+    KVM_OPT=""
+fi
+kas-container --runtime-args "$KVM_RUNTIME" shell $KAS_CONFIG \
+    -c "runqemu $WIC ovmf slirp snapshot $KVM_OPT nographic"
+'''
+
+[tasks.run-vnc]
+description = "Boot the image in QEMU with a VNC display on localhost:5900"
+dir = "{{config_root}}"
+depends = ["unpack"]
+raw = true
+run = '''
+# /dev/kvm is root:kvm 0660. The kas entrypoint drops to the "builder" user
+# via gosu, which rebuilds supplementary groups from the container's
+# /etc/group - so "--group-add" is discarded. Overriding GROUP_ID instead
+# makes the kvm gid builder's *primary* group, which survives gosu.
+if [ -e /dev/kvm ]; then
+    KVM_RUNTIME="--device /dev/kvm -e GROUP_ID=$(stat -c %g /dev/kvm)"
+    KVM_OPT="kvm"
+else
+    KVM_RUNTIME=""
+    KVM_OPT=""
+fi
+kas-container --runtime-args "$KVM_RUNTIME -p 5900:5900" shell $KAS_CONFIG \
+    -c "runqemu $WIC ovmf slirp snapshot $KVM_OPT publicvnc serialstdio"
+'''
+
+[tasks.clean]
+description = "Remove build artifacts, keeping sstate and downloads"
+dir = "{{config_root}}"
+run = "kas-container clean $KAS_CONFIG"
