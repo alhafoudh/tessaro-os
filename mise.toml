@@ -2,7 +2,7 @@
 python = "3.12.11"
 
 [env]
-_.path = "/opt/homebrew/opt/coreutils/libexec/gnubin"
+_.path = "/opt/homebrew/opt/coreutils/libexec/gnubin:/opt/nvim-linux-x86_64/bin"
 KAS_CONTAINER_ENGINE = "docker"
 DL_DIR = "{{config_root}}/cache/downloads"
 SSTATE_DIR = "{{config_root}}/cache/sstate-cache"
