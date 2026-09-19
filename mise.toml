@@ -54,8 +54,22 @@ else
     KVM_RUNTIME=""
     KVM_OPT=""
 fi
-kas-container --runtime-args "$KVM_RUNTIME" shell $KAS_CONFIG \
-    -c "runqemu $WIC ovmf slirp snapshot $KVM_OPT nographic"
+# The guest GPU is virtio-vga-gl, which is virgl backed by a real render node
+# on the host. Only the kvm gid survives gosu (see above), so the render node
+# is reached via mode 0666 from a udev rule rather than group membership.
+# Without /dev/dri the kiosk browser cannot allocate a buffer and paints
+# nothing; everything else still boots fine.
+if [ -d /dev/dri ]; then
+    GPU_RUNTIME="--device /dev/dri"
+    GPU_OPT="egl-headless"
+else
+    echo "warning: no /dev/dri on the host - Weston will start but the kiosk" >&2
+    echo "         browser will not render. See CLAUDE.md." >&2
+    GPU_RUNTIME=""
+    GPU_OPT="nographic"
+fi
+kas-container --runtime-args "$KVM_RUNTIME $GPU_RUNTIME" shell $KAS_CONFIG \
+    -c "runqemu $WIC ovmf slirp snapshot $KVM_OPT $GPU_OPT serialstdio"
 '''
 
 [tasks.run-vnc]
@@ -75,8 +89,20 @@ else
     KVM_RUNTIME=""
     KVM_OPT=""
 fi
-kas-container --runtime-args "$KVM_RUNTIME -p 5900:5900" shell $KAS_CONFIG \
-    -c "runqemu $WIC ovmf slirp snapshot $KVM_OPT publicvnc serialstdio"
+# See the run task for why this is --device plus a 0666 udev rule. QEMU's
+# egl-headless display renders through the host GPU and is documented to be
+# combinable with -vnc, which is what publicvnc adds.
+if [ -d /dev/dri ]; then
+    GPU_RUNTIME="--device /dev/dri"
+    GPU_OPT="egl-headless"
+else
+    echo "warning: no /dev/dri on the host - the kiosk browser will not" >&2
+    echo "         render over VNC. See CLAUDE.md." >&2
+    GPU_RUNTIME=""
+    GPU_OPT=""
+fi
+kas-container --runtime-args "$KVM_RUNTIME $GPU_RUNTIME -p 5900:5900" shell $KAS_CONFIG \
+    -c "runqemu $WIC ovmf slirp snapshot $KVM_OPT $GPU_OPT publicvnc serialstdio"
 '''
 
 [tasks.clean]

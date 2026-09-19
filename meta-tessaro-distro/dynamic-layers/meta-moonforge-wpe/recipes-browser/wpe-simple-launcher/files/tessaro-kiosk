@@ -1,0 +1,14 @@
+# Kiosk URL override for the WPE browser.
+#
+# The build-time default lives in the systemd drop-in at
+# /lib/systemd/system/wpe-simple-launcher.service.d/10-tessaro-kiosk.conf.
+# Uncomment the line below to override it, then apply with:
+#
+#     systemctl restart wpe-simple-launcher
+#
+# /etc is an overlayfs whose upper layer is the /data partition, so the change
+# persists across reboots. It is left commented out on purpose: once a file
+# under /etc is written, the copy on /data shadows the one in the image for
+# good, and later images could no longer change the default.
+#
+#KIOSK_URL="https://www.freevision.sk"

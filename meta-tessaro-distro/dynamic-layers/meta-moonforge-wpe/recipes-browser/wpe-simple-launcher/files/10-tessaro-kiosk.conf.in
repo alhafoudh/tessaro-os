@@ -1,0 +1,28 @@
+[Unit]
+# After= is ordering only, so without Requires= the kiosk starts and immediately
+# dies whenever the compositor is absent. PartOf= restarts it with Weston.
+Requires=weston.service
+PartOf=weston.service
+# wpe-exported-wayland exits within milliseconds when weston-keyboard is not up
+# yet, which burns systemd's default start limit (5 starts in 10s) before Weston
+# has finished coming up and leaves the unit failed for good.
+StartLimitIntervalSec=0
+
+[Service]
+# Build-time default. This drop-in lives in /lib, outside the /etc overlay, so
+# it still tracks image updates after someone has edited the file below.
+# EnvironmentFile= overrides Environment=, so /etc wins when it sets KIOSK_URL.
+Environment=KIOSK_URL=@kiosk-url@
+EnvironmentFile=-/etc/default/tessaro-kiosk
+
+# Wait for the compositor's input-method helper, which is how
+# wpe-exported-wayland finds the Wayland socket. Bounded by TimeoutStartSec.
+ExecStartPre=/bin/sh -c 'until pidof weston-keyboard >/dev/null; do sleep 1; done'
+
+# The empty ExecStart= is required: ExecStart is a list, so without the reset
+# this would add a second command rather than replace the one carrying the URL
+# baked in at build time.
+ExecStart=
+ExecStart=/usr/bin/wpe-exported-wayland ${KIOSK_URL} --fullscreen
+Restart=always
+RestartSec=2

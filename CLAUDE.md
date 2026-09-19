@@ -72,6 +72,50 @@ Configuration arrives through three chains that each span several files:
 image features in `meta-tessaro-distro/recipes-core/images/moonforge-image-base.bbappend`.
 The image recipe itself stays upstream's - do not fork it.
 
+Appends to recipes from an optional upstream layer go under
+`meta-tessaro-distro/dynamic-layers/<collection>/`, wired up by `BBFILES_DYNAMIC`
+in `meta-tessaro-distro/conf/layer.conf`. That way a target that does not enable
+that layer does not trip over a dangling bbappend.
+
+## Kiosk browser
+
+`meta-moonforge-wpe` gives WPEWebKit fullscreen on Weston via
+`wpe-simple-launcher`. It pulls in `meta-moonforge-graphics`, `meta-webkit` and
+`meta-openembedded` on its own, so it costs exactly one `includes:` entry.
+
+Upstream bakes `WPE_SIMPLE_LAUNCHER_URL` into `wpe-simple-launcher.service` with
+a `sed` at `do_compile`, so the URL is a literal in the unit and can only be
+changed by rebuilding. Tessaro layers a runtime knob on top, in
+`dynamic-layers/meta-moonforge-wpe/recipes-browser/wpe-simple-launcher/`:
+
+* a drop-in at
+  `/lib/systemd/system/wpe-simple-launcher.service.d/10-tessaro-kiosk.conf`
+  resets `ExecStart`, re-points it at `${KIOSK_URL}`, and carries the
+  build-time default in `Environment=`.
+* `/etc/default/tessaro-kiosk` is an `EnvironmentFile=` that overrides it,
+  shipped with the assignment **commented out**.
+
+The default deliberately lives in the drop-in under `/lib`, not in `/etc`:
+`/etc` is an overlayfs upper on `/data`, so the first write to a file there
+shadows the image's copy permanently and no later image could move the default
+again. Keeping `/etc` empty until someone opts in preserves that.
+
+Apply a change with `systemctl restart wpe-simple-launcher`.
+
+Two things to know about the unit:
+
+* **The URL is not shell-safe.** `/usr/bin/wpe-exported-wayland` ends in
+  `su weston -c "... $*"` with `$*` unquoted, so the URL is re-parsed by a
+  second shell. A `&` in a query string would background the launcher, and
+  `;`/backticks/`$()` are live. Fine for the plain
+  `https://www.freevision.sk` we ship; fixing it properly means overriding
+  that script in our layer.
+* **The start limit had to be disabled.** `wpe-exported-wayland` exits in
+  milliseconds when `weston-keyboard` is not up, which burns systemd's default
+  5-starts-in-10s limit before Weston finishes and fails the unit for good.
+  The drop-in sets `StartLimitIntervalSec=0`, `Restart=always`, `RestartSec=2`
+  and an `ExecStartPre` that waits for `weston-keyboard`.
+
 ## Gotchas
 
 * **runqemu needs a file path, not an image name.** `runqemu ... qemux86-64
@@ -84,8 +128,40 @@ The image recipe itself stays upstream's - do not fork it.
   not `--group-add`: the entrypoint's `gosu builder` rebuilds supplementary
   groups from the container's `/etc/group`, so only the primary gid survives.
 * **The build host is headless.** `nographic` is the default for `run`; use
-  `run-vnc` plus an SSH tunnel if you need the framebuffer. The base image only
-  ships psplash, so there is little to see until a graphics layer is added.
+  `run-vnc` plus an SSH tunnel if you need the framebuffer. With the kiosk
+  enabled, `run` shows nothing but the serial console - the browser needs
+  `run-vnc`.
+* **The kiosk needs a real GPU on the build host to render under QEMU.** Only
+  the DRM master may allocate KMS dumb buffers, which is how Mesa's
+  `kms_swrast` backs GBM when there is no GPU. Weston holds master so Weston
+  draws; `WPEWebProcess` runs as the unprivileged `weston` user and is refused
+  with `DRM_IOCTL_MODE_CREATE_DUMB failed: Permission denied`, so the browser
+  loads the page and silently paints nothing. WPE 2.52 has no `wl_shm`
+  fallback - `WEBKIT_DISABLE_DMABUF_RENDERER` was removed in that release, and
+  forcing Weston to `use-pixman` only changes the failure to `no valid format
+  found`. An ordinary SHM client such as `weston-simple-shm` still renders, so
+  a blank screen with a healthy Weston is this bug, not a broken compositor.
+  The fix is host-side: a render node at `/dev/dri`, passed into the kas
+  container, with `runqemu ... egl-headless` selecting `virtio-vga-gl`/virgl.
+  If the host kernel boots with `nomodeset`, no GPU driver loads at all and
+  `modprobe amdgpu` fails with `Invalid argument`; that has to come off the
+  kernel command line first.
+* **`runqemu`'s `QB_MEM` default is 256M**, which WPEWebKit plus Weston will not
+  survive. Fixed in the `30_tessaro-qemu-kiosk` block of the kas fragment.
+* **`QB_GRAPHICS` is the knob for the QEMU display, not `QB_OPT_APPEND`** -
+  `runqemu` appends `QB_GRAPHICS` unconditionally, while
+  `x86/qemuboot-x86.inc` already owns `QB_OPT_APPEND`. `runqemu`'s
+  `setup_vga()` only adds `-device virtio-vga` on its `sdl`/`gtk`/
+  `egl-headless` paths, never on `publicvnc`. This is a performance choice, not
+  a prerequisite: QEMU's default std VGA plus `CONFIG_DRM_BOCHS=y` in
+  `linux-yocto` already gives Weston a `/dev/dri` node. Note `-device
+  virtio-vga` does not replace the default std VGA, so `-vga none` goes with it
+  or Weston sees two cards. Falling back to the default std VGA is a working
+  configuration if virtio ever misbehaves under OVMF.
+* **Weston is `WantedBy=graphical.target`, not `multi-user.target`.** That
+  works because `rootfs-postcommands.bbclass` sets
+  `SYSTEMD_DEFAULT_TARGET = "graphical.target"` whenever `IMAGE_FEATURES` has
+  `weston`. If the compositor never starts, check `systemctl get-default` first.
 * **`DISTROOVERRIDES` is `tessaro`, not `moonforge`.** Any `VAR:moonforge = ...`
   in an upstream layer silently stops applying, with no warning. There are
   currently zero such lines; re-check after a Moonforge bump or when enabling a
@@ -100,6 +176,6 @@ The image recipe itself stays upstream's - do not fork it.
 
 ## Status
 
-`qemux86-64` works and is the development target. Raspberry Pi 4/5 and the
-kiosk browser (`meta-moonforge-wpe`) are not wired up yet; both are available
-as Moonforge layers and cost one `includes:` entry each.
+`qemux86-64` works and is the development target, and carries the kiosk browser.
+Raspberry Pi 4/5 is not wired up yet; it is available as a Moonforge layer
+(`meta-moonforge-raspberrypi`) and costs one `includes:` entry.
