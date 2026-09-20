@@ -1,0 +1,86 @@
+# Runtime overrides for the Tessaro kiosk.
+#
+# The build-time defaults live in /usr/lib/tessaro-kiosk/tessaro-kiosk.env.
+# Both tessaro-kiosk.service and tessaro-kiosk-watchdog.service read that file
+# first and this one second, so anything set here wins. Apply a change with:
+#
+#     systemctl restart tessaro-kiosk tessaro-kiosk-watchdog
+#
+# This file is left entirely commented out on purpose. /etc is an overlayfs
+# whose upper layer is the /data partition, so the first write to this path
+# shadows the image's copy for good and no later image could move a default
+# again.
+#
+# It is parsed by systemd, not by a shell: plain NAME=value, optional quotes,
+# and # comments. No command substitution, no exports.
+
+# URL the kiosk shows.
+#KIOSK_URL="https://www.freevision.sk"
+
+# --- offline page ----------------------------------------------------------
+#
+# Shown while the site is unreachable. Precedence, first match wins:
+#
+#   1. KIOSK_OFFLINE_URL          navigated to verbatim - any URI, including a
+#                                 page on another host. Note that a remote page
+#                                 is only reachable when the failure is upstream
+#                                 of it; for one that always renders, use 2 or 3.
+#                                 The value "none" disables navigating away
+#                                 entirely, for a site that handles its own
+#                                 offline state in a service worker.
+#   2. /data/kiosk/offline.html   drop a file on the data partition. It is used
+#                                 as-is, with no substitution, and takes effect
+#                                 on the next failure with no restart.
+#   3. /usr/share/tessaro-kiosk/offline.html   the shipped default.
+#
+# Diagnostics are deliberately not on the page - they are in the journal:
+#
+#     journalctl -fu tessaro-kiosk-watchdog
+#
+#KIOSK_OFFLINE_URL="https://status.example.com/kiosk"
+#KIOSK_OFFLINE_PAGE="/data/kiosk/offline.html"
+
+# --- probe -----------------------------------------------------------------
+#
+# What the watchdog fetches to decide whether the site is up. Empty means
+# KIOSK_URL itself. Set it when the site has a cheap health endpoint, and set it
+# always when KIOSK_URL is not an http(s) URL - a file:// or custom-scheme kiosk
+# cannot be probed, and the watchdog drops to refresh-only without it.
+#KIOSK_PROBE_URL="https://www.freevision.sk/"
+
+# Seconds between probes while healthy, and while down.
+#KIOSK_PROBE_INTERVAL="30"
+#KIOSK_PROBE_INTERVAL_FAIL="10"
+
+# curl timeouts for one probe. Keep the total well under KIOSK_PROBE_INTERVAL.
+#KIOSK_PROBE_CONNECT_TIMEOUT="5"
+#KIOSK_PROBE_TIMEOUT="10"
+
+# Consecutive failed probes before the offline page is shown. Riding out one
+# blip stops a single dropped packet blanking a public screen.
+#KIOSK_FAIL_THRESHOLD="2"
+
+# --- navigation ------------------------------------------------------------
+#
+# Seconds between re-opening the kiosk URL while healthy. This is the periodic
+# refresh. 0 disables it.
+#KIOSK_REFRESH_INTERVAL="600"
+
+# Seconds between re-opening the offline page while down. 0 shows it once.
+#KIOSK_OFFLINE_REFRESH="300"
+
+# --- recovery --------------------------------------------------------------
+#
+# Failed D-Bus pings before the browser is restarted - this one catches cog
+# being dead or wedged, independently of the network.
+#KIOSK_PING_FAILS="3"
+
+# Failed probes before the browser is restarted once, to clear a wedged web
+# process. 0 disables it. The restart happens at most once per outage, and never
+# more often than KIOSK_RESTART_BACKOFF seconds.
+#KIOSK_RESTART_AFTER="40"
+#KIOSK_RESTART_BACKOFF="300"
+
+# Set to 0 to park the watchdog without masking the unit - useful while
+# debugging a page, where the periodic refresh would keep stealing the view.
+#KIOSK_WATCHDOG_ENABLE="1"

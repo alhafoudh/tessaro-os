@@ -29,20 +29,31 @@ Images land in `build/tmp/deploy/images/<machine>/`.
 
 ## Kiosk browser
 
-Images boot straight into a fullscreen WPEWebKit window on Weston, showing
-`https://www.freevision.sk`. The build-time default is
-`WPE_SIMPLE_LAUNCHER_URL` in `meta-tessaro-distro/conf/distro/tessaro.conf`.
+Images boot straight into a fullscreen WPEWebKit window on Weston - Igalia's
+[cog](https://github.com/Igalia/cog) - showing `https://www.freevision.sk`. The
+build-time default is `TESSARO_KIOSK_URL` in
+`meta-tessaro-distro/conf/distro/tessaro.conf`.
 
 On a running device, change the URL without rebuilding by uncommenting and
 editing `KIOSK_URL` in `/etc/default/tessaro-kiosk`:
 
 ```sh
 vi /etc/default/tessaro-kiosk
-systemctl restart wpe-simple-launcher
+systemctl restart tessaro-kiosk tessaro-kiosk-watchdog
 ```
 
 `/etc` is an overlayfs whose upper layer is the persistent `/data` partition,
 so the change survives a reboot.
+
+A watchdog keeps the page honest: it probes the URL, re-opens it every ten
+minutes, shows a local offline page while the site is unreachable, and restarts
+the browser if it stops responding. Replace the offline page by dropping a file
+at `/data/kiosk/offline.html`. Why it failed is in the journal, not on the
+screen:
+
+```sh
+journalctl -fu tessaro-kiosk-watchdog
+```
 
 ## Structure
 

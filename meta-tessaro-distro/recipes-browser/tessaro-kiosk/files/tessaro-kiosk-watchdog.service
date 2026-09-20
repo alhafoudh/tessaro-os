@@ -1,0 +1,48 @@
+[Unit]
+Description=Tessaro kiosk watchdog (probe, refresh, offline page)
+
+# Wants= and deliberately not Requires=/BindsTo=/PartOf= on the browser:
+# restarting tessaro-kiosk.service is one of this unit's jobs, and a binding
+# relationship would propagate that stop back here - the watchdog would kill
+# itself the first time it tried to fix anything. It tolerates cog being absent
+# and just keeps probing.
+Wants=tessaro-kiosk.service
+After=tessaro-kiosk.service
+
+# It does follow the compositor, so stopping Weston stops the whole kiosk stack
+# instead of leaving a loop poking at a unit that cannot start.
+After=weston.service
+PartOf=weston.service
+
+# It stages the offline page into /run/tessaro-kiosk, which tmpfiles.d created,
+# and it talks to cog on the system bus.
+After=systemd-tmpfiles-setup.service
+After=dbus.socket
+
+StartLimitIntervalSec=0
+
+[Service]
+Type=exec
+
+# Same two files as the browser, in the same order, so both see one set of
+# values. The script reads them from its environment rather than sourcing them,
+# which keeps /etc/default/tessaro-kiosk data rather than code running as root.
+EnvironmentFile=/usr/lib/tessaro-kiosk/tessaro-kiosk.env
+EnvironmentFile=-/etc/default/tessaro-kiosk
+
+# Root: it writes into /run/tessaro-kiosk (root owned, so the browser user
+# cannot forge the page it is being shown), talks to cog on the D-Bus system
+# bus, and calls systemctl.
+User=root
+
+ExecStart=/usr/bin/tessaro-kiosk-watchdog
+
+Restart=always
+RestartSec=10
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=tessaro-kiosk-watchdog
+
+[Install]
+WantedBy=graphical.target

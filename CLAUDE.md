@@ -75,46 +75,88 @@ The image recipe itself stays upstream's - do not fork it.
 Appends to recipes from an optional upstream layer go under
 `meta-tessaro-distro/dynamic-layers/<collection>/`, wired up by `BBFILES_DYNAMIC`
 in `meta-tessaro-distro/conf/layer.conf`. That way a target that does not enable
-that layer does not trip over a dangling bbappend.
+that layer does not trip over a dangling bbappend. There are none right now -
+and note the key is the layer's `BBFILE_COLLECTIONS` name, not its directory
+name: meta-webkit registers itself as `webkit`. Prefer a `:pn-<recipe>` override
+in `tessaro.conf` when all you need is a variable; that is how cog's
+`PACKAGECONFIG` is set without a bbappend at all.
 
 ## Kiosk browser
 
-`meta-moonforge-wpe` gives WPEWebKit fullscreen on Weston via
-`wpe-simple-launcher`. It pulls in `meta-moonforge-graphics`, `meta-webkit` and
-`meta-openembedded` on its own, so it costs exactly one `includes:` entry.
+Igalia's **cog** (0.18.5, from `meta-webkit`) fullscreen on Weston. Moonforge's
+own launcher, `wpe-simple-launcher`, is deliberately *not* installed: it
+connects no error signals at all, so a network blip, a bad certificate or a
+renderer crash left WebKit's error page on screen forever with nothing in the
+journal and no process exit for systemd to act on. Cog connects `load-failed`,
+`load-failed-with-tls-errors` and `web-process-terminated` by default and has a
+D-Bus control interface.
 
-Upstream bakes `WPE_SIMPLE_LAUNCHER_URL` into `wpe-simple-launcher.service` with
-a `sed` at `do_compile`, so the URL is a literal in the unit and can only be
-changed by rebuilding. Tessaro layers a runtime knob on top, in
-`dynamic-layers/meta-moonforge-wpe/recipes-browser/wpe-simple-launcher/`:
+`meta-moonforge-wpe` stays in the `includes:` - it sets
+`PREFERRED_PROVIDER_virtual/wpebackend` (cog's `wl` plugin needs wpebackend-fdo),
+pulls in `meta-moonforge-graphics`, `meta-webkit` and `meta-openembedded`, and
+maps `/home` onto `/data/overlay-home`. Only its *package* is dropped, with a
+`CORE_IMAGE_EXTRA_INSTALL:remove` in `moonforge-image-base.bbappend`, because
+the `+=` that installs it lives in the pinned upstream kas fragment.
 
-* a drop-in at
-  `/lib/systemd/system/wpe-simple-launcher.service.d/10-tessaro-kiosk.conf`
-  resets `ExecStart`, re-points it at `${KIOSK_URL}`, and carries the
-  build-time default in `Environment=`.
-* `/etc/default/tessaro-kiosk` is an `EnvironmentFile=` that overrides it,
-  shipped with the assignment **commented out**.
+Everything else is `meta-tessaro-distro/recipes-browser/tessaro-kiosk/`:
 
-The default deliberately lives in the drop-in under `/lib`, not in `/etc`:
-`/etc` is an overlayfs upper on `/data`, so the first write to a file there
-shadows the image's copy permanently and no later image could move the default
-again. Keeping `/etc` empty until someone opts in preserves that.
+* `tessaro-kiosk.service` runs `cog --platform=wl` as the `weston` user.
+* `tessaro-kiosk-watchdog.service` probes the URL with curl, re-navigates cog
+  through D-Bus, shows a local offline page while the site is down, and restarts
+  the browser when it stops answering.
+* `/usr/lib/tessaro-kiosk/tessaro-kiosk.env` carries the build-time defaults
+  (`TESSARO_KIOSK_URL` from `tessaro.conf`), `/etc/default/tessaro-kiosk`
+  overrides them and ships entirely **commented out**.
 
-Apply a change with `systemctl restart wpe-simple-launcher`.
+The defaults deliberately live under `/usr/lib`, not `/etc`: `/etc` is an
+overlayfs upper on `/data`, so the first write to a file there shadows the
+image's copy permanently and no later image could move the default again.
 
-Two things to know about the unit:
+Apply a change with `systemctl restart tessaro-kiosk tessaro-kiosk-watchdog`.
 
-* **The URL is not shell-safe.** `/usr/bin/wpe-exported-wayland` ends in
-  `su weston -c "... $*"` with `$*` unquoted, so the URL is re-parsed by a
-  second shell. A `&` in a query string would background the launcher, and
-  `;`/backticks/`$()` are live. Fine for the plain
-  `https://www.freevision.sk` we ship; fixing it properly means overriding
-  that script in our layer.
-* **The start limit had to be disabled.** `wpe-exported-wayland` exits in
-  milliseconds when `weston-keyboard` is not up, which burns systemd's default
-  5-starts-in-10s limit before Weston finishes and fails the unit for good.
-  The drop-in sets `StartLimitIntervalSec=0`, `Restart=always`, `RestartSec=2`
-  and an `ExecStartPre` that waits for `weston-keyboard`.
+Things to know:
+
+* **`cogctl` needs `--system`.** `tessaro.conf` sets
+  `PACKAGECONFIG:append:pn-cog = " dbus"`, which moves the control interface
+  off the session bus so a root watchdog can reach a browser running as
+  `weston`. `COG_DBUS_OWN_USER` must match `User=` in the unit or cog cannot
+  own its name at all.
+* **`cogctl ping` is broken in 0.18.5** - it tests the `GError**` instead of the
+  connection and always fails without contacting the bus. The watchdog uses
+  `busctl ... org.freedesktop.DBus.Peer Ping`.
+* **The control surface is write-only** - five stateless actions (`quit`,
+  `previous`, `next`, `reload`, `open`). Nothing can be read back, so the
+  watchdog cannot tell a live page from cog's error page and simply
+  re-navigates on every successful probe.
+* **Cog's error page is a hardcoded C string** with a "Try again" *button*,
+  useless without a pointer. Ours is a separate page the watchdog navigates to:
+  `$KIOSK_OFFLINE_URL`, else `/data/kiosk/offline.html`, else
+  `/usr/share/tessaro-kiosk/offline.html`, staged into `/run/tessaro-kiosk` and
+  served through cog's `--dir-handler=tessaro:` scheme.
+* **`--webprocess-failure=exit`** is what makes renderer death visible to
+  systemd. Cog's own `restart` mode reloads in-process at most 5 times in a
+  hardcoded 1s window and then sits on an error page, which looks healthy to
+  everything.
+* **`XDG_RUNTIME_DIR` is mandatory** even though `WAYLAND_DISPLAY` is an
+  absolute path: wpebackend-fdo puts its nested Wayland display there. Unset,
+  cog runs, answers D-Bus and paints nothing.
+* **Ctrl-W quits the kiosk.** Cog's wl plugin hardwires it (and F11, F5/Ctrl-R,
+  Alt-arrows, Ctrl-+/-/0) with no way to disable them. `Restart=always` - not
+  `on-failure`, because that path exits 0 - is the only mitigation short of
+  patching cog.
+* **Diagnostics are journal-only** by design; nothing technical reaches the
+  screen. `journalctl -fu tessaro-kiosk-watchdog`.
+* **Our D-Bus policy lives in `/etc/dbus-1/system.d/`, and its comments may not
+  contain `--`.** cog's own `com.igalia.Cog.conf` lets `context="default"` - any
+  local user - send to the kiosk, `quit` included. Overriding it means being
+  parsed later, and `dbus-1`'s `system.conf` lists
+  `<includedir>system.d</includedir>` before
+  `<includedir>/etc/dbus-1/system.d</includedir>`, so the directory is the only
+  ordering guarantee; filename sorting within one directory is not promised.
+  Separately, a `--` anywhere in an XML comment ends it and makes the file
+  malformed, at which point dbus discards the whole policy **silently** and you
+  get no hardening at all - which is what pasting a `busctl --system ...`
+  example into the comment did. `journalctl -b -u dbus` shows the parse error.
 
 ## Gotchas
 
@@ -170,9 +212,10 @@ Two things to know about the unit:
   `IMAGE_VERSION: "0"`. The stable symlink is `...-qemux86-64.rootfs.*`, and
   the mise tasks depend on that `.rootfs` spelling.
 * **Moonforge's `STRUCTURE.md` is stale in places** - e.g. it documents the
-  kiosk browser as Cog with `WAYLAND_COG_LAUNCH_URL`, but the layer now ships
-  `wpe-simple-launcher` with `WPE_SIMPLE_LAUNCHER_URL`. Trust the layer sources
-  over upstream docs.
+  kiosk browser as Cog with `WAYLAND_COG_LAUNCH_URL`, while the layer actually
+  ships `wpe-simple-launcher` with `WPE_SIMPLE_LAUNCHER_URL`. Tessaro is back on
+  Cog, but through its own units, and no `WAYLAND_COG_LAUNCH_URL` is involved.
+  Trust the layer sources over upstream docs.
 
 ## Status
 

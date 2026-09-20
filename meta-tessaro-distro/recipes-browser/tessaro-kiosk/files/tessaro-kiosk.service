@@ -1,0 +1,131 @@
+[Unit]
+Description=Tessaro kiosk browser (cog on Weston)
+Documentation=man:cog(1)
+
+# After= alone is ordering only, so Requires= is what stops the kiosk starting
+# into a world with no Wayland socket, and PartOf= takes it down and back up
+# with Weston. weston.service is Type=notify and only reaches "active" once the
+# compositor is really up, which is what makes this a real guarantee - and what
+# lets the old "poll for weston-keyboard" ExecStartPre go away entirely.
+Requires=weston.service
+After=weston.service
+PartOf=weston.service
+
+# /run/wayland-0 is created by the socket unit, before Weston itself runs.
+# weston.service Requires= it but does not order against it, so we do.
+Requires=weston.socket
+After=weston.socket
+
+# cog owns com.igalia.Cog on the system bus (the dbus PACKAGECONFIG set in
+# tessaro.conf).
+After=dbus.socket
+
+# /run/tessaro-kiosk is the --dir-handler root below, and it comes from
+# /usr/lib/tmpfiles.d/tessaro-kiosk.conf. cog validates that path at startup and
+# exits before the main loop if it is missing, so this ordering is load bearing.
+# Default dependencies already imply it via basic.target -> sysinit.target;
+# spelled out so it survives someone turning default dependencies off.
+After=systemd-tmpfiles-setup.service
+
+# Deliberately NOT Wants/After=network-online.target, which the old
+# wpe-simple-launcher unit had. With systemd-networkd that pulls in
+# systemd-networkd-wait-online and holds the screen black for its timeout on a
+# device with no link. The whole point of the watchdog and the offline page is
+# that the kiosk lights up regardless of the network.
+
+# No start limit. The failure modes that would loop instantly - a missing
+# --dir-handler path, an empty URL - are configuration errors that will not fix
+# themselves, and a kiosk that has permanently given up is worse than one that
+# retries and logs. The journal is where you find out why.
+StartLimitIntervalSec=0
+
+[Service]
+Type=exec
+
+# Build-time defaults live under /usr/lib, outside the /etc overlay, so image
+# updates can still move them. /etc/default/tessaro-kiosk is read second and
+# therefore wins; it ships with every assignment commented out, because /etc is
+# an overlayfs upper on /data and the first write to a path there shadows the
+# image copy for good.
+EnvironmentFile=/usr/lib/tessaro-kiosk/tessaro-kiosk.env
+EnvironmentFile=-/etc/default/tessaro-kiosk
+
+User=weston
+Group=weston
+# Redundant - systemd already grants the groups the weston user holds in
+# /etc/group - but named as documentation: "wayland" is what makes
+# /run/wayland-0 (0775, group wayland) reachable, and video/render are what let
+# wpebackend-fdo open /dev/dri.
+SupplementaryGroups=video input render wayland
+
+# An absolute path, so finding the compositor needs no XDG_RUNTIME_DIR. Same
+# value /etc/profile.d/weston-socket.sh exports for interactive logins.
+Environment=WAYLAND_DISPLAY=/run/wayland-0
+
+# XDG_RUNTIME_DIR is still required, for a different reason: wpebackend-fdo
+# creates its own nested Wayland display there and WebKit puts its IPC sockets
+# there. Unset, cog starts, owns its bus name, answers cogctl - and paints
+# nothing, which looks exactly like the QEMU no-GPU bug. This unit gets no PAM
+# session, so there is no logind-provided /run/user/<uid>; systemd makes the
+# directory instead, 0700 and owned by User=, and wipes it on stop.
+RuntimeDirectory=tessaro-kiosk-xdg
+RuntimeDirectoryMode=0700
+Environment=XDG_RUNTIME_DIR=/run/tessaro-kiosk-xdg
+
+# /home is a bind of /data/overlay-home, so this is the persistent partition. A
+# systemd unit runs no shell profile, and cog reads these directly for its data
+# and disk-cache directories.
+Environment=HOME=/home/weston
+Environment=XDG_DATA_HOME=/home/weston/.local/share
+Environment=XDG_CACHE_HOME=/home/weston/.cache
+WorkingDirectory=/home/weston
+
+# The only way to get a fullscreen view out of the wl platform plugin. There is
+# no command line flag for it, and cog's --config file has no [general] section.
+Environment=COG_PLATFORM_WL_VIEW_FULLSCREEN=1
+
+# --platform=wl, not "wayland": wl is the plugin's name on disk
+#   (libcogplatform-wl.so). A name cog does not know is a hard failure, which is
+#   what we want. A *setup* failure of a known plugin is only a warning and
+#   leaves cog running against a backend that renders nothing.
+# --webprocess-failure=exit turns a dead web process into a process exit that
+#   Restart= can see. cog's own "restart" mode reloads in process, at most 5
+#   times in a hardcoded 1000ms window, and then sits on an error page - which
+#   looks healthy to systemd, and which the watchdog's HTTP probe cannot tell
+#   apart from a live page either, because the probe tests the network and not
+#   the renderer.
+# --bg-color is a literal on purpose and is NOT a knob in /etc/default: an
+#   unparseable value calls g_error() and aborts the process, so exposing it
+#   would be a way to brick the screen with a typo.
+# --dir-handler serves the offline page the watchdog stages in /run. A custom
+#   scheme rather than file:// because it is handled in cog's UI process, so it
+#   sidesteps both the web process sandbox and WebKit's file-origin rules.
+# ${KIOSK_URL} is substituted by systemd as a single argument and never touches
+#   a shell - unlike the old wpe-exported-wayland path, where "su weston -c"
+#   made '&' and ';' in the URL live. That gotcha dies with this change.
+ExecStart=/usr/bin/cog \
+    --platform=wl \
+    --webprocess-failure=exit \
+    --bg-color=black \
+    --dir-handler=tessaro:/run/tessaro-kiosk \
+    ${KIOSK_URL}
+
+# Restart=always, not on-failure: the wl plugin hardwires Ctrl-W to quit the
+# application, and cog then exits 0. With on-failure a passing keyboard would
+# blank the kiosk until someone logged in.
+Restart=always
+RestartSec=5
+
+# SIGTERM and SIGINT both make cog call g_application_quit(), so the default
+# KillSignal is already a clean shutdown; give it room to tear the web process
+# down before SIGKILL.
+TimeoutStopSec=20
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=tessaro-kiosk
+
+[Install]
+# Weston is WantedBy=graphical.target, and rootfs-postcommands sets
+# SYSTEMD_DEFAULT_TARGET=graphical.target because IMAGE_FEATURES has weston.
+WantedBy=graphical.target

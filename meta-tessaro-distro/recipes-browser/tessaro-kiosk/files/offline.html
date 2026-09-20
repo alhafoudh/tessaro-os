@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<!--
+  Shown by tessaro-kiosk-watchdog while the kiosk URL is unreachable, served to
+  cog through the "tessaro" --dir-handler scheme from /run/tessaro-kiosk.
+
+  Everything is inline on purpose: this page is displayed precisely when the
+  network is gone, so a single external byte would make it fail to render.
+
+  There is deliberately nothing technical on screen. Diagnostics - the curl
+  failure class, the URL, the streak - go to the journal:
+
+      journalctl -fu tessaro-kiosk-watchdog
+
+  To replace this page on a device, drop a file at /data/kiosk/offline.html; it
+  is served as-is, with no substitution. See /etc/default/tessaro-kiosk.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>No connection</title>
+<style>
+  /* Dark, unconditionally. prefers-color-scheme is not honoured here: it
+     resolves from a desktop appearance setting, and with no settings portal on
+     this device WebKit falls back to "light" - so respecting it would mean a
+     full-screen white glare in a dark room, which is the one outcome worth
+     avoiding on a screen nobody switches off. */
+  :root {
+    color-scheme: dark;
+    --bg: #0b0e13;
+    --glow: #151b26;
+    --fg: #e7ebf2;
+    --dim: #8d98ab;
+    --accent: #e8b339;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+
+  body {
+    margin: 0;
+    padding: clamp(18px, 4.5vmin, 64px);
+    /* DejaVu is named explicitly: it is the family in the image with the widest
+       coverage, and system-ui has nothing to resolve against on this device. */
+    font-family: system-ui, "DejaVu Sans", "Liberation Sans", sans-serif;
+    background: var(--bg);
+    background-image: radial-gradient(120vmax 90vmax at 50% 30%, var(--glow), var(--bg) 68%);
+    color: var(--fg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  main {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: clamp(12px, 2.4vmin, 28px);
+    max-width: 30em;
+  }
+
+  .mark {
+    width: clamp(56px, 11vmin, 132px);
+    height: auto;
+    color: var(--accent);
+    flex: none;
+  }
+
+  h1 {
+    margin: 0;
+    font-weight: 600;
+    line-height: 1.1;
+    letter-spacing: -0.015em;
+    /* Sized against vmin so it reads across a room in either orientation. */
+    font-size: clamp(1.9rem, 7.2vmin, 5.5rem);
+  }
+
+  p {
+    margin: 0;
+    color: var(--dim);
+    line-height: 1.45;
+    font-size: clamp(0.95rem, 2.6vmin, 1.9rem);
+  }
+
+  /* The only moving part, and it promises nothing: the watchdog owns the retry
+     cadence, so the page must not claim a next-attempt time it cannot know. */
+  .pulse {
+    display: flex;
+    align-items: center;
+    gap: 0.6em;
+    color: var(--dim);
+    font-size: clamp(0.8rem, 1.9vmin, 1.2rem);
+    margin-top: 0.4em;
+  }
+
+  .dot {
+    width: 0.62em;
+    height: 0.62em;
+    border-radius: 50%;
+    background: var(--accent);
+    animation: pulse 2.4s ease-in-out infinite;
+    flex: none;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 0.25; transform: scale(0.8); }
+    50%      { opacity: 1;    transform: scale(1); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .dot { animation: none; opacity: 0.7; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <svg class="mark" viewBox="0 0 64 64" aria-hidden="true">
+    <g fill="none" stroke="currentColor" stroke-width="4.5" stroke-linecap="round">
+      <path d="M6 26a37 37 0 0 1 52 0" opacity=".2"/>
+      <path d="M16.5 36a23 23 0 0 1 31 0" opacity=".45"/>
+      <path d="M26 45.6a10 10 0 0 1 12 0" opacity=".85"/>
+    </g>
+    <circle cx="32" cy="54.5" r="3.4" fill="currentColor"/>
+  </svg>
+
+  <h1>No connection</h1>
+
+  <p>The device is working. The page will come back on its own as soon as the
+     connection does.</p>
+
+  <p class="pulse"><span class="dot"></span>Trying again</p>
+</main>
+</body>
+</html>
