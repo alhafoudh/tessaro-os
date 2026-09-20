@@ -75,6 +75,11 @@ is what `mise.toml` assembles. The machine fragment includes
 for that BSP, `WKS_FILE`, `OVERLAYFS_ETC_DEVICE`, `distro`, `machine`. Adding a
 target is one new file in `kas/machine/`; nothing else moves.
 
+`kas/common/debug.yml` is a one-line wrapper that includes Moonforge's own
+`kas/common/debug.yml`. It has to exist as a local file because kas splits a
+config chain on `:` and treats each element as a plain path, so only an
+`includes:` entry can be repo-prefixed, never a top-level config.
+
 Configuration arrives through three chains that each span several files:
 
 1. **kas includes.** `kas/machine/<machine>.yml` and `kas/common/tessaro.yml`

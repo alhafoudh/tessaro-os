@@ -1,9 +1,13 @@
+# Debug features for development images: an empty root password on the console
+# and over the network. Upstream Moonforge already ships exactly this fragment,
+# so this file only pulls it in.
+#
+# It cannot be dropped in favour of naming the upstream file directly: kas
+# splits a config chain on ":" and treats every element as a plain path
+# (kas/config.py), so a top-level config cannot be repo-prefixed. Only an
+# include can be.
 header:
   version: 16
-
-local_conf_header:
-  20_common-debug: |
-    # Enables common debug features: debug-tweaks leaves the root password
-    # empty and lets root log in over SSH, so this gives passwordless root
-    # on the console and over the network. Development images only.
-    EXTRA_IMAGE_FEATURES += "debug-tweaks ssh-server-dropbear"
+  includes:
+    - repo: meta-moonforge
+      file: kas/common/debug.yml
