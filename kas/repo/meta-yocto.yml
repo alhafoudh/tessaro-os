@@ -1,0 +1,17 @@
+# meta-yocto: the split-out mirror of poky's meta-poky and meta-yocto-bsp
+# layers. Pinning this rather than poky itself keeps the clone small and avoids
+# a second copy of bitbake and oe-core in the tree.
+#
+# Only meta-yocto-bsp is enabled - the repo root is not a layer, so the layers
+# key is mandatory here, unlike the single-layer repos Moonforge pins.
+# meta-yocto-bsp depends on core alone.
+header:
+  version: 16
+
+repos:
+  meta-yocto:
+    url: https://git.yoctoproject.org/meta-yocto
+    commit: 961c2399d06fbdb04ee27d06079e186d2c4a14ad
+    branch: scarthgap
+    layers:
+      meta-yocto-bsp:

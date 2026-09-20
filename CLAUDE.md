@@ -14,7 +14,10 @@ Use the mise tasks rather than calling `kas-container` directly:
 
 | Task | Purpose |
 | --- | --- |
-| `mise run build` | Build the image and OVMF firmware |
+| `mise run build` | Build the image for `$TESSARO_MACHINE` (plus OVMF on qemu) |
+| `mise run build-qemu` | Same, forced to `qemux86-64` |
+| `mise run build-x86` | Same, forced to `genericx86-64` |
+| `mise run build-rpi` | Same, forced to `raspberrypi3-64` |
 | `mise run shell` | Interactive kas shell (cwd is the build dir) |
 | `mise run unpack` | Decompress the `.wic` for runqemu |
 | `mise run run` | Boot in QEMU, serial console on the terminal |
@@ -22,6 +25,20 @@ Use the mise tasks rather than calling `kas-container` directly:
 | `mise run clean` | Drop build artifacts, keep sstate and downloads |
 
 Exit the QEMU serial console with `Ctrl-a x`.
+
+**Every task acts on one machine**, `$TESSARO_MACHINE`, defaulting to
+`qemux86-64`. The `build-*` tasks are one-line wrappers that set it; anything
+else takes it from the environment:
+
+```sh
+TESSARO_MACHINE=raspberrypi3-64 mise run shell
+```
+
+`mise.toml` derives `KAS_CONFIG`, `KAS_BUILD_DIR` and `WIC` from that one
+variable, so each machine gets its own TOPDIR under `build/<machine>/` while
+`cache/` (`DL_DIR` + `SSTATE_DIR`) stays shared. Valid values are exactly the
+basenames in `kas/machine/`. `run`, `run-vnc` and OVMF are qemu-only and refuse
+to run on anything else.
 
 There is no test suite or linter; correctness is "the image builds and boots".
 For work on a single recipe, go through the kas shell so bitbake sees the right
@@ -40,24 +57,36 @@ Builds are long. Run them in a Herdr pane, not the Bash tool.
 ## Architecture
 
 **This repository is the kas root repo.** Everything else is a build input that
-kas clones and checks out from pins in `kas/*.yml`, and is gitignored:
-`meta-moonforge/`, `openembedded-core/`, `bitbake/`, plus `build/` (TOPDIR) and
-`cache/` (`DL_DIR` + `SSTATE_DIR`).
+kas clones and checks out from pins under `kas/`, and is gitignored:
+`meta-moonforge/`, `openembedded-core/`, `bitbake/`, the BSP layers a target
+pulls in (`meta-raspberrypi/`, `meta-lts-mixins/`, `meta-yocto/`), plus
+`build/<machine>/` (TOPDIR) and `cache/` (`DL_DIR` + `SSTATE_DIR`).
 
 In kas, a `repos:` entry with **no `url:`** is the repo holding the config file,
 which kas never touches. That is the `tessaro-os:` entry. Upstream layers get a
 `url`/`commit`/`branch` instead. Bumping Moonforge means changing one commit
-hash in `kas/tessaro-image-base-qemux86-64.yml`.
+hash in `kas/common/tessaro.yml`.
+
+**One config chain per machine.** A build is always a machine fragment plus the
+shared debug fragment, `kas/machine/<machine>.yml:kas/common/debug.yml`, which
+is what `mise.toml` assembles. The machine fragment includes
+`kas/common/tessaro.yml` (the pins, `meta-tessaro-distro`, the kiosk layers,
+`IMAGE_DATA_MIN_SIZE`) and adds only what is board-specific: the layer fragment
+for that BSP, `WKS_FILE`, `OVERLAYFS_ETC_DEVICE`, `distro`, `machine`. Adding a
+target is one new file in `kas/machine/`; nothing else moves.
 
 Configuration arrives through three chains that each span several files:
 
-1. **kas includes.** `kas/tessaro-image-base-qemux86-64.yml` pulls
-   `meta-moonforge:kas/include/layer/meta-moonforge-*.yml`. Each *layer*
+1. **kas includes.** `kas/machine/<machine>.yml` and `kas/common/tessaro.yml`
+   pull `meta-moonforge:kas/include/layer/meta-moonforge-*.yml`. Each *layer*
    fragment activates its layer, pulls the *repo* fragments it needs
    (`kas/include/repo/*.yml`, which carry the url/commit pins), and contributes
    `local_conf_header` defaults. So enabling a feature is one `includes:` entry
-   here, never a manual `bblayers.conf` edit - kas regenerates `build/conf/`
-   on every invocation.
+   here, never a manual `bblayers.conf` edit - kas regenerates
+   `build/<machine>/conf/` on every invocation. `local_conf_header` keys merge
+   by *name* across the whole chain, so a key reused by two fragments silently
+   replaces the other's block; ours are `20_tessaro-common` and
+   `25_tessaro-machine`, upstream's are `10_`/`20_meta-moonforge-*`.
 2. **Distro.** `meta-tessaro-distro/conf/distro/tessaro.conf` does
    `require conf/distro/moonforge.conf` and overrides only identity fields plus
    the hostname. Everything else (systemd, uninative, `OEEquivHash`,
@@ -160,6 +189,60 @@ Things to know:
 
 ## Gotchas
 
+* **`distro:` has to be set by the entry point of the kas chain.** kas resolves
+  a plain scalar by include order, and a file's own value beats the ones its
+  includes set. Every machine fragment includes a `meta-moonforge-*` layer
+  fragment, which pulls `meta-moonforge-distro.yml`, which says
+  `distro: moonforge` - so `distro: tessaro` sitting in `kas/common/tessaro.yml`
+  gets silently undone and the whole image builds as Moonforge (no `tessaro`
+  hostname, no cog `PACKAGECONFIG`, `DISTROOVERRIDES` flipped). It lives in each
+  `kas/machine/*.yml` instead. `kas dump <chain>` prints the resolved value and
+  is the cheap way to check after touching includes.
+* **`genericx86-64` comes from `meta-yocto-bsp`, not meta-intel.** The generic
+  x86 machines moved out of meta-intel years ago; meta-intel's own machines
+  would switch `virtual/kernel` to `linux-intel` and pull in the Intel media
+  stack, while meta-yocto-bsp keeps `linux-yocto 6.6` and works on AMD boards.
+  It is pinned as the split-out `meta-yocto` repo (`kas/repo/meta-yocto.yml`),
+  not all of poky, and only the `meta-yocto-bsp` layer is enabled - the repo
+  root is not a layer, so the `layers:` key there is mandatory.
+* **`/data` is mounted by label, not by device node.**
+  `OVERLAYFS_ETC_DEVICE = "LABEL=data"` in `kas/common/tessaro.yml`, so one
+  image boots off SATA, USB, NVMe or SD unchanged. It works because the preinit
+  generated by `overlayfs-etc.bbclass` runs `/bin/mount`, which is
+  `util-linux-mount` with `libblkid1` behind it (not busybox), on a kernel with
+  `CONFIG_DEVTMPFS_MOUNT=y` - `/dev` is populated by the kernel before
+  `/sbin/init` runs, so blkid can resolve the label. Every wks in use passes
+  `--label data`, which wic turns into `mkfs.ext4 -L`. If a wks ever drops that
+  label the symptom is `PREINIT: Mounting </data> failed!` on the console
+  followed by a booting but non-persistent system. Two disks carrying a `data`
+  label (usually the flashing USB stick left plugged in) is the one case this
+  gets wrong, and device nodes are no safer there - that stick is often
+  `/dev/sda`.
+* **wic rewrites `/etc/fstab` inside the image, and that is a second place a
+  disk gets named.** `update_fstab()` in `scripts/lib/wic/plugins/imager/direct.py`
+  adds a line for every partition with a mountpoint: `PARTUUID=`/`UUID=` with
+  `--use-uuid`, `LABEL=` with `--use-label`, and a bare `/dev/sdaN` otherwise.
+  So the preinit mounting `/data` by label is only half the job - without
+  `--use-label` on that partition, fstab still says `/dev/sda3`, and on an NVMe
+  board systemd fails `data.mount` after a perfectly good preinit. Our
+  genericx86-64 wks passes it. The upstream qemu and Pi wks files do not, which
+  is harmless there (`sda` under QEMU, `mmcblk0` on SD) right up until someone
+  boots the Pi image off USB.
+* **The x86 hardware image is UEFI-only.**
+  `meta-tessaro-distro/wic/tessaro-image-base-genericx86-64.wks.in` is GPT plus
+  an ESP with grub-efi. `genericx86-64` does declare the `pcbios`
+  `MACHINE_FEATURE`, and oe-core's `bootimg-biosplusefi` wic plugin can put
+  syslinux and an EFI loader in the same `/boot` partition (it picks
+  syslinux's `gptmbr.bin` on GPT, so the partition table can stay), but nothing
+  here is set up or tested for legacy boot today.
+* **The Pi target is `raspberrypi3-64` and covers the 3B and 3B+** - the B+
+  device tree is in `RPI_KERNEL_DEVICETREE` and the firmware picks it at boot.
+  `meta-moonforge-raspberrypi` advertises Pi 4/5 only, but contains nothing
+  board-specific (psplash framebuffer config, a udev rule, the mmcblk wic
+  layout). The 3B+ has 1GB of RAM shared with the GPU and WPEWebKit is the
+  heaviest thing in the image, so `GPU_MEM` and `VC4DTBO` (fake KMS by default
+  on this machine) are the first knobs if the kiosk gets OOM-killed or crawls;
+  both are noted in the fragment and left at meta-raspberrypi's defaults.
 * **runqemu needs a file path, not an image name.** `runqemu ... qemux86-64
   moonforge-image-base wic` fails with `IMAGE_LINK_NAME wasn't set`: the image
   name is treated as a lazy rootfs, and the machine argument makes runqemu run
@@ -219,6 +302,19 @@ Things to know:
 
 ## Status
 
-`qemux86-64` works and is the development target, and carries the kiosk browser.
-Raspberry Pi 4/5 is not wired up yet; it is available as a Moonforge layer
-(`meta-moonforge-raspberrypi`) and costs one `includes:` entry.
+Three targets, one fragment each in `kas/machine/`. All three carry the same
+image: read-only rootfs, overlayfs `/etc` on `/data`, Weston and the cog kiosk.
+
+| Machine | Purpose | State |
+| --- | --- | --- |
+| `qemux86-64` | development, boots through `mise run run-vnc` | builds and boots |
+| `genericx86-64` | shipping x86_64 hardware (UEFI) | configured, never built end to end |
+| `raspberrypi3-64` | Raspberry Pi 3 Model B+ | configured, never built end to end |
+
+"Configured" means the kas chain resolves and bitbake parses it with the right
+`DISTRO`/`MACHINE`/`WKS_FILE`; neither image has been built or booted on real
+hardware yet. Expect the first build of each to surface fetch or packaging
+issues that parsing cannot.
+
+Writing an image to a card or disk is deliberately not a mise task - decompress
+with `mise run unpack` and `dd` the `.wic` yourself.

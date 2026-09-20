@@ -10,7 +10,7 @@ persistent `/data` partition out of the box.
 ## Quick start
 
 ```sh
-mise run build     # build the image and OVMF firmware
+mise run build     # build for QEMU (the default target) plus OVMF firmware
 mise run run-vnc   # boot it in QEMU, framebuffer on localhost:5900
 mise run run       # same, but serial console only (Ctrl-a x to exit)
 ```
@@ -18,14 +18,42 @@ mise run run       # same, but serial console only (Ctrl-a x to exit)
 Use `run-vnc` to see the kiosk: `run` boots with `nographic`, so there is no
 display to render the browser on.
 
-Images land in `build/tmp/deploy/images/<machine>/`.
+## Targets
+
+Every task acts on one machine, `$TESSARO_MACHINE`, which defaults to
+`qemux86-64`:
+
+```sh
+mise run build-qemu   # qemux86-64      - development, boots under QEMU
+mise run build-x86    # genericx86-64   - x86_64 PCs and mini PCs, UEFI
+mise run build-rpi    # raspberrypi3-64 - Raspberry Pi 3 Model B+
+
+TESSARO_MACHINE=raspberrypi3-64 mise run shell   # any task, any target
+```
+
+Each target gets its own build directory, `build/<machine>/`, and images land
+in `build/<machine>/tmp/deploy/images/<machine>/`. The download and sstate
+caches in `cache/` are shared, so the second target reuses most of the first
+one's work.
+
+Writing an image to a card or a disk is left to you on purpose:
+
+```sh
+TESSARO_MACHINE=raspberrypi3-64 mise run unpack
+sudo dd if=build/raspberrypi3-64/tmp/deploy/images/raspberrypi3-64/moonforge-image-base-raspberrypi3-64.rootfs.wic \
+    of=/dev/sdX bs=4M status=progress conv=fsync
+```
 
 ## Status
 
-| Platform | State |
-| --- | --- |
-| `qemux86-64` | working, used for development, kiosk browser enabled |
-| Raspberry Pi 4 / 5 | not wired up yet (`meta-moonforge-raspberrypi`) |
+| Platform | Machine | State |
+| --- | --- | --- |
+| QEMU x86_64 | `qemux86-64` | builds and boots, used for development |
+| x86_64 hardware | `genericx86-64` | configured, first build still to be run |
+| Raspberry Pi 3B+ | `raspberrypi3-64` | configured, first build still to be run |
+
+All three build the same image: read-only rootfs, overlayfs `/etc`, persistent
+`/data`, Weston and the cog kiosk.
 
 ## Kiosk browser
 
@@ -57,6 +85,8 @@ journalctl -fu tessaro-kiosk-watchdog
 
 ## Structure
 
-`kas/*.yml` pins every upstream repo and selects the layers; `meta-tessaro-distro`
-holds everything specific to this product. See [CLAUDE.md](CLAUDE.md) for the
+`kas/common/tessaro.yml` pins every upstream repo and selects the layers shared
+by all targets, `kas/machine/<machine>.yml` adds what is board-specific, and
+`meta-tessaro-distro` holds everything specific to this product. Adding a target
+is one new file in `kas/machine/`. See [CLAUDE.md](CLAUDE.md) for the
 full layout, the task list and the gotchas worth knowing before your first build.

@@ -1,0 +1,36 @@
+# Raspberry Pi 3 Model B+, 64-bit (aarch64, Cortex-A53).
+#
+# meta-raspberrypi's raspberrypi3-64 covers the 3B and the 3B+; the device tree
+# for the B+ (bcm2710-rpi-3-b-plus.dtb) is in RPI_KERNEL_DEVICETREE and the
+# firmware picks the right one at boot, so one image serves both.
+#
+# meta-moonforge-raspberrypi documents itself as Pi 4/5 support, but it carries
+# nothing board-specific: a psplash framebuffer config, a udev rule and the
+# mmcblk wic layout, all of which apply to the 3B+ as well. It also pulls in
+# meta-raspberrypi and meta-lts-mixins (u-boot) and sets ENABLE_UART,
+# RPI_USE_U_BOOT and the Synaptics firmware license flag.
+header:
+  version: 16
+  includes:
+    - kas/common/tessaro.yml
+    - repo: meta-moonforge
+      file: kas/include/layer/meta-moonforge-raspberrypi.yml
+
+local_conf_header:
+  25_tessaro-machine: |
+    # /boot (vfat, firmware + u-boot), rootfs, /data - from
+    # meta-moonforge-raspberrypi/wic/. /data is found by label, set in
+    # kas/common/tessaro.yml; here it would be /dev/mmcblk0p3, and it becomes
+    # /dev/sda3 the moment someone boots the same image off USB.
+    # The 3B+ has 1GB of RAM shared with the GPU, and WPEWebKit is the heaviest
+    # thing in the image. Two knobs to reach for if the kiosk gets OOM-killed
+    # or renders slowly, both defaulted by meta-raspberrypi and left alone here
+    # because either one trades against the other:
+    #   GPU_MEM = "128"            # rpi-base.inc defaults to 64
+    #   VC4DTBO = "vc4-kms-v3d"    # raspberrypi3-64 defaults to fake KMS
+
+# Both keys belong in the entry point of the config chain: an include cannot
+# set them, because meta-moonforge-distro.yml sets distro too and wins by
+# order. See the note in kas/common/tessaro.yml.
+distro: tessaro
+machine: raspberrypi3-64

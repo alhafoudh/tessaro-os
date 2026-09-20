@@ -1,36 +1,78 @@
 [tools]
 python = "3.12.11"
 
+[vars]
+# The machine every task acts on. Override it per command:
+#
+#   TESSARO_MACHINE=raspberrypi3-64 mise run build
+#
+# or use the build-qemu / build-x86 / build-rpi wrappers. Valid values are the
+# basenames in kas/machine/: qemux86-64, genericx86-64, raspberrypi3-64.
+machine = "{{ env.TESSARO_MACHINE | default(value='qemux86-64') }}"
+
 [env]
 _.path = "/opt/homebrew/opt/coreutils/libexec/gnubin:/opt/nvim-linux-x86_64/bin"
 KAS_CONTAINER_ENGINE = "docker"
 DL_DIR = "{{config_root}}/cache/downloads"
 SSTATE_DIR = "{{config_root}}/cache/sstate-cache"
 
-# kas fragments that describe the qemux86-64 target. Both live in this repo,
-# which is the kas root repo; meta-moonforge is cloned by kas from the pin in
-# kas/tessaro-image-base-qemux86-64.yml.
-KAS_CONFIG = "kas/tessaro-image-base-qemux86-64.yml:kas/common/debug.yml"
+# Exported so the tasks can branch on it (OVMF and runqemu are QEMU-only).
+TESSARO_MACHINE = "{{vars.machine}}"
 
-# Relative to the kas build dir (build/ on the host, /build in the container),
-# so the same value works on both sides of the mount.
-WIC = "tmp/deploy/images/qemux86-64/moonforge-image-base-qemux86-64.rootfs.wic"
+# One machine fragment plus the shared debug fragment. The machine fragment
+# includes kas/common/tessaro.yml, which carries the pins, the distro and the
+# kiosk layers.
+KAS_CONFIG = "kas/machine/{{vars.machine}}.yml:kas/common/debug.yml"
+
+# A build dir (TOPDIR) per machine, all sharing DL_DIR and SSTATE_DIR, so
+# switching targets does not throw away the other one's tmp/. kas-container
+# creates this directory and mounts it at /build.
+KAS_BUILD_DIR = "{{config_root}}/build/{{vars.machine}}"
+
+# Relative to the build dir, so the same value works on the host
+# ("$KAS_BUILD_DIR/$WIC") and inside the container (cwd is /build).
+WIC = "tmp/deploy/images/{{vars.machine}}/moonforge-image-base-{{vars.machine}}.rootfs.wic"
 
 [tasks.build]
-description = "Build the qemux86-64 image and the OVMF firmware"
+description = "Build the image for $TESSARO_MACHINE (default qemux86-64)"
 dir = "{{config_root}}"
-run = "kas-container build --target moonforge-image-base --target ovmf $KAS_CONFIG"
+run = '''
+# OVMF is the UEFI firmware runqemu boots the image with, so it is built for
+# the QEMU target only. Real hardware brings its own.
+if [ "$TESSARO_MACHINE" = "qemux86-64" ]; then
+    set -- --target moonforge-image-base --target ovmf
+else
+    set -- --target moonforge-image-base
+fi
+kas-container build "$@" $KAS_CONFIG
+'''
+
+[tasks.build-qemu]
+description = "Build the qemux86-64 image (development target)"
+dir = "{{config_root}}"
+run = "TESSARO_MACHINE=qemux86-64 mise run build"
+
+[tasks.build-x86]
+description = "Build the genericx86-64 image (real x86_64 hardware)"
+dir = "{{config_root}}"
+run = "TESSARO_MACHINE=genericx86-64 mise run build"
+
+[tasks.build-rpi]
+description = "Build the raspberrypi3-64 image (Raspberry Pi 3B+)"
+dir = "{{config_root}}"
+run = "TESSARO_MACHINE=raspberrypi3-64 mise run build"
 
 [tasks.shell]
-description = "Drop into the kas build environment (cwd is the build dir)"
+description = "Drop into the kas build environment for $TESSARO_MACHINE (cwd is the build dir)"
 dir = "{{config_root}}"
 raw = true
 run = "kas-container shell $KAS_CONFIG"
 
 [tasks.unpack]
 description = "Decompress the built .wic so runqemu can boot it"
-dir = "{{config_root}}/build"
+dir = "{{config_root}}"
 run = '''
+cd "$KAS_BUILD_DIR"
 if [ -f "$WIC.bz2" ] && [ ! "$WIC" -nt "$WIC.bz2" ]; then
     bzip2 -dc "$WIC.bz2" > "$WIC"
 fi
@@ -38,11 +80,15 @@ fi
 '''
 
 [tasks.run]
-description = "Boot the image in QEMU with the serial console on this terminal"
+description = "Boot the qemux86-64 image in QEMU with the serial console on this terminal"
 dir = "{{config_root}}"
 depends = ["unpack"]
 raw = true
 run = '''
+[ "$TESSARO_MACHINE" = "qemux86-64" ] || {
+    echo "run only works for qemux86-64, not $TESSARO_MACHINE" >&2
+    exit 1
+}
 # /dev/kvm is root:kvm 0660. The kas entrypoint drops to the "builder" user
 # via gosu, which rebuilds supplementary groups from the container's
 # /etc/group - so "--group-add" is discarded. Overriding GROUP_ID instead
@@ -73,11 +119,15 @@ kas-container --runtime-args "$KVM_RUNTIME $GPU_RUNTIME" shell $KAS_CONFIG \
 '''
 
 [tasks.run-vnc]
-description = "Boot the image in QEMU with a VNC display on localhost:5900"
+description = "Boot the qemux86-64 image in QEMU with a VNC display on localhost:5900"
 dir = "{{config_root}}"
 depends = ["unpack"]
 raw = true
 run = '''
+[ "$TESSARO_MACHINE" = "qemux86-64" ] || {
+    echo "run-vnc only works for qemux86-64, not $TESSARO_MACHINE" >&2
+    exit 1
+}
 # /dev/kvm is root:kvm 0660. The kas entrypoint drops to the "builder" user
 # via gosu, which rebuilds supplementary groups from the container's
 # /etc/group - so "--group-add" is discarded. Overriding GROUP_ID instead
@@ -106,6 +156,6 @@ kas-container --runtime-args "$KVM_RUNTIME $GPU_RUNTIME -p 5900:5900" shell $KAS
 '''
 
 [tasks.clean]
-description = "Remove build artifacts, keeping sstate and downloads"
+description = "Remove build artifacts for $TESSARO_MACHINE, keeping sstate and downloads"
 dir = "{{config_root}}"
 run = "kas-container clean $KAS_CONFIG"

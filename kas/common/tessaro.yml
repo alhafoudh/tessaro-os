@@ -1,0 +1,66 @@
+# Everything about a Tessaro image that does not depend on the machine.
+#
+# Every fragment in kas/machine/ includes this file, so the pins and the kiosk
+# stack are defined exactly once (distro is the exception - see the bottom of
+# this file). A build is always this file plus one machine fragment:
+#
+#   kas-container build kas/machine/<machine>.yml:kas/common/debug.yml
+#
+# which is what the mise tasks assemble from TESSARO_MACHINE.
+header:
+  version: 16
+  includes:
+    - repo: meta-moonforge
+      file: kas/include/layer/meta-moonforge-distro.yml
+    # Kiosk browser. Pulls in meta-moonforge-graphics (Weston), meta-webkit and
+    # meta-openembedded by itself, so this is the only layer line it needs.
+    - repo: meta-moonforge
+      file: kas/include/layer/meta-moonforge-wpe.yml
+
+local_conf_header:
+  # Key names are merged across the whole config chain, so anything set here
+  # would be replaced wholesale by a fragment reusing the name. Machine
+  # fragments use 25_tessaro-machine, upstream Moonforge uses
+  # 10_/20_meta-moonforge-*; this one is ours alone.
+  20_tessaro-common: |
+    # The kiosk needs room on /data: the /etc overlay, /home/weston (the wpe
+    # layer's volatile-binds bbappend maps it to /data/overlay-home) and the
+    # WebKit disk cache all live on this partition.
+    IMAGE_DATA_MIN_SIZE = "4096M"
+    # Find /data by filesystem label rather than by device node, so one image
+    # boots off SATA, USB, NVMe and SD without a rebuild. Every wks in use
+    # labels that partition "data" (wic passes it to mkfs.ext4 -L), and the
+    # preinit that mounts it is util-linux mount with libblkid behind it, on a
+    # kernel with CONFIG_DEVTMPFS_MOUNT=y - so /dev is populated before /sbin/init
+    # runs and blkid can resolve the label.
+    #
+    # The one ambiguity is two attached disks both carrying a "data" label -
+    # typically the USB stick the device was flashed from, left plugged in.
+    # blkid then picks whichever it finds first. Device nodes are no safer
+    # there: that same stick often enumerates as /dev/sda ahead of the
+    # internal disk. Pull the flashing medium.
+    #
+    # A machine fragment can still override this with a plain path if a board
+    # needs it.
+    OVERLAYFS_ETC_DEVICE = "LABEL=data"
+
+repos:
+  # Upstream layer collection. Pinned here; kas clones and checks it out.
+  # Bumping Moonforge is this one commit hash.
+  meta-moonforge:
+    url: https://github.com/moonforgelinux/meta-moonforge.git
+    commit: 7c2fe20810b8878a2d466bacb6de799149f968f4
+    branch: main
+  # No url: this is the repo holding this file, which kas never touches.
+  tessaro-os:
+    layers:
+      meta-tessaro-distro:
+
+# distro deliberately lives in the machine fragments, not here. kas resolves a
+# plain key like distro by include order, and a file's own value beats the ones
+# its includes set - so the *entry point* of the chain has to be the file that
+# says "tessaro". Setting it here instead is silently undone: every machine
+# fragment also includes a meta-moonforge-*.yml layer fragment that pulls in
+# meta-moonforge-distro.yml, and that one comes later and says "moonforge".
+# The symptom is a whole image built with DISTRO = "moonforge": no tessaro
+# hostname, no kiosk PACKAGECONFIG, and DISTROOVERRIDES flipped.

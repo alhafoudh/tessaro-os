@@ -1,0 +1,31 @@
+# genericx86-64: real x86_64 hardware (UEFI PCs, mini PCs, thin clients).
+#
+# The machine comes from meta-yocto-bsp, not meta-intel - the generic x86
+# machines moved out of meta-intel years ago. It keeps linux-yocto, so
+# PREFERRED_VERSION_linux-yocto = "6.6%" from moonforge.conf still applies, and
+# it works on AMD hardware as well; meta-intel's machines would switch the
+# kernel to linux-intel and pull in the Intel media stack.
+header:
+  version: 16
+  includes:
+    - kas/common/tessaro.yml
+    - kas/repo/meta-yocto.yml
+
+local_conf_header:
+  25_tessaro-machine: |
+    # meta-yocto-bsp's own genericx86.wks.in has no /data partition, which
+    # overlayfs-etc needs, so the image uses ours - it is the Moonforge
+    # qemux86-64 layout (ESP, rootfs, /data, swap) with the loader taken from
+    # EFI_PROVIDER instead of being hardcoded to grub-efi.
+    WKS_FILE = "tessaro-image-base-genericx86-64.wks.in"
+    # No OVERLAYFS_ETC_DEVICE here on purpose: this is the target where the
+    # disk name is least predictable (SATA and USB are /dev/sda*, NVMe is
+    # /dev/nvme0n1p*, eMMC is /dev/mmcblk0p*), which is exactly why
+    # kas/common/tessaro.yml mounts /data by label instead.
+    OVERLAYFS_ETC_DEVICE = "/dev/sda3"
+
+# Both keys belong in the entry point of the config chain: an include cannot
+# set them, because meta-moonforge-distro.yml sets distro too and wins by
+# order. See the note in kas/common/tessaro.yml.
+distro: tessaro
+machine: genericx86-64
