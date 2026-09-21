@@ -58,9 +58,10 @@ Builds are long. Run them in a Herdr pane, not the Bash tool.
 
 **This repository is the kas root repo.** Everything else is a build input that
 kas clones and checks out from pins under `kas/`, and is gitignored:
-`meta-moonforge/`, `openembedded-core/`, `bitbake/`, the BSP layers a target
-pulls in (`meta-raspberrypi/`, `meta-lts-mixins/`, `meta-yocto/`), plus
-`build/<machine>/` (TOPDIR) and `cache/` (`DL_DIR` + `SSTATE_DIR`).
+`meta-moonforge/`, `openembedded-core/`, `bitbake/`, `meta-openembedded/`, the
+BSP layers a target pulls in (`meta-raspberrypi/`, `meta-lts-mixins/`,
+`meta-yocto/`), plus `build/<machine>/` (TOPDIR) and `cache/` (`DL_DIR` +
+`SSTATE_DIR`).
 
 In kas, a `repos:` entry with **no `url:`** is the repo holding the config file,
 which kas never touches. That is the `tessaro-os:` entry. Upstream layers get a
@@ -191,6 +192,105 @@ Things to know:
   malformed, at which point dbus discards the whole policy **silently** and you
   get no hardening at all - which is what pasting a `busctl --system ...`
   example into the comment did. `journalctl -b -u dbus` shows the parse error.
+
+## Networking
+
+**NetworkManager**, from `meta-networking`, which `kas/common/tessaro.yml`
+enables on the meta-openembedded pin Moonforge already carries. It replaces
+systemd-networkd outright: `PACKAGECONFIG:remove:pn-systemd = "networkd"` in
+`tessaro.conf` stops networkd being built at all, and
+`PACKAGECONFIG:remove:pn-systemd-conf = "dhcp-ethernet"` drops the
+`80-wired.network` that used to provide ethernet DHCP.
+
+The reason is WiFi. Under systemd-networkd, changing a network in the field
+means hand-writing a `.network` file and a `wpa_supplicant.conf` in two
+syntaxes with no feedback; `nmtui` makes it one screen. The reconfiguration
+story is a technician on `getty@tty1` (Ctrl-Alt-F1 - Weston is on tty7), on the
+serial console, or over SSH.
+
+Things to know:
+
+* **Ethernet DHCP is still zero-configuration.** NM's auto-default gives any
+  managed ethernet device with no stored profile an in-memory
+  `Wired connection 1` with `ipv4.method=auto`. Nothing sets `no-auto-default`.
+  A factory device boots and takes a lease exactly as before; the profile is
+  just ephemeral until someone saves a real one.
+* **Profiles persist for free, state needs a unit.**
+  `/etc/NetworkManager/system-connections` is on the `/etc` overlay, so saved
+  connections land on `/data` with no work. `/var/lib/NetworkManager` is tmpfs,
+  because oe-core's `VOLATILE_BINDS` maps `/var/volatile/lib` over `/var/lib`,
+  and `tessaro-network-state.service` binds it to `/data/overlay-nm`.
+* **That state unit is deliberately *not* a `VOLATILE_BINDS` entry**, even
+  though `/home` is one. Adding `/data/overlay-nm /var/lib/NetworkManager` to
+  `VOLATILE_BINDS` is silently broken: every unit volatile-binds generates is
+  `DefaultDependencies=no` and `Before=local-fs.target` with **no ordering
+  between them**, and the template carries `ConditionPathIsReadWrite=!<where>`.
+  Race `var-volatile-lib.service` and you lose both ways - if the tmpfs lands
+  first the condition skips your unit without a word, and if yours lands first
+  the tmpfs mounts over it. `/home` escapes only because it is not under a
+  volatile path. Anything nested under `/var/lib`, `/var/cache`, `/var/spool`
+  or `/srv` needs its own unit with `After=var-volatile-<x>.service`.
+* **systemd-resolved stays and keeps `/etc/resolv.conf`.** That path is a
+  symlink into `/run` recreated by a tmpfiles `L!` line each boot, which is why
+  it survives the `/etc` overlay. `10-tessaro.conf` sets
+  `dns=systemd-resolved` and `rc-manager=unmanaged` so NM never writes a real
+  file there - one that would land in the overlay upper and outlive every
+  future image.
+* **The NM drop-in lives in `/usr/lib/NetworkManager/conf.d/`, not `/etc`**, for
+  the same reason the kiosk's defaults do. It ships in
+  `meta-tessaro-distro/recipes-connectivity/tessaro-network/`.
+* **`auth-polkit=root-only` is load-bearing for SSH.** `polkit` is in
+  `DISTRO_FEATURES` and in NM's `PACKAGECONFIG`, but the image ships no polkit
+  *agent*. Upstream's policy grants `settings.modify.system` and
+  `network-control` to `allow_active` and demands `auth_admin_keep` otherwise,
+  so without this line `nmtui` saves a profile fine from a getty on tty1
+  (logind gives it an active seat) and fails over dropbear with "Not authorized
+  to modify the system settings". Same command, two answers, depending on how
+  the technician got in. `nmcli general permissions` should read `yes`
+  throughout.
+* **Split packages only.** The plain `networkmanager` package is `ALLOW_EMPTY`
+  and `RRECOMMENDS` every plugin built - ppp, wwan, adsl, ovs, bluetooth,
+  cloud-setup. The image names `networkmanager-daemon`, `-nmcli`, `-nmtui`,
+  `-wifi`. `nmtui` also needs `PACKAGECONFIG:append:pn-networkmanager = " nmtui"`;
+  it is not in the recipe's default and pulls `libnewt` from oe-core.
+* **`networking-layer`, not `meta-networking`,** is what
+  `LAYERDEPENDS_meta-tessaro-distro` names - the layer's `BBFILE_COLLECTIONS`
+  value, same trap as meta-webkit registering itself as `webkit`.
+* **WiFi drivers and firmware are both per machine, and both already handled on
+  the two real targets.** They are separate things: drivers are
+  `kernel-module-*` packages, firmware is `linux-firmware*`. `linux-yocto`
+  builds the wifi drivers as modules on every machine here - the qemu package
+  feed has `kernel-module-brcmfmac`, `-ath9k` and the rest - but a module is
+  only *installed* if something recommends it.
+  - `raspberrypi3-64`: `rpi-base.inc` adds `kernel-modules` (every built
+    module), and `raspberrypi3-64.conf` adds the bcm43430/43455 rpidistro
+    firmware. Nothing to do.
+  - `genericx86-64`: meta-yocto-bsp's `genericx86-common.inc` adds
+    `kernel-modules linux-firmware`. Drivers are complete. Firmware is **not**
+    "all firmware": oe-core splits that recipe into 138 packages and
+    `FILES:${PN}` is only the catch-all `${nonarch_base_libdir}/firmware/*`,
+    so anything a split package claims is absent and nothing pulls it back.
+    The line runs through Intel - `-iwlwifi-8265`, `-9260`, `-7260` and the
+    other legacy generations are split out, the AX200/AX210/BE200 blobs are
+    not and so land in the catch-all. Same for `-ath10k`/`-ath11k` (split,
+    missing) vs ath12k (an explicit `RDEPENDS` of the base). So a modern card
+    works out of the box and an 8265 or ath10k - common in exactly this class
+    of mini PC - binds its driver and finds no firmware. See its kas fragment.
+  - `qemux86-64`: neither, and the image ships 15 modules total. Correct -
+    QEMU emulates no wireless NIC, so wifi cannot be exercised here at all.
+    The first real wifi test has to be on the Pi.
+* **`NetworkManager-wait-online.service` *is* enabled** - `preset-all` at rootfs
+  time creates `/etc/systemd/system/network-online.target.wants/NetworkManager-wait-online.service`,
+  even though `SYSTEMD_SERVICE:networkmanager-daemon` never names it. It is
+  inert only because nothing in the image `Wants=` or `Requires=`
+  `network-online.target`, so the target is never pulled into a transaction.
+  The moment something does - an update agent, a VPN, an MQTT client - that
+  unit starts gating boot with `nm-online`'s 30-second default on a link-less
+  device. Ship a drop-in from `tessaro-network` capping the timeout at that
+  point, and do not add one before, since an override with no consumer just
+  rots.
+* **Changing systemd's `PACKAGECONFIG` rebuilds most of the image.** Removing
+  `networkd` is not an incremental change. Budget a near-full build.
 
 ## Gotchas
 

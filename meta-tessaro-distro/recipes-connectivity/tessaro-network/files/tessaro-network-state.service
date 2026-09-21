@@ -1,0 +1,46 @@
+[Unit]
+Description=Persistent NetworkManager state on /data
+Documentation=man:NetworkManager(8)
+
+# Why this is a unit of our own and not a VOLATILE_BINDS entry.
+#
+# oe-core's volatile-binds already maps /var/volatile/lib over /var/lib, so
+# everything below it is tmpfs. Adding "/data/overlay-nm /var/lib/NetworkManager"
+# to VOLATILE_BINDS looks like the obvious answer and is silently broken: the
+# generated units are all DefaultDependencies=no and Before=local-fs.target with
+# no ordering against each other, and the template carries
+# ConditionPathIsReadWrite=!<where>. So either var-volatile-lib.service wins the
+# race, /var/lib/NetworkManager is already read-write, the condition fails and
+# nothing is mounted - or ours wins and the /var/lib tmpfs is then mounted
+# straight over the top of it. /home gets away with it only because /home is not
+# under a volatile path.
+#
+# The fix is to stop racing and state the order.
+DefaultDependencies=no
+Before=local-fs.target
+After=var-volatile-lib.service
+Requires=var-volatile-lib.service
+
+# /data is mounted by the overlayfs-etc preinit, before systemd is exec'd, so it
+# is already there. Stated anyway, and guarded, so the unit fails visibly in the
+# journal rather than mounting over nothing if that ever stops being true.
+RequiresMountsFor=/data
+ConditionPathIsReadWrite=/data
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+
+# A plain bind, not /sbin/mount-copybind as volatile-binds uses. copybind exists
+# to carry the image's content up into the writable layer, and
+# networkmanager-daemon ships /var/lib/NetworkManager as an empty directory -
+# every file in it (secret_key, NetworkManager.state, timestamps, seen-bssids,
+# the internal DHCP client's leases) is created by the daemon at runtime. A bind
+# also avoids stacking an overlay on the overlay that volatile-binds just put
+# over /var/lib.
+ExecStartPre=/bin/mkdir -p /data/overlay-nm
+ExecStart=/bin/mount --bind /data/overlay-nm /var/lib/NetworkManager
+ExecStop=/bin/umount /var/lib/NetworkManager
+
+[Install]
+WantedBy=local-fs.target

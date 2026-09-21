@@ -51,6 +51,23 @@ repos:
     url: https://github.com/moonforgelinux/meta-moonforge.git
     commit: 7c2fe20810b8878a2d466bacb6de799149f968f4
     branch: main
+  # meta-networking carries NetworkManager, which is how a field technician
+  # reconfigures the network (nmtui on tty1 or over SSH, nmcli for scripting).
+  # The repo itself is already pinned and cloned by meta-moonforge's
+  # kas/include/repo/meta-openembedded.yml, so only the layer is turned on here.
+  #
+  # kas merges repos.<name>.layers additively across the whole chain, so this
+  # adds to - rather than replaces - the meta-oe/meta-python/meta-multimedia the
+  # Moonforge fragments enable. The proof is in the build itself:
+  # meta-moonforge-graphics.yml asks for meta-oe alone and meta-moonforge-wpe.yml
+  # asks for all three, and the generated bblayers.conf carries all three.
+  #
+  # LAYERDEPENDS_networking-layer is "core meta-python openembedded-layer", all
+  # three already in, and LAYERSERIES_COMPAT is scarthgap, matching the oe-core
+  # pin. Check with: kas-container dump kas/machine/<machine>.yml:kas/common/debug.yml
+  meta-openembedded:
+    layers:
+      meta-networking:
   # No url: this is the repo holding this file, which kas never touches.
   tessaro-os:
     layers:

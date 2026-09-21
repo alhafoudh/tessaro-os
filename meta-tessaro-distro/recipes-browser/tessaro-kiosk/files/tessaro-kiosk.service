@@ -28,10 +28,11 @@ After=dbus.socket
 After=systemd-tmpfiles-setup.service
 
 # Deliberately NOT Wants/After=network-online.target, which the old
-# wpe-simple-launcher unit had. With systemd-networkd that pulls in
-# systemd-networkd-wait-online and holds the screen black for its timeout on a
-# device with no link. The whole point of the watchdog and the offline page is
-# that the kiosk lights up regardless of the network.
+# wpe-simple-launcher unit had. That target pulls in whatever wait-online
+# implementation the image has - NetworkManager-wait-online.service here - and
+# holds the screen black for its timeout on a device with no link. The whole
+# point of the watchdog and the offline page is that the kiosk lights up
+# regardless of the network.
 
 # No start limit. The failure modes that would loop instantly - a missing
 # --dir-handler path, an empty URL - are configuration errors that will not fix
