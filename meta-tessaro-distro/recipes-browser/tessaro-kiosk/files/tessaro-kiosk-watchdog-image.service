@@ -1,0 +1,23 @@
+[Unit]
+Description=Load the Tessaro kiosk watchdog container image
+
+# podman's storage.conf (container-host-config, bbappended by the Moonforge
+# podman layer) points the graphroot at /data/containers/storage, so the
+# persistent partition must be mounted first. /data is mounted by label via
+# fstab; data.mount is generated from that by systemd-fstab-generator.
+After=data.mount
+After=systemd-tmpfiles-setup.service
+Before=tessaro-kiosk-watchdog.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+
+# Load the shipped archive into podman's storage unless the image is already
+# there. The archive is produced by `mise run watchdog-image` (docker build,
+# then docker save); podman keeps the archive's freevision.sk/ name, and the
+# run unit references exactly that.
+ExecStart=/usr/bin/tessaro-kiosk-watchdog-image
+
+[Install]
+WantedBy=graphical.target

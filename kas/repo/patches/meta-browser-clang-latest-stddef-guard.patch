@@ -1,0 +1,13 @@
+diff --git a/meta-chromium/recipes-browser/chromium/chromium-gn.inc b/meta-chromium/recipes-browser/chromium/chromium-gn.inc
+index 1c89abeb..31ff83c7 100644
+--- a/meta-chromium/recipes-browser/chromium/chromium-gn.inc
++++ b/meta-chromium/recipes-browser/chromium/chromium-gn.inc
+@@ -454,7 +454,7 @@ do_add_clang_latest () {
+     # Find and copy headers from any versioned directory to ensure bindgen can find them
+     headers_copied=false
+     for dir in *; do
+-        if [ -d "$dir/include" ]; then
++        if [ -d "$dir/include" ] && [ -e "$dir/include/stddef.h" ]; then
+             echo "Found headers in $dir/include, copying to latest/include"
+             mkdir -p latest/include
+             cp -r "$dir/include/"* latest/include/

@@ -1,0 +1,23 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+$LOAD_PATH.unshift File.expand_path("../lib", __dir__)
+require "tessaro/kiosk_watchdog"
+
+config = Tessaro::KioskWatchdog::Config.new(ENV)
+log = Tessaro::KioskWatchdog::Log.new(debug: config.debug)
+
+if config.kiosk_url.empty?
+  log.info("KIOSK_URL is empty; nothing to watch")
+  exit 1
+end
+
+watchdog = Tessaro::KioskWatchdog::Watchdog.new(
+  config: config,
+  log: log,
+  probe: Tessaro::KioskWatchdog::Probe.new(log: log, config: config),
+  cdp: Tessaro::KioskWatchdog::Cdp.new(log: log, url: config.cdp_url, timeout: config.probe_connect_timeout),
+  systemd: Tessaro::KioskWatchdog::Systemd.new(unit: config.unit, log: log),
+  offline: Tessaro::KioskWatchdog::Offline.new(log: log, config: config)
+)
+watchdog.run

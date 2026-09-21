@@ -53,13 +53,12 @@ sudo dd if=build/raspberrypi3-64/tmp/deploy/images/raspberrypi3-64/moonforge-ima
 | Raspberry Pi 3B+ | `raspberrypi3-64` | configured, first build still to be run |
 
 All three build the same image: read-only rootfs, overlayfs `/etc`, persistent
-`/data`, Weston and the cog kiosk.
+`/data`, Weston and the Chromium kiosk.
 
 ## Kiosk browser
 
-Images boot straight into a fullscreen WPEWebKit window on Weston - Igalia's
-[cog](https://github.com/Igalia/cog) - showing `https://www.freevision.sk`. The
-build-time default is `TESSARO_KIOSK_URL` in
+Images boot straight into a fullscreen Chromium on Weston, showing
+`https://www.freevision.sk`. The build-time default is `TESSARO_KIOSK_URL` in
 `meta-tessaro-distro/conf/distro/tessaro.conf`.
 
 On a running device, change the URL without rebuilding by uncommenting and
@@ -73,14 +72,27 @@ systemctl restart tessaro-kiosk tessaro-kiosk-watchdog
 `/etc` is an overlayfs whose upper layer is the persistent `/data` partition,
 so the change survives a reboot.
 
-A watchdog keeps the page honest: it probes the URL, re-opens it every ten
+A watchdog keeps the page honest: it watches the browser over CDP (the
+DevTools protocol, on `127.0.0.1:9222`), probes the URL, re-opens it every ten
 minutes, shows a local offline page while the site is unreachable, and restarts
-the browser if it stops responding. Replace the offline page by dropping a file
-at `/data/kiosk/offline.html`. Why it failed is in the journal, not on the
-screen:
+the browser over systemd's D-Bus API if it stops responding. The watchdog is a
+Ruby 4 container, built by `mise run watchdog-image` and run by podman with
+storage on `/data`. Replace the offline page by dropping a file at
+`/data/kiosk/offline.html`. Why it failed is in the journal, not on the screen:
 
 ```sh
-journalctl -fu tessaro-kiosk-watchdog
+journalctl -fu tessaro-kiosk-watchdog        # the browser and the watchdog unit
+journalctl CONTAINER_NAME=tessaro-kiosk-watchdog   # the container's own output
+```
+
+## Developing the watchdog
+
+The watchdog lives in `watchdog/`, as a plain Ruby project with minitest tests,
+and runs in Docker locally - no Ruby on the host needed:
+
+```sh
+mise run watchdog-test         # unit tests in the Ruby 4 container
+mise run watchdog-integration  # real Chromium + the watchdog in compose
 ```
 
 ## Structure

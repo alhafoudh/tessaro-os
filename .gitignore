@@ -11,6 +11,13 @@
 /meta-rauc/
 /meta-rauc-community/
 /meta-lts-mixins/
+/meta-browser/
+/meta-clang/
+/meta-lts-mixins-rust/
+
+# The watchdog container image archive, produced by `mise run watchdog-image`
+# into the recipe's files/. It is a build artifact of watchdog/, not content.
+/meta-tessaro-distro/recipes-browser/tessaro-kiosk/files/tessaro-kiosk-watchdog-image.tar.gz
 
 # Build output and shared caches
 /build/

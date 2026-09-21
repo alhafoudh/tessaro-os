@@ -1,8 +1,9 @@
 # Runtime overrides for the Tessaro kiosk.
 #
 # The build-time defaults live in /usr/lib/tessaro-kiosk/tessaro-kiosk.env.
-# Both tessaro-kiosk.service and tessaro-kiosk-watchdog.service read that file
-# first and this one second, so anything set here wins. Apply a change with:
+# Both tessaro-kiosk.service and the watchdog container read that file first
+# and this one second (systemd's EnvironmentFile= for the browser, podman's
+# --env-file for the watchdog), so anything set here wins. Apply a change with:
 #
 #     systemctl restart tessaro-kiosk tessaro-kiosk-watchdog
 #
@@ -11,11 +12,17 @@
 # shadows the image's copy for good and no later image could move a default
 # again.
 #
-# It is parsed by systemd, not by a shell: plain NAME=value, optional quotes,
-# and # comments. No command substitution, no exports.
+# It is parsed as a NAME=value environment file, not by a shell: plain
+# NAME=value, optional quotes, and # comments. No command substitution, no
+# exports.
 
 # URL the kiosk shows.
 #KIOSK_URL="https://www.freevision.sk"
+
+# Where the watchdog finds Chromium's DevTools protocol. Loopback only, which
+# is where the browser listens; the watchdog container reaches it through
+# --network=host.
+#KIOSK_CDP_URL="http://127.0.0.1:9222"
 
 # --- offline page ----------------------------------------------------------
 #
@@ -33,9 +40,11 @@
 #                                 on the next failure with no restart.
 #   3. /usr/share/tessaro-kiosk/offline.html   the shipped default.
 #
-# Diagnostics are deliberately not on the page - they are in the journal:
+# The watchdog stages the chosen file into /run/tessaro-kiosk and navigates
+# Chromium to it as file://. Diagnostics are deliberately not on the page -
+# they are in the journal:
 #
-#     journalctl -fu tessaro-kiosk-watchdog
+#     journalctl CONTAINER_NAME=tessaro-kiosk-watchdog
 #
 #KIOSK_OFFLINE_URL="https://status.example.com/kiosk"
 #KIOSK_OFFLINE_PAGE="/data/kiosk/offline.html"
@@ -44,15 +53,15 @@
 #
 # What the watchdog fetches to decide whether the site is up. Empty means
 # KIOSK_URL itself. Set it when the site has a cheap health endpoint, and set it
-# always when KIOSK_URL is not an http(s) URL - a file:// or custom-scheme kiosk
-# cannot be probed, and the watchdog drops to refresh-only without it.
+# always when KIOSK_URL is not an http(s) URL - a file:// or data: kiosk cannot
+# be probed, and the watchdog drops to refresh-only without it.
 #KIOSK_PROBE_URL="https://www.freevision.sk/"
 
 # Seconds between probes while healthy, and while down.
 #KIOSK_PROBE_INTERVAL="30"
 #KIOSK_PROBE_INTERVAL_FAIL="10"
 
-# curl timeouts for one probe. Keep the total well under KIOSK_PROBE_INTERVAL.
+# Timeouts for one probe. Keep the total well under KIOSK_PROBE_INTERVAL.
 #KIOSK_PROBE_CONNECT_TIMEOUT="5"
 #KIOSK_PROBE_TIMEOUT="10"
 
@@ -71,13 +80,15 @@
 
 # --- recovery --------------------------------------------------------------
 #
-# Failed D-Bus pings before the browser is restarted - this one catches cog
-# being dead or wedged, independently of the network.
+# Failed CDP liveness checks before the browser is restarted - this one catches
+# Chromium being dead or wedged, independently of the network. The restart goes
+# through systemd's D-Bus API (RestartUnit), so it is exactly what systemctl
+# restart would do.
 #KIOSK_PING_FAILS="3"
 
-# Failed probes before the browser is restarted once, to clear a wedged web
-# process. 0 disables it. The restart happens at most once per outage, and never
-# more often than KIOSK_RESTART_BACKOFF seconds.
+# Failed probes before the browser is restarted once, to clear a wedged
+# renderer. 0 disables it. The restart happens at most once per outage, and
+# never more often than KIOSK_RESTART_BACKOFF seconds.
 #KIOSK_RESTART_AFTER="40"
 #KIOSK_RESTART_BACKOFF="300"
 

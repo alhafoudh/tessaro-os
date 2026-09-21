@@ -23,6 +23,9 @@ Use the mise tasks rather than calling `kas-container` directly:
 | `mise run run` | Boot in QEMU, serial console on the terminal |
 | `mise run run-vnc` | Boot in QEMU with VNC on localhost:5900 |
 | `mise run clean` | Drop build artifacts, keep sstate and downloads |
+| `mise run watchdog-image` | Build the watchdog container image and export it into the recipe |
+| `mise run watchdog-test` | Watchdog unit tests in the Ruby 4 container |
+| `mise run watchdog-integration` | Real Chromium + the watchdog together in compose |
 
 Exit the QEMU serial console with `Ctrl-a x`.
 
@@ -38,11 +41,15 @@ TESSARO_MACHINE=raspberrypi3-64 mise run shell
 variable, so each machine gets its own TOPDIR under `build/<machine>/` while
 `cache/` (`DL_DIR` + `SSTATE_DIR`) stays shared. Valid values are exactly the
 basenames in `kas/machine/`. `run`, `run-vnc` and OVMF are qemu-only and refuse
-to run on anything else.
+to run on anything else. `build` depends on `watchdog-image`, which regenerates
+the container archive the recipe packages (gitignored) on every build; with the
+docker layer cache that costs seconds.
 
-There is no test suite or linter; correctness is "the image builds and boots".
-For work on a single recipe, go through the kas shell so bitbake sees the right
-environment:
+The watchdog is a Ruby project under `watchdog/` with its own test suite
+(minitest, `mise run watchdog-test`) and an integration compose
+(`mise run watchdog-integration`). Everything runs in Docker, no Ruby on the
+host. For Yocto work on a single recipe, go through the kas shell so bitbake
+sees the right environment:
 
 ```sh
 mise run shell                          # then, inside (cwd is /build):
@@ -112,36 +119,42 @@ Appends to recipes from an optional upstream layer go under
 in `meta-tessaro-distro/conf/layer.conf`. That way a target that does not enable
 that layer does not trip over a dangling bbappend. There are none right now -
 and note the key is the layer's `BBFILE_COLLECTIONS` name, not its directory
-name: meta-webkit registers itself as `webkit`. Prefer a `:pn-<recipe>` override
-in `tessaro.conf` when all you need is a variable; that is how cog's
-`PACKAGECONFIG` is set without a bbappend at all.
+name: meta-chromium registers itself as `chromium-browser-layer`. Prefer a
+`:pn-<recipe>` override in `tessaro.conf` when all you need is a variable; that
+is how Chromium's `PACKAGECONFIG` is set without a bbappend at all.
 
 ## Kiosk browser
 
-Igalia's **cog** (0.18.5, from `meta-webkit`) fullscreen on Weston. Moonforge's
-own launcher, `wpe-simple-launcher`, is deliberately *not* installed: it
-connects no error signals at all, so a network blip, a bad certificate or a
-renderer crash left WebKit's error page on screen forever with nothing in the
-journal and no process exit for systemd to act on. Cog connects `load-failed`,
-`load-failed-with-tls-errors` and `web-process-terminated` by default and has a
-D-Bus control interface.
+**Chromium** (147, `chromium-ozone-wayland` from meta-browser's `meta-chromium`
+layer) fullscreen on Weston. It replaced cog/WPE: Chromium is the only browser
+that will ever support the WebBluetooth/WebSerial/WebUSB APIs on the roadmap,
+and CDP gives the watchdog a real health channel where cog's D-Bus surface was
+write-only. The cost is footprint - the Pi 3B+ with its 1GB is likely to OOM,
+and a full build takes hours.
 
-`meta-moonforge-wpe` stays in the `includes:` - it sets
-`PREFERRED_PROVIDER_virtual/wpebackend` (cog's `wl` plugin needs wpebackend-fdo),
-pulls in `meta-moonforge-graphics`, `meta-webkit` and `meta-openembedded`, and
-maps `/home` onto `/data/overlay-home`. Only its *package* is dropped, with a
-`CORE_IMAGE_EXTRA_INSTALL:remove` in `moonforge-image-base.bbappend`, because
-the `+=` that installs it lives in the pinned upstream kas fragment.
+The layers arrive through `kas/repo/meta-chromium.yml`, which pins meta-browser
+(repo root is not a layer, so `layers:` is mandatory, same pattern as
+`kas/repo/meta-yocto.yml`), plus its two dependencies: meta-clang and the Rust
+mixin, a *second* checkout of meta-lts-mixins on its `scarthgap/rust` branch
+(Moonforge pins the same repo on `scarthgap/u-boot`). meta-moonforge-wpe and
+meta-webkit are gone entirely; `/home` on `/data/overlay-home` is now ours
+(`meta-tessaro-distro/recipes-core/volatile-binds/volatile-binds.bbappend`), and
+Weston/wayland/polkit come from including `meta-moonforge-graphics` directly.
 
 Everything else is `meta-tessaro-distro/recipes-browser/tessaro-kiosk/`:
 
-* `tessaro-kiosk.service` runs `cog --platform=wl` as the `weston` user.
-* `tessaro-kiosk-watchdog.service` probes the URL with curl, re-navigates cog
-  through D-Bus, shows a local offline page while the site is down, and restarts
-  the browser when it stops answering.
+* `tessaro-kiosk.service` runs Chromium as the `weston` user, with CDP on
+  `127.0.0.1:9222` and the profile on `/data/kiosk/chromium`.
+* `tessaro-kiosk-watchdog.service` runs the **Ruby watchdog in a podman
+  container** (`--network=host`, system bus socket bind-mounted in). The image
+  is built by `mise run watchdog-image` from `watchdog/`, shipped as
+  `/usr/share/tessaro-kiosk/tessaro-kiosk-watchdog-image.tar.gz` (gitignored,
+  regenerated by every `build`), and loaded into podman's `/data` storage by
+  `tessaro-kiosk-watchdog-image.service` on first boot.
 * `/usr/lib/tessaro-kiosk/tessaro-kiosk.env` carries the build-time defaults
   (`TESSARO_KIOSK_URL` from `tessaro.conf`), `/etc/default/tessaro-kiosk`
-  overrides them and ships entirely **commented out**.
+  overrides them and ships entirely **commented out**. The browser reads them
+  as systemd `EnvironmentFile=`, the watchdog as podman `--env-file`.
 
 The defaults deliberately live under `/usr/lib`, not `/etc`: `/etc` is an
 overlayfs upper on `/data`, so the first write to a file there shadows the
@@ -149,49 +162,50 @@ image's copy permanently and no later image could move the default again.
 
 Apply a change with `systemctl restart tessaro-kiosk tessaro-kiosk-watchdog`.
 
+The watchdog is a port of the old POSIX-sh one with the health checks
+upgraded. It watches the browser over **CDP** (`http://127.0.0.1:9222`):
+`/json/list` plus a `Runtime.evaluate` round trip proves the *renderer* is
+alive, `Page.navigate` replaces the old D-Bus `open` action, and the offline
+page is served as `file:///run/tessaro-kiosk/index.html` (the `tessaro://`
+dir-handler died with cog). The restart path is `org.freedesktop.systemd1`
+`RestartUnit` over the system bus - no `systemctl` shell-outs. Same state
+machine as before: probe cadence vs navigation cadence, fail threshold before
+the offline page, one restart per outage, backoff, `nav_state=unknown` after a
+browser restart.
+
 Things to know:
 
-* **`cogctl` needs `--system`.** `tessaro.conf` sets
-  `PACKAGECONFIG:append:pn-cog = " dbus"`, which moves the control interface
-  off the session bus so a root watchdog can reach a browser running as
-  `weston`. `COG_DBUS_OWN_USER` must match `User=` in the unit or cog cannot
-  own its name at all.
-* **`cogctl ping` is broken in 0.18.5** - it tests the `GError**` instead of the
-  connection and always fails without contacting the bus. The watchdog uses
-  `busctl ... org.freedesktop.DBus.Peer Ping`.
-* **The control surface is write-only** - five stateless actions (`quit`,
-  `previous`, `next`, `reload`, `open`). Nothing can be read back, so the
-  watchdog cannot tell a live page from cog's error page and simply
-  re-navigates on every successful probe.
-* **Cog's error page is a hardcoded C string** with a "Try again" *button*,
-  useless without a pointer. Ours is a separate page the watchdog navigates to:
-  `$KIOSK_OFFLINE_URL`, else `/data/kiosk/offline.html`, else
-  `/usr/share/tessaro-kiosk/offline.html`, staged into `/run/tessaro-kiosk` and
-  served through cog's `--dir-handler=tessaro:` scheme.
-* **`--webprocess-failure=exit`** is what makes renderer death visible to
-  systemd. Cog's own `restart` mode reloads in-process at most 5 times in a
-  hardcoded 1s window and then sits on an error page, which looks healthy to
-  everything.
-* **`XDG_RUNTIME_DIR` is mandatory** even though `WAYLAND_DISPLAY` is an
-  absolute path: wpebackend-fdo puts its nested Wayland display there. Unset,
-  cog runs, answers D-Bus and paints nothing.
-* **Ctrl-W quits the kiosk.** Cog's wl plugin hardwires it (and F11, F5/Ctrl-R,
-  Alt-arrows, Ctrl-+/-/0) with no way to disable them. `Restart=always` - not
-  `on-failure`, because that path exits 0 - is the only mitigation short of
-  patching cog.
+* **The CDP port is on the loopback and stays there.** `--remote-debugging-address=127.0.0.1`
+  in the unit; the watchdog container reaches it through `--network=host`.
+  Recent Chromium also refuses to open the DevTools port with the *default*
+  user-data-dir, so `--user-data-dir` must stay set.
+* **Do not duplicate the wrapper's flags.** `/usr/bin/chromium` is the
+  recipe's wrapper that prepends `CHROMIUM_EXTRA_ARGS` -
+  `--ozone-platform=wayland`, plus `--kiosk --no-first-run --incognito` from
+  the `kiosk-mode` PACKAGECONFIG in `tessaro.conf`. The unit only adds CDP,
+  profile and autoplay flags.
+* **`proprietary-codecs` is what plays H.264.** The marketing site's videos
+  will not play without it; it is enabled in `tessaro.conf`.
+* **Chromium has no D-Bus control interface at all.** Everything is CDP. The
+  control-plane D-Bus policy that existed for cog is gone with it.
+* **The watchdog container mounts four things**: the system bus socket
+  (`/run/dbus/system_bus_socket`, for RestartUnit), `/run/tessaro-kiosk`
+  (writable, it stages the offline page there), `/data/kiosk` and
+  `/usr/share/tessaro-kiosk` (read-only page sources).
+* **Podman storage lives on `/data/containers`** via the Moonforge podman
+  layer's bbappend to `container-host-config` (graphroot in storage.conf);
+  that is why the recipe RDEPENDS on the package explicitly.
 * **Diagnostics are journal-only** by design; nothing technical reaches the
-  screen. `journalctl -fu tessaro-kiosk-watchdog`.
-* **Our D-Bus policy lives in `/etc/dbus-1/system.d/`, and its comments may not
-  contain `--`.** cog's own `com.igalia.Cog.conf` lets `context="default"` - any
-  local user - send to the kiosk, `quit` included. Overriding it means being
-  parsed later, and `dbus-1`'s `system.conf` lists
-  `<includedir>system.d</includedir>` before
-  `<includedir>/etc/dbus-1/system.d</includedir>`, so the directory is the only
-  ordering guarantee; filename sorting within one directory is not promised.
-  Separately, a `--` anywhere in an XML comment ends it and makes the file
-  malformed, at which point dbus discards the whole policy **silently** and you
-  get no hardening at all - which is what pasting a `busctl --system ...`
-  example into the comment did. `journalctl -b -u dbus` shows the parse error.
+  screen. The watchdog container logs with `--log-driver=journald`:
+  `journalctl CONTAINER_NAME=tessaro-kiosk-watchdog`; the browser and the
+  units under `journalctl -fu tessaro-kiosk`.
+* **Kiosk modes and first run are suppressed at the wrapper level**
+  (`--kiosk --no-first-run --incognito`), not by the unit, so profile writes
+  stay minimal; the profile dir is `/data/kiosk/chromium`, owned by `weston`
+  (tmpfiles).
+* **The watchdog degrades gracefully without a system bus**: every Systemd
+  method answers as if the unit were stopped and `restart!` raises, so the
+  same image runs in the integration compose (no bus) and on a device.
 
 ## Networking
 
@@ -300,7 +314,7 @@ Things to know:
   fragment, which pulls `meta-moonforge-distro.yml`, which says
   `distro: moonforge` - so `distro: tessaro` sitting in `kas/common/tessaro.yml`
   gets silently undone and the whole image builds as Moonforge (no `tessaro`
-  hostname, no cog `PACKAGECONFIG`, `DISTROOVERRIDES` flipped). It lives in each
+  hostname, no Chromium `PACKAGECONFIG`, `DISTROOVERRIDES` flipped). It lives in each
   `kas/machine/*.yml` instead. `kas dump <chain>` prints the resolved value and
   is the cheap way to check after touching includes.
 * **`genericx86-64` comes from `meta-yocto-bsp`, not meta-intel.** The generic
@@ -344,10 +358,11 @@ Things to know:
   device tree is in `RPI_KERNEL_DEVICETREE` and the firmware picks it at boot.
   `meta-moonforge-raspberrypi` advertises Pi 4/5 only, but contains nothing
   board-specific (psplash framebuffer config, a udev rule, the mmcblk wic
-  layout). The 3B+ has 1GB of RAM shared with the GPU and WPEWebKit is the
-  heaviest thing in the image, so `GPU_MEM` and `VC4DTBO` (fake KMS by default
-  on this machine) are the first knobs if the kiosk gets OOM-killed or crawls;
-  both are noted in the fragment and left at meta-raspberrypi's defaults.
+  layout). The 3B+ has 1GB of RAM shared with the GPU and Chromium is far
+  heavier than the WPE browser it replaced - expect OOM kills and plan the Pi
+  target around that. `GPU_MEM` and `VC4DTBO` (fake KMS by default on this
+  machine) are the first knobs; both are noted in the fragment and left at
+  meta-raspberrypi's defaults.
 * **runqemu needs a file path, not an image name.** `runqemu ... qemux86-64
   moonforge-image-base wic` fails with `IMAGE_LINK_NAME wasn't set`: the image
   name is treated as a lazy rootfs, and the machine argument makes runqemu run
@@ -364,20 +379,18 @@ Things to know:
 * **The kiosk needs a real GPU on the build host to render under QEMU.** Only
   the DRM master may allocate KMS dumb buffers, which is how Mesa's
   `kms_swrast` backs GBM when there is no GPU. Weston holds master so Weston
-  draws; `WPEWebProcess` runs as the unprivileged `weston` user and is refused
-  with `DRM_IOCTL_MODE_CREATE_DUMB failed: Permission denied`, so the browser
-  loads the page and silently paints nothing. WPE 2.52 has no `wl_shm`
-  fallback - `WEBKIT_DISABLE_DMABUF_RENDERER` was removed in that release, and
-  forcing Weston to `use-pixman` only changes the failure to `no valid format
-  found`. An ordinary SHM client such as `weston-simple-shm` still renders, so
-  a blank screen with a healthy Weston is this bug, not a broken compositor.
-  The fix is host-side: a render node at `/dev/dri`, passed into the kas
-  container, with `runqemu ... egl-headless` selecting `virtio-vga-gl`/virgl.
-  If the host kernel boots with `nomodeset`, no GPU driver loads at all and
-  `modprobe amdgpu` fails with `Invalid argument`; that has to come off the
-  kernel command line first.
-* **`runqemu`'s `QB_MEM` default is 256M**, which WPEWebKit plus Weston will not
-  survive. Fixed in the `30_tessaro-qemu-kiosk` block of the kas fragment.
+  draws; Chromium's unprivileged GPU process is refused with
+  `DRM_IOCTL_MODE_CREATE_DUMB failed: Permission denied`, so the browser
+  loads the page and silently paints nothing. An ordinary SHM client such as
+  `weston-simple-shm` still renders, so a blank screen with a healthy Weston
+  is this bug, not a broken compositor. The fix is host-side: a render node
+  at `/dev/dri`, passed into the kas container, with `runqemu ... egl-headless`
+  selecting `virtio-vga-gl`/virgl. If the host kernel boots with `nomodeset`,
+  no GPU driver loads at all and `modprobe amdgpu` fails with `Invalid
+  argument`; that has to come off the kernel command line first.
+* **`runqemu`'s `QB_MEM` default is 256M**, which Chromium plus Weston will
+  not survive. Fixed at 4G in the `30_tessaro-qemu-kiosk` block of the kas
+  fragment.
 * **`QB_GRAPHICS` is the knob for the QEMU display, not `QB_OPT_APPEND`** -
   `runqemu` appends `QB_GRAPHICS` unconditionally, while
   `x86/qemuboot-x86.inc` already owns `QB_OPT_APPEND`. `runqemu`'s
@@ -401,20 +414,21 @@ Things to know:
   the mise tasks depend on that `.rootfs` spelling.
 * **Moonforge's `STRUCTURE.md` is stale in places** - e.g. it documents the
   kiosk browser as Cog with `WAYLAND_COG_LAUNCH_URL`, while the layer actually
-  ships `wpe-simple-launcher` with `WPE_SIMPLE_LAUNCHER_URL`. Tessaro is back on
-  Cog, but through its own units, and no `WAYLAND_COG_LAUNCH_URL` is involved.
-  Trust the layer sources over upstream docs.
+  ships `wpe-simple-launcher` with `WPE_SIMPLE_LAUNCHER_URL`. Tessaro runs
+  Chromium through its own units, and neither variable is involved. Trust the
+  layer sources over upstream docs.
 
 ## Status
 
 Three targets, one fragment each in `kas/machine/`. All three carry the same
-image: read-only rootfs, overlayfs `/etc` on `/data`, Weston and the cog kiosk.
+image: read-only rootfs, overlayfs `/etc` on `/data`, Weston and the Chromium
+kiosk.
 
 | Machine | Purpose | State |
 | --- | --- | --- |
 | `qemux86-64` | development, boots through `mise run run-vnc` | builds and boots |
 | `genericx86-64` | shipping x86_64 hardware (UEFI) | configured, never built end to end |
-| `raspberrypi3-64` | Raspberry Pi 3 Model B+ | configured, never built end to end |
+| `raspberrypi3-64` | Raspberry Pi 3 Model B+ | configured, never built end to end; Chromium will likely OOM on 1GB |
 
 "Configured" means the kas chain resolves and bitbake parses it with the right
 `DISTRO`/`MACHINE`/`WKS_FILE`; neither image has been built or booted on real

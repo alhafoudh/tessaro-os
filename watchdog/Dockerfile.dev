@@ -1,0 +1,19 @@
+# Local development and integration-testing image: the watchdog's runtime
+# plus Chromium, so `docker compose up` can exercise the real CDP path.
+FROM ruby:4.0-slim-bookworm
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends chromium \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY Gemfile Gemfile.lock ./
+RUN bundle install
+
+COPY lib ./lib
+COPY bin ./bin
+COPY test ./test
+COPY Rakefile ./Rakefile
+
+CMD ["sleep", "infinity"]

@@ -13,8 +13,10 @@ local_conf_header:
     # in kas/common/tessaro.yml; here it would be /dev/sda3.
     WKS_FILE = "moonforge-image-base-qemux86-64.wks.in"
   30_tessaro-qemu-kiosk: |
-    # runqemu defaults to 256M, which WPEWebKit plus Weston will not survive.
-    QB_MEM = "-m 2048"
+    # runqemu defaults to 256M, which Chromium plus Weston will not survive.
+    # 4G rather than the 2G cog needed: Chromium's process model plus the
+    # podman-run watchdog container sit on top of Weston.
+    QB_MEM = "-m 4096"
     # Suppress QEMU's default std VGA. The display device itself comes from
     # runqemu's "egl-headless" option, which adds -device virtio-vga-gl and
     # -display egl-headless; adding one here as well would give Weston two
@@ -22,9 +24,9 @@ local_conf_header:
     #
     # virtio-vga-gl means virgl, which needs a real GPU on the *host* (a
     # render node at /dev/dri). Weston can limp along on Mesa's kms_swrast
-    # because it holds DRM master, but WPEWebProcess runs as the unprivileged
-    # "weston" user and the kernel refuses it the dumb-buffer allocation, so
-    # the kiosk renders nothing at all without host GPU passthrough.
+    # because it holds DRM master, but the unprivileged renderer processes
+    # cannot allocate dumb buffers, so the kiosk renders nothing at all
+    # without host GPU passthrough.
     QB_GRAPHICS = "-vga none"
 
 # Both keys belong in the entry point of the config chain: an include cannot

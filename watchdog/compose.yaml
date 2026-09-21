@@ -1,0 +1,61 @@
+# Local integration setup: a headless Chromium with CDP exposed, and the
+# watchdog pointed at it. The device runs both differently (Chromium on the
+# host, the watchdog in a podman container), but the CDP conversation is the
+# same. The probe URL is the CDP server itself, a cheap real HTTP endpoint.
+# KIOSK_RESTART_AFTER=0 keeps the network-escalation restart out of the way:
+# there is no systemd in this container to restart anything.
+services:
+  chromium:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    command: >
+      chromium --headless=new --no-sandbox
+      --remote-debugging-port=9222 --remote-debugging-address=0.0.0.0
+      --user-data-dir=/tmp/chromium-profile about:blank
+    ports:
+      - "9222:9222"
+
+  watchdog:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    # Shares chromium's network namespace, the compose equivalent of the
+    # device's --network=host: CDP stays on the shared loopback, exactly as
+    # between the podman container and the host on the device. This chromium
+    # build ignores --remote-debugging-address=0.0.0.0, so there is no
+    # service-to-service CDP over the compose network anyway.
+    network_mode: "service:chromium"
+    command: ruby bin/tessaro-kiosk-watchdog
+    volumes:
+      - .:/app
+    environment:
+      KIOSK_URL: "data:text/html,<h1>integration target</h1>"
+      KIOSK_CDP_URL: "http://127.0.0.1:9222"
+      KIOSK_PROBE_URL: "http://127.0.0.1:9222/json/version"
+      KIOSK_PROBE_INTERVAL: "5"
+      KIOSK_PROBE_INTERVAL_FAIL: "2"
+      KIOSK_FAIL_THRESHOLD: "1"
+      KIOSK_REFRESH_INTERVAL: "30"
+      KIOSK_PING_FAILS: "3"
+      KIOSK_RESTART_AFTER: "0"
+      KIOSK_DEBUG: "1"
+    depends_on:
+      - chromium
+
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    command: bundle exec rake test
+    volumes:
+      - .:/app
+      # The host's system bus, for the read-only Systemd smoke test. The
+      # watchdog never restarts anything through it in this compose setup -
+      # the test only queries a nonexistent unit.
+      - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket
+    # Ubuntu's dbus-daemon enforces AppArmor and denies connections from
+    # docker's default profile (AccessDenied even for uid 0); unconfined
+    # restores the plain uid-based policy the smoke test needs.
+    security_opt:
+      - apparmor:unconfined

@@ -33,9 +33,34 @@ KAS_BUILD_DIR = "{{config_root}}/build/{{vars.machine}}"
 # ("$KAS_BUILD_DIR/$WIC") and inside the container (cwd is /build).
 WIC = "tmp/deploy/images/{{vars.machine}}/moonforge-image-base-{{vars.machine}}.rootfs.wic"
 
+[tasks.watchdog-image]
+description = "Build the watchdog container image and export it into the recipe's files/"
+dir = "{{config_root}}/watchdog"
+run = '''
+set -e
+# freevision.sk/ prefix: a registry-style namespace for our own images, so the
+# name cannot collide with an upstream image. Nothing ever pulls it - the
+# device loads the archive with --pull=never.
+docker build -t freevision.sk/tessaro-kiosk-watchdog:latest .
+mkdir -p ../meta-tessaro-distro/recipes-browser/tessaro-kiosk/files
+docker save freevision.sk/tessaro-kiosk-watchdog:latest | gzip -n \
+    > ../meta-tessaro-distro/recipes-browser/tessaro-kiosk/files/tessaro-kiosk-watchdog-image.tar.gz
+'''
+
+[tasks.watchdog-test]
+description = "Run the watchdog unit tests in the Ruby 4 container"
+dir = "{{config_root}}/watchdog"
+run = "docker compose run --rm test"
+
+[tasks.watchdog-integration]
+description = "Run Chromium and the watchdog together in containers (Ctrl-C to stop)"
+dir = "{{config_root}}/watchdog"
+run = "docker compose up --build chromium watchdog"
+
 [tasks.build]
 description = "Build the image for $TESSARO_MACHINE (default qemux86-64)"
 dir = "{{config_root}}"
+depends = ["watchdog-image"]
 run = '''
 # OVMF is the UEFI firmware runqemu boots the image with, so it is built for
 # the QEMU target only. Real hardware brings its own.

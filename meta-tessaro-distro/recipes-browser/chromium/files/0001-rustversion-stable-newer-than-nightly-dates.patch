@@ -1,0 +1,30 @@
+Fix rustversion's stable-channel date comparison for non-nightly compilers.
+
+Chromium's rustversion fork orders Channel::Stable BELOW any nightly date
+bound, so on a stable rustc every #[rustversion::before(<date>)] attribute
+keeps its block - the block that was only meant for old nightlies. With
+rustc 1.95.0 stable that compiles bytemuck's pre-2026-01-27 simd impls,
+which reference core::simd::LaneCount - an item the new simd API no longer
+has. The OE rustc is stable; chromium's own rustc is dev, which takes the
+Dev => Greater arm, so upstream never runs this path.
+
+A stable compiler's release (1.95.0, April 2026) is newer than the date
+bounds these attributes use, so order it above them, matching the Dev arm.
+This flips #[rustversion::before(date)] to false and since(date) to true
+on stable, which is what the vendored crates actually intend.
+
+Upstream: https://github.com/dtolnay/rustversion (the fork changed the
+semantics of this arm).
+Upstream-Status: Inappropriate [OE uses a stable rustc, upstream uses dev]
+
+--- a/third_party/rust/chromium_crates_io/vendor/rustversion-v1/src/bound.rs
++++ b/third_party/rust/chromium_crates_io/vendor/rustversion-v1/src/bound.rs
+@@ -48,7 +48,7 @@ impl PartialOrd<Bound> for Version {
+     fn partial_cmp(&self, rhs: &Bound) -> Option<Ordering> {
+         match rhs {
+             Bound::Nightly(date) => match self.channel {
+-                Stable | Beta => Some(Ordering::Less),
++                Stable | Beta => Some(Ordering::Greater),
+                 Nightly(nightly) => Some(nightly.cmp(date)),
+                 Dev => Some(Ordering::Greater),
+             },

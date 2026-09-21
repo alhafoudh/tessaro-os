@@ -12,10 +12,14 @@ header:
   includes:
     - repo: meta-moonforge
       file: kas/include/layer/meta-moonforge-distro.yml
-    # Kiosk browser. Pulls in meta-moonforge-graphics (Weston), meta-webkit and
-    # meta-openembedded by itself, so this is the only layer line it needs.
+    # Kiosk stack: Weston (the graphics fragment also turns on the wayland,
+    # opengl and polkit DISTRO_FEATURES), the podman runtime that runs the
+    # watchdog container with its storage on /data, and Chromium.
     - repo: meta-moonforge
-      file: kas/include/layer/meta-moonforge-wpe.yml
+      file: kas/include/layer/meta-moonforge-graphics.yml
+    - repo: meta-moonforge
+      file: kas/include/layer/meta-moonforge-podman.yml
+    - kas/repo/meta-chromium.yml
 
 local_conf_header:
   # Key names are merged across the whole config chain, so anything set here
@@ -23,9 +27,11 @@ local_conf_header:
   # fragments use 25_tessaro-machine, upstream Moonforge uses
   # 10_/20_meta-moonforge-*; this one is ours alone.
   20_tessaro-common: |
-    # The kiosk needs room on /data: the /etc overlay, /home/weston (the wpe
-    # layer's volatile-binds bbappend maps it to /data/overlay-home) and the
-    # WebKit disk cache all live on this partition.
+    # The kiosk needs room on /data: the /etc overlay, /home/weston (the
+    # volatile-binds bbappend in meta-tessaro-distro maps it to
+    # /data/overlay-home), podman's container storage (/data/containers,
+    # configured by the podman layer's container-host-config bbappend) and the
+    # Chromium profile all live on this partition.
     IMAGE_DATA_MIN_SIZE = "4096M"
     # Find /data by filesystem label rather than by device node, so one image
     # boots off SATA, USB, NVMe and SD without a rebuild. Every wks in use
@@ -57,10 +63,10 @@ repos:
   # kas/include/repo/meta-openembedded.yml, so only the layer is turned on here.
   #
   # kas merges repos.<name>.layers additively across the whole chain, so this
-  # adds to - rather than replaces - the meta-oe/meta-python/meta-multimedia the
-  # Moonforge fragments enable. The proof is in the build itself:
-  # meta-moonforge-graphics.yml asks for meta-oe alone and meta-moonforge-wpe.yml
-  # asks for all three, and the generated bblayers.conf carries all three.
+  # adds to - rather than replaces - the layers the Moonforge fragments enable
+  # (graphics wants meta-oe, podman wants meta-oe/meta-python/meta-networking/
+  # meta-filesystems). The proof is in the build itself: the generated
+  # bblayers.conf carries all of them.
   #
   # LAYERDEPENDS_networking-layer is "core meta-python openembedded-layer", all
   # three already in, and LAYERSERIES_COMPAT is scarthgap, matching the oe-core

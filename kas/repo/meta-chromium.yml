@@ -1,0 +1,49 @@
+# meta-chromium: Chromium for the kiosk browser.
+#
+# The meta-browser repo root is not a layer, so the layers key is mandatory
+# here, same as meta-yocto. meta-chromium layerdepends on meta-clang and the
+# Rust mixin, so all three come in together; the mixin is a second checkout of
+# meta-lts-mixins on its scarthgap/rust branch - Moonforge already pins the
+# same repo on scarthgap/u-boot for the Pi, and kas happily clones one URL
+# twice under two names.
+header:
+  version: 16
+
+repos:
+  meta-browser:
+    url: https://github.com/OSSystems/meta-browser.git
+    commit: 85eeb6b50883d22c977396f5e8fe211a7961cf2e
+    branch: scarthgap
+    layers:
+      meta-chromium:
+    patches:
+      # do_add_clang_latest copies bindgen's system headers from the first
+      # versioned clang dir it sees. A clang-native upgrade leaves the old
+      # major-version dir behind (gutted of its headers), and the loop picks
+      # that one - bindgen then fails with "stddef.h file not found". Require
+      # the actual header to exist before copying. See the patch file.
+      # repo: tessaro-os - the patch file lives in this (the config) repo.
+      clang-latest-stddef-guard:
+        repo: tessaro-os
+        path: kas/repo/patches/meta-browser-clang-latest-stddef-guard.patch
+  meta-clang:
+    # walnascar, not scarthgap: chromium 147's bundled libc++ requires clang
+    # 20+, and meta-clang's scarthgap branch ships 18.1.8 - the compile dies
+    # with "Libc++ only supports Clang 20 and later" plus a cascade of
+    # substitution errors. The walnascar branch carries clang 20.1.2 and its
+    # layer.conf still lists scarthgap in LAYERSERIES_COMPAT, so it layers
+    # onto the scarthgap core cleanly. Chromium is the only clang consumer in
+    # this build.
+    url: https://github.com/kraj/meta-clang.git
+    commit: 5945abf78de6c4b0269c4496fb63227344f79df7
+    branch: walnascar
+  meta-lts-mixins-rust:
+    # Pinned at the rust 1.95.0 upgrade commit on purpose: chromium 147 ships
+    # a prebuilt rust sysroot of its own fork of 1.95.0, and the recipe links
+    # the OE rustc against those rlibs. A newer mixin (1.96+) makes the rustc
+    # binary newer than the bundled core, and crates fail with "cannot find
+    # trait SupportedLaneCount in module core::simd". Bump this only together
+    # with a chromium bump, to whatever rust that chromium bundles.
+    url: https://git.yoctoproject.org/meta-lts-mixins
+    commit: 662b2b644d1436bc09516be964ac7527a27f0d1d
+    branch: scarthgap/rust
