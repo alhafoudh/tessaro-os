@@ -1,7 +1,19 @@
-# Replace Moonforge's wallpaper with a diagnostic one: light blue with a yellow
-# circle. Moonforge ships a plain white background.png, which is impossible to
-# tell apart from an uninitialised framebuffer or a blank browser window - the
-# exact ambiguity that made the kiosk bring-up hard to read under QEMU.
+# Replace Moonforge's wallpaper with the Tessaro one: dark green with scattered
+# pale squares. Moonforge ships a plain white background.png, which is
+# impossible to tell apart from an uninitialised framebuffer or a blank browser
+# window - the exact ambiguity that made the kiosk bring-up hard to read under
+# QEMU. The squares keep that property: a blank screen is still obviously blank.
+#
+# It is a 1920x1920 square, centre-cropped from the source art, so that the same
+# file serves a landscape and a portrait panel: whichever way the display is
+# turned, the visible window is a crop of the square and the art is never
+# stretched. See the background-type sed in do_install:append for the other half
+# of this.
+#
+# The size is also a memory decision. The source art was 10240x5760, which is
+# ~236MB once desktop-shell has decoded it - not something the 1GB Pi can spare
+# for a wallpaper. 1920x1920 is ~14MB and covers every panel we ship on at
+# native pixels.
 #
 # meta-moonforge-graphics already puts "file://background.png" in SRC_URI and
 # installs it. This layer has the higher BBFILE_PRIORITY (20 vs 6), so its
@@ -40,6 +52,28 @@ do_install:append() {
         ${WORKDIR}/weston-tessaro-scale.conf.in > ${WORKDIR}/10-tessaro-scale.conf
     install -Dm0644 ${WORKDIR}/10-tessaro-scale.conf \
         ${D}${systemd_system_unitdir}/weston.service.d/10-tessaro-scale.conf
+
+    # Show the wallpaper at native size, centred, instead of tiled. Neither
+    # oe-core's weston.ini nor Moonforge's names background-type, and
+    # desktop-shell defaults to "tile" (clients/desktop-shell.c), which would
+    # anchor our square at the top-left corner and repeat it - the one layout
+    # that looks wrong on both orientations at once. "centered" is the only
+    # mode that neither scales nor repeats: it clamps its scale factor to 1.0,
+    # so the output gets the middle of the square at native pixels whichever
+    # way the panel is turned. ("scale" letterboxes, "scale-crop" covers, and
+    # both resample the art on every output that is not exactly square.)
+    #
+    # background-color is what fills the frame on an output larger than the
+    # image in both axes - a 4K panel at scale=1. It is the square's own field
+    # colour, so the seam is invisible; ARGB, and the alpha has to be there or
+    # the fill is transparent and the frame shows black.
+    #
+    # A sed rather than our own copy of weston.ini: the delta is two keys, and
+    # forking the file would mean silently dropping whatever Moonforge changes
+    # in it next. oe-core's own do_install patches this file the same way.
+    sed -i -e '/^\[shell\]/a background-type=centered' \
+           -e '/^\[shell\]/a background-color=0xff042120' \
+        ${D}${sysconfdir}/xdg/weston/weston.ini
 }
 
 # ${libexecdir} is already in the default FILES:${PN}; the drop-in directory is
