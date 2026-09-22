@@ -224,3 +224,29 @@ kas-container --runtime-args "$KVM_RUNTIME $GPU_RUNTIME -p 5900:5900" shell $KAS
 description = "Remove build artifacts for $TESSARO_MACHINE, keeping sstate and downloads"
 dir = "{{config_root}}"
 run = "kas-container clean $KAS_CONFIG"
+
+[tasks.image-sizes]
+description = "List the size of every built .wic image, across all machines"
+dir = "{{config_root}}"
+run = '''
+# Deliberately not scoped to $TESSARO_MACHINE: the point is to compare the
+# targets against each other. Symlinks are skipped - the stable
+# "...rootfs.wic.bz2" name points at the versioned file already listed.
+found=0
+printf '%-16s %10s %10s  %s\n' MACHINE SIZE ON-DISK FILE
+for dir in build/*/tmp/deploy/images/*; do
+    [ -d "$dir" ] || continue
+    machine=$(basename "$dir")
+    for wic in "$dir"/*.wic "$dir"/*.wic.bz2; do
+        [ -f "$wic" ] || continue
+        [ -L "$wic" ] && continue
+        # A .wic is sparse, so the apparent size and the blocks it actually
+        # costs on disk are different numbers and both are worth seeing.
+        size=$(du -h --apparent-size "$wic" | cut -f1)
+        disk=$(du -h "$wic" | cut -f1)
+        printf '%-16s %10s %10s  %s\n' "$machine" "$size" "$disk" "$(basename "$wic")"
+        found=1
+    done
+done
+[ "$found" = 1 ] || echo "no .wic images found - run 'mise run build' first" >&2
+'''

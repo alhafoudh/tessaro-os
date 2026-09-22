@@ -55,7 +55,19 @@ impl<'a, H: HttpGet> CdpClient<'a, H> {
     }
 
     /// The WebSocket URL of the first page target.
-    fn page_target(&self) -> Result<String> {
+    fn page_ws_url(&self) -> Result<String> {
+        let page = self.page_target()?;
+
+        match page["webSocketDebuggerUrl"].as_str() {
+            Some(url) if !url.is_empty() => Ok(url.to_string()),
+            _ => Err(Error::Cdp(
+                "no webSocketDebuggerUrl for the page target".to_string(),
+            )),
+        }
+    }
+
+    /// The first page target, as `/json/list` describes it.
+    fn page_target(&self) -> Result<Value> {
         let response = self
             .http
             .get(&format!("{}/json/list", self.base_url))
@@ -71,21 +83,14 @@ impl<'a, H: HttpGet> CdpClient<'a, H> {
         let targets: Vec<Value> = serde_json::from_str(&response.body)
             .map_err(|err| Error::Cdp(format!("unparseable /json/list: {err}")))?;
 
-        let page = targets
-            .iter()
+        targets
+            .into_iter()
             .find(|target| target["type"] == "page")
-            .ok_or_else(|| Error::Cdp("no page target".to_string()))?;
-
-        match page["webSocketDebuggerUrl"].as_str() {
-            Some(url) if !url.is_empty() => Ok(url.to_string()),
-            _ => Err(Error::Cdp(
-                "no webSocketDebuggerUrl for the page target".to_string(),
-            )),
-        }
+            .ok_or_else(|| Error::Cdp("no page target".to_string()))
     }
 
     fn command(&self, method: &str, params: Value) -> Result<Value> {
-        let ws_url = self.page_target()?;
+        let ws_url = self.page_ws_url()?;
 
         let id = self.next_id.get() + 1;
         self.next_id.set(id);
@@ -190,6 +195,17 @@ impl<H: HttpGet> Cdp for CdpClient<'_, H> {
             Err(err) => {
                 self.log.debug(format!("cdp alive? failed: {err}"));
                 false
+            }
+        }
+    }
+
+    fn current_url(&self) -> Option<String> {
+        // Straight off /json/list - one cheap HTTP round trip, no websocket.
+        match self.page_target() {
+            Ok(page) => page["url"].as_str().map(str::to_string),
+            Err(err) => {
+                self.log.debug(format!("cdp current_url failed: {err}"));
+                None
             }
         }
     }

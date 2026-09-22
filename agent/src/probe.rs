@@ -76,7 +76,7 @@ impl<H: HttpGet> Prober for Probe<'_, H> {
                     Some(location) => {
                         self.log
                             .debug(format!("probe: following redirect to {location}"));
-                        target = join(&target, location);
+                        target = crate::url::join(&target, location);
                     }
                 },
                 status => return ProbeResult::failed(format!("server answered HTTP {status}")),
@@ -89,44 +89,7 @@ impl<H: HttpGet> Prober for Probe<'_, H> {
 }
 
 fn is_http(url: &str) -> bool {
-    url.starts_with("http://") || url.starts_with("https://")
-}
-
-/// Resolve a `Location` against the URL it came from.
-///
-/// Deliberately not a full RFC 3986 resolver - pulling a URL crate in for
-/// three cases is not worth it. Absolute, root-relative and path-relative are
-/// what real servers send; anything stranger is passed through and fails on
-/// the next hop with a message that says so.
-fn join(base: &str, location: &str) -> String {
-    if is_http(location) {
-        return location.to_string();
-    }
-
-    // Split scheme://authority from the path, remembering that the first
-    // "//" belongs to the scheme.
-    let scheme_end = match base.find("://") {
-        Some(index) => index + 3,
-        None => return location.to_string(),
-    };
-    let authority_end = base[scheme_end..]
-        .find('/')
-        .map(|index| scheme_end + index)
-        .unwrap_or(base.len());
-    let origin = &base[..authority_end];
-
-    if location.starts_with('/') {
-        return format!("{origin}{location}");
-    }
-
-    let path = &base[authority_end..];
-    let path = path.split(['?', '#']).next().unwrap_or("");
-    let directory = match path.rfind('/') {
-        Some(index) => &path[..=index],
-        None => "/",
-    };
-
-    format!("{origin}{directory}{location}")
+    crate::url::origin(url).is_some()
 }
 
 #[cfg(test)]
@@ -316,17 +279,5 @@ mod tests {
         assert!(!result.ok);
         assert_eq!(result.reason, "the URL is not valid");
         assert!(requested.is_empty());
-    }
-
-    #[test]
-    fn join_handles_the_three_shapes() {
-        assert_eq!(
-            join("http://a.test/x/y", "https://b.test/z"),
-            "https://b.test/z"
-        );
-        assert_eq!(join("http://a.test/x/y", "/z"), "http://a.test/z");
-        assert_eq!(join("http://a.test/x/y", "z"), "http://a.test/x/z");
-        assert_eq!(join("http://a.test", "z"), "http://a.test/z");
-        assert_eq!(join("http://a.test/x/y?q=1", "z"), "http://a.test/x/z");
     }
 }

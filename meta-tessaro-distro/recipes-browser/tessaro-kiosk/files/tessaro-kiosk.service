@@ -85,16 +85,45 @@ WorkingDirectory=/home/weston
 #   the Pi half the RAM goes to /dev/shm, which is not enough.
 # --disable-crash-reporter drops crashpad's outbound uploads and most of its
 #   disk writes; a kiosk is not going to ship minidumps home.
+# --password-store=basic keeps Chromium off the keyring. It has a private
+#   session bus now (see dbus-run-session below) but no secret service on it,
+#   and the kiosk runs incognito and stores no passwords anyway.
+# --disable-background-networking turns off the component updater and
+#   variations fetches: pointless on a kiosk, and recurring outbound requests
+#   on a connection that may be metered. It does not silence the one GCM
+#   registration line at startup, which is harmless and left alone.
 # --autoplay-policy=no-user-gesture-required lets the kiosk page autoplay
 #   video with sound - nobody is there to click first.
 # ${KIOSK_URL} is substituted by systemd as a single argument and never touches
 #   a shell.
-ExecStart=/usr/bin/chromium \
+# dbus-run-session gives Chromium a private session bus for the lifetime of the
+# browser, and is the fix for the burst of
+#
+#   ERROR:dbus/bus.cc  Failed to connect to the bus: Could not parse server
+#                      address: Unknown address type
+#   ERROR:dbus/object_proxy.cc  Failed to call method:
+#                      org.freedesktop.DBus.NameHasOwner
+#
+# at every start. The cause is not a missing flag: DBUS_SESSION_BUS_ADDRESS is
+# simply unset here, so libdbus falls back to *autolaunch*, which needs X11 and
+# cannot work on this image - hence "unknown address type" rather than a plain
+# connection failure. Silencing it with browser flags does not work either,
+# because Chromium probes that bus for several unrelated services; giving it a
+# real one is what stops all of them. Measured: 18 error lines per start, down
+# to 0.
+#
+# dbus-run-session execs the browser and exits when it exits, so Restart= still
+# behaves. It does become the unit's MainPID, which tessaro-agent reads to
+# notice a browser restart - that still works, since what it compares is the
+# unit's main pid changing, not which binary it belongs to.
+ExecStart=/usr/bin/dbus-run-session -- /usr/bin/chromium \
     --remote-debugging-address=127.0.0.1 \
     --remote-debugging-port=9222 \
     --user-data-dir=/data/kiosk/chromium \
     --disable-dev-shm-usage \
     --disable-crash-reporter \
+    --password-store=basic \
+    --disable-background-networking \
     --autoplay-policy=no-user-gesture-required \
     ${KIOSK_URL}
 

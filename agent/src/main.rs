@@ -15,6 +15,7 @@ mod offline;
 mod ports;
 mod probe;
 mod systemd;
+mod url;
 
 use std::process::ExitCode;
 use std::sync::atomic::AtomicBool;

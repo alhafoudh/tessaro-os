@@ -52,6 +52,12 @@ pub struct Agent<'a> {
     last_main_pid: u32,
     /// Has the browser answered even once since this process started?
     seen_alive: bool,
+    /// The origin the browser is allowed to be on. Starts unset, meaning
+    /// "whatever `KIOSK_URL` says", and becomes wherever our own navigation
+    /// actually lands.
+    accepted_origin: Option<String>,
+    /// We navigated last cycle, so this cycle's URL is the landing point.
+    awaiting_landing: bool,
 }
 
 impl<'a> Agent<'a> {
@@ -80,6 +86,8 @@ impl<'a> Agent<'a> {
             last_restart: 0,
             last_main_pid: 0,
             seen_alive: false,
+            accepted_origin: None,
+            awaiting_landing: false,
         }
     }
 
@@ -142,6 +150,14 @@ impl<'a> Agent<'a> {
         // Liveness first, so navigation failures below are attributed
         // correctly.
         if self.cdp.alive() {
+            // Worth a line: "not answering" is logged below, so without this
+            // the journal shows a browser going silent and never coming back.
+            if self.ping_fails > 0 && self.seen_alive {
+                self.log.info(format!(
+                    "chromium is answering again after {} failed checks",
+                    self.ping_fails
+                ));
+            }
             self.ping_fails = 0;
             self.seen_alive = true;
         } else {
@@ -183,10 +199,19 @@ impl<'a> Agent<'a> {
                 self.restart_done = false;
             }
 
-            // Navigate on recovery, or when the refresh timer expires - never
-            // on every probe. Unknown counts as a reason to navigate: after a
-            // browser restart it may be sitting on its own error page.
+            // Navigate on recovery, when the browser has wandered off our
+            // site, or when the refresh timer expires - never on every probe.
+            // Unknown counts as a reason to navigate: after a browser restart
+            // it may be sitting on its own error page.
+            let drifted = self.drifted_origin();
+            if let Some(url) = &drifted {
+                self.log.info(format!(
+                    "chromium is showing {url}; returning to the kiosk URL"
+                ));
+            }
+
             if self.nav_state != NavState::Live
+                || drifted.is_some()
                 || (config.refresh_interval > 0 && now - self.last_nav >= config.refresh_interval)
             {
                 self.go_live(now);
@@ -236,6 +261,72 @@ impl<'a> Agent<'a> {
         }
     }
 
+    /// The URL on screen when it is on a different site from the kiosk.
+    ///
+    /// Compared by origin, not by whole URL: the site's own sub-pages, query
+    /// strings and in-page routing are legitimate, and snapping back on those
+    /// would fight the site. Only leaving the site counts.
+    ///
+    /// The origin we compare against is not `KIOSK_URL`'s but **wherever our
+    /// own navigation last landed**. That is what stops the obvious disaster
+    /// here: `https://example.com` redirecting to `https://www.example.com` is
+    /// a *different origin*, so comparing against the configured URL made the
+    /// agent reload the page on every single cycle, forever. Accepting the
+    /// landing point costs us nothing - a redirect the site itself performs is
+    /// the site - and it cannot loop, because whatever we navigate to is what
+    /// we then accept.
+    ///
+    /// A page someone else navigated to is still caught: it was not reached by
+    /// our navigation, so it is measured against the accepted origin and
+    /// fails. The one window is a foreign navigation landing in the same cycle
+    /// as our periodic refresh, which would be adopted - and then corrected at
+    /// the next refresh, which is exactly the behaviour before any of this
+    /// existed.
+    ///
+    /// `None` whenever we cannot be sure: enforcement off, a kiosk URL with no
+    /// origin to compare against (`data:`, `file:`), a browser that will not
+    /// say, or a page we are not currently claiming to own. "Cannot tell" must
+    /// never become a navigation.
+    fn drifted_origin(&mut self) -> Option<String> {
+        if !self.config.enforce_origin || self.nav_state != NavState::Live {
+            return None;
+        }
+
+        let want = match &self.accepted_origin {
+            Some(origin) => origin.clone(),
+            None => crate::url::origin(&self.config.kiosk_url)?.to_string(),
+        };
+
+        let current = self.cdp.current_url()?;
+        let current_origin = crate::url::origin(&current).map(str::to_string);
+
+        // The cycle after we navigated: whatever is on screen is where that
+        // navigation ended up, redirects included. Adopt it and never call it
+        // drift.
+        if self.awaiting_landing {
+            self.awaiting_landing = false;
+
+            if let Some(origin) = current_origin {
+                if origin != want {
+                    self.log.info(format!(
+                        "{} redirected to {origin}; treating that as the kiosk origin",
+                        self.config.kiosk_url
+                    ));
+                }
+                self.accepted_origin = Some(origin);
+            }
+
+            return None;
+        }
+
+        match current_origin {
+            Some(origin) if origin == want => None,
+            // Includes about:blank and anything else without an origin, which
+            // is drift too - the browser is not showing our site.
+            _ => Some(current),
+        }
+    }
+
     /// A CDP failure is only news once the browser has proved it can answer.
     ///
     /// `tessaro-kiosk.service` is `Type=exec`, so systemd calls it started the
@@ -260,8 +351,14 @@ impl<'a> Agent<'a> {
             Ok(()) => {
                 self.nav_state = NavState::Live;
                 self.last_nav = now;
+                // Where this actually lands is next cycle's business - the
+                // site may redirect us somewhere else entirely.
+                self.awaiting_landing = true;
+                // Info, not debug: this is the one line that says what is on
+                // screen, and at the default refresh it costs one entry per
+                // ten minutes.
                 self.log
-                    .debug(format!("navigated to {}", self.config.kiosk_url));
+                    .info(format!("navigated to {}", self.config.kiosk_url));
             }
             Err(err) => {
                 // Counts towards the CDP escalation: a browser that will not
@@ -294,7 +391,8 @@ impl<'a> Agent<'a> {
             Ok(()) => {
                 self.nav_state = NavState::Offline;
                 self.last_nav = now;
-                self.log.debug("navigated to the offline page");
+                self.log
+                    .info(format!("navigated to the offline page ({uri})"));
             }
             Err(err) => {
                 self.ping_fails += 1;
@@ -388,6 +486,12 @@ mod tests {
         panics: Cell<bool>,
         navigations: RefCell<Vec<String>>,
         navigate_fails: Cell<bool>,
+        /// What the browser claims to be showing. `None` means "will not say",
+        /// which is the case a real browser hits mid-navigation.
+        current_url: RefCell<Option<String>>,
+        /// Where the site sends every navigation, as a real one does when it
+        /// redirects apex to www.
+        redirect_to: RefCell<Option<String>>,
     }
 
     impl Default for FakeCdp {
@@ -397,6 +501,8 @@ mod tests {
                 panics: Cell::new(false),
                 navigations: RefCell::new(Vec::new()),
                 navigate_fails: Cell::new(false),
+                current_url: RefCell::new(Some("http://kiosk.test/".to_string())),
+                redirect_to: RefCell::new(None),
             }
         }
     }
@@ -407,11 +513,23 @@ mod tests {
             self.alive.get()
         }
 
+        fn current_url(&self) -> Option<String> {
+            self.current_url.borrow().clone()
+        }
+
         fn navigate(&self, url: &str) -> Result<()> {
             if self.navigate_fails.get() {
                 return Err(Error::Cdp("navigate refused".to_string()));
             }
             self.navigations.borrow_mut().push(url.to_string());
+            // A real browser ends up wherever the site sent it, and the next
+            // cycle's drift check reads that back.
+            let landed = self
+                .redirect_to
+                .borrow()
+                .clone()
+                .unwrap_or_else(|| url.to_string());
+            *self.current_url.borrow_mut() = Some(landed);
             Ok(())
         }
     }
@@ -733,6 +851,161 @@ mod tests {
     }
 
     #[test]
+    fn wandering_off_the_site_snaps_back_and_says_so() {
+        let world = World::new(&[]);
+        let mut agent = world.agent();
+
+        agent.cycle(1000);
+        // Second cycle settles where that navigation landed. Only after that
+        // is a change attributable to somebody else - see drifted_origin for
+        // the one window this leaves.
+        agent.cycle(1005);
+
+        *world.cdp.current_url.borrow_mut() = Some("https://youtube.com/watch?v=x".to_string());
+        agent.cycle(1010);
+
+        assert_eq!(
+            world.navigations(),
+            vec!["http://kiosk.test/", "http://kiosk.test/"]
+        );
+        assert!(world
+            .log
+            .lines()
+            .iter()
+            .any(|line| line.contains("chromium is showing https://youtube.com/watch?v=x")));
+    }
+
+    #[test]
+    fn a_cross_origin_redirect_does_not_loop() {
+        // Regression, found on a device: https://freevision.sk redirects to
+        // https://www.freevision.sk, a different origin, and comparing against
+        // the configured URL made the agent reload the page every cycle
+        // forever - a kiosk refreshing itself every 30 seconds.
+        let world = World::new(&[("KIOSK_URL", "https://kiosk.test/")]);
+        let mut agent = world.agent();
+
+        // The site sends every visit to www.
+        *world.cdp.redirect_to.borrow_mut() = Some("https://www.kiosk.test/".to_string());
+
+        for now in [1000, 1005, 1010, 1015, 1020, 1025] {
+            agent.cycle(now);
+        }
+
+        assert_eq!(
+            world.navigations().len(),
+            1,
+            "should have navigated once and then accepted where it landed, got {:?}",
+            world.navigations()
+        );
+        assert!(world
+            .log
+            .lines()
+            .iter()
+            .any(|line| line.contains("redirected to https://www.kiosk.test")));
+    }
+
+    #[test]
+    fn drift_is_still_caught_after_a_redirect_was_accepted() {
+        let world = World::new(&[("KIOSK_URL", "https://kiosk.test/")]);
+        let mut agent = world.agent();
+        *world.cdp.redirect_to.borrow_mut() = Some("https://www.kiosk.test/".to_string());
+
+        agent.cycle(1000);
+        agent.cycle(1005);
+        assert_eq!(world.navigations().len(), 1);
+
+        // Someone follows a link off the site.
+        *world.cdp.current_url.borrow_mut() = Some("https://elsewhere.test/".to_string());
+        agent.cycle(1010);
+
+        assert_eq!(world.navigations().len(), 2);
+        assert!(world
+            .log
+            .lines()
+            .iter()
+            .any(|line| line.contains("chromium is showing https://elsewhere.test/")));
+    }
+
+    #[test]
+    fn the_sites_own_pages_are_left_alone() {
+        let world = World::new(&[]);
+        let mut agent = world.agent();
+
+        agent.cycle(1000);
+        // Same origin: a sub-page, a query string, a fragment. All legitimate.
+        for url in [
+            "http://kiosk.test/about",
+            "http://kiosk.test/?utm_source=x",
+            "http://kiosk.test/a/b#c",
+        ] {
+            *world.cdp.current_url.borrow_mut() = Some(url.to_string());
+            agent.cycle(1005);
+        }
+
+        assert_eq!(world.navigations().len(), 1, "should not have re-navigated");
+    }
+
+    #[test]
+    fn a_browser_that_will_not_say_where_it_is_is_left_alone() {
+        // "Cannot tell" must never be mistaken for "has drifted", or a browser
+        // mid-navigation would be yanked back on every cycle.
+        let world = World::new(&[]);
+        let mut agent = world.agent();
+
+        agent.cycle(1000);
+        *world.cdp.current_url.borrow_mut() = None;
+        agent.cycle(1005);
+
+        assert_eq!(world.navigations().len(), 1);
+    }
+
+    #[test]
+    fn enforcement_can_be_turned_off() {
+        let world = World::new(&[("KIOSK_ENFORCE_ORIGIN", "0")]);
+        let mut agent = world.agent();
+
+        agent.cycle(1000);
+        *world.cdp.current_url.borrow_mut() = Some("https://elsewhere.test/".to_string());
+        agent.cycle(1005);
+
+        assert_eq!(world.navigations().len(), 1);
+    }
+
+    #[test]
+    fn drift_is_not_chased_while_the_offline_page_is_up() {
+        // The offline page is a file:// URL, which has no origin at all. It is
+        // there on purpose and must not be treated as the browser wandering.
+        let world = World::new(&[]);
+        let mut agent = world.agent();
+        world.probe.fail();
+
+        agent.cycle(1000);
+        agent.cycle(1010);
+        assert_eq!(world.navigations(), vec![OFFLINE_URI]);
+
+        agent.cycle(1020);
+        assert_eq!(world.navigations().len(), 1);
+    }
+
+    #[test]
+    fn a_recovered_browser_is_reported() {
+        let world = World::new(&[]);
+        let mut agent = world.agent();
+
+        agent.cycle(1000);
+        world.cdp.alive.set(false);
+        agent.cycle(1005);
+        world.cdp.alive.set(true);
+        agent.cycle(1010);
+
+        assert!(world
+            .log
+            .lines()
+            .iter()
+            .any(|line| line.contains("chromium is answering again after 1 failed checks")));
+    }
+
+    #[test]
     fn the_startup_race_is_not_reported_as_a_fault() {
         // Every boot starts here: systemd has exec'd Chromium, so the unit
         // counts as started, but the DevTools port is not open yet.
@@ -790,7 +1063,11 @@ mod tests {
 
         // One healthy cycle proves the browser can answer...
         agent.cycle(1000);
-        assert!(world.log.lines().is_empty());
+        assert!(!world
+            .log
+            .lines()
+            .iter()
+            .any(|line| line.contains("not answering")));
 
         // ...so from here on, silence would be hiding a real fault.
         world.cdp.alive.set(false);

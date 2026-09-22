@@ -55,6 +55,7 @@ pub struct Config {
 
     pub unit: String,
     pub agent_enable: bool,
+    pub enforce_origin: bool,
     pub debug: bool,
 
     pub cdp_url: String,
@@ -95,6 +96,7 @@ impl Config {
 
             unit: string(env, "KIOSK_UNIT", "tessaro-kiosk.service"),
             agent_enable: flag(env, "KIOSK_AGENT_ENABLE", true),
+            enforce_origin: flag(env, "KIOSK_ENFORCE_ORIGIN", true),
             debug: flag(env, "KIOSK_DEBUG", false),
 
             cdp_url: string(env, "KIOSK_CDP_URL", "http://127.0.0.1:9222"),

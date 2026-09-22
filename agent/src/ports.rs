@@ -14,6 +14,12 @@ pub trait Cdp {
     /// Never fails: an unreachable browser is an answer, not an error.
     fn alive(&self) -> bool;
 
+    /// What the page target is currently showing, or `None` when the browser
+    /// cannot say. Never fails, for the same reason `alive` does not: this is
+    /// used to notice drift, and "cannot tell" must not be mistaken for "has
+    /// drifted" and trigger a navigation.
+    fn current_url(&self) -> Option<String>;
+
     /// Point the page target at a URL.
     fn navigate(&self, url: &str) -> Result<()>;
 }

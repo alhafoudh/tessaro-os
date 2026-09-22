@@ -22,6 +22,7 @@ Use the mise tasks rather than calling `kas-container` directly:
 | `mise run unpack` | Decompress the `.wic` for runqemu |
 | `mise run run` | Boot in QEMU, serial console on the terminal |
 | `mise run run-vnc` | Boot in QEMU with VNC on localhost:5900 |
+| `mise run image-sizes` | Size of every built `.wic`, all machines at once |
 | `mise run clean` | Drop build artifacts, keep sstate and downloads |
 | `mise run agent-test` | `cargo test` for the kiosk agent |
 | `mise run agent-lint` | `cargo fmt --check` plus clippy for the agent |
@@ -30,8 +31,9 @@ Use the mise tasks rather than calling `kas-container` directly:
 Exit the QEMU serial console with `Ctrl-a x`.
 
 **Every task acts on one machine**, `$TESSARO_MACHINE`, defaulting to
-`qemux86-64`. The `build-*` tasks are one-line wrappers that set it; anything
-else takes it from the environment:
+`qemux86-64` - `image-sizes` is the one exception, since comparing the targets
+is the whole point of it. The `build-*` tasks are one-line wrappers that set
+it; anything else takes it from the environment:
 
 ```sh
 TESSARO_MACHINE=raspberrypi3-64 mise run shell
@@ -204,7 +206,21 @@ Things to know:
   recipe's wrapper that prepends `CHROMIUM_EXTRA_ARGS` -
   `--ozone-platform=wayland`, plus `--kiosk --no-first-run --incognito` from
   the `kiosk-mode` PACKAGECONFIG in `tessaro.conf`. The unit only adds CDP,
-  profile and autoplay flags.
+  profile, quieting and autoplay flags.
+* **Chromium runs under `dbus-run-session`, and that is not cosmetic.**
+  `DBUS_SESSION_BUS_ADDRESS` is unset on this image, so libdbus falls back to
+  *autolaunch*, which needs X11 - hence `Could not parse server address:
+  Unknown address type` rather than a plain connection failure, 18 error lines
+  at every start. Browser flags do not fix it: `--password-store=basic` only
+  covers the keyring, and Chromium probes that bus for several other services.
+  Giving it a private session bus takes those 18 lines to 0 (measured). The
+  wrapper becomes the unit's `MainPID`, which is fine - the agent compares
+  whether the main pid *changed*, not which binary it is - and it exits when
+  the browser exits, so `Restart=` still behaves.
+  `--password-store=basic` and `--disable-background-networking` stay as
+  policy: no keyring, no component updater or variations fetches on a link
+  that may be metered. Neither silences the single GCM `DEPRECATED_ENDPOINT`
+  line at startup, which is harmless and left alone.
 * **`proprietary-codecs` is what plays H.264.** The marketing site's videos
   will not play without it; it is enabled in `tessaro.conf`.
 * **Chromium has no D-Bus control interface at all.** Everything is CDP. The
@@ -227,6 +243,22 @@ Things to know:
   that keeps `/run/tessaro-kiosk` root owned. Chromium only needs its
   `--user-data-dir` writable. `d` lines re-apply owner and mode every boot, so
   a device built before this heals itself.
+* **The agent enforces the kiosk *origin*, not the kiosk URL.** Every healthy
+  cycle reads the page's current URL out of `/json/list` - one cheap HTTP
+  round trip, no websocket - and navigates back if the scheme/host/port
+  differs from `KIOSK_URL`'s, logging where it had gone. Same-origin
+  sub-pages, query strings and in-page routing are deliberately left alone:
+  matching the whole URL would fight the site and loop on any redirect.
+  `KIOSK_ENFORCE_ORIGIN=0` turns it off for a site that legitimately hands
+  visitors to another host, and it is inert anyway when `KIOSK_URL` is
+  `data:`/`file:` (no origin to compare). A browser that will not say where it
+  is counts as "cannot tell", never as drift - otherwise a page caught
+  mid-navigation would be yanked back every cycle.
+* **Navigations log at info.** `navigated to <url>`, the offline page with its
+  URI, the drift line, and `chromium is answering again after N failed checks`
+  are all info, because "what is on screen right now" is the question anyone
+  reading this journal actually has. At the default 600s refresh that is one
+  line per ten minutes.
 * **CDP failures are quiet until the browser has answered once.**
   `tessaro-kiosk.service` is `Type=exec`, so systemd calls it started the
   moment `/usr/bin/chromium` is exec'd - seconds before Chromium opens its

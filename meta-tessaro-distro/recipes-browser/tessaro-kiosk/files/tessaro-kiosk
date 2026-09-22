@@ -92,6 +92,20 @@
 #KIOSK_RESTART_AFTER="40"
 #KIOSK_RESTART_BACKOFF="300"
 
+# --- staying on the site ---------------------------------------------------
+#
+# Bring the browser back to KIOSK_URL when it ends up somewhere else - someone
+# followed a link, or the page opened one. The comparison is by *origin*
+# (scheme, host and port), so the site's own sub-pages, query strings and
+# in-page routing are left alone; only leaving the site counts. The return is
+# logged, so the journal shows where it had gone.
+#
+# Set to 0 if the site legitimately sends visitors to another host - a payment
+# provider, an external booking system - and you would rather they could get
+# back. It is also inert when KIOSK_URL is not http(s), since a data: or file:
+# URL has no origin to compare against.
+#KIOSK_ENFORCE_ORIGIN="1"
+
 # Set to 0 to park the agent without masking the unit - useful while debugging
 # a page, where the periodic refresh would keep stealing the view.
 #KIOSK_AGENT_ENABLE="1"
