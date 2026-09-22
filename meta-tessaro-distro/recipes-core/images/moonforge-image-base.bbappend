@@ -82,3 +82,32 @@ CORE_IMAGE_EXTRA_INSTALL += " \
 CORE_IMAGE_EXTRA_INSTALL += " \
     tessaro-selftest \
 "
+
+# Remote access, on every image rather than only development ones.
+#
+# Until now an SSH server came exclusively from debug-tweaks, which
+# meta-moonforge's kas/common/debug.yml adds and a production chain does not
+# include - so a shipped device had no way in at all. The VNC screen share is
+# bound to 127.0.0.1 (see KIOSK_VNC and tessaro-weston-config), which makes an
+# SSH tunnel the only route to it, so without this the feature would exist and
+# be unreachable in the field.
+#
+# allow-empty-password is the one that does the work for dropbear: it adds -B
+# to its arguments. empty-root-password on its own only clears the password
+# hash, and dropbear refuses a blank password without -B, so the two are a
+# pair. Development builds get all of this from debug-tweaks as well; stating
+# it twice costs nothing.
+#
+# This is a root shell with no credential on every device, reachable from
+# whatever network NetworkManager attaches to - not just over loopback. It is a
+# deliberate choice for now. An authorized_keys story is the obvious next step,
+# and it is the one change that would let the empty password go.
+IMAGE_FEATURES += "ssh-server-dropbear empty-root-password allow-empty-password"
+
+# No account is created for the VNC login on purpose. It was tried: Weston
+# authenticates VNC clients through PAM, and pam_unix can only ever check the
+# password of the account the compositor itself runs as - its helper drops the
+# setuid it needs to read /etc/shadow when a non-root caller asks about anybody
+# else. So a "tessaro" system account was authenticated against by nothing and
+# refused every login. The credential lives in the kiosk's environment files
+# now and is checked by pam_exec; see recipes-graphics/wayland/weston_%.bbappend.

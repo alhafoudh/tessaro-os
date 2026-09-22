@@ -38,9 +38,53 @@ SRC_URI += " \
     file://weston-tessaro-scale.conf.in \
 "
 
+# Self-signed certificate for the VNC screen share, generated at build time.
+#
+# Weston 13's VNC backend will not start without one: vnc.c calls
+# nvnc_enable_auth(NVNC_AUTH_REQUIRE_AUTH | NVNC_AUTH_REQUIRE_ENCRYPTION) and
+# bails with "requires a key and a certificate for TLS security" if either is
+# missing. There is no unencrypted mode and no VNC-standard password auth, so
+# the choice is not whether to have a cert but where it comes from.
+#
+# Build time, shipped read-only, rather than generated on first boot: it keeps
+# openssl out of the image and leaves no per-device state to lose, back up or
+# renew. The trade is that every device flashed from one image shares this key,
+# which is acceptable only because the port is bound to 127.0.0.1 and reached
+# through an SSH tunnel that does the real transport security. Widening the
+# bind address means revisiting this.
+#
+# It does make the package non-reproducible - a fresh build with no sstate hit
+# mints a new key. Nothing depends on the cert's identity, so that only costs
+# re-accepting the fingerprint in the viewer.
+DEPENDS += "openssl-native"
+
+do_compile:append() {
+    openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 3650 \
+        -subj "/CN=tessaro-kiosk" \
+        -keyout ${WORKDIR}/tessaro-vnc-tls.key \
+        -out ${WORKDIR}/tessaro-vnc-tls.crt
+}
+
 do_install:append() {
     install -Dm0755 ${WORKDIR}/tessaro-weston-config \
         ${D}${libexecdir}/tessaro-weston-config
+
+    # Both world readable, root owned, which for a private key wants saying out
+    # loud: this one authenticates nothing. It is self-signed, identical on
+    # every device built from this image and only ever presented on a loopback
+    # port, so a viewer cannot learn anything from it and neither can anyone
+    # who reads it off the rootfs. Its entire job is to satisfy a backend that
+    # refuses to start without a key.
+    #
+    # The alternative, 0640 root:weston, was tried and is not worth it: the
+    # weston group's dynamically allocated gid is 1000, the same as the user
+    # running bitbake, so every build ends with a host-user-contaminated QA
+    # warning about a file that is in fact perfectly fine. A standing false
+    # warning costs more than this.
+    install -Dm0644 ${WORKDIR}/tessaro-vnc-tls.crt \
+        ${D}${libdir}/tessaro-vnc/tls.crt
+    install -Dm0644 ${WORKDIR}/tessaro-vnc-tls.key \
+        ${D}${libdir}/tessaro-vnc/tls.key
 
     # Substituted rather than hardcoded, for the same reason oe-core's own
     # do_install runs "sed -e s:/usr/bin:${bindir}:g" over weston.service: if a
@@ -74,11 +118,25 @@ do_install:append() {
     sed -i -e '/^\[shell\]/a background-type=centered' \
            -e '/^\[shell\]/a background-color=0xff042120' \
         ${D}${sysconfdir}/xdg/weston/weston.ini
+
+    # Drop the [screen-share] section this file inherits from oe-core through
+    # Moonforge. Its command= points at rdp-backend.so, which we do not build,
+    # and tessaro-weston-config owns that section now: it appends a VNC one to
+    # its copy of this file at boot, and - like [output] and [input-method] -
+    # leaves any section already present here alone, so that a technician can
+    # hand-edit one. Weston honours the *first* matching section, so a stale
+    # block here would silently shadow the generated one and screen sharing
+    # would fail with "Screen share failed: exec failed".
+    sed -i '/^\[screen-share\]/,/^$/d' ${D}${sysconfdir}/xdg/weston/weston.ini
+    if grep -q '^\[screen-share\]' ${D}${sysconfdir}/xdg/weston/weston.ini; then
+        bbfatal "a [screen-share] section survived in weston.ini; it would shadow the one tessaro-weston-config generates"
+    fi
 }
 
 # ${libexecdir} is already in the default FILES:${PN}; the drop-in directory is
 # not, because systemd.bbclass only packages units named in SYSTEMD_SERVICE.
 FILES:${PN} += "${systemd_system_unitdir}/weston.service.d"
+FILES:${PN} += "${libdir}/tessaro-vnc"
 
 # NOTE: do not add "use-pixman" here. It was tried while chasing the blank
 # kiosk under QEMU, and it makes things worse rather than better: the pixman

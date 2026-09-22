@@ -1,7 +1,8 @@
 #!/bin/sh
 # Generate Weston's effective config from the hardware actually attached: an
-# output scale that suits the panel, and an on-screen keyboard only on a device
-# that has no keyboard of its own.
+# output scale that suits the panel, an on-screen keyboard only on a device
+# that has no keyboard of its own, and the screen share that puts the panel on
+# a VNC port for remote support.
 #
 # Why the scale is here: Chromium cannot scale itself on this stack. It only
 # honours --force-device-scale-factor when the compositor advertises
@@ -17,6 +18,10 @@
 # [input-method] path=. The browser side of it is unconditional - see the
 # --enable-wayland-ime comment in tessaro-kiosk.service. Same argument as the
 # scale: a shipped image cannot know whether it will meet a USB keyboard.
+#
+# Why the screen share is here: it is weston.ini's [screen-share] command=, and
+# it is only a section rather than a knob because a VNC backend cannot be added
+# to a running compositor - see the block that writes it below.
 #
 # Run as ExecStartPre= of weston.service (see the drop-in next to this file),
 # as User=weston. /sys/class/drm, /sys/class/input and the udev database are
@@ -38,6 +43,17 @@ OUT="${TESSARO_WESTON_CONFIG:-/run/weston/weston.ini}"
 
 DEFAULTS=/usr/lib/tessaro-kiosk/tessaro-kiosk.env
 OVERRIDE=/etc/default/tessaro-kiosk
+
+# Where the VNC screen share listens, and the certificate it needs. Loopback
+# only: the way in is an SSH tunnel, which is what actually authenticates the
+# technician and encrypts the link. The certificate is shipped by the
+# weston-init bbappend and is the same on every device built from one image,
+# so it proves nothing about which kiosk answered - another reason the port
+# does not leave the machine.
+VNC_ADDRESS=127.0.0.1
+VNC_PORT=5900
+VNC_TLS_CERT=/usr/lib/tessaro-vnc/tls.crt
+VNC_TLS_KEY=/usr/lib/tessaro-vnc/tls.key
 
 # Read one key out of a systemd environment file.
 #
@@ -64,6 +80,19 @@ case $osk in
     *)
         echo "tessaro-weston-config: KIOSK_OSK=$osk is not auto, always or never - using auto" >&2
         osk=auto
+        ;;
+esac
+
+vnc=$(read_key "$DEFAULTS" KIOSK_VNC)
+o=$(read_key "$OVERRIDE" KIOSK_VNC)
+[ -n "$o" ] && vnc=$o
+[ -n "$vnc" ] || vnc=on
+
+case $vnc in
+    on|off) ;;
+    *)
+        echo "tessaro-weston-config: KIOSK_VNC=$vnc is not on or off - using on" >&2
+        vnc=on
         ;;
 esac
 
@@ -149,6 +178,62 @@ elif hw_keyboard_present; then
     echo "tessaro-weston-config: on-screen keyboard off (auto, keyboard attached)"
 else
     echo "tessaro-weston-config: on-screen keyboard on (auto, no keyboard attached)"
+fi
+
+# Remote access, before the scale for the same reason the keyboard is: a
+# KIOSK_SCALE=none device should still be reachable.
+#
+# What this section actually starts is a *second* Weston. Weston's VNC support
+# is a backend, not an add-on, and this compositor is already on the DRM
+# backend driving the panel - so there is no way to open a VNC port on it.
+# screen-share.so (loaded from the unit drop-in) forks the command below, hands
+# it one end of a socketpair, and presents this output into it through
+# zwp_fullscreen_shell_v1; the child serves that surface over VNC and sends
+# pointer and key events back, which screen-share injects into this compositor
+# through a synthetic seat. That last part is what makes the session
+# interactive rather than a picture: a click in the viewer lands in Chromium.
+#
+# The cost is real and continuous: sharing an output makes Weston stop using
+# hardware overlay and cursor planes for it, and every damage rectangle is read
+# back out of the renderer. A mostly static page is nearly free; full-screen
+# video is a readback per frame. KIOSK_VNC=off is the first thing to try if a
+# device feels slow, the Pi especially.
+#
+# Flags, and why each one:
+#
+#   --backend=vnc-backend.so     the whole point. --address/--port are
+#                                command line only; weston.ini's [vnc] section
+#                                takes refresh-rate and the TLS paths, nothing
+#                                that binds a socket.
+#   --shell=fullscreen-shell.so  required. Without it the child does not
+#                                advertise zwp_fullscreen_shell_v1 and the
+#                                share fails with "Parent does not support
+#                                wl_fullscreen_shell".
+#   --no-config                  stops the child loading /etc/xdg/weston/
+#                                weston.ini, finding a [screen-share] section
+#                                and sharing itself, recursively.
+#   --vnc-tls-cert/-key          not optional: the backend refuses to start
+#                                without both, and clients must then log in
+#                                over the TLS channel. That login is PAM
+#                                against a real account - the weston user,
+#                                whose password the image sets.
+#
+# Note what is *not* here: oe-core's stock command carries
+# --no-clients-resize, which is an RDP backend option. An unrecognised option
+# is fatal to the child, so it has to go.
+#
+# No --width/--height either. The child's output starts at the backend default
+# and present_surface_for_mode switches it to this panel's mode as soon as the
+# share is set up.
+if grep -q '^[[:space:]]*\[screen-share\]' "$OUT"; then
+    echo "tessaro-weston-config: [screen-share] already in $BASE, leaving it alone"
+elif [ "$vnc" = off ]; then
+    echo "tessaro-weston-config: remote access off (KIOSK_VNC=off)"
+else
+    printf '\n[screen-share]\nstart-on-startup=true\ncommand=%s\n' \
+        "/usr/bin/weston --backend=vnc-backend.so --shell=fullscreen-shell.so --no-config --address=$VNC_ADDRESS --port=$VNC_PORT --vnc-tls-cert=$VNC_TLS_CERT --vnc-tls-key=$VNC_TLS_KEY" \
+        >> "$OUT"
+    echo "tessaro-weston-config: remote access on, VNC on $VNC_ADDRESS:$VNC_PORT"
 fi
 
 if [ "$scale_override" = none ]; then

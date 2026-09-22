@@ -23,5 +23,12 @@ ExecStartPre=@libexecdir@/tessaro-weston-config
 # ours; without it systemd appends and Weston is started twice. Note
 # --modules=systemd-notify.so is carried over verbatim and is not optional -
 # weston.service is Type=notify and hangs until its start timeout without it.
+#
+# screen-share.so is the remote-access half: it is what forks a second Weston
+# on the VNC backend and mirrors this one into it. --modules is comma
+# separated. The module is inert on its own - it does nothing until a
+# [screen-share] section names a command, which tessaro-weston-config writes
+# only when KIOSK_VNC is on. Its other trigger, a Ctrl+Alt+S key binding, is
+# not reachable on a kiosk with no keyboard.
 ExecStart=
-ExecStart=@bindir@/weston --config=/run/weston/weston.ini --modules=systemd-notify.so
+ExecStart=@bindir@/weston --config=/run/weston/weston.ini --modules=systemd-notify.so,screen-share.so

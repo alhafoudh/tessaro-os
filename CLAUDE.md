@@ -435,9 +435,9 @@ connector will be called, the config is generated per boot:
 * The empty `ExecStart=` in the drop-in is required to clear oe-core's line
   before replacing it, and `--modules=systemd-notify.so` has to be carried over
   verbatim - `weston.service` is `Type=notify` and hangs without it.
-* `KIOSK_SCALE` is one of the two keys in `/etc/default/tessaro-kiosk` that need
-  `systemctl restart weston` rather than `systemctl restart tessaro-kiosk`.
-  `KIOSK_OSK` is the other.
+* `KIOSK_SCALE` is one of the three keys in `/etc/default/tessaro-kiosk` that
+  need `systemctl restart weston` rather than `systemctl restart tessaro-kiosk`.
+  `KIOSK_OSK` and `KIOSK_VNC` are the others.
 
 ### On-screen keyboard
 
@@ -520,6 +520,100 @@ can do about it. A touch-first site should keep its inputs out of the bottom of
 the viewport, or bring its own keyboard in the page, where it can reserve the
 space. That in-page route is also the only one that can react to a keyboard
 being plugged in without restarting anything.
+
+### Remote access
+
+**A technician sees the real panel over VNC on `127.0.0.1:5900`**, reached
+through an SSH tunnel. It is the live screen with the live Chromium on it, not
+a second session.
+
+**It is view only, and that is a Chromium limitation rather than a setting.**
+Remote input does arrive: `screen-share` injects it with `notify_motion_absolute`
+and friends through a synthetic seat. But that seat is a *second* `wl_seat`
+(`weston_seat_init(&seat->base, compositor, "screen-share")`,
+`screen-share.c:374`), created when the first viewer connects, and Chromium
+binds exactly one seat - `wayland_seat.cc:34` returns early once
+`connection->seat_` is set, which the libinput seat has done at startup. So
+clicks and keys are delivered to a seat the browser never bound. The fix is
+about 40 lines in a patch against `screen-share.c`, written up as item 11 in
+`TODO.md`; do not go looking for a flag.
+
+**It cannot be done by adding a VNC backend to the running compositor.** In
+Weston a backend is what drives the display, and this one is on
+`drm-backend.so`. So the mirror is `screen-share.so` (loaded from the
+`weston.service` drop-in): it forks a *second* Weston on `vnc-backend.so` plus
+`fullscreen-shell.so`, presents this compositor's output surface into it over
+`zwp_fullscreen_shell_v1`, and injects the remote pointer and key events back
+through a synthetic seat (`ss_seat_handle_motion` → `notify_motion_absolute`) -
+which is the half that does not reach the browser, see above.
+
+* **The `[screen-share]` section is generated**, by `tessaro-weston-config`,
+  under `KIOSK_VNC` (`on` by default, `off` to disable) - the same file, the
+  same log (`journalctl -t tessaro-weston-config`) and the same "a section
+  written by hand in `/etc/xdg/weston/weston.ini` wins" rule as `[output]` and
+  `[input-method]`. The `weston-init` bbappend deletes the `[screen-share]`
+  block the shipped `weston.ini` inherits from oe-core through Moonforge; that
+  block names `rdp-backend.so`, which is not built, and Weston honours the
+  *first* matching section, so a leftover would silently shadow ours. A
+  `bbfatal` in `do_install` guards that.
+* **`--address` and `--port` are command-line only.** weston.ini's `[vnc]`
+  section takes `refresh-rate`, `tls-cert` and `tls-key` and nothing that binds
+  a socket, so loopback is enforced from the generated `command=`. The child
+  also gets `--no-config`, without which it loads `weston.ini`, finds a
+  `[screen-share]` section and shares itself recursively.
+* **Do not copy oe-core's stock command verbatim.** It carries
+  `--no-clients-resize`, an RDP-backend option; an unrecognised option is fatal
+  to the child, and the failure reads as a screen-share problem rather than a
+  typo.
+* **TLS and a login are not optional and not configurable.**
+  `libweston/backend-vnc/vnc.c` calls `nvnc_enable_auth(NVNC_AUTH_REQUIRE_AUTH |
+  NVNC_AUTH_REQUIRE_ENCRYPTION, ...)` and refuses to start without a cert and
+  key. There is no unauthenticated mode and no VNC-standard password auth -
+  neatvnc's only password mechanism is the "plain" sub-type inside VeNCrypt,
+  which *is* the TLS path. Hence two things that would otherwise look like
+  over-engineering: `PACKAGECONFIG:append:pn-neatvnc = " tls"` in
+  `tessaro.conf` (its own default is `""`, and without it Weston logs `Neat VNC
+  built without TLS support` and dies), and a self-signed certificate generated
+  at build time by the `weston-init` bbappend into `/usr/lib/tessaro-vnc/`.
+* **The credential is `tessaro` / `tessaro`, and it is deliberately not a
+  system account.** `weston_authenticate_user()` is
+  `pam_start("weston-remote-access", <username the client sent>, ...)`, and the
+  stack Weston ships is `auth include login` - which can only ever accept one
+  username, `weston`. The compositor is unprivileged, and `pam_unix`'s helper
+  refuses to check any account but the caller's own: `unix_chkpwd.c:133-146`
+  drops its setuid when the requested user differs, and then cannot read
+  `/etc/shadow` (0400 root). Weston's own man page says as much - "the VNC
+  client has to authenticate as the user running weston". Creating a `tessaro`
+  account does *not* work around it; that was tried and every login was
+  refused.
+  So `weston_%.bbappend` replaces that PAM stack with `pam_exec` running
+  `/usr/libexec/tessaro-vnc-auth`, which compares against `KIOSK_VNC_USER` and
+  `KIOSK_VNC_PASSWORD` from the same two environment files as every other
+  kiosk setting. No account, no `/etc/shadow`, no privilege - and the
+  credential can be changed on a running device with no restart, since PAM runs
+  the checker on every attempt. It needs `pam-plugin-exec`, which is not in the
+  image by default and is an `RDEPENDS` of weston for that reason; without it
+  every login fails with a bare `PAM: authentication failed`.
+* **Client compatibility is narrow.** VeNCrypt with plain auth means TigerVNC
+  or Remmina. macOS Screen Sharing and RealVNC fail in the handshake. The cert
+  is self-signed and identical across an image, so the fingerprint warning
+  means nothing.
+* **Sharing is not free while it is on.** `weston_output_disable_planes_incr()`
+  takes the output off hardware overlay and cursor planes for as long as it is
+  shared, and every damage rectangle goes through `read_pixels()`. A static
+  page is nearly free; full-screen video is a readback per frame. `KIOSK_VNC=off`
+  is the first thing to try on a Pi that feels slow.
+* **One client at a time** - a second connection disconnects the first - and
+  **only outputs present when Weston starts are shared**, so a monitor plugged
+  in later needs `systemctl restart weston`, the same limitation `KIOSK_OSK`
+  has.
+* **SSH now ships in every image**, not only debug ones:
+  `ssh-server-dropbear empty-root-password allow-empty-password` in
+  `moonforge-image-base.bbappend`. `allow-empty-password` is the one that
+  matters for dropbear - it adds `-B`, without which a blank password is
+  refused whatever the hash says. This is a root shell with no credential on
+  any network the device joins; an `authorized_keys` story is the obvious next
+  step and the only thing that would let the empty password go.
 
 ### Device APIs: WebSerial, WebHID, WebUSB, Web Bluetooth
 

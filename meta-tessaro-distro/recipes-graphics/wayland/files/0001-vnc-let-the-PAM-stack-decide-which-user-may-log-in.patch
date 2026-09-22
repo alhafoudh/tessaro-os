@@ -1,0 +1,56 @@
+From: Ahmed Al Hafoudh <alhafoudh@freevision.sk>
+Date: Mon, 22 Sep 2026 22:10:00 +0200
+Subject: [PATCH] vnc: let the PAM stack decide which user may log in
+
+The VNC backend refuses any username that does not resolve to the uid the
+compositor runs as, before PAM is consulted at all:
+
+    struct passwd *pw = getpwnam(username);
+    if (!pw || pw->pw_uid != getuid())
+            return false;
+
+That check exists because the stack Weston ships is "auth include login",
+i.e. pam_unix - and pam_unix cannot verify anybody else's password from an
+unprivileged process anyway: unix_chkpwd drops its setuid when a non-root
+caller asks about a different account and then cannot read /etc/shadow. So
+upstream's check is an early, clearer failure for a login that could not
+have worked.
+
+Tessaro replaces that PAM service with one that checks the credential
+itself (pam_exec plus /usr/libexec/tessaro-vnc-auth, see
+meta-tessaro-distro/recipes-graphics/wayland/weston_%.bbappend), so the
+premise is gone: no system account is consulted, nothing needs privilege,
+and the username is product configuration rather than a fact about how the
+image was built. With the check still in place the only accepted username
+would be "weston" - the compositor's own account - which is an
+implementation detail we do not want a technician to have to know.
+
+Dropping it changes no default behaviour for anyone using the stock PAM
+file: pam_unix still refuses every username except the compositor's, the
+refusal simply arrives from PAM instead of from this function.
+
+Upstream-Status: Inappropriate [configuration]
+
+Signed-off-by: Ahmed Al Hafoudh <alhafoudh@freevision.sk>
+---
+ libweston/backend-vnc/vnc.c | 7 -------
+ 1 file changed, 7 deletions(-)
+
+diff --git a/libweston/backend-vnc/vnc.c b/libweston/backend-vnc/vnc.c
+index 1111111..2222222 100644
+--- a/libweston/backend-vnc/vnc.c
++++ b/libweston/backend-vnc/vnc.c
+@@ -475,13 +475,6 @@ vnc_pointer_event(struct nvnc_client *client, uint16_t x, uint16_t y,
+ static bool
+ vnc_handle_auth(const char *username, const char *password, void *userdata)
+ {
+-	struct passwd *pw = getpwnam(username);
+-
+-	if (!pw || pw->pw_uid != getuid()) {
+-		weston_log("VNC: wrong user '%s'\n", username);
+-		return false;
+-	}
+-
+ 	return weston_authenticate_user(username, password);
+ }
+

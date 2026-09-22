@@ -1,0 +1,67 @@
+#!/bin/sh
+# Check the credentials a VNC client offered. Run by pam_exec.so from
+# /etc/pam.d/weston-remote-access; exit 0 accepts the login, anything else
+# refuses it.
+#
+# Why this exists rather than the stock "auth include login": Weston's VNC
+# backend authenticates through PAM as the user the compositor runs as, and
+# pam_unix cannot check anybody else's password from there. Its helper refuses:
+# unix_chkpwd drops its setuid when a non-root caller asks about a user other
+# than itself (modules/pam_unix/unix_chkpwd.c), and then cannot read
+# /etc/shadow, which is 0400 root. So with the stock stack the only username
+# that can ever work is "weston" - the compositor's own account - which is a
+# detail of how the kiosk is built leaking into what a technician types.
+#
+# Checking the credential here instead decouples the two: the login is
+# whatever KIOSK_VNC_USER/KIOSK_VNC_PASSWORD say, no system account is
+# involved, /etc/shadow is never consulted, and nothing needs privilege.
+#
+# The password is a published constant, so this file being world readable
+# gives away nothing that the documentation does not. The port is on the
+# loopback and the SSH tunnel in front of it is the real gate; see the
+# Remote access section in CLAUDE.md.
+#
+# pam_exec hands us:
+#   PAM_USER  in the environment, the username the client sent
+#   the password on stdin, with **no trailing newline** (pam_exec.c writes
+#   strlen(authtok) bytes), which is why this reads it with $(cat) rather
+#   than `read`.
+#
+# POSIX sh: same constraint as every other script in this image.
+set -u
+
+DEFAULTS=/usr/lib/tessaro-kiosk/tessaro-kiosk.env
+OVERRIDE=/etc/default/tessaro-kiosk
+
+# Same accessor as tessaro-weston-config, and for the same reason: these files
+# are systemd environment files that legitimately contain values a shell would
+# try to execute, so they are read, never sourced.
+read_key() {
+    [ -r "$1" ] || return 0
+    sed -n "s/^[[:space:]]*$2=//p" "$1" | tail -n 1 | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'$/\1/"
+}
+
+read_setting() {
+    value=$(read_key "$DEFAULTS" "$1")
+    override=$(read_key "$OVERRIDE" "$1")
+    [ -n "$override" ] && value=$override
+    [ -n "$value" ] || value=$2
+    printf '%s' "$value"
+}
+
+# The fallbacks matter: this script lives in the weston package and the file it
+# reads its defaults from belongs to tessaro-kiosk, so an image with one and
+# not the other still has a working login rather than an empty password.
+user=$(read_setting KIOSK_VNC_USER tessaro)
+password=$(read_setting KIOSK_VNC_PASSWORD tessaro)
+
+# Only the auth stage carries a password; the account stage is pam_permit.
+[ "${PAM_TYPE:-auth}" = auth ] || exit 0
+
+[ "${PAM_USER:-}" = "$user" ] || exit 1
+
+# No newline to strip - see the pam_exec note above.
+offered=$(cat)
+[ "$offered" = "$password" ] || exit 1
+
+exit 0

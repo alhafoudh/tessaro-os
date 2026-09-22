@@ -151,6 +151,59 @@
 # alone, whatever KIOSK_OSK says.
 #KIOSK_OSK="always"
 
+# Remote access over VNC: on | off. Default on.
+#
+# On means the live panel is mirrored to 127.0.0.1:5900 - the same screen the
+# person in front of the kiosk is looking at, not a second session.
+#
+# It is view only. A viewer will let you click and type, and the browser will
+# ignore every bit of it, because Weston delivers remote input on a second
+# wl_seat and Chromium listens to only one. Nothing here changes that; it needs
+# a patch to Weston (TODO.md item 11).
+#
+# The port never leaves the machine, so getting to it means a tunnel:
+#
+#     ssh -L 5900:127.0.0.1:5900 root@<device>
+#     vncviewer localhost:5900        # user "tessaro", password "tessaro"
+#
+# TigerVNC or Remmina. Weston's VNC backend only offers VeNCrypt with TLS, and
+# viewers that do not implement it - macOS Screen Sharing, RealVNC - fail at
+# the handshake with nothing useful in the log. The certificate is self-signed
+# and shared by every device from the same image, so the fingerprint warning is
+# expected and means nothing.
+#
+# Set "off" where the cost matters. While an output is shared Weston cannot use
+# hardware overlay or cursor planes on it and reads back every damaged region,
+# which is invisible on a static page and measurable under full-screen video.
+# The Pi is the machine to try this on first.
+#
+# Consumed by the compositor, like KIOSK_SCALE and KIOSK_OSK: apply with
+# `systemctl restart weston`. Only outputs that exist at that moment are
+# shared, so a monitor plugged in afterwards is not.
+#
+# `journalctl -t tessaro-weston-config` says whether it was enabled;
+# `journalctl -u weston` carries the child compositor's own errors, a missing
+# certificate and a failed login among them.
+#KIOSK_VNC="off"
+
+# The VNC login. Defaults are tessaro / tessaro.
+#
+# Unlike everything else in this section, these two need no restart at all:
+# PAM runs /usr/libexec/tessaro-vnc-auth on every attempt and it re-reads this
+# file each time, so a new password is live for the next connection.
+#
+# It is not a system account and not a system password - Weston hands the
+# username straight to PAM, and pam_unix would only ever accept the account
+# the compositor runs as, so the credential is checked against these keys
+# instead. Nothing on the device can be logged into with them.
+#
+# The password is in a world-readable file here and in the image's own
+# defaults, which is acceptable only because the port is bound to 127.0.0.1:
+# anyone who can read this file is already on the device. If that stops being
+# true, the tunnel is what has to be tightened, not this file.
+#KIOSK_VNC_USER="tessaro"
+#KIOSK_VNC_PASSWORD="a better password"
+
 # --- the agent: offline page -----------------------------------------------
 #
 # Shown while the site is unreachable. Precedence, first match wins:

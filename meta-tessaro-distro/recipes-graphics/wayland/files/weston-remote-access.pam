@@ -1,0 +1,22 @@
+#%PAM-1.0
+#
+# Authentication for Weston's VNC backend. Replaces the "auth include login"
+# stack Weston ships, which cannot work here: libweston/auth.c calls
+# pam_start("weston-remote-access", ...) from the compositor process, and
+# pam_unix's helper will only verify the password of the caller's own account
+# (unix_chkpwd.c drops its setuid otherwise, and /etc/shadow is 0400 root).
+# That pins the username to "weston" and rules out any credential that is not
+# a system account.
+#
+# @libexecdir@/tessaro-vnc-auth checks KIOSK_VNC_USER and KIOSK_VNC_PASSWORD
+# from the kiosk's own environment files instead, so the login is product
+# configuration rather than a system login, and changing it needs no rebuild
+# and no restart - the checker reads those files on every attempt.
+#
+# Not "quiet": a refused login then leaves a line in the journal, which is the
+# only trace a support case would have.
+auth     required   pam_exec.so expose_authtok @libexecdir@/tessaro-vnc-auth
+
+# Nothing to check - the account this authenticates is not a system account at
+# all, so there is no expiry, no shell and no home directory to police.
+account  required   pam_permit.so
