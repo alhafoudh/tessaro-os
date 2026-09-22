@@ -236,7 +236,8 @@ Things to know:
   can *counter* it - `--disable-pinch` is not in it because Chromium 147 has no
   `--enable-pinch` - and every `base::Feature` goes through
   `KIOSK_ENABLE_FEATURES`, because duplicate `--enable-features` switches do
-  not merge and the last one silently wins.
+  not merge and the last one silently wins. The two IME switches are the one
+  documented exception to the first rule - see **On-screen keyboard**.
 * **`--disable-crash-reporter` was a no-op too.** It is defined only in
   chromecast and headless, never in the chrome binary. The switch that works is
   `--disable-breakpad`.
@@ -377,9 +378,10 @@ actually does something. To get back to it on a deployed device, set
 * **The agent probes the local server**, because `KIOSK_URL` is now http - so
   nginx dying puts the offline page on screen like any other outage, rather
   than going unnoticed.
-* **There is no on-screen keyboard in this image**, and Chromium on Linux has
-  none built in, so the text inputs need a USB keyboard. Everything that is a
-  tap, a slider or a picker works with a finger. The page carries this warning.
+* **The on-screen keyboard only appears on a device with no keyboard**, so the
+  text inputs need a USB keyboard or `KIOSK_OSK=always` - see **On-screen
+  keyboard** below. Everything that is a tap, a slider or a picker works with a
+  finger. The page carries this as a note.
 * **It is a separate recipe from `tessaro-kiosk` on purpose.** That recipe
   `inherit`s cargo and builds `tessaro-agent`, so anything added to its
   `SRC_URI` re-hashes `do_fetch` and drags the whole Rust build behind every
@@ -418,6 +420,11 @@ connector will be called, the config is generated per boot:
   bbappend), reads every connected connector out of `/sys/class/drm`, and
   writes `/etc/xdg/weston/weston.ini` plus an `[output]` section per connector
   to `/run/weston/weston.ini`. The drop-in then points `weston --config=` at it.
+  It writes the `[input-method]` section too - see **On-screen keyboard**.
+* **Its log is `journalctl -t tessaro-weston-config`, not `-u weston`.** It runs
+  as `ExecStartPre=`, and those lines do not come back under the unit even
+  though the compositor's own do. Every decision it makes - connector, scale
+  and why, keyboard and why - is one line there.
 * Scale is `KIOSK_SCALE` if set, otherwise 2 above 3400px wide and 1 below.
   `KIOSK_SCALE=none` disables the mechanism entirely.
 * **The technician-facing file is still `/etc/xdg/weston/weston.ini`**, which is
@@ -428,8 +435,91 @@ connector will be called, the config is generated per boot:
 * The empty `ExecStart=` in the drop-in is required to clear oe-core's line
   before replacing it, and `--modules=systemd-notify.so` has to be carried over
   verbatim - `weston.service` is `Type=notify` and hangs without it.
-* `KIOSK_SCALE` is the one key in `/etc/default/tessaro-kiosk` that needs
+* `KIOSK_SCALE` is one of the two keys in `/etc/default/tessaro-kiosk` that need
   `systemctl restart weston` rather than `systemctl restart tessaro-kiosk`.
+  `KIOSK_OSK` is the other.
+
+### On-screen keyboard
+
+**It was always in the image; nothing was speaking to it.**
+`/usr/libexec/weston-keyboard` ships in the `weston` package (oe-core's
+`FILES:${PN}` covers `${libexecdir}`, and the `clients` PACKAGECONFIG is on by
+default), and Weston launches it unprompted - `text_backend_configuration()`
+defaults `[input-method] path=` to `wet_get_libexec_path("weston-keyboard")`.
+It never drew anything because Chromium was not asking for it.
+
+Two halves, deliberately split:
+
+* **The browser is put in IME mode unconditionally**, by
+  `--enable-wayland-ime --wayland-text-input-version=1` in
+  `tessaro-kiosk.service`. Chromium 147 speaks text-input v1 and v3, and
+  `kWaylandTextInputV3` is `FEATURE_ENABLED_BY_DEFAULT`, so left alone it binds
+  v3, finds no `zwp_text_input_manager_v3` on Weston 13 (v1 and
+  input-method-v1, nothing newer) and logs `text-input-v3 not available`. The
+  version switch is only read when `--enable-wayland-ime` is also present, and
+  v3 would not help anyway: `wayland_input_method_context.cc` says outright
+  that it "does not support input panel show/hide yet". **These two are the
+  exception to the counterable-from-`KIOSK_CHROMIUM_ARGS_EXTRA` rule** -
+  `--disable-wayland-ime` cannot undo them, because `IsImeEnabled()` tests for
+  `--enable-wayland-ime` first.
+* **Whether a keyboard exists is a compositor decision**, made by
+  `tessaro-weston-config` writing `[input-method] path=` (empty) into the
+  generated `weston.ini`, or leaving the section out so Weston's default
+  applies. With no input method client bound,
+  `input_method_context_create()` returns early, no panel surface is ever
+  created and `show_input_panel` reaches nothing.
+
+Keeping the flags unconditional is the point: if the IME path itself switched
+with the panel, the device would take text input differently - composition,
+dead keys - depending on what was plugged in. This way only the panel changes.
+
+`KIOSK_OSK` is `auto` (default), `always` or `never`. `auto` means "no hardware
+keyboard attached", and how that is decided matters:
+
+* **udev's `ID_INPUT_KEYBOARD`, and the bus.** systemd's `input_id` builtin
+  (`60-input-id.rules`) is the only thing here that tells a full keyboard from
+  a device that merely has keys - a power button, a lid switch and a mouse's
+  consumer-control endpoint all carry `EV_KEY`. But that tag alone is a trap:
+  nearly every x86 board exposes an "AT Translated Set 2 keyboard" through the
+  i8042 or the EC with nothing plugged in, so counting those would mean the
+  keyboard never appeared on x86 at all. Hence USB (`0003`) and Bluetooth
+  (`0005`) only, from `/sys/class/input/input*/id/bustype`.
+* **Under QEMU the answer is "keyboard attached", and that is right.** runqemu
+  boots x86 with `-machine q35,i8042=off -usb -device usb-kbd`, so the guest
+  has a real USB keyboard (`QEMU QEMU USB Keyboard`) and `auto` hides the
+  panel. Exercising the keyboard under `mise run run-vnc` therefore needs
+  `KIOSK_OSK=always` in `/etc/default/tessaro-kiosk` plus
+  `systemctl restart weston`; note `run`/`run-vnc` pass `-snapshot`, so that
+  edit does not survive a reboot of the VM.
+* **Keyboard-shaped peripherals will fool it.** A barcode scanner, an RFID
+  reader or a KVM dongle enumerates as a USB HID keyboard. `KIOSK_OSK=always`
+  is the answer, which is why that value exists.
+* **It fails towards showing the keyboard.** No `udevadm`, an unpopulated udev
+  database, anything unexpected: the verdict is "no keyboard" and the panel is
+  offered. A superfluous keyboard on screen is a nuisance; a touch-only device
+  with no way to type is a brick.
+* **The decision is made once, at compositor start.** Hotplug does nothing
+  until `systemctl restart weston`, which takes the browser and the agent with
+  it. A udev rule that recomputes and restarts on change is the obvious
+  follow-up and is deliberately not built yet - the detection wants proving
+  against real peripherals first.
+* An `[input-method]` section written by hand in `/etc/xdg/weston/weston.ini`
+  wins over all of it, the same courtesy `[output]` sections get.
+
+What weston-keyboard actually is: a demo client, cairo-drawn, fixed 60x50 px
+keys scaled by the output scale, QWERTY with shift and symbols, a numeric
+layout selected from the field's content purpose, and a real touch handler
+(`clients/keyboard.c`), so a finger works. It takes no keyboard grab, so a USB
+keyboard keeps working normally with the panel up.
+
+**The page cannot see it.** Chromium's v1 client keeps only a visible/not
+visible bool out of `input_panel_state` and never learns the panel geometry,
+the surface is not resized, and `visualViewport` does not change - so a field
+near the bottom of the page can sit behind the keyboard with nothing the site
+can do about it. A touch-first site should keep its inputs out of the bottom of
+the viewport, or bring its own keyboard in the page, where it can reserve the
+space. That in-page route is also the only one that can react to a keyboard
+being plugged in without restarting anything.
 
 ### Device APIs: WebSerial, WebHID, WebUSB, Web Bluetooth
 

@@ -136,6 +136,27 @@ WorkingDirectory=/home/weston
 #   not auto, so a real touch panel is invisible to feature detection without
 #   this; "auto" ties it to Weston's wl_seat touch capability. Finger input
 #   arrives as synthesized mouse events either way. KIOSK_TOUCH.
+# --enable-wayland-ime with --wayland-text-input-version=1 is what makes an
+#   on-screen keyboard possible at all. Chromium 147 speaks both text-input-v1
+#   and text-input-v3 and kWaylandTextInputV3 is FEATURE_ENABLED_BY_DEFAULT, so
+#   left alone it binds v3, finds no zwp_text_input_manager_v3 on Weston 13
+#   (which implements v1 and input-method-v1, nothing newer) and logs
+#   "text-input-v3 not available". Even where v3 exists it would not help:
+#   wayland_input_method_context.cc says outright that v3 "does not support
+#   input panel show/hide yet", so v1 is the only version that can raise a
+#   keyboard. The version switch is read only when --enable-wayland-ime is also
+#   present.
+#   Both are unconditional on purpose. Whether a keyboard actually appears is
+#   decided on the compositor side, by tessaro-weston-config writing
+#   [input-method] into the generated weston.ini - see KIOSK_OSK. Deciding it
+#   here instead would switch the entire IME path on and off with the panel, so
+#   the device would take text input differently depending on what was plugged
+#   in; this way only the panel changes. With no input method client bound,
+#   weston's input_method_context_create() returns early, no panel surface
+#   exists and show_input_panel reaches nothing.
+#   These two are the exception to the counterable-from-EXTRA rule below:
+#   --disable-wayland-ime cannot undo them, because IsImeEnabled() tests for
+#   --enable-wayland-ime first and returns true. KIOSK_OSK is the lever.
 # --enable-features is the single place base::Features are named, because
 #   duplicate occurrences of that switch do not merge - the last one wins - so
 #   routing them through one variable is what stops KIOSK_CHROMIUM_ARGS_EXTRA
@@ -186,6 +207,8 @@ ExecStart=/usr/bin/dbus-run-session -- /usr/bin/chromium \
     --disable-background-networking \
     --autoplay-policy=no-user-gesture-required \
     --touch-events=${KIOSK_TOUCH} \
+    --enable-wayland-ime \
+    --wayland-text-input-version=1 \
     --enable-features=${KIOSK_ENABLE_FEATURES} \
     $KIOSK_CHROMIUM_ARGS_EXTRA \
     ${KIOSK_URL}

@@ -393,11 +393,16 @@
     you can see the control actually registering rather than guessing. Nothing
     is submitted anywhere.</p>
 
-  <p class="note bad"><strong>No on-screen keyboard.</strong> This image ships
-    no virtual keyboard, and Chromium on Linux has none built in. On a
-    touch-only device the text fields here cannot be typed into - plug in a USB
-    keyboard to test them. Everything that is a tap, a slider or a picker works
-    with a finger alone.</p>
+  <p class="note"><strong>On-screen keyboard.</strong> Tapping a text field
+    raises Weston's virtual keyboard, but only on a device with no hardware
+    keyboard of its own - if a USB keyboard is plugged in, nothing appears and
+    you type on that instead. Forced on with <code>KIOSK_OSK=always</code> in
+    <code>/etc/default/tessaro-kiosk</code> followed by
+    <code>systemctl restart weston</code>;
+    <code>journalctl -t tessaro-weston-config</code> says what it decided. It draws over the page rather than moving it, so it
+    can cover a field near the bottom of the screen - scroll the field up
+    first. Everything that is a tap, a slider or a picker works with a finger
+    alone either way.</p>
 
   <form id="form" onsubmit="return false">
     <table>

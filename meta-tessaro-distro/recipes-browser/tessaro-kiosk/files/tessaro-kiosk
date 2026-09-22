@@ -94,14 +94,45 @@
 # the only lever. Set it to 2 on a 4K panel that is read from across a room, or
 # to 1 on one that is read from a desk.
 #
-# Unlike everything else in this file, this is consumed by the compositor.
-# Apply it with `systemctl restart weston`, which takes the browser and the
-# agent with it.
+# Unlike most of this file, this is consumed by the compositor. Apply it with
+# `systemctl restart weston`, which takes the browser and the agent with it.
 #
 # For per-connector control instead, put an [output] section in
 # /etc/xdg/weston/weston.ini by hand - the generator leaves any connector
-# already named there alone. `journalctl -u weston` lists the connector names.
+# already named there alone. `journalctl -t tessaro-weston-config` lists the
+# connector names, and everything else the generator decided.
 #KIOSK_SCALE="2"
+
+# On-screen keyboard: auto | always | never. Default auto.
+#
+# auto means: show Weston's virtual keyboard when no hardware keyboard is
+# attached, hide it when one is. Only USB and Bluetooth devices that udev tags
+# ID_INPUT_KEYBOARD count, so the AT keyboard most x86 boards expose with
+# nothing plugged into it does not suppress the keyboard. A VM does: runqemu
+# gives the guest a USB keyboard, so auto hides the panel there and testing it
+# under QEMU means setting this to "always".
+#
+# Set "always" on a touch device that also has something keyboard-shaped on the
+# USB bus - a barcode scanner, an RFID reader and a KVM dongle all enumerate as
+# HID keyboards and all make auto decide a keyboard is present. Set "never" on
+# a device where nobody is ever meant to type.
+#
+# The keyboard itself is weston-keyboard, Weston's own: QWERTY, a numeric pad
+# for number and digit fields, touch and mouse both. It draws above the
+# fullscreen browser and does not move the page, so a field at the very bottom
+# can end up behind it - a site that expects touch input should keep its inputs
+# out of the bottom of the viewport, or bring its own keyboard.
+#
+# Consumed by the compositor, like KIOSK_SCALE: apply with
+# `systemctl restart weston`, and note that the decision is made at that moment
+# only. Plugging a keyboard in later changes nothing until the next restart.
+# `journalctl -t tessaro-weston-config` prints what it decided and what it
+# found - not `journalctl -u weston`, which does not carry ExecStartPre output.
+#
+# For full manual control, put an [input-method] section in
+# /etc/xdg/weston/weston.ini by hand - the generator leaves one already there
+# alone, whatever KIOSK_OSK says.
+#KIOSK_OSK="always"
 
 # --- the agent: offline page -----------------------------------------------
 #

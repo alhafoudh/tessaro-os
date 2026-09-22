@@ -1,8 +1,9 @@
 #!/bin/sh
-# Generate Weston's effective config, with an output scale that suits the
-# panel actually attached.
+# Generate Weston's effective config from the hardware actually attached: an
+# output scale that suits the panel, and an on-screen keyboard only on a device
+# that has no keyboard of its own.
 #
-# Why this exists at all: Chromium cannot scale itself on this stack. It only
+# Why the scale is here: Chromium cannot scale itself on this stack. It only
 # honours --force-device-scale-factor when the compositor advertises
 # wp_fractional_scale_manager_v1, and Weston 13 does not implement that
 # protocol server side - the XML in its tree is used by its own demo clients.
@@ -11,19 +12,27 @@
 # exact connector name, with no wildcards and no command-line equivalent on the
 # DRM backend. Hence: generate it, per boot, from what is plugged in.
 #
+# Why the keyboard is here: whether the virtual keyboard appears is decided by
+# whether Weston has an input method client at all, which is weston.ini's
+# [input-method] path=. The browser side of it is unconditional - see the
+# --enable-wayland-ime comment in tessaro-kiosk.service. Same argument as the
+# scale: a shipped image cannot know whether it will meet a USB keyboard.
+#
 # Run as ExecStartPre= of weston.service (see the drop-in next to this file),
-# as User=weston. /sys/class/drm is world readable and $RUNTIME_DIRECTORY is
-# ours, so no privilege is needed.
+# as User=weston. /sys/class/drm, /sys/class/input and the udev database are
+# world readable and $RUNTIME_DIRECTORY is ours, so no privilege is needed.
 #
 # The technician-facing file is still /etc/xdg/weston/weston.ini, which is on
 # the /etc overlay and therefore persists. It is used as the base below, and an
-# [output] section written there by hand always wins over what this computes.
-# /run/weston/weston.ini is generated and must never be edited.
+# [output] or [input-method] section written there by hand always wins over
+# what this computes. /run/weston/weston.ini is generated and must never be
+# edited.
 #
 # POSIX sh, because the image has busybox and nothing else this early.
 set -eu
 
 DRM_ROOT="${TESSARO_DRM_ROOT:-/sys/class/drm}"
+INPUT_ROOT="${TESSARO_INPUT_ROOT:-/sys/class/input}"
 BASE="${TESSARO_WESTON_BASE:-/etc/xdg/weston/weston.ini}"
 OUT="${TESSARO_WESTON_CONFIG:-/run/weston/weston.ini}"
 
@@ -45,6 +54,64 @@ scale_override=$(read_key "$DEFAULTS" KIOSK_SCALE)
 o=$(read_key "$OVERRIDE" KIOSK_SCALE)
 [ -n "$o" ] && scale_override=$o
 
+osk=$(read_key "$DEFAULTS" KIOSK_OSK)
+o=$(read_key "$OVERRIDE" KIOSK_OSK)
+[ -n "$o" ] && osk=$o
+[ -n "$osk" ] || osk=auto
+
+case $osk in
+    auto|always|never) ;;
+    *)
+        echo "tessaro-weston-config: KIOSK_OSK=$osk is not auto, always or never - using auto" >&2
+        osk=auto
+        ;;
+esac
+
+# Is a keyboard someone can actually type on attached right now?
+#
+# Two filters, and both are needed:
+#
+#   * udev's ID_INPUT_KEYBOARD, set by systemd's input_id builtin
+#     (60-input-id.rules), which is the only thing here that knows a full
+#     keyboard from a device that merely has keys. A power button, a lid
+#     switch and the consumer-control endpoint of a mouse all carry EV_KEY and
+#     none of them are keyboards.
+#   * the bus. Nearly every x86 board exposes an "AT Translated Set 2 keyboard"
+#     through the i8042 or the embedded controller whether or not anything is
+#     plugged into the port, so counting those would mean the keyboard never
+#     appeared on x86 at all. USB (0003) and Bluetooth (0005) only.
+#
+# Under QEMU this comes out as "keyboard attached" and that is correct, not a
+# bug in the filter: runqemu boots x86 with `-machine q35,i8042=off -usb
+# -device usb-kbd`, so the guest really does have a USB keyboard - it is the
+# one the VNC window types on. Testing the panel there means KIOSK_OSK=always.
+#
+# Not filtered, and worth knowing: a barcode scanner, an RFID reader or a KVM
+# dongle enumerates as a USB HID keyboard, so on a device with one of those
+# auto will decide there is a keyboard. KIOSK_OSK=always is the answer there.
+#
+# Anything that goes wrong here - no udevadm, an unpopulated udev database -
+# ends up reporting no keyboard, which shows the on-screen one. That is the
+# safe direction: a superfluous keyboard on a screen is a nuisance, a
+# touch-only device with no way to type is a brick.
+hw_keyboard_present() {
+    for dev in "$INPUT_ROOT"/input*; do
+        [ -r "$dev/id/bustype" ] || continue
+        case $(cat "$dev/id/bustype") in
+            0003|0005) ;;
+            *) continue ;;
+        esac
+
+        udevadm info --query=property --path="$dev" 2>/dev/null \
+            | grep -q '^ID_INPUT_KEYBOARD=1$' || continue
+
+        echo "tessaro-weston-config: keyboard attached: $(cat "$dev/name" 2>/dev/null || echo "${dev##*/}")"
+        return 0
+    done
+
+    return 1
+}
+
 mkdir -p "$(dirname "$OUT")"
 
 # Start from the shipped config so Moonforge's [core]/[shell] settings and any
@@ -55,6 +122,33 @@ if [ -r "$BASE" ]; then
 else
     echo "tessaro-weston-config: $BASE is missing, generating from nothing" >&2
     : > "$OUT"
+fi
+
+# The on-screen keyboard, before the scale, so that KIOSK_SCALE=none below
+# still leaves it configured.
+#
+# Weston's default for [input-method] path= is its own weston-keyboard, which
+# ships in the image, so *enabling* the keyboard means writing nothing at all -
+# leaving the default alone is also the only way to avoid hardcoding a
+# libexecdir here. Disabling it is an explicit empty path, which text-backend.c
+# tests for and treats as "launch nothing".
+#
+# With no input method client running, weston's input_method_context_create()
+# returns early and the panel never exists, so Chromium's show_input_panel
+# reaches nothing. It stays in IME mode either way, which is the point: only
+# the keyboard changes, not how text gets into the browser.
+if grep -q '^[[:space:]]*\[input-method\]' "$OUT"; then
+    echo "tessaro-weston-config: [input-method] already in $BASE, leaving it alone"
+elif [ "$osk" = never ]; then
+    printf '\n[input-method]\npath=\n' >> "$OUT"
+    echo "tessaro-weston-config: on-screen keyboard off (KIOSK_OSK=never)"
+elif [ "$osk" = always ]; then
+    echo "tessaro-weston-config: on-screen keyboard on (KIOSK_OSK=always)"
+elif hw_keyboard_present; then
+    printf '\n[input-method]\npath=\n' >> "$OUT"
+    echo "tessaro-weston-config: on-screen keyboard off (auto, keyboard attached)"
+else
+    echo "tessaro-weston-config: on-screen keyboard on (auto, no keyboard attached)"
 fi
 
 if [ "$scale_override" = none ]; then
