@@ -57,6 +57,33 @@ TESSARO_KIOSK_URL ?= "https://www.moonforgelinux.org"
 # has to be trimmed rather than pasted through.
 TESSARO_KIOSK_ORIGIN ?= "${@'/'.join((d.getVar('TESSARO_KIOSK_URL') or '').split('/')[:3])}"
 
+# Where nginx serves the self-test page. It has to appear in the policy in its
+# own right, not only as whatever TESSARO_KIOSK_URL happens to be: on a
+# deployed device the kiosk URL is the customer's site, and without this line
+# the diagnostic page would lose exactly the grants it exists to exercise.
+# Must match the listen address in tessaro-selftest's nginx conf.
+TESSARO_SELFTEST_ORIGIN ?= "http://127.0.0.1"
+
+# The two of them, deduplicated and order-stable. On a factory image they are
+# the same string and this collapses to one entry.
+#
+# A plain space-separated list, *not* a ready-made JSON array: this value is
+# expanded into the shell of do_install below, and a string carrying its own
+# double quotes would have them eaten by the surrounding "..." there, leaving
+# an unquoted bareword in the policy. Chromium drops the whole file on a syntax
+# error with a single SYSLOG(WARNING), so that failure would be silent. The
+# quoting happens in shell, where it can be done safely. An origin cannot
+# contain a space, so splitting on one is sound.
+def tessaro_device_origins(d):
+    origins = []
+    for key in ("TESSARO_KIOSK_ORIGIN", "TESSARO_SELFTEST_ORIGIN"):
+        value = (d.getVar(key) or "").strip()
+        if value and value not in origins:
+            origins.append(value)
+    return " ".join(origins)
+
+TESSARO_DEVICE_ORIGINS = "${@tessaro_device_origins(d)}"
+
 do_install:append() {
     install -Dm0644 ${WORKDIR}/tessaro-kiosk.service \
         ${D}${systemd_system_unitdir}/tessaro-kiosk.service
@@ -76,7 +103,18 @@ do_install:append() {
     # Chromium enterprise policy. This one path cannot follow the /usr/lib
     # convention above: it is compiled into the binary (policy_paths.cc), and
     # /etc/chromium/policies/managed is where Chromium looks, full stop.
+    # JSON-quote the origins here rather than in the bitbake variable - see the
+    # comment on tessaro_device_origins above for why that matters.
+    device_origins=""
+    for origin in ${TESSARO_DEVICE_ORIGINS}; do
+        if [ -n "$device_origins" ]; then
+            device_origins="$device_origins, "
+        fi
+        device_origins="$device_origins\"$origin\""
+    done
+
     sed -e "s|@kiosk-origin@|${TESSARO_KIOSK_ORIGIN}|g" \
+        -e "s|@device-origins@|$device_origins|g" \
         ${WORKDIR}/tessaro-kiosk-policy.json.in > ${WORKDIR}/10-tessaro.json
     install -Dm0644 ${WORKDIR}/10-tessaro.json \
         ${D}${sysconfdir}/chromium/policies/managed/10-tessaro.json

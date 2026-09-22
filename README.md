@@ -57,8 +57,10 @@ All three build the same image: read-only rootfs, overlayfs `/etc`, persistent
 
 ## Kiosk browser
 
-Images boot straight into a fullscreen Chromium on Weston, showing
-`https://www.freevision.sk`. The build-time default is `TESSARO_KIOSK_URL` in
+Images boot straight into a fullscreen Chromium on Weston. A factory image
+shows the self-test page described below, served locally on
+`http://127.0.0.1/`; a deployment shows the site it is there to show. The
+build-time default is `TESSARO_KIOSK_URL` in
 `meta-tessaro-distro/conf/distro/tessaro.conf`.
 
 On a running device, change the URL without rebuilding by uncommenting and
@@ -71,6 +73,35 @@ systemctl restart tessaro-kiosk tessaro-kiosk-watchdog
 
 `/etc` is an overlayfs whose upper layer is the persistent `/data` partition,
 so the change survives a reboot.
+
+## Checking a device
+
+A factory image boots into a static self-test page, served by nginx on the
+loopback from `/usr/share/tessaro-selftest/`. It checks rendering, fonts,
+emoji, every HTML input type, touch and mouse scrolling, WebSerial and WebHID,
+audio and video playback, and WebAudio synthesis - all from local files, so it
+works with the network down.
+
+Deploying a device means pointing `KIOSK_URL` at the site it is there to show.
+To get back to the self-test page afterwards:
+
+```sh
+vi /etc/default/tessaro-kiosk
+#   KIOSK_URL=http://127.0.0.1/
+systemctl restart tessaro-kiosk tessaro-agent
+```
+
+Set `KIOSK_REFRESH_INTERVAL=0` as well before working through it by hand -
+otherwise the supervisor reloads the page every ten minutes, closing any serial
+port it has open and wiping every field you have typed into.
+
+It is served over http rather than opened as a file on purpose: a `file://`
+page has no origin, and Chromium's serial and HID policy grants match on
+origin, so the page could only reach a device through a chooser dialog.
+`http://127.0.0.1` is a real origin and a secure context, so the pre-grants
+apply. One thing that does still need hardware: this image has no on-screen
+keyboard, so the text fields need a USB keyboard. Everything else works with a
+finger.
 
 A watchdog keeps the page honest: it watches the browser over CDP (the
 DevTools protocol, on `127.0.0.1:9222`), probes the URL, re-opens it every ten

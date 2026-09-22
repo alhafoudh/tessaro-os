@@ -334,6 +334,68 @@ Things to know:
   The latter would use the Mozilla roots that ureq's `native-tls` feature
   compiles in, freezing the trust store at build time.
 
+### Self-test page
+
+**This is what a factory image opens.** `TESSARO_KIOSK_URL` in `tessaro.conf`
+defaults to `http://127.0.0.1/`; a deployment repoints it, at build time or in
+`/etc/default/tessaro-kiosk`.
+
+`meta-tessaro-distro/recipes-browser/tessaro-selftest/` ships one static page at
+`/usr/share/tessaro-selftest/index.html`, with its media beside it. It exercises
+rendering, fonts, emoji, every `<input>` type, touch and mouse scrolling plus
+multi-touch, WebSerial and WebHID, audio and video playback, and WebAudio
+synthesis - from local files, with the network down. Passive checks grade
+themselves in a strip at the top; interactive ones stay `pending` until someone
+actually does something. To get back to it on a deployed device, set
+`KIOSK_URL=http://127.0.0.1/` and restart both units.
+
+* **It is served by nginx, and that is not a preference.** A `file://` page has
+  a null origin, and `SerialAllowAllPortsForUrls` /
+  `WebHidAllowAllDevicesForUrls` match on origin and nothing else - so the
+  self-test could never be pre-granted a device, and the chooser dialog would
+  be the only route. `http://127.0.0.1` is a real origin *and* a potentially
+  trustworthy one, so the grants apply and the page is a secure context, which
+  is itself a precondition for `navigator.serial` existing at all. The page
+  still handles the `file://` case and says what is missing.
+* **The policy lists two origins, not one.** `TESSARO_DEVICE_ORIGINS` in
+  `tessaro-kiosk_1.0.bb` is `TESSARO_KIOSK_ORIGIN` plus
+  `TESSARO_SELFTEST_ORIGIN`, deduplicated - one entry on a factory image where
+  they are the same string, two on a customer image. That second entry is what
+  keeps the diagnostic page able to open a serial port on a *deployed* device.
+  `TESSARO_SELFTEST_ORIGIN` must match the `listen` line in
+  `tessaro-selftest`'s nginx conf.
+* **nginx serves from `/usr/lib/nginx/conf.d/`, not `/etc/nginx/conf.d/`**, for
+  the same reason everything else does: `/etc` is an overlay upper on `/data`.
+  `recipes-httpd/nginx/nginx_%.bbappend` adds that include to `nginx.conf` -
+  which has to stay in `/etc`, its path being compiled in by `--conf-path` -
+  and deletes the stock `default_server` symlink, which would otherwise answer
+  on `0.0.0.0:80` with the nginx welcome page. Ours binds `127.0.0.1` only.
+* **Set `KIOSK_REFRESH_INTERVAL=0` before a manual pass.** The agent
+  re-navigates on that timer, 600s by default, and a reload closes any serial
+  port the page has open and wipes every form value. Put it back afterwards:
+  on a real site the periodic reload is what recovers a stale page.
+* **The agent probes the local server**, because `KIOSK_URL` is now http - so
+  nginx dying puts the offline page on screen like any other outage, rather
+  than going unnoticed.
+* **There is no on-screen keyboard in this image**, and Chromium on Linux has
+  none built in, so the text inputs need a USB keyboard. Everything that is a
+  tap, a slider or a picker works with a finger. The page carries this warning.
+* **It is a separate recipe from `tessaro-kiosk` on purpose.** That recipe
+  `inherit`s cargo and builds `tessaro-agent`, so anything added to its
+  `SRC_URI` re-hashes `do_fetch` and drags the whole Rust build behind every
+  edit to a `<div>`.
+* **The video clips are stand-ins**, generated with ffmpeg (H.264 high, 30 fps,
+  3 s, 1080p and 4K, AAC audio). Replace them with real footage by dropping
+  files of the same names into `files/media/`.
+
+Fonts are part of this story. Until now nothing in the tree named a font
+package at all: `liberation-fonts` was the only TTF family in the image and it
+arrived as an `RRECOMMENDS` of `weston`, which meant every generic family
+resolved to the same three faces and every emoji anywhere on the kiosk was a
+tofu box. `moonforge-image-base.bbappend` now installs `ttf-noto-emoji-color`
+(NotoColorEmoji, ~10 MB) and DejaVu sans/serif/mono (~2 MB) from meta-oe -
+which is why `layer.conf` names `openembedded-layer` in `LAYERDEPENDS`.
+
 ### Display scaling
 
 **Chromium cannot scale itself on this stack, so Weston does it.** The obvious
@@ -386,13 +448,16 @@ What was actually missing was kernel drivers and file permissions.
   open a chooser dialog, and there is nobody in front of a kiosk to click it.
   This is a constraint on the web app and it is the thing that makes or breaks
   unattended device access.
-* **Serial and HID are pre-granted to the kiosk origin** by
+* **Serial and HID are pre-granted to two origins** by
   `SerialAllowAllPortsForUrls` and `WebHidAllowAllDevicesForUrls` in the policy
-  file. These match on *origin* only - scheme, host, port, no `[*.]host`
-  wildcards - and the origin is substituted at build time from
-  `TESSARO_KIOSK_URL` (`TESSARO_KIOSK_ORIGIN` in the recipe). **Pointing
-  `KIOSK_URL` at a different origin in `/etc/default/tessaro-kiosk` silently
-  voids both**, which is the one sharp edge here.
+  file: the kiosk's own, derived from `TESSARO_KIOSK_URL`, and the self-test's
+  `http://127.0.0.1`. They collapse to one entry on a factory image, where
+  those are the same string. These match on *origin* only - scheme, host, port,
+  no `[*.]host` wildcards - and both are substituted at build time
+  (`TESSARO_DEVICE_ORIGINS` in the recipe). **Pointing `KIOSK_URL` at a third
+  origin in `/etc/default/tessaro-kiosk` silently voids the grant for it**,
+  which is the one sharp edge here; building the image with the right
+  `TESSARO_KIOSK_URL` avoids it.
 * **WebUSB ships granted to nothing.** It is the only one of the three with no
   "allow all" policy, and blanket raw USB is a bigger grant than blanket serial
   or HID, so `WebUsbAllowDevicesForUrls` is an empty list with a worked example

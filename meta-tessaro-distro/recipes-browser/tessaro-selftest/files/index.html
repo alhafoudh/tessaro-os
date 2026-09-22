@@ -1,0 +1,1815 @@
+<!DOCTYPE html>
+<!--
+  Tessaro self-test page.
+
+  What a factory image opens: nginx serves this directory on the loopback and
+  TESSARO_KIOSK_URL defaults to http://127.0.0.1/. On a deployed device, whose
+  KIOSK_URL is the customer's site, get back to it with
+
+      vi /etc/default/tessaro-kiosk
+          KIOSK_URL=http://127.0.0.1/
+      systemctl restart tessaro-kiosk tessaro-agent
+
+  Served over http rather than opened as a file, and that is the reason a web
+  server exists on this image at all. A file:// page has a null origin, and
+  SerialAllowAllPortsForUrls and WebHidAllowAllDevicesForUrls in
+  /etc/chromium/policies/managed/10-tessaro.json match on origin - so getPorts()
+  and getDevices() would come back empty on a perfectly configured device and
+  the chooser would be the only route. http://127.0.0.1 is a real origin, and a
+  potentially trustworthy one, so the grants apply and the page is a secure
+  context. It handles the file:// case anyway and says what is missing.
+
+  Before a manual pass, set KIOSK_REFRESH_INTERVAL=0 as well. The agent
+  re-navigates on that timer - ten minutes by default - and a reload closes any
+  serial port this page has open and wipes every form value.
+
+  Everything is inline and every asset is a relative path under media/. Nothing
+  is fetched from the network, so the page is just as usable on a device that
+  cannot reach anything, which is when it is needed most.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Tessaro self-test</title>
+<style>
+  /* Dark unconditionally, for the reason offline.html gives: there is no
+     settings portal on this device, prefers-color-scheme resolves to light,
+     and a full-screen white glare in a dark room is the one outcome worth
+     avoiding on a screen nobody switches off. */
+  :root {
+    color-scheme: dark;
+    --bg: #0b0e13;
+    --panel: #141a24;
+    --panel-2: #1b2331;
+    --line: #26303f;
+    --fg: #e7ebf2;
+    --dim: #8d98ab;
+    --accent: #e8b339;
+    --ok: #46c46e;
+    --warn: #e8b339;
+    --fail: #e85f5f;
+    --info: #59a6f0;
+    /* One container width for both shipping configurations: 1080p at scale 1
+       and 4K at scale 2 are both 1920 CSS px. KIOSK_SCALE=none on a 4K panel
+       gives 3840, which this keeps readable rather than stretched. */
+    --maxw: 1320px;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  html, body { margin: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    /* "Noto Color Emoji" is named after the text faces, not before them: CSS
+       falls back per character, so a family with no Latin glyphs is skipped
+       for text and picked up for emoji. Leaving it to fontconfig's ordering
+       instead works until a monochrome font that also covers the codepoint
+       outranks it. */
+    font-family: system-ui, "DejaVu Sans", "Liberation Sans", "Noto Color Emoji", sans-serif;
+    font-size: clamp(14px, 1.15vmin, 19px);
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    padding-bottom: 6rem;
+  }
+
+  .wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 clamp(12px, 2vw, 32px); }
+
+  /* ---- header ---------------------------------------------------------- */
+
+  header {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    background: rgba(11, 14, 19, 0.94);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--line);
+  }
+
+  .bar { display: flex; align-items: baseline; gap: 0.8em; flex-wrap: wrap; padding: 0.7rem 0 0.5rem; }
+  .bar h1 { margin: 0; font-size: 1.35em; font-weight: 650; letter-spacing: -0.01em; }
+  .bar .sub { color: var(--dim); font-size: 0.85em; }
+  .bar .spacer { flex: 1 1 auto; }
+
+  nav { display: flex; gap: 0.35em; overflow-x: auto; padding-bottom: 0.6rem; scrollbar-width: thin; }
+  nav a {
+    flex: none;
+    color: var(--dim);
+    text-decoration: none;
+    font-size: 0.85em;
+    padding: 0.35em 0.7em;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    white-space: nowrap;
+  }
+  nav a:hover, nav a:focus-visible { color: var(--fg); border-color: var(--accent); }
+
+  /* ---- summary --------------------------------------------------------- */
+
+  #summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+    gap: 0.5rem;
+    margin: 1.2rem 0 2rem;
+  }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 0.6rem 0.8rem;
+    display: flex;
+    align-items: center;
+    gap: 0.6em;
+  }
+  .card .label { flex: 1; }
+  .card .name { display: block; }
+  .card .detail { display: block; color: var(--dim); font-size: 0.82em; }
+
+  /* ---- sections -------------------------------------------------------- */
+
+  section {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: clamp(0.9rem, 2vmin, 1.6rem);
+    margin: 0 0 1.4rem;
+    /* Sticky header is ~7rem; without this an anchor jump hides the heading. */
+    scroll-margin-top: 8rem;
+  }
+  section > h2 {
+    margin: 0 0 0.2em;
+    font-size: 1.15em;
+    font-weight: 650;
+    display: flex;
+    align-items: center;
+    gap: 0.5em;
+  }
+  section > h2 .num { color: var(--accent); font-variant-numeric: tabular-nums; }
+  section > .hint { margin: 0 0 1.1em; color: var(--dim); font-size: 0.88em; max-width: 70ch; }
+
+  h3 { margin: 1.4em 0 0.5em; font-size: 0.95em; font-weight: 600; color: var(--dim); text-transform: uppercase; letter-spacing: 0.06em; }
+  h3:first-of-type { margin-top: 0.4em; }
+
+  /* ---- shared widgets -------------------------------------------------- */
+
+  .pill {
+    flex: none;
+    display: inline-block;
+    min-width: 5.2em;
+    text-align: center;
+    font-size: 0.78em;
+    font-weight: 600;
+    padding: 0.2em 0.6em;
+    border-radius: 999px;
+    border: 1px solid currentColor;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .pill[data-state="ok"]      { color: var(--ok); }
+  .pill[data-state="warn"]    { color: var(--warn); }
+  .pill[data-state="fail"]    { color: var(--fail); }
+  .pill[data-state="info"]    { color: var(--info); }
+  .pill[data-state="pending"] { color: var(--dim); }
+
+  /* 44px is the floor for anything a finger has to hit. */
+  button, .btn {
+    font: inherit;
+    min-height: 44px;
+    padding: 0 1.1em;
+    color: var(--fg);
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  button:active { background: #232c3c; }
+  button:disabled { opacity: 0.45; cursor: not-allowed; }
+  button.primary { border-color: var(--accent); color: var(--accent); }
+
+  .row { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; margin: 0.6rem 0; }
+
+  table { border-collapse: collapse; width: 100%; font-size: 0.9em; }
+  th, td { text-align: left; padding: 0.4em 0.7em; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--dim); font-weight: 600; }
+  tbody tr:last-child td { border-bottom: none; }
+
+  code, pre, .mono { font-family: "DejaVu Sans Mono", "Liberation Mono", ui-monospace, monospace; }
+  code { background: var(--panel-2); padding: 0.1em 0.35em; border-radius: 4px; font-size: 0.9em; }
+  pre { background: var(--panel-2); padding: 0.7em 0.9em; border-radius: 8px; overflow: auto; font-size: 0.85em; margin: 0.5em 0; }
+
+  .log {
+    background: #090c11;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 0.6em 0.8em;
+    height: 10em;
+    overflow: auto;
+    font-family: "DejaVu Sans Mono", "Liberation Mono", ui-monospace, monospace;
+    font-size: 0.82em;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .log:empty::before { content: "(nothing yet)"; color: var(--dim); }
+
+  .note {
+    border-left: 3px solid var(--accent);
+    background: var(--panel-2);
+    padding: 0.6em 0.9em;
+    border-radius: 0 8px 8px 0;
+    margin: 0.8em 0;
+    font-size: 0.88em;
+  }
+  .note.bad { border-left-color: var(--fail); }
+
+  .kv { display: grid; grid-template-columns: minmax(10em, max-content) 1fr; gap: 0.25em 1em; font-size: 0.9em; }
+  .kv dt { color: var(--dim); }
+  .kv dd { margin: 0; word-break: break-word; }
+
+  .grid { display: grid; gap: 0.8rem; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <div class="bar">
+      <h1>Tessaro self-test</h1>
+      <span class="sub" id="head-meta">&nbsp;</span>
+      <span class="spacer"></span>
+      <span class="sub mono" id="head-scroll">scroll 0%</span>
+    </div>
+    <nav>
+      <a href="#s0">0 Environment</a>
+      <a href="#s1">1 Rendering</a>
+      <a href="#s2">2 Fonts</a>
+      <a href="#s3">3 Emoji</a>
+      <a href="#s4">4 Form inputs</a>
+      <a href="#s5">5 Scroll &amp; touch</a>
+      <a href="#s6">6 WebSerial</a>
+      <a href="#s7">7 WebHID</a>
+      <a href="#s8">8 Audio</a>
+      <a href="#s9">9 Video</a>
+      <a href="#s10">10 Synthesis</a>
+    </nav>
+  </div>
+</header>
+
+<div class="wrap">
+
+<div id="summary"><!-- filled by JS --></div>
+
+<!-- ===================================================================== -->
+<section id="s0">
+  <h2><span class="num">0</span> Environment</h2>
+  <p class="hint">What the browser thinks it is running on. The scaling numbers
+    are the ones to read first: on this image Weston does the scaling from
+    <code>KIOSK_SCALE</code>, because Chromium's
+    <code>--force-device-scale-factor</code> is inert without
+    <code>wp_fractional_scale_manager_v1</code>, which Weston 13 does not
+    implement.</p>
+  <dl class="kv" id="env"></dl>
+</section>
+
+<!-- ===================================================================== -->
+<section id="s1">
+  <h2><span class="num">1</span> HTML and CSS rendering</h2>
+  <p class="hint">No automatic verdict here - if it looks like the description,
+    it rendered. Anything missing, misplaced or unstyled is the finding.</p>
+
+  <h3>Text and block elements</h3>
+  <h4 style="margin:0.6em 0 0.3em;font-size:1.05em;">A fourth-level heading</h4>
+  <p>Body text with <strong>bold</strong>, <em>italic</em>, <strong><em>both</em></strong>,
+    <s>struck through</s>, <u>underlined</u>, <mark>marked</mark>, <small>small</small>,
+    H<sub>2</sub>O and E=mc<sup>2</sup>, an <a href="#s1">internal link</a>, and
+    <code>inline code</code>.</p>
+
+  <div class="grid">
+    <div>
+      <ul><li>Unordered one</li><li>Unordered two<ul><li>Nested</li></ul></li></ul>
+      <ol><li>Ordered one</li><li>Ordered two</li></ol>
+      <dl class="kv"><dt>Term</dt><dd>Definition</dd></dl>
+    </div>
+    <div>
+      <blockquote style="margin:0;padding-left:1em;border-left:3px solid var(--line);color:var(--dim);">
+        A block quotation, indented with a rule down its left edge.
+      </blockquote>
+      <pre>preformatted
+  keeps   its     spacing</pre>
+      <hr style="border:none;border-top:1px solid var(--line);">
+      <details><summary style="cursor:pointer;">A collapsed disclosure - tap to open</summary>
+        <p style="margin:0.5em 0 0;">If you can read this, <code>&lt;details&gt;</code> works.</p>
+      </details>
+    </div>
+  </div>
+
+  <h3>Table</h3>
+  <table>
+    <thead><tr><th>Column</th><th>Numeric</th><th>Note</th></tr></thead>
+    <tbody>
+      <tr><td>First row</td><td class="mono">1 234.56</td><td>Right column wraps if it needs to</td></tr>
+      <tr><td>Second row</td><td class="mono">-42.00</td><td>Rules between rows, none after the last</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Gauges and images</h3>
+  <div class="row">
+    <label>progress <progress value="0.65"></progress></label>
+    <label>meter <meter value="0.3" low="0.4" high="0.8" optimum="1"></meter></label>
+    <svg width="44" height="44" viewBox="0 0 64 64" aria-label="inline SVG">
+      <circle cx="32" cy="32" r="28" fill="none" stroke="var(--accent)" stroke-width="5"/>
+      <path d="M20 34l9 9 16-18" fill="none" stroke="var(--ok)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    <img alt="4x4 data: PNG, magenta" width="44" height="44" style="image-rendering:pixelated;border-radius:6px;"
+         src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAYAAACp8Z5+AAAAGElEQVQI12P8z8Dwn4GBgYGJAQ0MLgEAVCkDAxUbYxsAAAAASUVORK5CYII=">
+    <span class="sub" style="color:var(--dim)">a progress bar, a meter in its "low" range, an inline SVG tick, and a 4x4 <code>data:</code> PNG</span>
+  </div>
+
+  <h3>CSS features</h3>
+  <p class="hint" style="margin:0 0 0.7em;">Grid of twelve boxes: gradient, radius,
+    shadow, transform, filter, animation, blend, clip-path, sticky, custom
+    property, <code>clamp()</code> type, and a flex row. A broken box is a
+    missing feature.</p>
+  <div id="css-demo"></div>
+</section>
+
+<!-- ===================================================================== -->
+<section id="s2">
+  <h2><span class="num">2</span> Fonts <span class="pill" data-state="pending" id="p-fonts">pending</span></h2>
+  <p class="hint">The table below measures each family against a deliberate
+    nonsense fallback: <em>present</em> means the glyphs really came from that
+    family, <em>substituted</em> means fontconfig quietly handed back something
+    else. Two rows reading identically is the interesting result.</p>
+
+  <table>
+    <thead><tr><th style="width:12em">Family</th><th style="width:7em">Status</th><th>Sample</th></tr></thead>
+    <tbody id="font-table"></tbody>
+  </table>
+
+  <h3>Scripts and diacritics</h3>
+  <table>
+    <thead><tr><th style="width:12em">Script</th><th>Sample</th></tr></thead>
+    <tbody>
+      <tr><td>Slovak</td><td style="font-size:1.3em">Ľuboš ščíta žltučké ťavy - ÄÔŇčšžýáíéúô</td></tr>
+      <tr><td>Latin extended</td><td style="font-size:1.3em">Æßðþøå ĄĆĘŁŃÓŚŹŻ ĂÎȘȚ ÇĞİÖŞÜ</td></tr>
+      <tr><td>Greek</td><td style="font-size:1.3em">Ξεσκεπάζω την ψυχοφθόρα βδελυγμία</td></tr>
+      <tr><td>Cyrillic</td><td style="font-size:1.3em">Съешь же ещё этих мягких французских булок</td></tr>
+      <tr><td>Arabic</td><td style="font-size:1.3em" dir="rtl">نص عربي للاختبار</td></tr>
+      <tr><td>CJK</td><td style="font-size:1.3em">日本語のテキスト 中文文本 한국어</td></tr>
+      <tr><td>Symbols</td><td style="font-size:1.3em">→ ← ↑ ↓ ± × ÷ ≈ ≤ ≥ ∞ ∑ √ ° € £ ¥ © ® ™ ♪ ★ ☂</td></tr>
+    </tbody>
+  </table>
+  <p class="note">Arabic and CJK have no font in this image and are
+    <em>expected</em> to render as boxes. They are here so that a real tofu box
+    is on screen next to the rows that should not be tofu.</p>
+</section>
+
+<!-- ===================================================================== -->
+<section id="s3">
+  <h2><span class="num">3</span> Emoji <span class="pill" data-state="pending" id="p-emoji">pending</span></h2>
+  <p class="hint">Colour emoji need an emoji font in the image
+    (<code>ttf-noto-emoji-color</code>). Without one every cell below is a tofu
+    box. The verdict is measured, not eyeballed: the page checks glyph width
+    against an unassigned codepoint and samples the rendered pixels for colour.</p>
+
+  <table>
+    <thead><tr><th style="width:14em">Category</th><th style="width:7em">Renders</th><th>Sample</th></tr></thead>
+    <tbody id="emoji-table"></tbody>
+  </table>
+
+  <h3>Colour check</h3>
+  <div class="row">
+    <canvas id="emoji-canvas" width="64" height="64" style="background:#090c11;border:1px solid var(--line);border-radius:8px;width:64px;height:64px;"></canvas>
+    <span id="emoji-colour" class="sub" style="color:var(--dim)">measuring...</span>
+  </div>
+</section>
+
+<!-- ===================================================================== -->
+<section id="s4">
+  <h2><span class="num">4</span> Form inputs</h2>
+  <p class="hint">Every input type, each with a live readout of its value, so
+    you can see the control actually registering rather than guessing. Nothing
+    is submitted anywhere.</p>
+
+  <p class="note bad"><strong>No on-screen keyboard.</strong> This image ships
+    no virtual keyboard, and Chromium on Linux has none built in. On a
+    touch-only device the text fields here cannot be typed into - plug in a USB
+    keyboard to test them. Everything that is a tap, a slider or a picker works
+    with a finger alone.</p>
+
+  <form id="form" onsubmit="return false">
+    <table>
+      <thead><tr><th style="width:12em">Control</th><th style="width:min(45%,22em)">Input</th><th>Value</th></tr></thead>
+      <tbody id="form-table"></tbody>
+    </table>
+
+    <h3>Other controls</h3>
+    <div class="grid">
+      <label>textarea<br><textarea name="textarea" rows="3" style="width:100%" placeholder="Multi-line text"></textarea></label>
+      <label>select<br>
+        <select name="select" style="width:100%;min-height:44px">
+          <optgroup label="Group one"><option>Alpha</option><option>Bravo</option></optgroup>
+          <optgroup label="Group two"><option>Charlie</option></optgroup>
+        </select>
+      </label>
+      <label>select multiple<br>
+        <select name="selectmulti" multiple size="3" style="width:100%">
+          <option>One</option><option>Two</option><option>Three</option><option>Four</option>
+        </select>
+      </label>
+      <label>datalist<br>
+        <input name="withlist" list="dl" style="width:100%;min-height:44px" placeholder="Type or pick">
+        <datalist id="dl"><option value="Bratislava"><option value="Košice"><option value="Žilina"></datalist>
+      </label>
+    </div>
+
+    <fieldset style="margin-top:1rem;border:1px solid var(--line);border-radius:8px;">
+      <legend style="color:var(--dim);padding:0 0.5em;">fieldset, validation and disabled states</legend>
+      <div class="row">
+        <label>required + pattern (3 digits)
+          <input name="validated" required pattern="[0-9]{3}" style="min-height:44px" placeholder="123">
+        </label>
+        <label>readonly <input value="read only" readonly style="min-height:44px"></label>
+        <label>disabled <input value="disabled" disabled style="min-height:44px"></label>
+        <button type="button" id="validate-btn">Check validity</button>
+        <output id="validate-out" class="sub" style="color:var(--dim)">not checked</output>
+      </div>
+    </fieldset>
+
+    <div class="row">
+      <button type="submit" class="primary">submit (blocked)</button>
+      <button type="reset">reset</button>
+      <input type="hidden" name="hidden" value="hidden inputs have no rendering">
+      <span class="sub" style="color:var(--dim)">plus one <code>type="hidden"</code>, which correctly shows nothing</span>
+    </div>
+  </form>
+</section>
+
+<!-- ===================================================================== -->
+<section id="s5">
+  <h2><span class="num">5</span> Scrolling and pointer input</h2>
+  <p class="hint">This whole page is the primary scroll test - the percentage in
+    the header tracks it. The panels below test nested scrolling, horizontal
+    scrolling, and whether touch is reaching the browser as touch rather than as
+    synthesized mouse events.</p>
+
+  <div class="grid">
+    <div>
+      <h3>Nested vertical scroller</h3>
+      <div class="log" id="vscroll" style="height:12em;white-space:normal;"></div>
+      <p class="sub mono" id="vscroll-out" style="color:var(--dim)">scrollTop 0</p>
+    </div>
+    <div>
+      <h3>Horizontal scroller</h3>
+      <div id="hscroll" style="overflow-x:auto;border:1px solid var(--line);border-radius:8px;padding:0.6em;">
+        <div id="hscroll-inner" style="display:flex;gap:0.5em;"></div>
+      </div>
+      <p class="sub mono" id="hscroll-out" style="color:var(--dim)">scrollLeft 0</p>
+    </div>
+  </div>
+
+  <h3>Event source</h3>
+  <p class="hint" style="margin:0 0 0.6em;">Scroll or drag anywhere. <code>touch</code>
+    means the touchscreen is reaching Chromium as touch;
+    <code>mouse</code> everywhere on a touch panel means
+    <code>KIOSK_TOUCH</code> or the kernel side is wrong.</p>
+  <dl class="kv" id="pointer-stats"></dl>
+
+  <h3>Multi-touch</h3>
+  <p class="hint" style="margin:0 0 0.6em;">Put several fingers on the pad. Each
+    tracked pointer gets a ring and its id. Only one ring with several fingers
+    down means the panel is falling back to <code>hid-generic</code>, which does
+    not decode multi-finger reports - that is what
+    <code>CONFIG_HID_MULTITOUCH</code> is in the kernel config for.</p>
+  <canvas id="touchpad" style="width:100%;height:clamp(180px,26vmin,320px);background:var(--panel-2);border:1px solid var(--line);border-radius:10px;touch-action:none;display:block;"></canvas>
+  <p class="sub mono" id="touch-out" style="color:var(--dim)">0 pointers down, max seen 0</p>
+</section>
+
+<!-- ===================================================================== -->
+<section id="s6">
+  <h2><span class="num">6</span> WebSerial <span class="pill" data-state="pending" id="p-serial">pending</span></h2>
+  <p class="hint">Plug in a USB serial adapter. <em>Authorised ports</em> is
+    what the page can see without asking; <em>Request</em> opens Chromium's
+    chooser.</p>
+  <p class="note" id="serial-origin-note"></p>
+
+  <div class="row">
+    <button id="serial-list">List authorised ports</button>
+    <button id="serial-request" class="primary">Request a port</button>
+    <label>baud
+      <select id="serial-baud" style="min-height:44px">
+        <option>9600</option><option selected>115200</option><option>57600</option>
+        <option>38400</option><option>19200</option><option>4800</option>
+      </select>
+    </label>
+    <button id="serial-open">Open</button>
+    <button id="serial-write" disabled>Write a line</button>
+    <button id="serial-close" disabled>Close</button>
+  </div>
+  <div class="log" id="serial-log"></div>
+</section>
+
+<!-- ===================================================================== -->
+<section id="s7">
+  <h2><span class="num">7</span> WebHID <span class="pill" data-state="pending" id="p-hid">pending</span></h2>
+  <p class="hint">Same shape as serial. Opening a device subscribes to its input
+    reports, so pressing a button on it should produce log lines.</p>
+
+  <div class="row">
+    <button id="hid-list">List authorised devices</button>
+    <button id="hid-request" class="primary">Request a device</button>
+    <button id="hid-close" disabled>Close all</button>
+  </div>
+  <div class="log" id="hid-log"></div>
+
+  <h3>Other device APIs</h3>
+  <p class="hint" style="margin:0 0 0.6em;">Availability only - no grants are
+    attempted. <code>navigator.bluetooth</code> is absent unless
+    <code>KIOSK_ENABLE_FEATURES</code> names <code>WebBluetooth</code>: the
+    feature is <code>stable</code> on every platform except the one this is.</p>
+  <dl class="kv" id="device-apis"></dl>
+</section>
+
+<!-- ===================================================================== -->
+<section id="s8">
+  <h2><span class="num">8</span> Audio playback <span class="pill" data-state="pending" id="p-audio">pending</span></h2>
+  <p class="hint">The same two-second tone in three containers - 440 Hz in the
+    left channel, 880 Hz in the right, so a single file also proves channel
+    mapping. Audio on this image goes straight to ALSA: Chromium is built
+    against PulseAudio but no libpulse ships, so it fails to load and falls
+    back. There is no mixer daemon in between.</p>
+
+  <div class="grid" id="audio-players"></div>
+
+  <div class="row">
+    <label>volume <input type="range" id="audio-vol" min="0" max="1" step="0.05" value="0.7"></label>
+    <button id="audio-play-all">Play all three</button>
+  </div>
+
+  <h3>Declared codec support</h3>
+  <p class="hint" style="margin:0 0 0.6em;"><code>canPlayType()</code> only states
+    an intention. A row saying <em>probably</em> next to a player that stays
+    silent is the interesting failure.</p>
+  <table><thead><tr><th style="width:16em">Type</th><th>canPlayType</th></tr></thead><tbody id="audio-codecs"></tbody></table>
+</section>
+
+<!-- ===================================================================== -->
+<section id="s9">
+  <h2><span class="num">9</span> Video playback <span class="pill" data-state="pending" id="p-video">pending</span></h2>
+  <p class="hint">H.264 in MP4, which is what <code>proprietary-codecs</code>
+    buys. A black frame with no error usually means the GPU path, not the codec:
+    Chromium's unprivileged GPU process cannot allocate KMS dumb buffers when
+    Weston holds DRM master, so the page loads and paints nothing.</p>
+  <p class="hint">Watch the <strong>dropped</strong> count on the 4K clip. That
+    is the number that decides whether a panel and a board can be paired.</p>
+
+  <div class="grid" id="video-players"></div>
+
+  <div class="row">
+    <button id="video-play-all" class="primary">Play both</button>
+    <button id="video-stop-all">Stop</button>
+    <label><input type="checkbox" id="video-loop"> loop</label>
+  </div>
+
+  <h3>Declared codec support</h3>
+  <table><thead><tr><th style="width:16em">Type</th><th>canPlayType</th></tr></thead><tbody id="video-codecs"></tbody></table>
+</section>
+
+<!-- ===================================================================== -->
+<section id="s10">
+  <h2><span class="num">10</span> JS audio synthesis <span class="pill" data-state="pending" id="p-webaudio">pending</span></h2>
+  <p class="hint">WebAudio, with nothing decoded and no file involved. If §8 is
+    silent but this is not, the problem is a decoder; if both are silent, it is
+    the output device.</p>
+
+  <dl class="kv" id="webaudio-info"></dl>
+
+  <div class="row">
+    <button id="wa-start" class="primary">Start tone</button>
+    <button id="wa-stop" disabled>Stop</button>
+    <button id="wa-sweep" disabled>Sweep 200-2000 Hz</button>
+    <button id="wa-pan" disabled>Left, then right</button>
+  </div>
+  <div class="row">
+    <label>waveform
+      <select id="wa-wave" style="min-height:44px">
+        <option>sine</option><option>square</option><option>sawtooth</option><option>triangle</option>
+      </select>
+    </label>
+    <label>frequency <input type="range" id="wa-freq" min="55" max="2000" step="1" value="440"></label>
+    <output class="mono" id="wa-freq-out">440 Hz</output>
+    <label>gain <input type="range" id="wa-gain" min="0" max="0.5" step="0.01" value="0.15"></label>
+  </div>
+  <canvas id="wa-scope" style="width:100%;height:clamp(120px,18vmin,220px);background:#090c11;border:1px solid var(--line);border-radius:10px;display:block;"></canvas>
+</section>
+
+</div>
+
+<script>
+"use strict";
+
+/* ===================================================================== */
+/* summary strip                                                          */
+/* ===================================================================== */
+
+// Passive checks report into the strip at the top. Interactive ones stay
+// "manual" until the tester actually does something, because an automatic
+// "ok" next to a test nobody ran is worse than no verdict at all.
+const CHECKS = [
+  ["render",   "Rendering",      "visual, no verdict"],
+  ["fonts",    "Fonts",          "measuring"],
+  ["emoji",    "Emoji",          "measuring"],
+  ["forms",    "Form inputs",    "manual"],
+  ["scroll",   "Scroll & touch", "manual"],
+  ["serial",   "WebSerial",      "checking"],
+  ["hid",      "WebHID",         "checking"],
+  ["audio",    "Audio playback", "manual"],
+  ["video",    "Video playback", "manual"],
+  ["webaudio", "Synthesis",      "manual"],
+];
+
+const cards = {};
+
+function buildSummary() {
+  const host = document.getElementById("summary");
+  for (const [key, name, detail] of CHECKS) {
+    const card = document.createElement("div");
+    card.className = "card";
+    card.innerHTML =
+      '<span class="pill" data-state="pending">pending</span>' +
+      '<span class="label"><span class="name"></span><span class="detail"></span></span>';
+    card.querySelector(".name").textContent = name;
+    card.querySelector(".detail").textContent = detail;
+    host.appendChild(card);
+    cards[key] = card;
+  }
+}
+
+function setCheck(key, state, detail) {
+  const card = cards[key];
+  if (!card) return;
+  const pill = card.querySelector(".pill");
+  pill.dataset.state = state;
+  pill.textContent = state;
+  if (detail !== undefined) card.querySelector(".detail").textContent = detail;
+
+  // The section heading carries the same verdict, so it is legible when the
+  // summary has scrolled away.
+  const inline = document.getElementById("p-" + key);
+  if (inline) { inline.dataset.state = state; inline.textContent = state; }
+}
+
+function el(tag, props, text) {
+  const node = document.createElement(tag);
+  if (props) Object.assign(node, props);
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+function kv(host, pairs) {
+  const dl = typeof host === "string" ? document.getElementById(host) : host;
+  dl.textContent = "";
+  for (const [k, v] of pairs) {
+    dl.appendChild(el("dt", null, k));
+    const dd = el("dd", null, String(v));
+    dd.className = "mono";
+    dl.appendChild(dd);
+  }
+}
+
+function logTo(id, line) {
+  const box = document.getElementById(id);
+  const at = new Date().toISOString().slice(11, 23);
+  box.textContent += at + "  " + line + "\n";
+  box.scrollTop = box.scrollHeight;
+}
+
+/* ===================================================================== */
+/* 0 - environment                                                        */
+/* ===================================================================== */
+
+function chromiumVersion() {
+  const m = navigator.userAgent.match(/Chrome\/([\d.]+)/);
+  return m ? m[1] : "not a Chromium user agent";
+}
+
+function mq(query) { return window.matchMedia(query).matches; }
+
+function buildEnv() {
+  const dpr = window.devicePixelRatio;
+  const rows = [
+    ["Chromium", chromiumVersion()],
+    ["User agent", navigator.userAgent],
+    ["Platform", navigator.platform + " / " + (navigator.language || "?")],
+    ["Screen", screen.width + " x " + screen.height + " CSS px, " + screen.colorDepth + "-bit"],
+    ["Viewport", window.innerWidth + " x " + window.innerHeight + " CSS px"],
+    ["devicePixelRatio", dpr + (dpr === 1 ? "  (Weston scale 1, or KIOSK_SCALE=none)" : "  (Weston output scale " + dpr + ")")],
+    ["Physical pixels", Math.round(window.innerWidth * dpr) + " x " + Math.round(window.innerHeight * dpr)],
+    ["Pointer", (mq("(pointer: coarse)") ? "coarse" : mq("(pointer: fine)") ? "fine" : "none") +
+                ", hover " + (mq("(hover: hover)") ? "yes" : "no")],
+    ["maxTouchPoints", navigator.maxTouchPoints],
+    ["Reduced motion", mq("(prefers-reduced-motion: reduce)") ? "yes" : "no"],
+    ["Colour scheme", mq("(prefers-color-scheme: dark)") ? "dark" : "light"],
+    ["Protocol", location.protocol],
+    ["Origin", location.origin === "null" || !location.origin ? "null (file:// has no origin)" : location.origin],
+    ["Secure context", window.isSecureContext ? "yes" : "no"],
+    ["Online", navigator.onLine ? "yes" : "no"],
+    ["Hardware threads", navigator.hardwareConcurrency || "unknown"],
+    ["Device memory", navigator.deviceMemory ? navigator.deviceMemory + " GB (bucketed)" : "not reported"],
+  ];
+  kv("env", rows);
+  document.getElementById("head-meta").textContent =
+    "Chromium " + chromiumVersion().split(".")[0] + " · " +
+    window.innerWidth + "×" + window.innerHeight + " @ " + dpr + "x";
+}
+
+/* ===================================================================== */
+/* 1 - CSS feature boxes                                                  */
+/* ===================================================================== */
+
+const CSS_BOXES = [
+  ["gradient",   "background:linear-gradient(135deg,#e8b339,#59a6f0)"],
+  ["radius",     "background:var(--panel-2);border-radius:50%"],
+  ["shadow",     "background:var(--panel-2);box-shadow:0 8px 20px rgba(0,0,0,.8),0 0 0 2px var(--accent)"],
+  ["transform",  "background:var(--panel-2);transform:rotate(-12deg) skewX(-8deg)"],
+  ["filter",     "background:linear-gradient(135deg,#e8b339,#59a6f0);filter:hue-rotate(140deg) saturate(2)"],
+  ["animation",  "background:var(--accent);animation:selftest-spin 3s linear infinite"],
+  ["blend",      "background:linear-gradient(90deg,#e85f5f,#59a6f0);mix-blend-mode:screen"],
+  ["clip-path",  "background:var(--ok);clip-path:polygon(50% 0,100% 100%,0 100%)"],
+  ["sticky",     "background:var(--panel-2);position:sticky;top:9rem"],
+  ["var()",      "background:var(--info)"],
+  ["clamp()",    "background:var(--panel-2);font-size:clamp(10px,2.2vmin,22px);display:grid;place-items:center"],
+  ["flex",       "background:var(--panel-2);display:flex;gap:3px;align-items:flex-end;justify-content:center;padding:6px"],
+];
+
+function buildCssDemo() {
+  const style = document.createElement("style");
+  style.textContent = "@keyframes selftest-spin{to{transform:rotate(360deg)}}";
+  document.head.appendChild(style);
+
+  const host = document.getElementById("css-demo");
+  host.style.cssText = "display:grid;gap:0.6rem;grid-template-columns:repeat(auto-fit,minmax(110px,1fr))";
+
+  for (const [name, css] of CSS_BOXES) {
+    const cell = el("div");
+    const box = el("div");
+    box.style.cssText = "height:72px;" + css;
+    if (name === "clamp()") box.textContent = "Aa";
+    if (name === "flex") {
+      for (const h of [20, 38, 56, 30]) {
+        box.appendChild(Object.assign(el("i"), { style: "flex:1;background:var(--accent);height:" + h + "px;border-radius:2px" }));
+      }
+    }
+    cell.appendChild(box);
+    cell.appendChild(Object.assign(el("div", null, name), { className: "sub mono", style: "color:var(--dim);font-size:.75em;text-align:center;margin-top:.3em" }));
+    host.appendChild(cell);
+  }
+  setCheck("render", "info", "look at it - no automatic verdict");
+}
+
+/* ===================================================================== */
+/* 2 - font availability                                                  */
+/* ===================================================================== */
+
+const PANGRAM = "Sphinx of black quartz, judge my vow. 0123456789";
+
+// The families worth asking about: the three generics every stylesheet leans
+// on, the two nobody ships, system-ui, and then the named families this image
+// does or does not install.
+//
+// Third element overrides the probe string. An emoji font has no Latin glyphs
+// at all, so probing it with a pangram measures the fallback font every time
+// and reports a perfectly well installed NotoColorEmoji as missing.
+const LATIN_PROBE = "mmmmmmmmmmlli WwOo08 Ážť";
+const EMOJI_PROBE = "\u{1F600}\u{1F44D}\u{1F4BB}";
+
+const FONT_ROWS = [
+  ["sans-serif", true], ["serif", true], ["monospace", true],
+  ["cursive", true], ["fantasy", true], ["system-ui", true],
+  ["Liberation Sans", false], ["Liberation Serif", false], ["Liberation Mono", false],
+  ["DejaVu Sans", false], ["DejaVu Serif", false], ["DejaVu Sans Mono", false],
+  ["Noto Color Emoji", false, EMOJI_PROBE],
+  ["Helvetica", false], ["Arial", false], ["Times New Roman", false], ["Courier New", false],
+];
+
+// Width-probe: render a string in "<family>, <base>" and in "<base>" alone. If
+// the family exists the widths differ from at least one base. Three bases,
+// because a family that happens to metric-match one of them would otherwise
+// read as missing.
+function fontPresent(family, probe) {
+  probe = probe || LATIN_PROBE;
+  const canvas = fontPresent._c || (fontPresent._c = document.createElement("canvas"));
+  const ctx = canvas.getContext("2d");
+  const size = "72px";
+  for (const base of ["monospace", "serif", "sans-serif"]) {
+    ctx.font = size + " " + base;
+    const bare = ctx.measureText(probe).width;
+    ctx.font = size + ' "' + family + '", ' + base;
+    if (Math.abs(ctx.measureText(probe).width - bare) > 0.5) return true;
+  }
+  return false;
+}
+
+function buildFonts() {
+  const body = document.getElementById("font-table");
+  let named = 0, namedPresent = 0;
+
+  for (const [family, generic, probe] of FONT_ROWS) {
+    // A generic keyword always resolves to something, so "present" is not a
+    // meaningful question for it - what it resolved *to* is, and that is what
+    // the sample column shows.
+    const present = generic ? null : fontPresent(family, probe);
+    if (!generic) { named++; if (present) namedPresent++; }
+
+    const tr = el("tr");
+    tr.appendChild(el("td", { className: "mono" }, family));
+
+    const status = el("td");
+    const pill = el("span", { className: "pill" },
+      generic ? "generic" : present ? "present" : "substituted");
+    pill.dataset.state = generic ? "info" : present ? "ok" : "warn";
+    status.appendChild(pill);
+    tr.appendChild(status);
+
+    const sample = el("td", null, probe ? EMOJI_PROBE + "  " + PANGRAM : PANGRAM);
+    sample.style.cssText = 'font-family:"' + family + '",' + (generic ? "" : "sans-serif") + ';font-size:1.25em';
+    tr.appendChild(sample);
+
+    body.appendChild(tr);
+  }
+
+  const emojiFont = fontPresent("Noto Color Emoji", EMOJI_PROBE);
+  const dejavu = fontPresent("DejaVu Sans");
+  const liberation = fontPresent("Liberation Sans");
+
+  if (liberation && dejavu && emojiFont) {
+    setCheck("fonts", "ok", "Liberation, DejaVu and Noto emoji all present");
+  } else if (liberation || dejavu) {
+    setCheck("fonts", "warn",
+      namedPresent + " of " + named + " named families present" +
+      (emojiFont ? "" : ", no emoji font"));
+  } else {
+    setCheck("fonts", "fail", "no expected family resolved - check fontconfig");
+  }
+}
+
+/* ===================================================================== */
+/* 3 - emoji                                                              */
+/* ===================================================================== */
+
+// Candidates for the colour probe below, best first. Only the first one that
+// is actually installed and draws something is reported on.
+const EMOJI_FAMILIES = ["Noto Color Emoji", "Noto Emoji", "DejaVu Sans"];
+
+const EMOJI_ROWS = [
+  ["Faces", "\u{1F600} \u{1F642} \u{1F914} \u{1F62E} \u{1F634}"],
+  ["Objects and nature", "\u{1F4BB} \u{1F50C} \u{1F4E1} \u{1F333} \u{2600}️ \u{1F327}️"],
+  ["Skin tone modifier", "\u{1F44D} \u{1F44D}\u{1F3FB} \u{1F44D}\u{1F3FD} \u{1F44D}\u{1F3FF}"],
+  ["ZWJ sequence", "\u{1F468}‍\u{1F469}‍\u{1F467}‍\u{1F466} \u{1F469}‍\u{1F4BB} \u{1F3F3}️‍\u{1F308}"],
+  ["Regional flags", "\u{1F1F8}\u{1F1F0} \u{1F1E8}\u{1F1FF} \u{1F1E6}\u{1F1F9} \u{1F1EA}\u{1F1FA}"],
+  ["Variation selector", "❤️ (emoji) vs ❤︎ (text)"],
+  ["Keycaps", "1️⃣ 2️⃣ #️⃣"],
+  ["Symbols", "✅ ❌ ⚠️ ℹ️ \u{1F50B} \u{1F4F6}"],
+];
+
+// Measure against the stack the page is actually rendered with, not a bare
+// "sans-serif". Which font fontconfig picks for an emoji codepoint depends on
+// the whole list, so probing a different list would answer a question nobody
+// asked - the tester is looking at body text.
+function pageFont(size) {
+  return size + "px " + getComputedStyle(document.body).fontFamily;
+}
+
+// A glyph the font cannot draw comes back at the .notdef width. U+FFFF is
+// permanently unassigned, so whatever it measures is this font stack's tofu
+// width - anything matching it did not render.
+function looksLikeTofu(text) {
+  const canvas = looksLikeTofu._c || (looksLikeTofu._c = document.createElement("canvas"));
+  const ctx = canvas.getContext("2d");
+  ctx.font = pageFont(48);
+  const tofu = ctx.measureText("￿").width;
+  const w = ctx.measureText(text).width;
+  return Math.abs(w - tofu) < 0.5;
+}
+
+function buildEmoji() {
+  const body = document.getElementById("emoji-table");
+  let bad = 0;
+
+  for (const [name, sample] of EMOJI_ROWS) {
+    const first = Array.from(sample)[0];
+    const tofu = looksLikeTofu(first);
+    if (tofu) bad++;
+
+    const tr = el("tr");
+    tr.appendChild(el("td", null, name));
+    const status = el("td");
+    const pill = el("span", { className: "pill" }, tofu ? "tofu" : "yes");
+    pill.dataset.state = tofu ? "fail" : "ok";
+    status.appendChild(pill);
+    tr.appendChild(status);
+    const cell = el("td", null, sample);
+    cell.style.fontSize = "1.9em";
+    tr.appendChild(cell);
+    body.appendChild(tr);
+  }
+
+  // Colour is the other half: a monochrome emoji font draws the glyph in the
+  // text colour, which a width check cannot tell apart from a colour one. That
+  // needs pixels.
+  //
+  // Name the family. Drawing with the page's own font list and asking what
+  // came out is the obvious thing and it is wrong: canvas2d's fallback for a
+  // codepoint the primary font lacks is not the same code path as Blink's text
+  // layout, so the canvas lands on a different font than the table above it.
+  // Measured - a device showing colour emoji in the rows reported "monochrome"
+  // here, because the canvas had fallen back to a mono font that also covers
+  // U+1F600. What the tester can see is the rows; what this answers is the
+  // separate question of whether a colour emoji font is installed at all.
+  const canvas = document.getElementById("emoji-canvas");
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+
+  function drawProbe(font) {
+    ctx.fillStyle = "#090c11";
+    ctx.fillRect(0, 0, 64, 64);
+    ctx.font = font;
+    // Canvas silently keeps the old value for a font string it cannot parse,
+    // so an unusable family must not be mistaken for an absent glyph.
+    if (ctx.font !== font) return null;
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = "#e7ebf2";
+    ctx.fillText("\u{1F600}", 6, 34);
+
+    const data = ctx.getImageData(0, 0, 64, 64).data;
+    let coloured = 0, drawn = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      const r = data[i], g = data[i + 1], b = data[i + 2];
+      if (r > 24 || g > 24 || b > 28) drawn++;
+      if (Math.max(r, g, b) - Math.min(r, g, b) > 30) coloured++;
+    }
+    return { drawn, coloured };
+  }
+
+  let best = null;
+  for (const family of EMOJI_FAMILIES) {
+    if (!fontPresent(family, EMOJI_PROBE)) continue;
+    const result = drawProbe('48px "' + family + '"');
+    if (!result || !result.drawn) continue;
+    if (!best || result.coloured > best.coloured) best = { family, ...result };
+    if (best.coloured > 20) break;
+  }
+
+  // Redraw whichever one won, so the swatch on screen matches the verdict
+  // under it rather than being whatever the loop happened to stop on.
+  if (best) drawProbe('48px "' + best.family + '"');
+
+  const out = document.getElementById("emoji-colour");
+  const allTofu = bad === EMOJI_ROWS.length;
+
+  if (!best) {
+    out.textContent = "no emoji family in the image draws U+1F600";
+    setCheck("emoji", "fail", "no emoji font in the image");
+  } else if (best.coloured > 20) {
+    out.textContent = best.family + " draws in colour (" + best.coloured + " coloured pixels)";
+    setCheck("emoji", bad ? "warn" : "ok",
+      bad ? bad + " of " + EMOJI_ROWS.length + " categories are tofu"
+          : "colour emoji render");
+  } else {
+    out.textContent = best.family + " draws U+1F600, but monochrome - a text emoji font";
+    setCheck("emoji", allTofu ? "fail" : "warn", "monochrome emoji only");
+  }
+}
+
+/* ===================================================================== */
+/* 4 - form inputs                                                        */
+/* ===================================================================== */
+
+const INPUT_TYPES = [
+  ["text", { placeholder: "Plain text" }],
+  ["search", { placeholder: "Search" }],
+  ["password", { value: "hunter2" }],
+  ["email", { placeholder: "name@example.com" }],
+  ["url", { placeholder: "https://example.com" }],
+  ["tel", { placeholder: "+421 900 000 000" }],
+  ["number", { value: "42", min: "0", max: "100", step: "1" }],
+  ["range", { value: "50", min: "0", max: "100" }],
+  ["date", {}],
+  ["time", {}],
+  ["datetime-local", {}],
+  ["month", {}],
+  ["week", {}],
+  ["color", { value: "#e8b339" }],
+  ["checkbox", {}],
+  ["radio", { name: "radiogroup" }],
+  ["file", {}],
+  ["button", { value: "type=button" }],
+  ["submit", { value: "type=submit" }],
+  ["reset", { value: "type=reset" }],
+  ["image", { src: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='90' height='30'%3E%3Crect width='90' height='30' rx='6' fill='%231b2331'/%3E%3Ctext x='45' y='20' font-size='12' fill='%23e7ebf2' text-anchor='middle'%3Etype=image%3C/text%3E%3C/svg%3E", alt: "type=image" }],
+];
+
+function buildForm() {
+  const body = document.getElementById("form-table");
+  const touched = new Set();
+
+  for (const [type, props] of INPUT_TYPES) {
+    const tr = el("tr");
+    tr.appendChild(el("td", { className: "mono" }, type));
+
+    const cell = el("td");
+    const input = el("input");
+    input.type = type;
+    Object.assign(input, props);
+    if (!["checkbox", "radio", "range", "color", "file", "button", "image"].includes(type)) {
+      input.style.cssText = "width:100%;min-height:44px";
+    }
+    if (type === "checkbox" || type === "radio") {
+      input.style.cssText = "width:26px;height:26px";
+    }
+    cell.appendChild(input);
+
+    // A second radio, because one radio on its own cannot show selection
+    // moving - which is the thing a touchscreen gets wrong.
+    if (type === "radio") {
+      const second = el("input");
+      second.type = "radio";
+      second.name = "radiogroup";
+      second.style.cssText = "width:26px;height:26px;margin-left:1em";
+      cell.appendChild(second);
+    }
+    tr.appendChild(cell);
+
+    const out = el("td", { className: "mono" }, "—");
+    out.style.color = "var(--dim)";
+    tr.appendChild(out);
+
+    const report = () => {
+      if (type === "checkbox" || type === "radio") out.textContent = input.checked ? "checked" : "unchecked";
+      else if (type === "file") out.textContent = input.files && input.files.length ? Array.from(input.files).map(f => f.name + " (" + f.size + " B)").join(", ") : "no file";
+      else out.textContent = input.value === "" ? "(empty)" : input.value;
+      out.style.color = "var(--fg)";
+      touched.add(type);
+      if (touched.size >= 3) setCheck("forms", "ok", touched.size + " controls exercised");
+    };
+    input.addEventListener("input", report);
+    input.addEventListener("change", report);
+    input.addEventListener("click", report);
+
+    body.appendChild(tr);
+  }
+
+  setCheck("forms", "pending", "tap a few controls");
+
+  document.getElementById("validate-btn").addEventListener("click", () => {
+    const field = document.querySelector('[name="validated"]');
+    const out = document.getElementById("validate-out");
+    out.textContent = field.checkValidity()
+      ? "valid"
+      : "invalid: " + field.validationMessage;
+    out.style.color = field.checkValidity() ? "var(--ok)" : "var(--fail)";
+  });
+
+  // The other controls feed the same counter, so "3 controls" really means 3.
+  for (const name of ["textarea", "select", "selectmulti", "withlist"]) {
+    const node = document.querySelector('[name="' + name + '"]');
+    if (node) node.addEventListener("input", () => {
+      touched.add(name);
+      if (touched.size >= 3) setCheck("forms", "ok", touched.size + " controls exercised");
+    });
+  }
+}
+
+/* ===================================================================== */
+/* 5 - scrolling and pointers                                             */
+/* ===================================================================== */
+
+function buildScroll() {
+  const v = document.getElementById("vscroll");
+  for (let i = 1; i <= 60; i++) {
+    v.appendChild(el("div", null, "Line " + i + " - scroll this panel without scrolling the page."));
+  }
+  const vout = document.getElementById("vscroll-out");
+  v.addEventListener("scroll", () => {
+    vout.textContent = "scrollTop " + Math.round(v.scrollTop) + " / " + (v.scrollHeight - v.clientHeight);
+    mark("nested");
+  });
+
+  const h = document.getElementById("hscroll-inner");
+  for (let i = 1; i <= 24; i++) {
+    const box = el("div", null, String(i));
+    box.style.cssText = "flex:none;width:96px;height:72px;display:grid;place-items:center;border-radius:8px;background:var(--panel-2);border:1px solid var(--line)";
+    h.appendChild(box);
+  }
+  const hbox = document.getElementById("hscroll");
+  const hout = document.getElementById("hscroll-out");
+  hbox.addEventListener("scroll", () => {
+    hout.textContent = "scrollLeft " + Math.round(hbox.scrollLeft) + " / " + (hbox.scrollWidth - hbox.clientWidth);
+    mark("horizontal");
+  });
+
+  // Page scroll percentage in the header.
+  const headScroll = document.getElementById("head-scroll");
+  window.addEventListener("scroll", () => {
+    const max = document.documentElement.scrollHeight - window.innerHeight;
+    const pct = max > 0 ? Math.round((window.scrollY / max) * 100) : 0;
+    headScroll.textContent = "scroll " + pct + "%";
+    mark("page");
+  }, { passive: true });
+
+  // Pointer provenance. The question this answers is whether the touchscreen
+  // is reaching Chromium as touch or only as synthesized mouse events.
+  const seen = new Set();
+  const scrolled = new Set();
+  const counts = { wheel: 0, touch: 0, mouse: 0, pen: 0 };
+  let lastWheel = "—";
+
+  const render = () => kv("pointer-stats", [
+    ["Pointer types seen", seen.size ? Array.from(seen).join(", ") : "none yet"],
+    ["pointerdown/move (touch)", counts.touch],
+    ["pointerdown/move (mouse)", counts.mouse],
+    ["pointerdown/move (pen)", counts.pen],
+    ["wheel events", counts.wheel],
+    ["last wheel delta", lastWheel],
+    ["Scrolled", Array.from(scrolled).join(", ") || "nothing yet"],
+    ["ontouchstart in window", ("ontouchstart" in window) ? "yes" : "no (--touch-events=disabled?)"],
+  ]);
+
+  function mark(what) { scrolled.add(what); render(); grade(); }
+
+  window.addEventListener("pointerdown", ev => { seen.add(ev.pointerType); counts[ev.pointerType] = (counts[ev.pointerType] || 0) + 1; render(); grade(); }, { passive: true });
+  window.addEventListener("pointermove", ev => { seen.add(ev.pointerType); counts[ev.pointerType] = (counts[ev.pointerType] || 0) + 1; render(); }, { passive: true });
+  window.addEventListener("wheel", ev => {
+    counts.wheel++;
+    lastWheel = "dx " + ev.deltaX.toFixed(1) + "  dy " + ev.deltaY.toFixed(1) + "  mode " + ev.deltaMode;
+    render();
+  }, { passive: true });
+
+  function grade() {
+    const kinds = [];
+    if (counts.touch) kinds.push("touch");
+    if (counts.mouse || counts.wheel) kinds.push("mouse");
+    if (!kinds.length) { setCheck("scroll", "pending", "scroll and touch the page"); return; }
+    setCheck("scroll", "ok", kinds.join(" + ") + ", " + scrolled.size + " scrollers used");
+  }
+
+  render();
+  buildTouchpad();
+}
+
+function buildTouchpad() {
+  const canvas = document.getElementById("touchpad");
+  const ctx = canvas.getContext("2d");
+  const live = new Map();
+  let maxSeen = 0;
+  const out = document.getElementById("touch-out");
+
+  function resize() {
+    const dpr = window.devicePixelRatio || 1;
+    const rect = canvas.getBoundingClientRect();
+    canvas.width = Math.round(rect.width * dpr);
+    canvas.height = Math.round(rect.height * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    draw();
+  }
+
+  function draw() {
+    const rect = canvas.getBoundingClientRect();
+    ctx.clearRect(0, 0, rect.width, rect.height);
+
+    if (!live.size) {
+      ctx.fillStyle = "#8d98ab";
+      ctx.font = "14px sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText("put one or more fingers here", rect.width / 2, rect.height / 2);
+      return;
+    }
+
+    let i = 0;
+    for (const [id, p] of live) {
+      const hue = (i++ * 67) % 360;
+      ctx.strokeStyle = "hsl(" + hue + ",80%,62%)";
+      ctx.fillStyle = "hsl(" + hue + ",80%,62%)";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 34, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.font = "12px sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText(p.type + " " + id, p.x, p.y - 42);
+    }
+  }
+
+  function at(ev) {
+    const rect = canvas.getBoundingClientRect();
+    return { x: ev.clientX - rect.left, y: ev.clientY - rect.top, type: ev.pointerType };
+  }
+
+  function update() {
+    maxSeen = Math.max(maxSeen, live.size);
+    out.textContent = live.size + " pointer" + (live.size === 1 ? "" : "s") + " down, max seen " + maxSeen;
+    if (maxSeen >= 2) setCheck("scroll", "ok", "multi-touch confirmed (" + maxSeen + " pointers)");
+    draw();
+  }
+
+  canvas.addEventListener("pointerdown", ev => {
+    canvas.setPointerCapture(ev.pointerId);
+    live.set(ev.pointerId, at(ev));
+    update();
+  });
+  canvas.addEventListener("pointermove", ev => {
+    if (live.has(ev.pointerId)) { live.set(ev.pointerId, at(ev)); draw(); }
+  });
+  // Only up and cancel. pointerleave would drop a finger that is still down
+  // but has slid past the edge of the pad, which is exactly the gesture a
+  // multi-touch test invites.
+  for (const type of ["pointerup", "pointercancel"]) {
+    canvas.addEventListener(type, ev => { live.delete(ev.pointerId); update(); });
+  }
+
+  new ResizeObserver(resize).observe(canvas);
+  resize();
+}
+
+/* ===================================================================== */
+/* 6 - WebSerial                                                          */
+/* ===================================================================== */
+
+function describePort(port) {
+  const info = port.getInfo ? port.getInfo() : {};
+  const hex = n => n === undefined ? "?" : "0x" + n.toString(16).padStart(4, "0");
+  return "usbVendorId " + hex(info.usbVendorId) + ", usbProductId " + hex(info.usbProductId);
+}
+
+function buildSerial() {
+  const note = document.getElementById("serial-origin-note");
+  const fileOrigin = location.protocol === "file:";
+  note.innerHTML = fileOrigin
+    ? "<strong>Loaded from <code>file://</code>, so the origin is <code>null</code>.</strong> " +
+      "<code>SerialAllowAllPortsForUrls</code> in the Chromium policy matches on origin, " +
+      "so it cannot apply here and the authorised list will be empty no matter how the " +
+      "device is configured. Use <em>Request a port</em>; the chooser is the only route " +
+      "from this URL."
+    : "Loaded from <code>" + location.origin + "</code>. If that is the origin baked into " +
+      "the policy file, authorised ports should appear without a chooser.";
+
+  if (!("serial" in navigator)) {
+    setCheck("serial", "fail", "navigator.serial is absent");
+    logTo("serial-log", "navigator.serial is not defined - Web Serial is unavailable in this context");
+    for (const id of ["serial-list", "serial-request", "serial-open", "serial-write", "serial-close"]) {
+      document.getElementById(id).disabled = true;
+    }
+    return;
+  }
+
+  setCheck("serial", "info", "API present, no port opened");
+
+  let port = null, reader = null, keepReading = false;
+
+  document.getElementById("serial-list").addEventListener("click", async () => {
+    try {
+      const ports = await navigator.serial.getPorts();
+      if (!ports.length) {
+        logTo("serial-log", "no authorised ports" + (fileOrigin ? " (expected on file://)" : ""));
+      } else {
+        ports.forEach((p, i) => logTo("serial-log", "authorised port " + i + ": " + describePort(p)));
+        port = ports[0];
+      }
+    } catch (err) { logTo("serial-log", "getPorts failed: " + err); }
+  });
+
+  document.getElementById("serial-request").addEventListener("click", async () => {
+    try {
+      port = await navigator.serial.requestPort();
+      logTo("serial-log", "chooser returned: " + describePort(port));
+      setCheck("serial", "ok", "port granted via chooser");
+    } catch (err) { logTo("serial-log", "requestPort: " + err); }
+  });
+
+  document.getElementById("serial-open").addEventListener("click", async () => {
+    if (!port) { logTo("serial-log", "no port selected - list or request one first"); return; }
+    const baud = Number(document.getElementById("serial-baud").value);
+    try {
+      await port.open({ baudRate: baud });
+      logTo("serial-log", "opened at " + baud + " baud");
+      setCheck("serial", "ok", "open at " + baud + " baud");
+      document.getElementById("serial-write").disabled = false;
+      document.getElementById("serial-close").disabled = false;
+
+      keepReading = true;
+      const decoder = new TextDecoder();
+      while (keepReading && port.readable) {
+        reader = port.readable.getReader();
+        try {
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            logTo("serial-log", "rx " + value.length + " B: " + JSON.stringify(decoder.decode(value)));
+          }
+        } catch (err) {
+          logTo("serial-log", "read error: " + err);
+        } finally {
+          reader.releaseLock();
+        }
+      }
+    } catch (err) {
+      logTo("serial-log", "open failed: " + err);
+      setCheck("serial", "fail", "open failed");
+    }
+  });
+
+  document.getElementById("serial-write").addEventListener("click", async () => {
+    if (!port || !port.writable) { logTo("serial-log", "port is not writable"); return; }
+    try {
+      const writer = port.writable.getWriter();
+      await writer.write(new TextEncoder().encode("tessaro selftest\r\n"));
+      writer.releaseLock();
+      logTo("serial-log", "tx 18 B");
+    } catch (err) { logTo("serial-log", "write failed: " + err); }
+  });
+
+  document.getElementById("serial-close").addEventListener("click", async () => {
+    keepReading = false;
+    try { if (reader) await reader.cancel(); } catch (err) { /* already gone */ }
+    try { await port.close(); logTo("serial-log", "closed"); } catch (err) { logTo("serial-log", "close failed: " + err); }
+    document.getElementById("serial-write").disabled = true;
+    document.getElementById("serial-close").disabled = true;
+  });
+}
+
+/* ===================================================================== */
+/* 7 - WebHID and the other device APIs                                   */
+/* ===================================================================== */
+
+function buildHid() {
+  kv("device-apis", [
+    ["navigator.serial", "serial" in navigator ? "present" : "absent"],
+    ["navigator.hid", "hid" in navigator ? "present" : "absent"],
+    ["navigator.usb", "usb" in navigator ? "present" : "absent"],
+    ["navigator.bluetooth", "bluetooth" in navigator ? "present" : "absent - add WebBluetooth to KIOSK_ENABLE_FEATURES"],
+    ["Secure context", window.isSecureContext ? "yes" : "no - device APIs need one"],
+  ]);
+
+  if (!("hid" in navigator)) {
+    setCheck("hid", "fail", "navigator.hid is absent");
+    logTo("hid-log", "navigator.hid is not defined - WebHID is unavailable in this context");
+    for (const id of ["hid-list", "hid-request", "hid-close"]) document.getElementById(id).disabled = true;
+    return;
+  }
+
+  setCheck("hid", "info", "API present, no device opened");
+  const open = [];
+
+  const hex = n => "0x" + (n || 0).toString(16).padStart(4, "0");
+
+  async function adopt(device) {
+    logTo("hid-log", "device: " + device.productName + "  vendor " + hex(device.vendorId) +
+      "  product " + hex(device.productId) + "  " + device.collections.length + " collection(s)");
+    for (const c of device.collections) {
+      logTo("hid-log", "  usagePage " + hex(c.usagePage) + " usage " + hex(c.usage) +
+        ", " + c.inputReports.length + " input / " + c.outputReports.length + " output reports");
+    }
+    if (!device.opened) {
+      try { await device.open(); logTo("hid-log", "  opened, listening for input reports"); }
+      catch (err) { logTo("hid-log", "  open failed: " + err); return; }
+    }
+    device.addEventListener("inputreport", ev => {
+      const bytes = Array.from(new Uint8Array(ev.data.buffer))
+        .map(b => b.toString(16).padStart(2, "0")).join(" ");
+      logTo("hid-log", "report " + ev.reportId + ": " + bytes);
+    });
+    open.push(device);
+    document.getElementById("hid-close").disabled = false;
+    setCheck("hid", "ok", open.length + " device(s) open");
+  }
+
+  document.getElementById("hid-list").addEventListener("click", async () => {
+    try {
+      const devices = await navigator.hid.getDevices();
+      if (!devices.length) {
+        logTo("hid-log", "no authorised devices" +
+          (location.protocol === "file:" ? " (expected on file:// - the policy grant needs an origin)" : ""));
+      } else {
+        for (const d of devices) await adopt(d);
+      }
+    } catch (err) { logTo("hid-log", "getDevices failed: " + err); }
+  });
+
+  document.getElementById("hid-request").addEventListener("click", async () => {
+    try {
+      const devices = await navigator.hid.requestDevice({ filters: [] });
+      if (!devices.length) { logTo("hid-log", "chooser dismissed with no selection"); return; }
+      for (const d of devices) await adopt(d);
+    } catch (err) { logTo("hid-log", "requestDevice: " + err); }
+  });
+
+  document.getElementById("hid-close").addEventListener("click", async () => {
+    for (const d of open.splice(0)) {
+      try { await d.close(); logTo("hid-log", "closed " + d.productName); }
+      catch (err) { logTo("hid-log", "close failed: " + err); }
+    }
+    document.getElementById("hid-close").disabled = true;
+  });
+}
+
+/* ===================================================================== */
+/* 8 - audio playback                                                     */
+/* ===================================================================== */
+
+const AUDIO_FILES = [
+  ["media/sample-tone.wav",  "WAV / PCM",  "audio/wav"],
+  ["media/sample-tone.mp3",  "MP3",        'audio/mpeg; codecs="mp3"'],
+  ["media/sample-tone.opus", "Opus / Ogg", 'audio/ogg; codecs="opus"'],
+];
+
+const AUDIO_CODECS = [
+  ["audio/wav", "audio/wav"],
+  ['audio/mpeg; codecs="mp3"', "MP3"],
+  ['audio/mp4; codecs="mp4a.40.2"', "AAC-LC in MP4"],
+  ['audio/ogg; codecs="opus"', "Opus in Ogg"],
+  ['audio/ogg; codecs="vorbis"', "Vorbis in Ogg"],
+  ['audio/webm; codecs="opus"', "Opus in WebM"],
+  ["audio/flac", "FLAC"],
+];
+
+function buildAudio() {
+  const host = document.getElementById("audio-players");
+  const players = [];
+  let played = 0, failed = 0;
+
+  for (const [src, name, type] of AUDIO_FILES) {
+    const probe = document.createElement("audio");
+    const verdict = probe.canPlayType(type) || "no";
+
+    const card = el("div");
+    card.style.cssText = "background:var(--panel-2);border:1px solid var(--line);border-radius:10px;padding:0.7em 0.9em";
+
+    const head = el("div");
+    head.style.cssText = "display:flex;align-items:center;gap:0.6em;margin-bottom:0.5em";
+    head.appendChild(el("strong", null, name));
+    const pill = el("span", { className: "pill" }, verdict === "no" ? "no" : verdict);
+    pill.dataset.state = verdict === "probably" ? "ok" : verdict === "maybe" ? "warn" : "fail";
+    head.appendChild(pill);
+    card.appendChild(head);
+
+    const audio = el("audio");
+    audio.controls = true;
+    audio.preload = "auto";
+    audio.src = src;
+    audio.style.width = "100%";
+    card.appendChild(audio);
+
+    const status = el("div", { className: "sub mono" }, "not played");
+    status.style.cssText = "color:var(--dim);font-size:0.82em;margin-top:0.4em";
+    card.appendChild(status);
+
+    audio.addEventListener("playing", () => { status.textContent = "playing"; status.style.color = "var(--ok)"; });
+    audio.addEventListener("ended", () => {
+      played++;
+      status.textContent = "played to the end (" + audio.duration.toFixed(2) + " s)";
+      status.style.color = "var(--ok)";
+      grade();
+    });
+    audio.addEventListener("error", () => {
+      failed++;
+      const err = audio.error;
+      status.textContent = "failed: " + (err ? "code " + err.code + " " + (err.message || "") : "unknown");
+      status.style.color = "var(--fail)";
+      grade();
+    });
+
+    host.appendChild(card);
+    players.push(audio);
+  }
+
+  function grade() {
+    if (failed && !played) setCheck("audio", "fail", failed + " of " + AUDIO_FILES.length + " failed to load");
+    else if (failed) setCheck("audio", "warn", played + " played, " + failed + " failed");
+    else if (played) setCheck("audio", "ok", played + " of " + AUDIO_FILES.length + " played through");
+  }
+
+  document.getElementById("audio-vol").addEventListener("input", ev => {
+    for (const a of players) a.volume = Number(ev.target.value);
+  });
+  for (const a of players) a.volume = 0.7;
+
+  document.getElementById("audio-play-all").addEventListener("click", async () => {
+    // Sequentially, so three tones do not arrive as one chord.
+    for (const a of players) {
+      a.currentTime = 0;
+      try { await a.play(); } catch (err) { logToConsoleOnly(err); }
+      await new Promise(done => {
+        const stop = () => { a.removeEventListener("ended", stop); a.removeEventListener("error", stop); done(); };
+        a.addEventListener("ended", stop);
+        a.addEventListener("error", stop);
+        setTimeout(stop, 4000);
+      });
+    }
+  });
+
+  const body = document.getElementById("audio-codecs");
+  const probe = document.createElement("audio");
+  for (const [type, label] of AUDIO_CODECS) {
+    const verdict = probe.canPlayType(type) || "no";
+    const tr = el("tr");
+    tr.appendChild(el("td", { className: "mono" }, label));
+    const td = el("td");
+    const pill = el("span", { className: "pill" }, verdict);
+    pill.dataset.state = verdict === "probably" ? "ok" : verdict === "maybe" ? "warn" : "fail";
+    td.appendChild(pill);
+    tr.appendChild(td);
+    body.appendChild(tr);
+  }
+
+  setCheck("audio", "pending", "press play");
+}
+
+function logToConsoleOnly(err) { if (window.console) console.warn(err); }
+
+/* ===================================================================== */
+/* 9 - video playback                                                     */
+/* ===================================================================== */
+
+const VIDEO_FILES = [
+  ["media/sample-video-3s-fullhd.mp4", "1920 x 1080, H.264"],
+  ["media/sample-video-3s-4k.mp4",     "3840 x 2160, H.264"],
+];
+
+const VIDEO_CODECS = [
+  ['video/mp4; codecs="avc1.42E01E"', "H.264 baseline"],
+  ['video/mp4; codecs="avc1.640028"', "H.264 high"],
+  ['video/mp4; codecs="hev1.1.6.L93.B0"', "HEVC"],
+  ['video/webm; codecs="vp8"', "VP8"],
+  ['video/webm; codecs="vp09.00.10.08"', "VP9"],
+  ['video/mp4; codecs="av01.0.05M.08"', "AV1"],
+  ["video/ogg", "Ogg Theora"],
+];
+
+function buildVideo() {
+  const host = document.getElementById("video-players");
+  const players = [];
+  let ok = 0, failed = 0;
+
+  for (const [src, name] of VIDEO_FILES) {
+    const card = el("div");
+    card.style.cssText = "background:var(--panel-2);border:1px solid var(--line);border-radius:10px;padding:0.7em 0.9em";
+    card.appendChild(Object.assign(el("strong", null, name), { style: "display:block;margin-bottom:0.5em" }));
+
+    const video = el("video");
+    video.controls = true;
+    video.preload = "metadata";
+    video.playsInline = true;
+    video.src = src;
+    video.style.cssText = "width:100%;border-radius:8px;background:#000;display:block";
+    card.appendChild(video);
+
+    const stats = el("div", { className: "mono" }, "not loaded");
+    stats.style.cssText = "color:var(--dim);font-size:0.8em;margin-top:0.4em;white-space:pre-line";
+    card.appendChild(stats);
+
+    const update = () => {
+      const q = video.getVideoPlaybackQuality ? video.getVideoPlaybackQuality() : null;
+      const lines = [
+        video.videoWidth + " x " + video.videoHeight + " intrinsic, " +
+          video.duration.toFixed(2) + " s, at " + video.currentTime.toFixed(2) + " s",
+      ];
+      if (q) {
+        const pct = q.totalVideoFrames ? ((q.droppedVideoFrames / q.totalVideoFrames) * 100).toFixed(1) : "0.0";
+        lines.push("frames: " + q.totalVideoFrames + " total, " + q.droppedVideoFrames + " dropped (" + pct + "%)");
+      } else {
+        lines.push("getVideoPlaybackQuality() unavailable");
+      }
+      stats.textContent = lines.join("\n");
+    };
+
+    video.addEventListener("loadedmetadata", () => { update(); stats.style.color = "var(--dim)"; });
+    video.addEventListener("timeupdate", update);
+    video.addEventListener("ended", () => {
+      ok++;
+      update();
+      stats.style.color = "var(--ok)";
+      grade();
+    });
+    video.addEventListener("error", () => {
+      failed++;
+      const err = video.error;
+      stats.textContent = "failed: " + (err ? "code " + err.code + " " + (err.message || "") : "unknown");
+      stats.style.color = "var(--fail)";
+      grade();
+    });
+
+    host.appendChild(card);
+    players.push(video);
+  }
+
+  function grade() {
+    if (failed && !ok) setCheck("video", "fail", failed + " clip(s) failed to decode");
+    else if (failed) setCheck("video", "warn", ok + " played, " + failed + " failed");
+    else if (ok) {
+      const dropped = players.reduce((n, v) =>
+        n + (v.getVideoPlaybackQuality ? v.getVideoPlaybackQuality().droppedVideoFrames : 0), 0);
+      setCheck("video", dropped > 5 ? "warn" : "ok",
+        ok + " of " + VIDEO_FILES.length + " played, " + dropped + " frames dropped");
+    }
+  }
+
+  document.getElementById("video-play-all").addEventListener("click", () => {
+    for (const v of players) { v.currentTime = 0; v.play().catch(logToConsoleOnly); }
+  });
+  document.getElementById("video-stop-all").addEventListener("click", () => {
+    for (const v of players) { v.pause(); v.currentTime = 0; }
+  });
+  document.getElementById("video-loop").addEventListener("change", ev => {
+    for (const v of players) v.loop = ev.target.checked;
+  });
+
+  const body = document.getElementById("video-codecs");
+  const probe = document.createElement("video");
+  for (const [type, label] of VIDEO_CODECS) {
+    const verdict = probe.canPlayType(type) || "no";
+    const tr = el("tr");
+    tr.appendChild(el("td", { className: "mono" }, label));
+    const td = el("td");
+    const pill = el("span", { className: "pill" }, verdict);
+    pill.dataset.state = verdict === "probably" ? "ok" : verdict === "maybe" ? "warn" : "fail";
+    td.appendChild(pill);
+    tr.appendChild(td);
+    body.appendChild(tr);
+  }
+
+  setCheck("video", "pending", "press play");
+}
+
+/* ===================================================================== */
+/* 10 - WebAudio synthesis                                                */
+/* ===================================================================== */
+
+function buildWebAudio() {
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  if (!Ctx) {
+    setCheck("webaudio", "fail", "AudioContext is absent");
+    kv("webaudio-info", [["AudioContext", "not available in this browser"]]);
+    return;
+  }
+
+  let ctx = null, osc = null, gain = null, panner = null, analyser = null, raf = 0;
+
+  const canvas = document.getElementById("wa-scope");
+  const c2d = canvas.getContext("2d");
+
+  const info = () => kv("webaudio-info", [
+    ["AudioContext", ctx ? ctx.state : "not created yet"],
+    ["Sample rate", ctx ? ctx.sampleRate + " Hz" : "—"],
+    ["Base latency", ctx && ctx.baseLatency !== undefined ? (ctx.baseLatency * 1000).toFixed(1) + " ms" : "—"],
+    ["Output latency", ctx && ctx.outputLatency ? (ctx.outputLatency * 1000).toFixed(1) + " ms" : "—"],
+    ["Destination channels", ctx ? ctx.destination.channelCount : "—"],
+    ["Max channel count", ctx ? ctx.destination.maxChannelCount : "—"],
+  ]);
+
+  function resize() {
+    const dpr = window.devicePixelRatio || 1;
+    const rect = canvas.getBoundingClientRect();
+    canvas.width = Math.round(rect.width * dpr);
+    canvas.height = Math.round(rect.height * dpr);
+    c2d.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  new ResizeObserver(resize).observe(canvas);
+  resize();
+
+  function scope() {
+    raf = requestAnimationFrame(scope);
+    const rect = canvas.getBoundingClientRect();
+    c2d.clearRect(0, 0, rect.width, rect.height);
+    if (!analyser) return;
+
+    const buf = new Uint8Array(analyser.fftSize);
+    analyser.getByteTimeDomainData(buf);
+
+    c2d.strokeStyle = "#26303f";
+    c2d.lineWidth = 1;
+    c2d.beginPath();
+    c2d.moveTo(0, rect.height / 2);
+    c2d.lineTo(rect.width, rect.height / 2);
+    c2d.stroke();
+
+    c2d.strokeStyle = "#e8b339";
+    c2d.lineWidth = 2;
+    c2d.beginPath();
+    for (let i = 0; i < buf.length; i++) {
+      const x = (i / (buf.length - 1)) * rect.width;
+      const y = (buf[i] / 255) * rect.height;
+      i ? c2d.lineTo(x, y) : c2d.moveTo(x, y);
+    }
+    c2d.stroke();
+  }
+
+  function start() {
+    if (!ctx) ctx = new Ctx();
+    if (ctx.state === "suspended") ctx.resume();
+
+    osc = ctx.createOscillator();
+    gain = ctx.createGain();
+    analyser = ctx.createAnalyser();
+    analyser.fftSize = 2048;
+
+    // StereoPannerNode is what makes the left/right check meaningful; without
+    // it the tone is centred and a swapped or mono output looks identical.
+    panner = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
+
+    osc.type = document.getElementById("wa-wave").value;
+    osc.frequency.value = Number(document.getElementById("wa-freq").value);
+    gain.gain.value = Number(document.getElementById("wa-gain").value);
+
+    osc.connect(gain);
+    if (panner) { gain.connect(panner); panner.connect(analyser); }
+    else gain.connect(analyser);
+    analyser.connect(ctx.destination);
+    osc.start();
+
+    if (!raf) scope();
+    info();
+
+    document.getElementById("wa-start").disabled = true;
+    for (const id of ["wa-stop", "wa-sweep", "wa-pan"]) document.getElementById(id).disabled = false;
+    setCheck("webaudio", "ok", ctx.state + " at " + ctx.sampleRate + " Hz");
+  }
+
+  function stop() {
+    if (osc) { try { osc.stop(); } catch (err) { /* already stopped */ } osc.disconnect(); osc = null; }
+    if (raf) { cancelAnimationFrame(raf); raf = 0; }
+    analyser = null;
+    const rect = canvas.getBoundingClientRect();
+    c2d.clearRect(0, 0, rect.width, rect.height);
+    document.getElementById("wa-start").disabled = false;
+    for (const id of ["wa-stop", "wa-sweep", "wa-pan"]) document.getElementById(id).disabled = true;
+    info();
+  }
+
+  document.getElementById("wa-start").addEventListener("click", start);
+  document.getElementById("wa-stop").addEventListener("click", stop);
+
+  document.getElementById("wa-wave").addEventListener("change", ev => { if (osc) osc.type = ev.target.value; });
+
+  document.getElementById("wa-freq").addEventListener("input", ev => {
+    const hz = Number(ev.target.value);
+    document.getElementById("wa-freq-out").textContent = hz + " Hz";
+    if (osc) osc.frequency.setTargetAtTime(hz, ctx.currentTime, 0.01);
+  });
+  document.getElementById("wa-gain").addEventListener("input", ev => {
+    if (gain) gain.gain.setTargetAtTime(Number(ev.target.value), ctx.currentTime, 0.01);
+  });
+
+  document.getElementById("wa-sweep").addEventListener("click", () => {
+    if (!osc) return;
+    const now = ctx.currentTime;
+    osc.frequency.cancelScheduledValues(now);
+    osc.frequency.setValueAtTime(200, now);
+    osc.frequency.exponentialRampToValueAtTime(2000, now + 2);
+    osc.frequency.exponentialRampToValueAtTime(200, now + 4);
+  });
+
+  document.getElementById("wa-pan").addEventListener("click", () => {
+    if (!panner) { setCheck("webaudio", "warn", "no StereoPannerNode - cannot test channels"); return; }
+    const now = ctx.currentTime;
+    panner.pan.cancelScheduledValues(now);
+    panner.pan.setValueAtTime(-1, now);
+    panner.pan.setValueAtTime(1, now + 1.5);
+    panner.pan.setValueAtTime(0, now + 3);
+  });
+
+  info();
+  setCheck("webaudio", "pending", "press start");
+}
+
+/* ===================================================================== */
+
+buildSummary();
+buildEnv();
+buildCssDemo();
+buildFonts();
+buildEmoji();
+buildForm();
+buildScroll();
+buildSerial();
+buildHid();
+buildAudio();
+buildVideo();
+buildWebAudio();
+
+// Fonts land asynchronously often enough to be worth one re-measure: on a cold
+// boot fontconfig may still be warming its cache when this first runs.
+if (document.fonts && document.fonts.ready) {
+  document.fonts.ready.then(() => {
+    document.getElementById("font-table").textContent = "";
+    document.getElementById("emoji-table").textContent = "";
+    buildFonts();
+    buildEmoji();
+  });
+}
+</script>
+</body>
+</html>

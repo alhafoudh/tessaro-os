@@ -40,8 +40,12 @@
   body {
     margin: 0;
     padding: clamp(18px, 4.5vmin, 64px);
-    /* DejaVu is named explicitly: it is the family in the image with the widest
-       coverage, and system-ui has nothing to resolve against on this device. */
+    /* DejaVu first because it has the widest coverage of the families in the
+       image, Liberation behind it because it is the one that arrives whether
+       anyone asks or not (weston RRECOMMENDS it). system-ui leads but resolves
+       to nothing on this device - there is no desktop to take a setting from.
+       Both named families are installed by moonforge-image-base.bbappend; for
+       a while this file named DejaVu when no DejaVu was in the image. */
     font-family: system-ui, "DejaVu Sans", "Liberation Sans", sans-serif;
     background: var(--bg);
     background-image: radial-gradient(120vmax 90vmax at 50% 30%, var(--glow), var(--bg) 68%);

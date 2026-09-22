@@ -22,6 +22,20 @@ After=weston.socket
 After=systemd-tmpfiles-setup.service
 After=dbus.socket
 
+# The default kiosk URL is served by nginx on the loopback, and nginx.service
+# is Type=forking with an ExecStartPre config test, so After= here means the
+# socket is actually accepting by the time Chromium asks for the page.
+#
+# Ordering only, no Wants=: nginx is enabled by its own preset, and an image
+# built without it - one whose KIOSK_URL is a remote site - should not have
+# this unit mention a dependency that does not exist. systemd ignores an
+# After= on an absent unit silently, which is exactly the behaviour wanted.
+#
+# Nothing breaks if it is slow anyway. tessaro-agent probes the URL and
+# navigates when it answers, so a browser that started too early is corrected
+# within one probe interval rather than left on an error page.
+After=nginx.service
+
 # Deliberately NOT Wants/After=network-online.target, which the old
 # wpe-simple-launcher unit had. That target pulls in whatever wait-online
 # implementation the image has - NetworkManager-wait-online.service here - and

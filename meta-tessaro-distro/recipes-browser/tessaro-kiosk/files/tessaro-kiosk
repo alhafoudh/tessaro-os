@@ -19,11 +19,29 @@
 
 # URL the kiosk shows.
 #
-# Careful if you point this at a *different origin*: the device-API grants in
-# /etc/chromium/policies/managed/10-tessaro.json name the origin that was built
-# into the image, so Web Serial and WebHID would silently stop working for the
-# new site until that file is edited too. Same-origin sub-pages are fine.
+# The image default is http://127.0.0.1/, the self-test page served by nginx
+# from /usr/share/tessaro-selftest. Deploying a device means pointing this at
+# the site it is there to show:
+#
 #KIOSK_URL="https://www.freevision.sk"
+#
+# Careful if you point this at an origin the image was not built for. The
+# device-API grants in /etc/chromium/policies/managed/10-tessaro.json list the
+# origins baked in at build time - TESSARO_KIOSK_URL's and the self-test's -
+# so Web Serial and WebHID silently stop working for anything else until that
+# file is edited too. Same-origin sub-pages, query strings and in-page routing
+# are all fine. Building the image with the right TESSARO_KIOSK_URL avoids the
+# problem entirely.
+#
+# To get back to the self-test page on a deployed device, comment the line
+# above out again, or set it explicitly:
+#
+#KIOSK_URL="http://127.0.0.1/"
+
+# Working through the self-test page by hand? Set KIOSK_REFRESH_INTERVAL to 0
+# first - it is in the navigation section further down. The agent re-navigates
+# on that timer whether or not anything is wrong, which closes any serial port
+# the page has open and wipes every value typed into it.
 
 # Where the agent finds Chromium's DevTools protocol. Loopback only, which is
 # where the browser listens and where it stays.
@@ -134,6 +152,11 @@
 #
 # Seconds between re-opening the kiosk URL while healthy. This is the periodic
 # refresh. 0 disables it.
+#
+# Set it to 0 for the duration of a manual pass over the self-test page: a
+# reload halfway through closes any serial port the page has open and wipes
+# every value typed into it. Put it back afterwards - on a deployed site the
+# periodic reload is what recovers a page that has quietly gone stale.
 #KIOSK_REFRESH_INTERVAL="600"
 
 # Seconds between re-opening the offline page while down. 0 shows it once.

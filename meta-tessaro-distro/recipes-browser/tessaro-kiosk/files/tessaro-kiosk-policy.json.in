@@ -71,21 +71,29 @@
   "DefaultWebUsbGuardSetting": 3,
   "DefaultWebBluetoothGuardSetting": 3,
 
-  // Serial and HID are granted wholesale to the kiosk origin. These match on
-  // *origin* only - scheme, host and port - with no [*.]host wildcard support,
-  // unlike the Ask/Blocked variants.
+  // Serial and HID are granted wholesale to two origins: the kiosk's own, from
+  // TESSARO_KIOSK_URL, and http://127.0.0.1, where nginx serves the self-test
+  // page. They collapse to one entry on a factory image, where those are the
+  // same thing. The second is what keeps the diagnostic page able to open a
+  // serial port on a *deployed* device, after TESSARO_KIOSK_URL has been
+  // pointed at a customer's site.
   //
-  // Changing KIOSK_URL in /etc/default/tessaro-kiosk to a different origin
-  // silently voids both lines, because the origin here is baked in at build
-  // time from TESSARO_KIOSK_URL. Point the kiosk somewhere else and you have
-  // to edit this file too.
+  // These match on *origin* only - scheme, host and port - with no [*.]host
+  // wildcard support, unlike the Ask/Blocked variants. A host served on a
+  // non-default port needs that port here.
+  //
+  // Changing KIOSK_URL in /etc/default/tessaro-kiosk at *runtime* to an origin
+  // that is not in this list silently voids the grant for it, because the list
+  // is baked in at build time. Point a shipped device somewhere new and you
+  // have to edit this file too; build the image with the right
+  // TESSARO_KIOSK_URL and you do not.
   //
   // Note the Serial and HID blocklists are consulted *before* policy, so a
   // blocklisted device stays blocked no matter what is listed here.
   // --disable-features=WebSerialBlocklist via KIOSK_CHROMIUM_ARGS_EXTRA is the
   // escape hatch if that is ever actually hit.
-  "SerialAllowAllPortsForUrls": ["@kiosk-origin@"],
-  "WebHidAllowAllDevicesForUrls": ["@kiosk-origin@"],
+  "SerialAllowAllPortsForUrls": [@device-origins@],
+  "WebHidAllowAllDevicesForUrls": [@device-origins@],
 
   // WebUSB has no "allow all" policy, and blanket raw USB is a bigger grant
   // than blanket serial or HID, so this ships empty. Add explicit IDs to

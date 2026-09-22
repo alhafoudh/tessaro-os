@@ -69,10 +69,20 @@ repos:
   # podman fragment, which this image no longer includes, so it has to be
   # spelled out here now. Check with:
   #   kas-container dump kas/machine/<machine>.yml:kas/common/debug.yml
+  #
+  # meta-webserver carries nginx, which serves the self-test page on the
+  # loopback. A file:// page would need no server at all, but it would also
+  # have a null origin, and Chromium's device-permission policies match on
+  # origin - so the page could not be granted a serial port or a HID device
+  # without a chooser dialog nobody is there to click. One static directory
+  # over http is the cost of making those grants possible. Its collection name
+  # is "webserver" and it depends on openembedded-layer, which the graphics
+  # fragment already enables.
   meta-openembedded:
     layers:
       meta-networking:
       meta-python:
+      meta-webserver:
   # No url: this is the repo holding this file, which kas never touches.
   tessaro-os:
     layers:
