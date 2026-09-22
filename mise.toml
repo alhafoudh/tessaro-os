@@ -38,6 +38,20 @@ description = "Build the watchdog container image and export it into the recipe'
 dir = "{{config_root}}/watchdog"
 run = '''
 set -e
+# `docker build` produces an image for the build host's architecture, and the
+# archive goes into the rootfs of whatever machine is being built. On a target
+# of another architecture that ships a container podman cannot start, which
+# only shows up as a crash-looping unit on the device. Refuse instead, until
+# someone does the buildx cross build (see CLAUDE.md).
+case "$TESSARO_MACHINE" in
+  qemux86-64|genericx86-64) ;;
+  *)
+    echo "watchdog-image: docker build produces a $(uname -m) image, and" >&2
+    echo "  $TESSARO_MACHINE is a different architecture. That needs a" >&2
+    echo "  'docker buildx --platform' cross build first - see CLAUDE.md." >&2
+    exit 1 ;;
+esac
+
 # freevision.sk/ prefix: a registry-style namespace for our own images, so the
 # name cannot collide with an upstream image. Nothing ever pulls it - the
 # device loads the archive with --pull=never.

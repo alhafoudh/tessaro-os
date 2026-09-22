@@ -11,4 +11,9 @@ RUN bundle config set --local without test && bundle install
 COPY lib ./lib
 COPY bin ./bin
 
-ENTRYPOINT ["ruby", "bin/tessaro-kiosk-watchdog"]
+# An absolute interpreter path, not a PATH lookup: the unit runs this container
+# with podman's --env-host, so the host's PATH replaces the image's and
+# /usr/local/bundle/bin drops out of it. GEM_HOME still points at the bundle
+# (systemd sets no such variable, so the image's value survives) and the
+# watchdog shells out nowhere, so nothing else cares about PATH.
+ENTRYPOINT ["/usr/local/bin/ruby", "bin/tessaro-kiosk-watchdog"]

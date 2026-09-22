@@ -1,9 +1,10 @@
 # Runtime overrides for the Tessaro kiosk.
 #
 # The build-time defaults live in /usr/lib/tessaro-kiosk/tessaro-kiosk.env.
-# Both tessaro-kiosk.service and the watchdog container read that file first
-# and this one second (systemd's EnvironmentFile= for the browser, podman's
-# --env-file for the watchdog), so anything set here wins. Apply a change with:
+# Both tessaro-kiosk.service and the watchdog read that file first and this one
+# second, so anything set here wins. systemd parses both for both of them - the
+# watchdog's container inherits the result through podman's --env-host - so
+# there is one parser and one set of values. Apply a change with:
 #
 #     systemctl restart tessaro-kiosk tessaro-kiosk-watchdog
 #
@@ -12,9 +13,9 @@
 # shadows the image's copy for good and no later image could move a default
 # again.
 #
-# It is parsed as a NAME=value environment file, not by a shell: plain
-# NAME=value, optional quotes, and # comments. No command substitution, no
-# exports.
+# It is parsed as a systemd NAME=value environment file, not by a shell: plain
+# NAME=value, optional quotes (which are stripped), and # comments. No command
+# substitution, no exports.
 
 # URL the kiosk shows.
 #KIOSK_URL="https://www.freevision.sk"

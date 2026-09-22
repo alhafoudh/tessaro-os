@@ -22,6 +22,14 @@ repos:
       # major-version dir behind (gutted of its headers), and the loop picks
       # that one - bindgen then fails with "stddef.h file not found". Require
       # the actual header to exist before copying. See the patch file.
+      #
+      # This may not be needed forever: the dirs it trips over are
+      # clang/18 and clang/18.1.8 in chromium's recipe-sysroot-native, left
+      # by the scarthgap meta-clang this repo used before the walnascar pin
+      # below. Check whether a from-scratch sysroot still has them
+      # (ls recipe-sysroot-native/usr/lib/clang/) and drop the patch if not -
+      # one less thing to re-apply on a meta-browser bump.
+      #
       # repo: tessaro-os - the patch file lives in this (the config) repo.
       clang-latest-stddef-guard:
         repo: tessaro-os

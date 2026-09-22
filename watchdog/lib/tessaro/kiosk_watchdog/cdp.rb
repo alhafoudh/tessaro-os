@@ -14,7 +14,7 @@ module Tessaro
     # cycles are noticed by the next command failing, which the caller counts
     # as ping failures - the same cadence-based model the shell watchdog used.
     class Cdp
-      class Error < StandardError; end
+      class Error < KioskWatchdog::Error; end
 
       def initialize(log:, url:, timeout: 5)
         @log = log

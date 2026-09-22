@@ -10,8 +10,11 @@ Wants=tessaro-kiosk.service
 After=tessaro-kiosk.service
 
 # The container image has to be in podman's storage before the container can
-# start. The image unit is a oneshot with RemainAfterExit=yes, so After=
-# alone gives the ordering.
+# start. Requires= and not just After=: with ordering alone, a failed image
+# load leaves podman answering "image not known" and this unit crash-looping
+# on Restart=always forever, which is a failure mode that hides its own cause.
+# Requires= turns it into one failed unit naming the one that broke.
+Requires=tessaro-kiosk-watchdog-image.service
 After=tessaro-kiosk-watchdog-image.service
 
 # It does follow the compositor, so stopping Weston stops the whole kiosk stack
@@ -32,11 +35,24 @@ Type=simple
 # Root: the container mounts the system bus socket and speaks systemd1 on it.
 User=root
 
+# The same two files in the same order as the browser unit, read by systemd
+# rather than by podman. This matters: podman's --env-file is not systemd's
+# parser. It does not strip quotes, so KIOSK_URL="https://..." reached the
+# browser clean and the watchdog with the quotes still on - which silently
+# failed the watchdog's http(s) check and dropped it to refresh-only - and it
+# has no equivalent of the "-" prefix, so deleting the override file killed
+# the unit outright. Letting systemd parse both and podman inherit the result
+# with --env-host leaves exactly one parser for both sides of the kiosk.
+EnvironmentFile=/usr/lib/tessaro-kiosk/tessaro-kiosk.env
+EnvironmentFile=-/etc/default/tessaro-kiosk
+
 # The watchdog runs in a podman container built from watchdog/ by
-# `mise run watchdog-image`. The environment arrives through podman's
-# --env-file, the same two files in the same order as the browser unit, so
-# both sides of the kiosk see one set of values.
+# `mise run watchdog-image`.
 #
+# --env-host hands the container the environment systemd just built above.
+#   It also brings PATH, HOME and friends along; the image's ENTRYPOINT is an
+#   absolute interpreter path for that reason, and LANG is pinned below so
+#   Ruby's default encoding does not depend on the host's locale.
 # --network=host is what makes 127.0.0.1:9222 (Chromium's CDP) and the
 #   /run/dbus/system_bus_socket bind below reachable, exactly as if the
 #   watchdog were a plain process on the host.
@@ -51,8 +67,8 @@ ExecStart=/usr/bin/podman run --rm --replace --name=tessaro-kiosk-watchdog \
     --network=host \
     --pull=never \
     --log-driver=journald \
-    --env-file /usr/lib/tessaro-kiosk/tessaro-kiosk.env \
-    --env-file /etc/default/tessaro-kiosk \
+    --env-host \
+    --env LANG=C.UTF-8 \
     --mount type=bind,src=/run/dbus/system_bus_socket,dst=/run/dbus/system_bus_socket \
     --mount type=bind,src=/run/tessaro-kiosk,dst=/run/tessaro-kiosk \
     --mount type=bind,src=/data/kiosk,dst=/data/kiosk,ro \

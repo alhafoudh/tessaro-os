@@ -30,6 +30,11 @@ module Tessaro
         end
 
         dir = @config.offline_dir
+        # Assigned before the begin on purpose: defined?(tmp) would be true even
+        # when mkdir raised first, because the parser has already seen the
+        # assignment below, and the cleanup would then rm_f(nil) and raise a
+        # TypeError out of the rescue that exists to swallow failures.
+        tmp = nil
         begin
           Dir.mkdir(dir) unless Dir.exist?(dir)
           tmp = File.join(dir, ".index.html.#{Process.pid}.#{rand(1_000_000)}")
@@ -37,7 +42,7 @@ module Tessaro
           File.chmod(0o644, tmp)
           File.rename(tmp, File.join(dir, "index.html"))
         rescue SystemCallError => e
-          FileUtils.rm_f(tmp) if defined?(tmp)
+          FileUtils.rm_f(tmp) if tmp
           @log.info("staging #{source} failed: #{e.message}; keeping the previous page")
           return nil
         end

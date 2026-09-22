@@ -70,6 +70,22 @@ class OfflineTest < Minitest::Test
     end
   end
 
+  # The staging directory cannot even be created: a path under a regular file,
+  # so mkdir fails with ENOTDIR before the temp file name exists. The cleanup in
+  # the rescue used to rm_f(nil) here and raise a TypeError out of the handler.
+  def test_uncreatable_stage_dir_stages_nothing
+    Dir.mktmpdir do |source_dir|
+      page = File.join(source_dir, "offline.html")
+      File.write(page, "<h1>operator page</h1>")
+      blocker = File.join(source_dir, "not-a-dir")
+      File.write(blocker, "")
+
+      uri = offline_with(dir: File.join(blocker, "stage"), page: page, default: "/nonexistent").stage
+
+      assert_nil uri
+    end
+  end
+
   def test_failed_copy_keeps_the_previous_page
     skip "root bypasses the permission bits this test relies on" if Process.uid.zero?
 

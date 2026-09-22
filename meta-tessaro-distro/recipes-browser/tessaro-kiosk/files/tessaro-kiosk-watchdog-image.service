@@ -3,9 +3,12 @@ Description=Load the Tessaro kiosk watchdog container image
 
 # podman's storage.conf (container-host-config, bbappended by the Moonforge
 # podman layer) points the graphroot at /data/containers/storage, so the
-# persistent partition must be mounted first. /data is mounted by label via
-# fstab; data.mount is generated from that by systemd-fstab-generator.
-After=data.mount
+# persistent partition must be mounted first. RequiresMountsFor= derives both
+# the requirement and the ordering from the path, rather than naming
+# data.mount, which depends on how /data got into fstab. The rootfs is
+# read-only, so without the mount this can only fail - and it should fail
+# loudly rather than load an image into a directory that will not persist.
+RequiresMountsFor=/data/containers
 After=systemd-tmpfiles-setup.service
 Before=tessaro-kiosk-watchdog.service
 

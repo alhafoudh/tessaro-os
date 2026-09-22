@@ -153,8 +153,17 @@ Everything else is `meta-tessaro-distro/recipes-browser/tessaro-kiosk/`:
   `tessaro-kiosk-watchdog-image.service` on first boot.
 * `/usr/lib/tessaro-kiosk/tessaro-kiosk.env` carries the build-time defaults
   (`TESSARO_KIOSK_URL` from `tessaro.conf`), `/etc/default/tessaro-kiosk`
-  overrides them and ships entirely **commented out**. The browser reads them
-  as systemd `EnvironmentFile=`, the watchdog as podman `--env-file`.
+  overrides them and ships entirely **commented out**. **Both units read them
+  as systemd `EnvironmentFile=`**; the watchdog's container inherits the result
+  through podman `--env-host`, so systemd is the only parser involved.
+  That is deliberate and worth keeping: podman's own `--env-file` is not
+  systemd's parser. It does not strip quotes, so `KIOSK_URL="https://..."`
+  reached the browser clean and the watchdog with the quotes still attached,
+  which silently failed the watchdog's `\Ahttps?://` check and dropped it to
+  refresh-only; and it has no `-` prefix, so a deleted override file killed the
+  unit outright. `--env-host` also overwrites `PATH` inside the container,
+  which is why `watchdog/Dockerfile`'s `ENTRYPOINT` is an absolute
+  `/usr/local/bin/ruby` and `LANG` is pinned in the unit.
 
 The defaults deliberately live under `/usr/lib`, not `/etc`: `/etc` is an
 overlayfs upper on `/data`, so the first write to a file there shadows the
@@ -201,11 +210,26 @@ Things to know:
   units under `journalctl -fu tessaro-kiosk`.
 * **Kiosk modes and first run are suppressed at the wrapper level**
   (`--kiosk --no-first-run --incognito`), not by the unit, so profile writes
-  stay minimal; the profile dir is `/data/kiosk/chromium`, owned by `weston`
-  (tmpfiles).
+  stay minimal.
+* **`/data/kiosk` is root owned and only `/data/kiosk/chromium` is `weston`.**
+  Both come from tmpfiles. The split matters: `/data/kiosk/offline.html` is one
+  of the pages the watchdog stages and puts on screen, so a weston-owned parent
+  would let the browser user rewrite the page it is being shown - the same rule
+  that keeps `/run/tessaro-kiosk` root owned. Chromium only needs its
+  `--user-data-dir` writable. `d` lines re-apply owner and mode every boot, so
+  a device built before this heals itself.
 * **The watchdog degrades gracefully without a system bus**: every Systemd
-  method answers as if the unit were stopped and `restart!` raises, so the
-  same image runs in the integration compose (no bus) and on a device.
+  method answers as if the unit were stopped and `restart!` raises
+  `Tessaro::KioskWatchdog::Error`, so the same image runs in the integration
+  compose (no bus) and on a device.
+* **The watchdog container is built for the build host's architecture.**
+  `mise run watchdog-image` is a plain `docker build`, so the archive is
+  amd64; the task refuses any `TESSARO_MACHINE` that is not x86_64 rather than
+  ship a container podman cannot start. See the Pi gotcha below.
+* **`Requires=`, not just `After=`, ties the watchdog to the image-load unit**,
+  and the image-load unit uses `RequiresMountsFor=/data/containers`. With bare
+  ordering a failed load left the watchdog crash-looping on `image not known`
+  under `Restart=always`, which hides its own cause.
 
 ## Networking
 
@@ -363,6 +387,15 @@ Things to know:
   target around that. `GPU_MEM` and `VC4DTBO` (fake KMS by default on this
   machine) are the first knobs; both are noted in the fragment and left at
   meta-raspberrypi's defaults.
+* **The Pi needs a cross-built watchdog container before it can be built at
+  all.** `mise run watchdog-image` is a plain `docker build` on an x86_64 host,
+  so the archive it exports into the recipe is amd64 and podman on the Pi
+  cannot start it - a failure that would only show up as a crash-looping unit
+  on the device. The task therefore refuses any non-x86_64 `TESSARO_MACHINE`,
+  and `build` depends on it, so `mise run build-rpi` stops with an explanation.
+  Lifting it means `docker buildx build --platform linux/arm64` plus qemu-user
+  binfmt on the build host, and an emulated `bundle install` is slow. Do it as
+  part of the first real Pi attempt, not before.
 * **runqemu needs a file path, not an image name.** `runqemu ... qemux86-64
   moonforge-image-base wic` fails with `IMAGE_LINK_NAME wasn't set`: the image
   name is treated as a lazy rootfs, and the machine argument makes runqemu run
@@ -428,7 +461,7 @@ kiosk.
 | --- | --- | --- |
 | `qemux86-64` | development, boots through `mise run run-vnc` | builds and boots |
 | `genericx86-64` | shipping x86_64 hardware (UEFI) | configured, never built end to end |
-| `raspberrypi3-64` | Raspberry Pi 3 Model B+ | configured, never built end to end; Chromium will likely OOM on 1GB |
+| `raspberrypi3-64` | Raspberry Pi 3 Model B+ | configured, cannot be built yet - `watchdog-image` refuses non-x86_64 until the buildx cross build exists; Chromium will likely OOM on 1GB anyway |
 
 "Configured" means the kas chain resolves and bitbake parses it with the right
 `DISTRO`/`MACHINE`/`WKS_FILE`; neither image has been built or booted on real
