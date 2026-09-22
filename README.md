@@ -40,7 +40,7 @@ Writing an image to a card or a disk is left to you on purpose:
 
 ```sh
 TESSARO_MACHINE=raspberrypi3-64 mise run unpack
-sudo dd if=build/raspberrypi3-64/tmp/deploy/images/raspberrypi3-64/moonforge-image-base-raspberrypi3-64.rootfs.wic \
+sudo dd if=build/raspberrypi3-64/tmp/deploy/images/raspberrypi3-64/tessaro-os-raspberrypi3-64.rootfs.wic \
     of=/dev/sdX bs=4M status=progress conv=fsync
 ```
 

@@ -1,5 +1,25 @@
 # Product-specific additions on top of the Moonforge base image.
 
+# What the artifacts in tmp/deploy/images/ are called. IMAGE_BASENAME defaults
+# to ${PN}, so without this every .wic, .ext4 and .manifest this product ships
+# would be named after the upstream recipe it inherits from.
+#
+# It is the only variable involved: IMAGE_NAME (moonforge-image.bbclass) and
+# IMAGE_LINK_NAME (image-artifact-names.bbclass) are both built from it, so the
+# versioned file and the stable symlink move together -
+# tessaro-os-<machine>-0.wic.bz2 and tessaro-os-<machine>.rootfs.wic.bz2.
+#
+# Deliberately here and not in tessaro.conf: a bare global would put it in
+# every recipe's datastore. Set on the image recipe it changes nothing outside
+# it - the recipe's own do_rootfs and do_image_* re-run, because IMAGE_NAME and
+# IMAGE_LINK_NAME are in do_rootfs[vardeps], and no package is rebuilt.
+#
+# The bitbake target stays moonforge-image-base; only the output is renamed.
+# WKS_FILE is unaffected - image_types_wic.bbclass would derive it from
+# IMAGE_BASENAME, but that is a ??= default and every machine here already has
+# a real value (our own for x86, rpi-base.inc's for the Pi).
+IMAGE_BASENAME = "tessaro-os"
+
 # Chromium and the CA store arrive as RDEPENDS of tessaro-kiosk, which owns the
 # units, the runtime configuration, the tessaro-agent binary and the offline
 # page.

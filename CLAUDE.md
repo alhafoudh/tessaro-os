@@ -838,9 +838,13 @@ Things to know:
   in an upstream layer silently stops applying, with no warning. There are
   currently zero such lines; re-check after a Moonforge bump or when enabling a
   new layer. Fix if needed: `DISTROOVERRIDES =. "moonforge:"` in `tessaro.conf`.
-* **Artifacts are named `...-qemux86-64-0.*`** because the kas fragment sets
-  `IMAGE_VERSION: "0"`. The stable symlink is `...-qemux86-64.rootfs.*`, and
-  the mise tasks depend on that `.rootfs` spelling.
+* **Artifacts are named `tessaro-os-qemux86-64-0.*`**: the `tessaro-os` prefix
+  is `IMAGE_BASENAME` in `moonforge-image-base.bbappend` (it defaults to `${PN}`,
+  which would name the product after the upstream recipe), and the `-0` is
+  `IMAGE_VERSION: "0"` in the kas fragment. The stable symlink is
+  `tessaro-os-qemux86-64.rootfs.*`, and the mise tasks depend on that `.rootfs`
+  spelling. The bitbake target is still `moonforge-image-base` - only the
+  output is renamed.
 * **Moonforge's `STRUCTURE.md` is stale in places** - e.g. it documents the
   kiosk browser as Cog with `WAYLAND_COG_LAUNCH_URL`, while the layer actually
   ships `wpe-simple-launcher` with `WPE_SIMPLE_LAUNCHER_URL`. Tessaro runs

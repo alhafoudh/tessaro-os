@@ -36,7 +36,7 @@ KAS_BUILD_DIR = "{{config_root}}/build/{{vars.machine}}"
 
 # Relative to the build dir, so the same value works on the host
 # ("$KAS_BUILD_DIR/$WIC") and inside the container (cwd is /build).
-WIC = "tmp/deploy/images/{{vars.machine}}/moonforge-image-base-{{vars.machine}}.rootfs.wic"
+WIC = "tmp/deploy/images/{{vars.machine}}/tessaro-os-{{vars.machine}}.rootfs.wic"
 
 # Keep cargo's build tree out of agent/. The recipe fetches that directory
 # with a file:// SRC_URI, and bitbake copies and checksums everything it finds

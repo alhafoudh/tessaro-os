@@ -22,7 +22,19 @@ local_conf_header:
     # meta-moonforge-raspberrypi/wic/. /data is found by label, set in
     # kas/common/tessaro.yml; here it would be /dev/mmcblk0p3, and it becomes
     # /dev/sda3 the moment someone boots the same image off USB.
-    # The 3B+ has 1GB of RAM shared with the GPU, and WPEWebKit is the heaviest
+    #
+    # This line is load-bearing and no layer supplies it: meta-moonforge ships
+    # the wks but sets WKS_FILE only in its own kas examples, so without it
+    # rpi-base.inc's weak default wins and the image is built from
+    # meta-raspberrypi's sdimage-raspberrypi.wks - boot and rootfs only, no
+    # /data at all. Nothing fails at build time. On the device the preinit
+    # cannot find LABEL=data, the /etc overlay never mounts, and everything
+    # that needs to write to /etc or /data dies at once: dropbear cannot
+    # generate a host key (ssh connects, then closes before the version
+    # exchange) and Chromium cannot create its --user-data-dir, so the screen
+    # stays on the Weston background.
+    WKS_FILE = "moonforge-image-base-raspberrypi.wks.in"
+    # The 3B+ has 1GB of RAM shared with the GPU, and Chromium is the heaviest
     # thing in the image. Two knobs to reach for if the kiosk gets OOM-killed
     # or renders slowly, both defaulted by meta-raspberrypi and left alone here
     # because either one trades against the other:
