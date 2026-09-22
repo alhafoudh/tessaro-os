@@ -14,8 +14,9 @@ local_conf_header:
     WKS_FILE = "moonforge-image-base-qemux86-64.wks.in"
   30_tessaro-qemu-kiosk: |
     # runqemu defaults to 256M, which Chromium plus Weston will not survive.
-    # 4G rather than the 2G cog needed: Chromium's process model plus the
-    # podman-run watchdog container sit on top of Weston.
+    # 4G rather than the 2G cog needed: Chromium's process model is the whole
+    # difference - a renderer, a GPU process and a zygote per tab, on top of
+    # Weston.
     QB_MEM = "-m 4096"
     # Suppress QEMU's default std VGA. The display device itself comes from
     # runqemu's "egl-headless" option, which adds -device virtio-vga-gl and

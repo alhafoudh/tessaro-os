@@ -1,0 +1,48 @@
+[Unit]
+Description=Tessaro agent (CDP probe, refresh, offline page)
+
+# Wants= and deliberately not Requires=/BindsTo=/PartOf= on the browser:
+# restarting tessaro-kiosk.service is one of this unit's jobs, and a binding
+# relationship would propagate that stop back here - the agent would kill
+# itself the first time it tried to fix anything. It tolerates the browser
+# being absent and just keeps probing.
+Wants=tessaro-kiosk.service
+After=tessaro-kiosk.service
+
+# It does follow the compositor, so stopping Weston stops the whole kiosk stack
+# instead of leaving a loop poking at a unit that cannot start.
+After=weston.service
+PartOf=weston.service
+
+# It stages the offline page into /run/tessaro-kiosk (tmpfiles) and restarts
+# the browser over the system bus.
+After=systemd-tmpfiles-setup.service
+After=dbus.socket
+
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+
+# Root: it speaks org.freedesktop.systemd1 on the system bus, and it writes the
+# offline page into root-owned /run/tessaro-kiosk. Nothing else needs it.
+User=root
+
+# The same two files in the same order as the browser unit, so both halves of
+# the kiosk see exactly one set of values with exactly one parser behind them.
+# The "-" on the second makes a missing override file a non-event, which is
+# what /etc being an overlay demands.
+EnvironmentFile=/usr/lib/tessaro-kiosk/tessaro-kiosk.env
+EnvironmentFile=-/etc/default/tessaro-kiosk
+
+ExecStart=/usr/bin/tessaro-agent
+
+Restart=always
+RestartSec=10
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=tessaro-agent
+
+[Install]
+WantedBy=graphical.target

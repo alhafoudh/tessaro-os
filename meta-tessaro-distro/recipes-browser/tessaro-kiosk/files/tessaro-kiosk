@@ -1,12 +1,12 @@
 # Runtime overrides for the Tessaro kiosk.
 #
 # The build-time defaults live in /usr/lib/tessaro-kiosk/tessaro-kiosk.env.
-# Both tessaro-kiosk.service and the watchdog read that file first and this one
-# second, so anything set here wins. systemd parses both for both of them - the
-# watchdog's container inherits the result through podman's --env-host - so
-# there is one parser and one set of values. Apply a change with:
+# Both tessaro-kiosk.service and tessaro-agent.service read that file first and
+# this one second, so anything set here wins, and the browser and its
+# supervisor can never disagree about what the kiosk URL is. Apply a change
+# with:
 #
-#     systemctl restart tessaro-kiosk tessaro-kiosk-watchdog
+#     systemctl restart tessaro-kiosk tessaro-agent
 #
 # This file is left entirely commented out on purpose. /etc is an overlayfs
 # whose upper layer is the /data partition, so the first write to this path
@@ -20,9 +20,8 @@
 # URL the kiosk shows.
 #KIOSK_URL="https://www.freevision.sk"
 
-# Where the watchdog finds Chromium's DevTools protocol. Loopback only, which
-# is where the browser listens; the watchdog container reaches it through
-# --network=host.
+# Where the agent finds Chromium's DevTools protocol. Loopback only, which is
+# where the browser listens and where it stays.
 #KIOSK_CDP_URL="http://127.0.0.1:9222"
 
 # --- offline page ----------------------------------------------------------
@@ -41,21 +40,21 @@
 #                                 on the next failure with no restart.
 #   3. /usr/share/tessaro-kiosk/offline.html   the shipped default.
 #
-# The watchdog stages the chosen file into /run/tessaro-kiosk and navigates
+# The agent stages the chosen file into /run/tessaro-kiosk and navigates
 # Chromium to it as file://. Diagnostics are deliberately not on the page -
 # they are in the journal:
 #
-#     journalctl CONTAINER_NAME=tessaro-kiosk-watchdog
+#     journalctl -u tessaro-agent
 #
 #KIOSK_OFFLINE_URL="https://status.example.com/kiosk"
 #KIOSK_OFFLINE_PAGE="/data/kiosk/offline.html"
 
 # --- probe -----------------------------------------------------------------
 #
-# What the watchdog fetches to decide whether the site is up. Empty means
+# What the agent fetches to decide whether the site is up. Empty means
 # KIOSK_URL itself. Set it when the site has a cheap health endpoint, and set it
 # always when KIOSK_URL is not an http(s) URL - a file:// or data: kiosk cannot
-# be probed, and the watchdog drops to refresh-only without it.
+# be probed, and the agent drops to refresh-only without it.
 #KIOSK_PROBE_URL="https://www.freevision.sk/"
 
 # Seconds between probes while healthy, and while down.
@@ -93,6 +92,11 @@
 #KIOSK_RESTART_AFTER="40"
 #KIOSK_RESTART_BACKOFF="300"
 
-# Set to 0 to park the watchdog without masking the unit - useful while
-# debugging a page, where the periodic refresh would keep stealing the view.
-#KIOSK_WATCHDOG_ENABLE="1"
+# Set to 0 to park the agent without masking the unit - useful while debugging
+# a page, where the periodic refresh would keep stealing the view.
+#KIOSK_AGENT_ENABLE="1"
+
+# Keep a blank line at the end. Appending to this file with >> is the obvious
+# way to set something from a script, and without a final newline the first
+# appended line lands on the end of the comment above it - where systemd
+# silently ignores it, because the line now starts with a #.

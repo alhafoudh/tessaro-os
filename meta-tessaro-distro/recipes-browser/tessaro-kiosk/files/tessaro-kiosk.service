@@ -26,7 +26,7 @@ After=dbus.socket
 # wpe-simple-launcher unit had. That target pulls in whatever wait-online
 # implementation the image has - NetworkManager-wait-online.service here - and
 # holds the screen black for its timeout on a device with no link. The whole
-# point of the watchdog and the offline page is that the kiosk lights up
+# point of tessaro-agent and the offline page is that the kiosk lights up
 # regardless of the network.
 
 # No start limit. A kiosk that has permanently given up is worse than one that
@@ -77,8 +77,8 @@ WorkingDirectory=/home/weston
 # then appends our flags and ${KIOSK_URL}. Do not duplicate the ozone or kiosk
 # flags here.
 #
-# --remote-debugging-address=127.0.0.1 keeps CDP on the loopback, where the
-#   watchdog container reaches it through --network=host and nothing else can.
+# --remote-debugging-address=127.0.0.1 keeps CDP on the loopback, where
+#   tessaro-agent reaches it and nothing off the device can.
 # --user-data-dir points at the persistent partition and must stay non-default:
 #   recent Chromium refuses to open the DevTools port with the default profile.
 # --disable-dev-shm-usage stops Chromium using /dev/shm for shared memory; on

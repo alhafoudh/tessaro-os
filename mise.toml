@@ -1,5 +1,10 @@
 [tools]
 python = "3.12.11"
+# The agent is built by bitbake with the rustc the Chromium pin dictates
+# (meta-lts-mixins-rust, see kas/repo/meta-chromium.yml). Pin the host
+# toolchain to the same version so `cargo test` cannot pass on a language
+# feature the image's compiler does not have.
+rust = "1.95.0"
 
 [vars]
 # The machine every task acts on. Override it per command:
@@ -33,48 +38,69 @@ KAS_BUILD_DIR = "{{config_root}}/build/{{vars.machine}}"
 # ("$KAS_BUILD_DIR/$WIC") and inside the container (cwd is /build).
 WIC = "tmp/deploy/images/{{vars.machine}}/moonforge-image-base-{{vars.machine}}.rootfs.wic"
 
-[tasks.watchdog-image]
-description = "Build the watchdog container image and export it into the recipe's files/"
-dir = "{{config_root}}/watchdog"
+# Keep cargo's build tree out of agent/. The recipe fetches that directory
+# with a file:// SRC_URI, and bitbake copies and checksums everything it finds
+# there - a stray target/ would put gigabytes of object files into WORKDIR and
+# into the task hash on every build.
+CARGO_TARGET_DIR = "{{config_root}}/build/cargo-target"
+
+[tasks.agent-test]
+description = "Run the tessaro-agent unit tests"
+dir = "{{config_root}}/agent"
+run = "cargo test"
+
+[tasks.agent-lint]
+description = "Check formatting and run clippy on tessaro-agent"
+dir = "{{config_root}}/agent"
 run = '''
 set -e
-# `docker build` produces an image for the build host's architecture, and the
-# archive goes into the rootfs of whatever machine is being built. On a target
-# of another architecture that ships a container podman cannot start, which
-# only shows up as a crash-looping unit on the device. Refuse instead, until
-# someone does the buildx cross build (see CLAUDE.md).
-case "$TESSARO_MACHINE" in
-  qemux86-64|genericx86-64) ;;
-  *)
-    echo "watchdog-image: docker build produces a $(uname -m) image, and" >&2
-    echo "  $TESSARO_MACHINE is a different architecture. That needs a" >&2
-    echo "  'docker buildx --platform' cross build first - see CLAUDE.md." >&2
-    exit 1 ;;
-esac
-
-# freevision.sk/ prefix: a registry-style namespace for our own images, so the
-# name cannot collide with an upstream image. Nothing ever pulls it - the
-# device loads the archive with --pull=never.
-docker build -t freevision.sk/tessaro-kiosk-watchdog:latest .
-mkdir -p ../meta-tessaro-distro/recipes-browser/tessaro-kiosk/files
-docker save freevision.sk/tessaro-kiosk-watchdog:latest | gzip -n \
-    > ../meta-tessaro-distro/recipes-browser/tessaro-kiosk/files/tessaro-kiosk-watchdog-image.tar.gz
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
 '''
 
-[tasks.watchdog-test]
-description = "Run the watchdog unit tests in the Ruby 4 container"
-dir = "{{config_root}}/watchdog"
-run = "docker compose run --rm test"
+[tasks.agent-integration]
+description = "Run the agent against a real headless Chromium (Ctrl-C to stop)"
+dir = "{{config_root}}/agent"
+raw = true
+run = '''
+set -e
+docker compose up -d chromium
+trap 'docker compose down' EXIT
 
-[tasks.watchdog-integration]
-description = "Run Chromium and the watchdog together in containers (Ctrl-C to stop)"
-dir = "{{config_root}}/watchdog"
-run = "docker compose up --build chromium watchdog"
+# Wait for the endpoint rather than for the container: a running container
+# whose DevTools port is not listening yet would just make the first few
+# cycles lie.
+for _ in $(seq 30); do
+    curl -sf http://127.0.0.1:9222/json/version >/dev/null && break
+    sleep 1
+done
+
+# headless-shell starts with no tab, and the agent drives the first target of
+# type "page" - with none it correctly reports the browser as unusable and
+# spends the whole run trying to restart it. On the device tessaro-kiosk.service
+# always starts Chromium with a URL, so open one here to match.
+curl -sf -X PUT "http://127.0.0.1:9222/json/new?about:blank" >/dev/null
+
+# The CDP server doubles as the probe target - it is the one HTTP endpoint
+# guaranteed to be up here, and /json/version is cheap.
+KIOSK_URL="data:text/html,<h1>integration target</h1>" \
+KIOSK_CDP_URL=http://127.0.0.1:9222 \
+KIOSK_PROBE_URL=http://127.0.0.1:9222/json/version \
+KIOSK_PROBE_INTERVAL=5 \
+KIOSK_PROBE_INTERVAL_FAIL=2 \
+KIOSK_FAIL_THRESHOLD=1 \
+KIOSK_REFRESH_INTERVAL=30 \
+KIOSK_PING_FAILS=3 \
+KIOSK_RESTART_AFTER=0 \
+KIOSK_OFFLINE_DIR="$(mktemp -d)" \
+KIOSK_OFFLINE_PAGE_DEFAULT="{{config_root}}/meta-tessaro-distro/recipes-browser/tessaro-kiosk/files/offline.html" \
+KIOSK_DEBUG=1 \
+    cargo run
+'''
 
 [tasks.build]
 description = "Build the image for $TESSARO_MACHINE (default qemux86-64)"
 dir = "{{config_root}}"
-depends = ["watchdog-image"]
 run = '''
 # OVMF is the UEFI firmware runqemu boots the image with, so it is built for
 # the QEMU target only. Real hardware brings its own.

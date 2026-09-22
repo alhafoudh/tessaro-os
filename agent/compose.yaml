@@ -1,0 +1,22 @@
+# A real Chromium with a real DevTools endpoint, for `mise run
+# agent-integration`. The agent itself runs on the host as a plain cargo
+# binary - it is a native binary on the device too, so there is nothing a
+# container would be reproducing here.
+#
+# tessaro-kiosk.service does not exist on a development host, so the agent's
+# systemd side reports it as "inactive" and declines to restart it. That is the
+# operator-stopped-it-by-hand path, and having it exercised on every
+# integration run is worth more than mocking a unit would be.
+services:
+  chromium:
+    image: chromedp/headless-shell:stable
+    # No command: override. The image's entrypoint starts headless-shell on
+    # 9223 bound to the loopback and socat-forwards 9222 to it, which is how it
+    # exposes DevTools without binding the browser itself to 0.0.0.0. Passing
+    # our own --remote-debugging-port here leaves that socat talking to
+    # nothing, and the symptom is a published port that refuses connections.
+    #
+    # Published on 127.0.0.1 only: this is a debugging endpoint with full
+    # control over the browser, and it has no authentication of any kind.
+    ports:
+      - "127.0.0.1:9222:9222"

@@ -1,15 +1,15 @@
 <!DOCTYPE html>
 <!--
-  Shown by tessaro-kiosk-watchdog while the kiosk URL is unreachable, served to
-  cog through the "tessaro" --dir-handler scheme from /run/tessaro-kiosk.
+  Shown by tessaro-agent while the kiosk URL is unreachable. The agent stages
+  it into /run/tessaro-kiosk and navigates Chromium to it as a file:// URL.
 
   Everything is inline on purpose: this page is displayed precisely when the
   network is gone, so a single external byte would make it fail to render.
 
-  There is deliberately nothing technical on screen. Diagnostics - the curl
+  There is deliberately nothing technical on screen. Diagnostics - the probe
   failure class, the URL, the streak - go to the journal:
 
-      journalctl -fu tessaro-kiosk-watchdog
+      journalctl -fu tessaro-agent
 
   To replace this page on a device, drop a file at /data/kiosk/offline.html; it
   is served as-is, with no substitution. See /etc/default/tessaro-kiosk.
@@ -84,7 +84,7 @@
     font-size: clamp(0.95rem, 2.6vmin, 1.9rem);
   }
 
-  /* The only moving part, and it promises nothing: the watchdog owns the retry
+  /* The only moving part, and it promises nothing: the agent owns the retry
      cadence, so the page must not claim a next-attempt time it cannot know. */
   .pulse {
     display: flex;

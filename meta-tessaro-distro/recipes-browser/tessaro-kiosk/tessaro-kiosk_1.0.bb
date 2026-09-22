@@ -1,50 +1,59 @@
-SUMMARY = "Tessaro kiosk: Chromium under Weston, with a Ruby CDP watchdog and an offline page"
-DESCRIPTION = "systemd units, runtime configuration, watchdog and offline page for the \
-Tessaro web kiosk. The browser itself is Chromium, from meta-browser's meta-chromium \
-layer; the watchdog is a Ruby 4 container image built by `mise run watchdog-image` and \
-shipped here as a podman-loadable archive. This recipe only owns the way both are \
-launched and supervised."
+SUMMARY = "Tessaro kiosk: Chromium under Weston, supervised by tessaro-agent"
+DESCRIPTION = "systemd units, runtime configuration, the tessaro-agent supervisor and \
+the offline page for the Tessaro web kiosk. The browser itself is Chromium, from \
+meta-browser's meta-chromium layer; the agent is the Rust program in agent/ at the root \
+of this repo, built here as a native binary. This recipe owns the way both are launched \
+and supervised."
 LICENSE = "MIT"
 LIC_FILES_CHKSUM = "file://${COMMON_LICENSE_DIR}/MIT;md5=0835ade698e0bcf8506ecda2f7b4f302"
 
-inherit systemd
+# cargo brings do_configure/do_compile and installs the binary from
+# ${B}/target; everything else this recipe ships is added by do_install:append
+# below. pkgconfig is how openssl-sys finds the target's openssl - cargo_common
+# already exports PKG_CONFIG_ALLOW_CROSS.
+inherit cargo cargo-update-recipe-crates systemd pkgconfig
 
-# unpack=0 on the OCI archive: it is for podman load, not a source tarball.
-# The default unpack class would happily extract it into blobs/ + oci-layout
-# in WORKDIR and do_install would find no file to copy.
-#
-# Note: no # comments inside the continued assignment below - bitbake's line
-# continuation ends at the first #, and the following line becomes "unparsed".
+# The crate lives at the root of this repo, next to kas/ and mise.toml, so that
+# cargo, rust-analyzer and the mise tasks all see an ordinary Rust project.
+# Three levels up from this recipe is that root; kas never touches this repo,
+# so the path is stable.
+FILESEXTRAPATHS:prepend := "${THISDIR}/../../..:"
+
 SRC_URI = " \
+    file://agent \
     file://tessaro-kiosk.service \
-    file://tessaro-kiosk-watchdog.service \
-    file://tessaro-kiosk-watchdog-image.service \
-    file://tessaro-kiosk-watchdog-image \
+    file://tessaro-agent.service \
     file://tessaro-kiosk.env.in \
     file://tessaro-kiosk \
     file://tmpfiles-tessaro-kiosk.conf \
     file://offline.html \
-    file://tessaro-kiosk-watchdog-image.tar.gz;unpack=0 \
 "
 
-S = "${WORKDIR}"
+# Every crate in Cargo.lock, as crate:// entries with their checksums. Do not
+# edit by hand - regenerate with:
+#
+#     bitbake -c update_crates tessaro-kiosk
+#
+# after any change to agent/Cargo.lock, and commit the result. do_compile runs
+# with --frozen and no network, so this file and the lock file have to agree.
+require tessaro-kiosk-crates.inc
 
-do_configure[noexec] = "1"
-do_compile[noexec] = "1"
+S = "${WORKDIR}/agent"
+
+# TLS for the agent's probe. native-tls means the platform's openssl, which is
+# the point: the trust store is the image's /etc/ssl/certs (ca-certificates
+# below), not a copy of the Mozilla roots baked into the binary.
+DEPENDS += "openssl"
+export OPENSSL_NO_VENDOR = "1"
 
 # Build-time default only; tessaro.conf sets the product value.
 TESSARO_KIOSK_URL ?= "https://www.moonforgelinux.org"
 
-do_install() {
+do_install:append() {
     install -Dm0644 ${WORKDIR}/tessaro-kiosk.service \
         ${D}${systemd_system_unitdir}/tessaro-kiosk.service
-    install -Dm0644 ${WORKDIR}/tessaro-kiosk-watchdog.service \
-        ${D}${systemd_system_unitdir}/tessaro-kiosk-watchdog.service
-    install -Dm0644 ${WORKDIR}/tessaro-kiosk-watchdog-image.service \
-        ${D}${systemd_system_unitdir}/tessaro-kiosk-watchdog-image.service
-
-    install -Dm0755 ${WORKDIR}/tessaro-kiosk-watchdog-image \
-        ${D}${bindir}/tessaro-kiosk-watchdog-image
+    install -Dm0644 ${WORKDIR}/tessaro-agent.service \
+        ${D}${systemd_system_unitdir}/tessaro-agent.service
 
     # Build-time defaults under /usr/lib, outside the /etc overlay, so a later
     # image can still move them. See the comments in the file itself.
@@ -61,15 +70,9 @@ do_install() {
 
     install -Dm0644 ${WORKDIR}/offline.html \
         ${D}${datadir}/tessaro-kiosk/offline.html
-
-    # The watchdog container image, loaded into podman's storage on first
-    # boot by tessaro-kiosk-watchdog-image.service. Built by
-    # `mise run watchdog-image` (docker build + docker save); gitignored.
-    install -Dm0644 ${WORKDIR}/tessaro-kiosk-watchdog-image.tar.gz \
-        ${D}${datadir}/tessaro-kiosk/tessaro-kiosk-watchdog-image.tar.gz
 }
 
-SYSTEMD_SERVICE:${PN} = "tessaro-kiosk.service tessaro-kiosk-watchdog.service tessaro-kiosk-watchdog-image.service"
+SYSTEMD_SERVICE:${PN} = "tessaro-kiosk.service tessaro-agent.service"
 SYSTEMD_AUTO_ENABLE:${PN} = "enable"
 
 # systemd.bbclass only packages the units named in SYSTEMD_SERVICE, and the
@@ -84,15 +87,15 @@ FILES:${PN} += " \
 CONFFILES:${PN} += "${sysconfdir}/default/tessaro-kiosk"
 
 # The browser (its recipe's ${PN} is chromium-ozone-wayland, and that package
-# carries the /usr/bin/chromium wrapper), the container runtime that runs the
-# watchdog, and container-host-config, whose storage.conf (bbappended by the
-# Moonforge podman layer) points podman's graphroot at /data/containers.
-# dbus is what the watchdog restarts tessaro-kiosk.service through, and
-# busybox runs the first-boot image-load script.
+# carries the /usr/bin/chromium wrapper) and dbus, which is what the agent
+# restarts tessaro-kiosk.service through.
+#
+# ca-certificates is named here rather than inherited: it used to arrive with
+# the Moonforge podman layer, which this image no longer includes, and without
+# it every https probe fails certificate verification and the device sits on
+# the offline page forever.
 RDEPENDS:${PN} = " \
     chromium-ozone-wayland \
-    podman \
-    container-host-config \
+    ca-certificates \
     dbus \
-    busybox \
 "

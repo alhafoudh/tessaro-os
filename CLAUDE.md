@@ -23,9 +23,9 @@ Use the mise tasks rather than calling `kas-container` directly:
 | `mise run run` | Boot in QEMU, serial console on the terminal |
 | `mise run run-vnc` | Boot in QEMU with VNC on localhost:5900 |
 | `mise run clean` | Drop build artifacts, keep sstate and downloads |
-| `mise run watchdog-image` | Build the watchdog container image and export it into the recipe |
-| `mise run watchdog-test` | Watchdog unit tests in the Ruby 4 container |
-| `mise run watchdog-integration` | Real Chromium + the watchdog together in compose |
+| `mise run agent-test` | `cargo test` for the kiosk agent |
+| `mise run agent-lint` | `cargo fmt --check` plus clippy for the agent |
+| `mise run agent-integration` | The agent against a real headless Chromium |
 
 Exit the QEMU serial console with `Ctrl-a x`.
 
@@ -41,15 +41,30 @@ TESSARO_MACHINE=raspberrypi3-64 mise run shell
 variable, so each machine gets its own TOPDIR under `build/<machine>/` while
 `cache/` (`DL_DIR` + `SSTATE_DIR`) stays shared. Valid values are exactly the
 basenames in `kas/machine/`. `run`, `run-vnc` and OVMF are qemu-only and refuse
-to run on anything else. `build` depends on `watchdog-image`, which regenerates
-the container archive the recipe packages (gitignored) on every build; with the
-docker layer cache that costs seconds.
+to run on anything else. `build` has no prerequisites beyond kas.
 
-The watchdog is a Ruby project under `watchdog/` with its own test suite
-(minitest, `mise run watchdog-test`) and an integration compose
-(`mise run watchdog-integration`). Everything runs in Docker, no Ruby on the
-host. For Yocto work on a single recipe, go through the kas shell so bitbake
-sees the right environment:
+The agent is an ordinary Rust project under `agent/`, built into the image by
+the `tessaro-kiosk` recipe. Its tests run on the host (`mise run agent-test`);
+mise pins the host toolchain to **rust 1.95.0**, the same version bitbake uses,
+because that version is dictated by the Chromium pin
+(`meta-lts-mixins-rust` in `kas/repo/meta-chromium.yml`) and not chosen freely.
+`mise.toml` also points `CARGO_TARGET_DIR` at `build/cargo-target`: the recipe
+fetches `agent/` with a `file://` SRC_URI, so a `target/` inside it would be
+copied into `WORKDIR` and hashed on every build.
+
+After changing `agent/Cargo.toml` or `Cargo.lock`, regenerate the crate list
+the recipe requires and commit it:
+
+```sh
+mise run shell                          # then, inside:
+bitbake -c update_crates tessaro-kiosk  # writes tessaro-kiosk-crates.inc
+```
+
+`do_compile` runs `cargo build --frozen` with no network, so `Cargo.lock` and
+`tessaro-kiosk-crates.inc` have to agree or the build fails at fetch time.
+
+For Yocto work on a single recipe, go through the kas shell so bitbake sees the
+right environment:
 
 ```sh
 mise run shell                          # then, inside (cwd is /build):
@@ -111,8 +126,9 @@ Configuration arrives through three chains that each span several files:
    fstypes and the `IMAGE_NAME`/`IMAGE_VERSION_SUFFIX` scheme.
 
 **Where product changes go:** system-wide policy in `tessaro.conf`; packages and
-image features in `meta-tessaro-distro/recipes-core/images/moonforge-image-base.bbappend`.
-The image recipe itself stays upstream's - do not fork it.
+image features in `meta-tessaro-distro/recipes-core/images/moonforge-image-base.bbappend`;
+kiosk supervision behaviour in `agent/`, which is ordinary Rust and not a Yocto
+concern at all. The image recipe itself stays upstream's - do not fork it.
 
 Appends to recipes from an optional upstream layer go under
 `meta-tessaro-distro/dynamic-layers/<collection>/`, wired up by `BBFILES_DYNAMIC`
@@ -128,7 +144,7 @@ is how Chromium's `PACKAGECONFIG` is set without a bbappend at all.
 **Chromium** (147, `chromium-ozone-wayland` from meta-browser's `meta-chromium`
 layer) fullscreen on Weston. It replaced cog/WPE: Chromium is the only browser
 that will ever support the WebBluetooth/WebSerial/WebUSB APIs on the roadmap,
-and CDP gives the watchdog a real health channel where cog's D-Bus surface was
+and CDP gives the agent a real health channel where cog's D-Bus surface was
 write-only. The cost is footprint - the Pi 3B+ with its 1GB is likely to OOM,
 and a full build takes hours.
 
@@ -136,8 +152,10 @@ The layers arrive through `kas/repo/meta-chromium.yml`, which pins meta-browser
 (repo root is not a layer, so `layers:` is mandatory, same pattern as
 `kas/repo/meta-yocto.yml`), plus its two dependencies: meta-clang and the Rust
 mixin, a *second* checkout of meta-lts-mixins on its `scarthgap/rust` branch
-(Moonforge pins the same repo on `scarthgap/u-boot`). meta-moonforge-wpe and
-meta-webkit are gone entirely; `/home` on `/data/overlay-home` is now ours
+(Moonforge pins the same repo on `scarthgap/u-boot`). That mixin is also what
+builds `tessaro-agent`, so the agent's rustc version is Chromium's to choose.
+meta-moonforge-wpe and meta-webkit are gone entirely; `/home` on
+`/data/overlay-home` is now ours
 (`meta-tessaro-distro/recipes-core/volatile-binds/volatile-binds.bbappend`), and
 Weston/wayland/polkit come from including `meta-moonforge-graphics` directly.
 
@@ -145,34 +163,28 @@ Everything else is `meta-tessaro-distro/recipes-browser/tessaro-kiosk/`:
 
 * `tessaro-kiosk.service` runs Chromium as the `weston` user, with CDP on
   `127.0.0.1:9222` and the profile on `/data/kiosk/chromium`.
-* `tessaro-kiosk-watchdog.service` runs the **Ruby watchdog in a podman
-  container** (`--network=host`, system bus socket bind-mounted in). The image
-  is built by `mise run watchdog-image` from `watchdog/`, shipped as
-  `/usr/share/tessaro-kiosk/tessaro-kiosk-watchdog-image.tar.gz` (gitignored,
-  regenerated by every `build`), and loaded into podman's `/data` storage by
-  `tessaro-kiosk-watchdog-image.service` on first boot.
+* `tessaro-agent.service` runs `/usr/bin/tessaro-agent`, the native binary
+  built from `agent/` by this same recipe. Plain `Type=simple`, `User=root`,
+  `Restart=always`. Nothing between it and the system.
 * `/usr/lib/tessaro-kiosk/tessaro-kiosk.env` carries the build-time defaults
   (`TESSARO_KIOSK_URL` from `tessaro.conf`), `/etc/default/tessaro-kiosk`
   overrides them and ships entirely **commented out**. **Both units read them
-  as systemd `EnvironmentFile=`**; the watchdog's container inherits the result
-  through podman `--env-host`, so systemd is the only parser involved.
-  That is deliberate and worth keeping: podman's own `--env-file` is not
-  systemd's parser. It does not strip quotes, so `KIOSK_URL="https://..."`
-  reached the browser clean and the watchdog with the quotes still attached,
-  which silently failed the watchdog's `\Ahttps?://` check and dropped it to
-  refresh-only; and it has no `-` prefix, so a deleted override file killed the
-  unit outright. `--env-host` also overwrites `PATH` inside the container,
-  which is why `watchdog/Dockerfile`'s `ENTRYPOINT` is an absolute
-  `/usr/local/bin/ruby` and `LANG` is pinned in the unit.
+  as systemd `EnvironmentFile=`**, in that order, so the browser and its
+  supervisor can never disagree about what the kiosk URL is. The `-` on the
+  second makes a missing override file a non-event, which is what `/etc` being
+  an overlay demands.
 
 The defaults deliberately live under `/usr/lib`, not `/etc`: `/etc` is an
 overlayfs upper on `/data`, so the first write to a file there shadows the
 image's copy permanently and no later image could move the default again.
 
-Apply a change with `systemctl restart tessaro-kiosk tessaro-kiosk-watchdog`.
+Apply a change with `systemctl restart tessaro-kiosk tessaro-agent`.
 
-The watchdog is a port of the old POSIX-sh one with the health checks
-upgraded. It watches the browser over **CDP** (`http://127.0.0.1:9222`):
+The agent used to be a Ruby program in a podman container. It is now a Rust
+binary, and podman is gone from the image with it - see **Removing the
+container runtime** below for what that cost. The behaviour did not change: it
+is the same state machine, the same environment variables and the same log
+lines. It watches the browser over **CDP** (`http://127.0.0.1:9222`):
 `/json/list` plus a `Runtime.evaluate` round trip proves the *renderer* is
 alive, `Page.navigate` replaces the old D-Bus `open` action, and the offline
 page is served as `file:///run/tessaro-kiosk/index.html` (the `tessaro://`
@@ -185,9 +197,9 @@ browser restart.
 Things to know:
 
 * **The CDP port is on the loopback and stays there.** `--remote-debugging-address=127.0.0.1`
-  in the unit; the watchdog container reaches it through `--network=host`.
-  Recent Chromium also refuses to open the DevTools port with the *default*
-  user-data-dir, so `--user-data-dir` must stay set.
+  in the unit, and the agent is a process on the same host, so nothing has to
+  be opened up for it. Recent Chromium also refuses to open the DevTools port
+  with the *default* user-data-dir, so `--user-data-dir` must stay set.
 * **Do not duplicate the wrapper's flags.** `/usr/bin/chromium` is the
   recipe's wrapper that prepends `CHROMIUM_EXTRA_ARGS` -
   `--ozone-platform=wayland`, plus `--kiosk --no-first-run --incognito` from
@@ -197,39 +209,88 @@ Things to know:
   will not play without it; it is enabled in `tessaro.conf`.
 * **Chromium has no D-Bus control interface at all.** Everything is CDP. The
   control-plane D-Bus policy that existed for cog is gone with it.
-* **The watchdog container mounts four things**: the system bus socket
+* **The agent touches four paths**: the system bus socket
   (`/run/dbus/system_bus_socket`, for RestartUnit), `/run/tessaro-kiosk`
-  (writable, it stages the offline page there), `/data/kiosk` and
-  `/usr/share/tessaro-kiosk` (read-only page sources).
-* **Podman storage lives on `/data/containers`** via the Moonforge podman
-  layer's bbappend to `container-host-config` (graphroot in storage.conf);
-  that is why the recipe RDEPENDS on the package explicitly.
+  (it stages the offline page there), and `/data/kiosk` plus
+  `/usr/share/tessaro-kiosk` as page sources. These used to be bind mounts
+  into a container and are now just paths.
 * **Diagnostics are journal-only** by design; nothing technical reaches the
-  screen. The watchdog container logs with `--log-driver=journald`:
-  `journalctl CONTAINER_NAME=tessaro-kiosk-watchdog`; the browser and the
-  units under `journalctl -fu tessaro-kiosk`.
+  screen. Both halves log the same way now:
+  `journalctl -fu tessaro-agent` and `journalctl -fu tessaro-kiosk`.
 * **Kiosk modes and first run are suppressed at the wrapper level**
   (`--kiosk --no-first-run --incognito`), not by the unit, so profile writes
   stay minimal.
 * **`/data/kiosk` is root owned and only `/data/kiosk/chromium` is `weston`.**
   Both come from tmpfiles. The split matters: `/data/kiosk/offline.html` is one
-  of the pages the watchdog stages and puts on screen, so a weston-owned parent
+  of the pages the agent stages and puts on screen, so a weston-owned parent
   would let the browser user rewrite the page it is being shown - the same rule
   that keeps `/run/tessaro-kiosk` root owned. Chromium only needs its
   `--user-data-dir` writable. `d` lines re-apply owner and mode every boot, so
   a device built before this heals itself.
-* **The watchdog degrades gracefully without a system bus**: every Systemd
-  method answers as if the unit were stopped and `restart!` raises
-  `Tessaro::KioskWatchdog::Error`, so the same image runs in the integration
-  compose (no bus) and on a device.
-* **The watchdog container is built for the build host's architecture.**
-  `mise run watchdog-image` is a plain `docker build`, so the archive is
-  amd64; the task refuses any `TESSARO_MACHINE` that is not x86_64 rather than
-  ship a container podman cannot start. See the Pi gotcha below.
-* **`Requires=`, not just `After=`, ties the watchdog to the image-load unit**,
-  and the image-load unit uses `RequiresMountsFor=/data/containers`. With bare
-  ordering a failed load left the watchdog crash-looping on `image not known`
-  under `Restart=always`, which hides its own cause.
+* **CDP failures are quiet until the browser has answered once.**
+  `tessaro-kiosk.service` is `Type=exec`, so systemd calls it started the
+  moment `/usr/bin/chromium` is exec'd - seconds before Chromium opens its
+  DevTools port. The agent's `After=` on it therefore guarantees nothing, and
+  the first cycle after every boot finds port 9222 closed. Logging that at
+  info put two lines that read like faults into every device's journal on
+  every boot, so `report_cdp_failure` in `agent.rs` holds them at debug until
+  the `seen_alive` flag flips. Nothing real is hidden: the escalation still
+  logs its restart at info. Do not "fix" this by making them unconditional.
+* **A slow-starting browser gets restarted once.** A failed navigation bumps
+  `ping_fails` as well as a failed liveness check, so the default
+  `KIOSK_PING_FAILS=3` is really reached after two cycles, not three - about
+  60s at the default probe interval. That is fine on x86; on the Pi, where a
+  cold first start could plausibly take longer, expect one spurious restart
+  and raise `KIOSK_PING_FAILS` there rather than reworking the counter.
+* **The agent degrades gracefully without a system bus**: every `Units` method
+  answers as if the unit were stopped and `restart` returns an error, so the
+  same binary runs against `mise run agent-integration` (no bus) and on a
+  device.
+* **TLS is openssl, and getting that wrong is quiet.** `ureq` gates its
+  native-tls connector on `cfg(feature = "native-tls")`; the `native-tls-no-default`
+  variant compiles the crate in, never references it, links without `libssl`
+  and then **panics on the first https request**. The build stays green
+  throughout. `agent/src/http.rs` has a test that makes an https request to
+  `127.0.0.1:1` purely to prove the provider is wired, and
+  `readelf -d` on the built binary should always show `libssl.so.3`.
+* **`RootCerts::PlatformVerifier`, not `WebPki`.** The former uses openssl's
+  default store, which is the image's `/etc/ssl/certs` from `ca-certificates`.
+  The latter would use the Mozilla roots that ureq's `native-tls` feature
+  compiles in, freezing the trust store at build time.
+
+### Removing the container runtime
+
+Dropping podman was one deleted `includes:` entry in `kas/common/tessaro.yml` -
+`meta-moonforge-podman.yml` - but that fragment was carrying three things that
+had nothing to do with containers, and each of them had to be put back by hand.
+This is worth knowing before including or dropping any other upstream fragment.
+
+* **`ca-certificates`** was enabled in exactly one place in the tree: that
+  fragment. It is now an explicit `RDEPENDS` of `tessaro-kiosk`. Losing it is
+  invisible at build time and total at runtime - every https probe fails
+  verification and the device sits on the offline page forever.
+* **`meta-python`** was likewise enabled only there, and
+  `LAYERDEPENDS_networking-layer` names it, so NetworkManager's layer stops
+  parsing without it. It is now listed next to `meta-networking` in
+  `kas/common/tessaro.yml`. This one at least fails loudly.
+* **`seccomp`** rode along in `DISTRO_FEATURES:append = " virtualization seccomp"`
+  and looked like a third thing to rescue - systemd's `PACKAGECONFIG` keys off
+  it, and losing it would silently turn every `SystemCallFilter=` into a no-op
+  that still parses. It turned out to be redundant: oe-core's
+  `DISTRO_FEATURES_DEFAULT` has carried `seccomp` since scarthgap, so the
+  fragment was only ever re-stating it. Re-adding it in `tessaro.conf` would
+  have been worse than nothing, because oe-core removes it again per
+  architecture (`:remove:riscv32` and friends) and an unconditional append
+  overrides that. Check `bitbake -e <recipe> | grep '^DISTRO_FEATURES='` rather
+  than assuming either way. Only `virtualization` actually went.
+
+What left for free, with nothing to unwind: `meta-moonforge-podman` and
+`meta-virtualization`, `podman` and `podman-compose`, and `container-host-config`
+with its `storage.conf` (`graphroot = /data/containers/storage`) and its
+tmpfiles line. There was never an fstab entry, mount unit or wic partition for
+`/data/containers` - it was a plain directory inside the `/data` filesystem.
+`IMAGE_DATA_MIN_SIZE` stays at 4096M: the Chromium profile is what dominates
+it, not the container storage.
 
 ## Networking
 
@@ -387,15 +448,12 @@ Things to know:
   target around that. `GPU_MEM` and `VC4DTBO` (fake KMS by default on this
   machine) are the first knobs; both are noted in the fragment and left at
   meta-raspberrypi's defaults.
-* **The Pi needs a cross-built watchdog container before it can be built at
-  all.** `mise run watchdog-image` is a plain `docker build` on an x86_64 host,
-  so the archive it exports into the recipe is amd64 and podman on the Pi
-  cannot start it - a failure that would only show up as a crash-looping unit
-  on the device. The task therefore refuses any non-x86_64 `TESSARO_MACHINE`,
-  and `build` depends on it, so `mise run build-rpi` stops with an explanation.
-  Lifting it means `docker buildx build --platform linux/arm64` plus qemu-user
-  binfmt on the build host, and an emulated `bundle install` is slow. Do it as
-  part of the first real Pi attempt, not before.
+* **The Pi is no longer blocked by the agent.** It used to be: the agent
+  shipped as an amd64 container archive built by `docker build` on the build
+  host, and the task that produced it refused any non-x86_64 machine rather
+  than ship something podman on the Pi could not start. `tessaro-agent` is
+  cross-compiled by bitbake like everything else, so `mise run build-rpi` now
+  gets as far as Chromium, which is where the real problem was all along.
 * **runqemu needs a file path, not an image name.** `runqemu ... qemux86-64
   moonforge-image-base wic` fails with `IMAGE_LINK_NAME wasn't set`: the image
   name is treated as a lazy rootfs, and the machine argument makes runqemu run
@@ -461,7 +519,7 @@ kiosk.
 | --- | --- | --- |
 | `qemux86-64` | development, boots through `mise run run-vnc` | builds and boots |
 | `genericx86-64` | shipping x86_64 hardware (UEFI) | configured, never built end to end |
-| `raspberrypi3-64` | Raspberry Pi 3 Model B+ | configured, cannot be built yet - `watchdog-image` refuses non-x86_64 until the buildx cross build exists; Chromium will likely OOM on 1GB anyway |
+| `raspberrypi3-64` | Raspberry Pi 3 Model B+ | configured, never attempted - nothing blocks the build now, but Chromium will likely OOM on 1GB |
 
 "Configured" means the kas chain resolves and bitbake parses it with the right
 `DISTRO`/`MACHINE`/`WKS_FILE`; neither image has been built or booted on real

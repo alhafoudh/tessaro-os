@@ -1,8 +1,8 @@
 # Product-specific additions on top of the Moonforge base image.
 
-# Chromium, the podman runtime for the watchdog container and the watchdog
-# container image all arrive as RDEPENDS of tessaro-kiosk, which owns the units,
-# the runtime configuration, the watchdog and the offline page.
+# Chromium and the CA store arrive as RDEPENDS of tessaro-kiosk, which owns the
+# units, the runtime configuration, the tessaro-agent binary and the offline
+# page.
 CORE_IMAGE_EXTRA_INSTALL += " \
     tessaro-kiosk \
 "

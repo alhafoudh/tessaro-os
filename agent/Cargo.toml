@@ -1,0 +1,47 @@
+[package]
+name = "tessaro-agent"
+version = "1.0.0"
+edition = "2021"
+# Kept at or below the rustc bitbake will use. That version is dictated by the
+# Chromium pin (meta-lts-mixins-rust in kas/repo/meta-chromium.yml), not chosen
+# here - see the comment on the mixin.
+rust-version = "1.95"
+license = "MIT"
+description = "Supervises the Tessaro kiosk browser over CDP and the system bus"
+publish = false
+
+[[bin]]
+name = "tessaro-agent"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+
+# HTTP, for the reachability probe and for CDP's /json/list.
+#
+# The "native-tls" feature, not "native-tls-no-default": ureq gates its whole
+# native-tls connector on `cfg(feature = "native-tls")`, so the -no-default
+# variant compiles the native-tls crate in and then never references it. The
+# result links cleanly, ships without libssl, and panics on the first https
+# request. There is a test in http.rs that catches exactly this.
+#
+# It drags webpki-root-certs along, which is a compiled-in copy of the Mozilla
+# root store. We never select it - http.rs pins RootCerts::PlatformVerifier, so
+# verification uses the device's /etc/ssl/certs (ca-certificates is an RDEPENDS
+# of tessaro-kiosk) and rotating the trust store stays an image concern.
+ureq = { version = "3", default-features = false, features = ["native-tls"] }
+
+# CDP itself. Default features are handshake-only; no TLS, because the
+# DevTools endpoint is plaintext on the loopback and stays there.
+tungstenite = "0.30"
+
+# org.freedesktop.systemd1 on the system bus. The blocking API is the whole
+# point; async-io comes with it because zbus needs some reactor underneath.
+zbus = "5"
+
+signal-hook = "0.4"
+
+[dev-dependencies]
+tempfile = "3"

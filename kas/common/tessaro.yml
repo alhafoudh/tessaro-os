@@ -13,12 +13,11 @@ header:
     - repo: meta-moonforge
       file: kas/include/layer/meta-moonforge-distro.yml
     # Kiosk stack: Weston (the graphics fragment also turns on the wayland,
-    # opengl and polkit DISTRO_FEATURES), the podman runtime that runs the
-    # watchdog container with its storage on /data, and Chromium.
+    # opengl and polkit DISTRO_FEATURES) and Chromium. The meta-chromium
+    # fragment is also what brings the Rust toolchain in, which tessaro-agent
+    # is built with - see the pin comment there.
     - repo: meta-moonforge
       file: kas/include/layer/meta-moonforge-graphics.yml
-    - repo: meta-moonforge
-      file: kas/include/layer/meta-moonforge-podman.yml
     - kas/repo/meta-chromium.yml
 
 local_conf_header:
@@ -29,9 +28,8 @@ local_conf_header:
   20_tessaro-common: |
     # The kiosk needs room on /data: the /etc overlay, /home/weston (the
     # volatile-binds bbappend in meta-tessaro-distro maps it to
-    # /data/overlay-home), podman's container storage (/data/containers,
-    # configured by the podman layer's container-host-config bbappend) and the
-    # Chromium profile all live on this partition.
+    # /data/overlay-home) and the Chromium profile with its caches all live on
+    # this partition. The profile is what dominates.
     IMAGE_DATA_MIN_SIZE = "4096M"
     # Find /data by filesystem label rather than by device node, so one image
     # boots off SATA, USB, NVMe and SD without a rebuild. Every wks in use
@@ -60,20 +58,21 @@ repos:
   # meta-networking carries NetworkManager, which is how a field technician
   # reconfigures the network (nmtui on tty1 or over SSH, nmcli for scripting).
   # The repo itself is already pinned and cloned by meta-moonforge's
-  # kas/include/repo/meta-openembedded.yml, so only the layer is turned on here.
+  # kas/include/repo/meta-openembedded.yml, so only the layers are turned on
+  # here. kas merges repos.<name>.layers additively across the whole chain, so
+  # this adds to - rather than replaces - what the graphics fragment enables
+  # (meta-oe).
   #
-  # kas merges repos.<name>.layers additively across the whole chain, so this
-  # adds to - rather than replaces - the layers the Moonforge fragments enable
-  # (graphics wants meta-oe, podman wants meta-oe/meta-python/meta-networking/
-  # meta-filesystems). The proof is in the build itself: the generated
-  # bblayers.conf carries all of them.
-  #
-  # LAYERDEPENDS_networking-layer is "core meta-python openembedded-layer", all
-  # three already in, and LAYERSERIES_COMPAT is scarthgap, matching the oe-core
-  # pin. Check with: kas-container dump kas/machine/<machine>.yml:kas/common/debug.yml
+  # meta-python is not optional and not ours to want: it is named in
+  # LAYERDEPENDS_networking-layer ("core meta-python openembedded-layer"), so
+  # dropping it fails the parse outright. It used to arrive with the Moonforge
+  # podman fragment, which this image no longer includes, so it has to be
+  # spelled out here now. Check with:
+  #   kas-container dump kas/machine/<machine>.yml:kas/common/debug.yml
   meta-openembedded:
     layers:
       meta-networking:
+      meta-python:
   # No url: this is the repo holding this file, which kas never touches.
   tessaro-os:
     layers:

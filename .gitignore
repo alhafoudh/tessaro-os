@@ -15,9 +15,12 @@
 /meta-clang/
 /meta-lts-mixins-rust/
 
-# The watchdog container image archive, produced by `mise run watchdog-image`
-# into the recipe's files/. It is a build artifact of watchdog/, not content.
-/meta-tessaro-distro/recipes-browser/tessaro-kiosk/files/tessaro-kiosk-watchdog-image.tar.gz
+# Cargo's build tree for agent/. CARGO_TARGET_DIR in mise.toml points it at
+# build/, out of the source tree, because the tessaro-kiosk recipe fetches
+# agent/ with a file:// SRC_URI - bitbake would otherwise copy and checksum
+# every object file in it on every build. This entry is the belt to that
+# braces, for a cargo invoked without mise.
+/agent/target/
 
 # Build output and shared caches
 /build/
