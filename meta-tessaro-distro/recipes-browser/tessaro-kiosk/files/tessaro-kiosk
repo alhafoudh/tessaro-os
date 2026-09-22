@@ -18,13 +18,74 @@
 # substitution, no exports.
 
 # URL the kiosk shows.
+#
+# Careful if you point this at a *different origin*: the device-API grants in
+# /etc/chromium/policies/managed/10-tessaro.json name the origin that was built
+# into the image, so Web Serial and WebHID would silently stop working for the
+# new site until that file is edited too. Same-origin sub-pages are fine.
 #KIOSK_URL="https://www.freevision.sk"
 
 # Where the agent finds Chromium's DevTools protocol. Loopback only, which is
 # where the browser listens and where it stays.
 #KIOSK_CDP_URL="http://127.0.0.1:9222"
 
-# --- offline page ----------------------------------------------------------
+# --- the browser -----------------------------------------------------------
+#
+# Read by tessaro-kiosk.service only. Apply with
+# `systemctl restart tessaro-kiosk`.
+
+# Extra Chromium flags, appended after the fixed set in the unit. systemd
+# splits this at whitespace, so several flags on one line work. It can only
+# add - there is no way to remove a flag the unit already passes.
+#
+# --disable-pinch is the common one on a touch panel: it stops two fingers
+# zooming the page out of the layout the site intends. It is not in the unit's
+# fixed set precisely because Chromium 147 has no --enable-pinch to undo it.
+#KIOSK_CHROMIUM_ARGS_EXTRA="--disable-pinch"
+
+# Touch event feature detection: auto | enabled | disabled.
+#
+# "auto" follows Weston's wl_seat, which is right almost always. Force it to
+# "enabled" if the page's own feature detection has to be true before any
+# device is warm - the seat capability can arrive after the first page load -
+# and to "disabled" on a panel whose driver reports touch you do not want the
+# site to see.
+#KIOSK_TOUCH="auto"
+
+# Chromium base::Feature names, comma separated.
+#
+# Web Bluetooth is *experimental* on desktop Linux - Chromium ships it enabled
+# on Android, ChromeOS, macOS and Windows and not here - so navigator.bluetooth
+# does not exist until this names it. WebBluetoothNewPermissionsBackend is what
+# makes a pairing survive a restart and exposes getDevices(); without it, every
+# boot needs the chooser again.
+#
+# Note there is no policy anywhere in Chromium that pre-grants a Bluetooth
+# device, so even with this set a technician has to pick the peripheral in the
+# chooser once per device. Serial, HID and USB do not need that - see the
+# policy file.
+#KIOSK_ENABLE_FEATURES="WebBluetooth,WebBluetoothNewPermissionsBackend"
+
+# --- the display -----------------------------------------------------------
+
+# Weston output scale, for a panel where the default guess is wrong.
+#
+# Empty means auto: 2 above 3400px wide, 1 below. "none" disables the whole
+# mechanism and leaves Weston at its own default. Integers only; Weston 13 has
+# no fractional scaling and Chromium cannot scale itself on Wayland, so this is
+# the only lever. Set it to 2 on a 4K panel that is read from across a room, or
+# to 1 on one that is read from a desk.
+#
+# Unlike everything else in this file, this is consumed by the compositor.
+# Apply it with `systemctl restart weston`, which takes the browser and the
+# agent with it.
+#
+# For per-connector control instead, put an [output] section in
+# /etc/xdg/weston/weston.ini by hand - the generator leaves any connector
+# already named there alone. `journalctl -u weston` lists the connector names.
+#KIOSK_SCALE="2"
+
+# --- the agent: offline page -----------------------------------------------
 #
 # Shown while the site is unreachable. Precedence, first match wins:
 #

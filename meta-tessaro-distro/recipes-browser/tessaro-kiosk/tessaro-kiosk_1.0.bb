@@ -25,6 +25,8 @@ SRC_URI = " \
     file://tessaro-agent.service \
     file://tessaro-kiosk.env.in \
     file://tessaro-kiosk \
+    file://tessaro-kiosk-policy.json.in \
+    file://70-tessaro-devices.rules \
     file://tmpfiles-tessaro-kiosk.conf \
     file://offline.html \
 "
@@ -49,6 +51,12 @@ export OPENSSL_NO_VENDOR = "1"
 # Build-time default only; tessaro.conf sets the product value.
 TESSARO_KIOSK_URL ?= "https://www.moonforgelinux.org"
 
+# The same site as an *origin* - scheme, host and port, no path. Chromium's
+# device-permission policies match on origin only, and reject the whole policy
+# file if a value is not a valid one, so a TESSARO_KIOSK_URL with a path in it
+# has to be trimmed rather than pasted through.
+TESSARO_KIOSK_ORIGIN ?= "${@'/'.join((d.getVar('TESSARO_KIOSK_URL') or '').split('/')[:3])}"
+
 do_install:append() {
     install -Dm0644 ${WORKDIR}/tessaro-kiosk.service \
         ${D}${systemd_system_unitdir}/tessaro-kiosk.service
@@ -64,6 +72,19 @@ do_install:append() {
 
     # Runtime override, shipped with every assignment commented out.
     install -Dm0644 ${WORKDIR}/tessaro-kiosk ${D}${sysconfdir}/default/tessaro-kiosk
+
+    # Chromium enterprise policy. This one path cannot follow the /usr/lib
+    # convention above: it is compiled into the binary (policy_paths.cc), and
+    # /etc/chromium/policies/managed is where Chromium looks, full stop.
+    sed -e "s|@kiosk-origin@|${TESSARO_KIOSK_ORIGIN}|g" \
+        ${WORKDIR}/tessaro-kiosk-policy.json.in > ${WORKDIR}/10-tessaro.json
+    install -Dm0644 ${WORKDIR}/10-tessaro.json \
+        ${D}${sysconfdir}/chromium/policies/managed/10-tessaro.json
+
+    # /dev/hidraw* and /dev/bus/usb/* for WebHID and WebUSB. The matching
+    # SupplementaryGroups= line is in tessaro-kiosk.service.
+    install -Dm0644 ${WORKDIR}/70-tessaro-devices.rules \
+        ${D}${nonarch_libdir}/udev/rules.d/70-tessaro-devices.rules
 
     install -Dm0644 ${WORKDIR}/tmpfiles-tessaro-kiosk.conf \
         ${D}${nonarch_libdir}/tmpfiles.d/tessaro-kiosk.conf
@@ -81,10 +102,17 @@ SYSTEMD_AUTO_ENABLE:${PN} = "enable"
 FILES:${PN} += " \
     ${nonarch_libdir}/tessaro-kiosk \
     ${nonarch_libdir}/tmpfiles.d/tessaro-kiosk.conf \
+    ${nonarch_libdir}/udev/rules.d/70-tessaro-devices.rules \
     ${datadir}/tessaro-kiosk \
 "
 
-CONFFILES:${PN} += "${sysconfdir}/default/tessaro-kiosk"
+# Both are ours and both are in /etc, so mark them as configuration: an
+# upgrade must not silently overwrite a device that has been retuned. The
+# policy file is only in /etc because Chromium's search path leaves no choice.
+CONFFILES:${PN} += " \
+    ${sysconfdir}/default/tessaro-kiosk \
+    ${sysconfdir}/chromium/policies/managed/10-tessaro.json \
+"
 
 # The browser (its recipe's ${PN} is chromium-ozone-wayland, and that package
 # carries the /usr/bin/chromium wrapper) and dbus, which is what the agent

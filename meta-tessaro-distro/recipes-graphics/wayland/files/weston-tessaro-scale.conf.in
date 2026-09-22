@@ -1,0 +1,27 @@
+# Point Weston at a generated config, so the output scale can follow the panel.
+#
+# See @libexecdir@/tessaro-weston-config for why the scale cannot
+# come from the browser: Chromium's --force-device-scale-factor is inert on
+# Weston 13, which does not implement wp_fractional_scale_manager_v1, so
+# weston.ini's [output] scale= is the only lever there is.
+#
+# The knob is KIOSK_SCALE in /etc/default/tessaro-kiosk, which is the same file
+# the browser and tessaro-agent read. It is the one key there that needs
+# `systemctl restart weston` rather than `systemctl restart tessaro-kiosk` -
+# and that takes the whole kiosk stack down and back up with it, since both
+# units are PartOf=weston.service.
+
+[Service]
+# Creates /run/weston owned by User= (weston) before ExecStartPre= runs, and
+# removes it on stop. This is why the generator needs no privilege: it only
+# reads world-readable /sys/class/drm and /etc, and writes here.
+RuntimeDirectory=weston
+
+ExecStartPre=@libexecdir@/tessaro-weston-config
+
+# The empty assignment is required to clear oe-core's ExecStart= before adding
+# ours; without it systemd appends and Weston is started twice. Note
+# --modules=systemd-notify.so is carried over verbatim and is not optional -
+# weston.service is Type=notify and hangs until its start timeout without it.
+ExecStart=
+ExecStart=@bindir@/weston --config=/run/weston/weston.ini --modules=systemd-notify.so

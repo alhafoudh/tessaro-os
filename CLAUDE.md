@@ -198,15 +198,48 @@ browser restart.
 
 Things to know:
 
-* **The CDP port is on the loopback and stays there.** `--remote-debugging-address=127.0.0.1`
-  in the unit, and the agent is a process on the same host, so nothing has to
-  be opened up for it. Recent Chromium also refuses to open the DevTools port
-  with the *default* user-data-dir, so `--user-data-dir` must stay set.
-* **Do not duplicate the wrapper's flags.** `/usr/bin/chromium` is the
-  recipe's wrapper that prepends `CHROMIUM_EXTRA_ARGS` -
-  `--ozone-platform=wayland`, plus `--kiosk --no-first-run --incognito` from
-  the `kiosk-mode` PACKAGECONFIG in `tessaro.conf`. The unit only adds CDP,
-  profile, quieting and autoplay flags.
+* **The CDP port is on the loopback because the binary hardcodes it**, not
+  because of a flag. `--remote-debugging-address` used to be in the unit and
+  never did anything: that switch exists only in `content_shell`, and
+  `chrome/browser/devtools/remote_debugging_server.cc` binds `127.0.0.1` with a
+  `::1` fallback unconditionally. There is nothing to widen and nothing to get
+  wrong. Recent Chromium does refuse to open the DevTools port with the
+  *default* user-data-dir, so `--user-data-dir` must stay set.
+* **The wrapper contributes exactly three flags**, pinned by `tessaro.conf`:
+  `--kiosk --no-first-run --ozone-platform=wayland`. Everything else is in
+  `tessaro-kiosk.service`. Keep it that way - flags in two places is how
+  `--incognito` went unnoticed for as long as it did.
+* **`--incognito` is gone, and how it was removed matters.** The `kiosk-mode`
+  PACKAGECONFIG selects `--kiosk --no-first-run --incognito` as one bundle,
+  and incognito threw away cookies, `localStorage` and service worker caches
+  on every restart. The tempting fix - drop `kiosk-mode` and pass the two good
+  flags from the unit - costs a **full Chromium rebuild**: `PACKAGECONFIG` is a
+  direct vardep of `do_configure` even for an option that expands to nothing,
+  so removing it changes that basehash and everything downstream. Measured with
+  `bitbake -S printdiff chromium-ozone-wayland`, which names the culprit
+  outright (`Variable PACKAGECONFIG value changed: ... [-kiosk-mode-] ...`).
+  So `kiosk-mode` stays and `tessaro.conf` overrides
+  `CHROMIUM_EXTRA_ARGS:pn-chromium-ozone-wayland` instead - that variable is
+  only read by a `sed` in `do_install`, so the cost is do_install onward. The
+  recipe's own `:append` of `--ozone-platform=wayland` still lands after our
+  value, which is why all three end up in the wrapper. **Run that printdiff
+  before touching either line.**
+* **Two flags are consequences of losing incognito, not preferences.**
+  `--hide-crash-restore-bubble`, or an unclean shutdown puts a "Restore pages?"
+  bubble on a public screen; and `--disk-cache-size`, because the profile now
+  grows on `/data`.
+* **Flags an operator may need are variables, not constants.**
+  `KIOSK_CHROMIUM_ARGS_EXTRA` (unbraced `$VAR` in `ExecStart`, so systemd
+  splits it at whitespace), `KIOSK_TOUCH` and `KIOSK_ENABLE_FEATURES` all come
+  from the same two env files as everything else. Two rules worth keeping:
+  a flag only belongs in the unit's fixed set if `KIOSK_CHROMIUM_ARGS_EXTRA`
+  can *counter* it - `--disable-pinch` is not in it because Chromium 147 has no
+  `--enable-pinch` - and every `base::Feature` goes through
+  `KIOSK_ENABLE_FEATURES`, because duplicate `--enable-features` switches do
+  not merge and the last one silently wins.
+* **`--disable-crash-reporter` was a no-op too.** It is defined only in
+  chromecast and headless, never in the chrome binary. The switch that works is
+  `--disable-breakpad`.
 * **Chromium runs under `dbus-run-session`, and that is not cosmetic.**
   `DBUS_SESSION_BUS_ADDRESS` is unset on this image, so libdbus falls back to
   *autolaunch*, which needs X11 - hence `Could not parse server address:
@@ -220,7 +253,9 @@ Things to know:
   `--password-store=basic` and `--disable-background-networking` stay as
   policy: no keyring, no component updater or variations fetches on a link
   that may be metered. Neither silences the single GCM `DEPRECATED_ENDPOINT`
-  line at startup, which is harmless and left alone.
+  line at startup, which is harmless and left alone. Note this is only the
+  *session* bus - Web Bluetooth talks to `org.bluez` on the **system** bus,
+  which `dbus-run-session` does not touch.
 * **`proprietary-codecs` is what plays H.264.** The marketing site's videos
   will not play without it; it is enabled in `tessaro.conf`.
 * **Chromium has no D-Bus control interface at all.** Everything is CDP. The
@@ -233,9 +268,18 @@ Things to know:
 * **Diagnostics are journal-only** by design; nothing technical reaches the
   screen. Both halves log the same way now:
   `journalctl -fu tessaro-agent` and `journalctl -fu tessaro-kiosk`.
-* **Kiosk modes and first run are suppressed at the wrapper level**
-  (`--kiosk --no-first-run --incognito`), not by the unit, so profile writes
-  stay minimal.
+* **Chromium policy lives in `/etc/chromium/policies/managed/10-tessaro.json`,
+  and that path is not a choice.** It is compiled into the binary
+  (`components/policy/core/common/policy_paths.cc`, the non-branded branch), so
+  this is the one piece of product configuration that cannot follow the
+  `/usr/lib` rule above. Shipped in the image it is the `/etc` overlay's lower
+  layer and works; the first on-device write to it shadows it for good. The
+  loader accepts `//` comments and trailing commas
+  (`JSON_PARSE_CHROMIUM_EXTENSIONS`), so the file documents itself. A syntax
+  error drops the **whole file** with one `SYSLOG(WARNING)` and carries on, so
+  confirm on `chrome://policy` after editing rather than assuming.
+  `TranslateEnabled: false` is what stops the translate bubble - there is no
+  `--disable-translate` switch in 147 any more.
 * **`/data/kiosk` is root owned and only `/data/kiosk/chromium` is `weston`.**
   Both come from tmpfiles. The split matters: `/data/kiosk/offline.html` is one
   of the pages the agent stages and puts on screen, so a weston-owned parent
@@ -289,6 +333,113 @@ Things to know:
   default store, which is the image's `/etc/ssl/certs` from `ca-certificates`.
   The latter would use the Mozilla roots that ureq's `native-tls` feature
   compiles in, freezing the trust store at build time.
+
+### Display scaling
+
+**Chromium cannot scale itself on this stack, so Weston does it.** The obvious
+knob, `--force-device-scale-factor`, is inert here: Chromium only honours it
+when the compositor advertises `wp_fractional_scale_manager_v1`
+(`WaylandWindowManager::DetermineUiScale`, gated on `IsUiScaleEnabled()`), and
+Weston 13.0.1 does not implement that protocol server side - the XML in its
+tree is used by its own demo clients. Chromium's own ozone-wayland startup even
+logs it as "TEST ONLY". Set it and nothing happens.
+
+What is left is `weston.ini`'s `[output] scale=`, which on the DRM backend is
+the *only* path: integers only, no fractional scaling, matched against an exact
+connector name, with no `--scale` command-line option and no wildcard matching
+(`drm_config_find_controlling_output_section`). Since a shipped image cannot
+know whether it will be plugged into a 1080p or a 4K panel, or what the
+connector will be called, the config is generated per boot:
+
+* `/usr/libexec/tessaro-weston-config` runs as `ExecStartPre=` of
+  `weston.service` (drop-in `10-tessaro-scale.conf`, from the `weston-init`
+  bbappend), reads every connected connector out of `/sys/class/drm`, and
+  writes `/etc/xdg/weston/weston.ini` plus an `[output]` section per connector
+  to `/run/weston/weston.ini`. The drop-in then points `weston --config=` at it.
+* Scale is `KIOSK_SCALE` if set, otherwise 2 above 3400px wide and 1 below.
+  `KIOSK_SCALE=none` disables the mechanism entirely.
+* **The technician-facing file is still `/etc/xdg/weston/weston.ini`**, which is
+  on the `/etc` overlay and persists. It is the base the generator copies, and
+  any connector already named in an `[output]` section there is left alone - so
+  a hand-written scale always wins. `/run/weston/weston.ini` is generated and
+  must never be edited.
+* The empty `ExecStart=` in the drop-in is required to clear oe-core's line
+  before replacing it, and `--modules=systemd-notify.so` has to be carried over
+  verbatim - `weston.service` is `Type=notify` and hangs without it.
+* `KIOSK_SCALE` is the one key in `/etc/default/tessaro-kiosk` that needs
+  `systemctl restart weston` rather than `systemctl restart tessaro-kiosk`.
+
+### Device APIs: WebSerial, WebHID, WebUSB, Web Bluetooth
+
+**All four are already compiled in; nothing about the browser build needs to
+change.** `use_dbus`, `use_udev` (`build/config/features.gni`) and `use_bluez`
+(`device/bluetooth/cast_bluetooth.gni`) all default to true on Linux and the
+recipe overrides none of them, so the BlueZ backend and the udev enumeration
+paths are there. `bluez5` and `bluetoothd` are in the image too, inherited from
+oe-core's default `bluetooth` `DISTRO_FEATURE` rather than anything we set.
+
+What was actually missing was kernel drivers and file permissions.
+
+* **The page has to enumerate, not request.** A policy-granted permission is
+  only visible to `navigator.serial.getPorts()`, `navigator.hid.getDevices()`
+  and `navigator.usb.getDevices()`. `requestPort()`/`requestDevice()` still
+  open a chooser dialog, and there is nobody in front of a kiosk to click it.
+  This is a constraint on the web app and it is the thing that makes or breaks
+  unattended device access.
+* **Serial and HID are pre-granted to the kiosk origin** by
+  `SerialAllowAllPortsForUrls` and `WebHidAllowAllDevicesForUrls` in the policy
+  file. These match on *origin* only - scheme, host, port, no `[*.]host`
+  wildcards - and the origin is substituted at build time from
+  `TESSARO_KIOSK_URL` (`TESSARO_KIOSK_ORIGIN` in the recipe). **Pointing
+  `KIOSK_URL` at a different origin in `/etc/default/tessaro-kiosk` silently
+  voids both**, which is the one sharp edge here.
+* **WebUSB ships granted to nothing.** It is the only one of the three with no
+  "allow all" policy, and blanket raw USB is a bigger grant than blanket serial
+  or HID, so `WebUsbAllowDevicesForUrls` is an empty list with a worked example
+  in the comment. Its schema does not mark `vendor_id` required, so
+  `"devices": [{}]` is a true wildcard if that is ever wanted.
+* **Web Bluetooth cannot be pre-granted at all.** No allowlist policy exists in
+  Chromium 147 - the Bluetooth chooser context has zero policy references, and
+  `DefaultWebBluetoothGuardSetting` only chooses between "block" and "ask". A
+  peripheral therefore needs one real chooser interaction by a technician, once
+  per device; with `WebBluetoothNewPermissionsBackend` that grant persists and
+  `getDevices()` returns it on later boots. The only non-interactive route is
+  CDP's experimental `DeviceAccess.selectPrompt`, which happens to support
+  Bluetooth and nothing else - `tessaro-agent` already holds a CDP connection,
+  so that is where it would go. It is on TODO.md, not built.
+* **Web Bluetooth is also experimental on Linux specifically.**
+  `runtime_enabled_features.json5` marks it `stable` on Android, ChromeOS, iOS,
+  macOS and Windows and leaves the `default` bucket - which is us - at
+  `experimental`, and `about_flags.cc` registers its flag `kOsLinux` only. So
+  `navigator.bluetooth` does not exist until `KIOSK_ENABLE_FEATURES` names
+  `WebBluetooth`. It ships empty.
+* **Blocklists beat policy.** Serial and HID consult their blocklist *before*
+  the policy grant, so a blocklisted device stays blocked no matter what is
+  listed. `--disable-features=WebSerialBlocklist` is the escape hatch.
+* **Device nodes are group-owned, not `uaccess`.** Chromium's device service is
+  in-process in the browser and opens the node itself - no privileged helper
+  outside ChromeOS - so the `weston` user needs the permission directly.
+  `dialout` covers `/dev/tty*` from systemd's own rules; `70-tessaro-devices.rules`
+  puts `hidraw` and `usb_device` in `plugdev` at 0660, since hidraw has no group
+  at all by default and usbfs is 0664 root:root. The unit names both groups in
+  `SupplementaryGroups=`. `TAG+="uaccess"` would *not* work here: logind grants
+  those ACLs to the active seat session's user, and `tessaro-kiosk.service` is a
+  plain system unit with no PAM session.
+* **The kernel needed four things it did not have**, all in
+  `recipes-kernel/linux/files/tessaro-devices.cfg` and all built in rather than
+  `=m` so no `kernel-module-*` package has to be chased into the image:
+  `HIDRAW` (there is no `/dev/hidraw*` without it), `HID_MULTITOUCH` (most touch
+  panels are HID multitouch and fall back to hid-generic, which does not decode
+  multi-finger reports), `USB_ACM` plus the CP210x and CH341 bridges for serial
+  (`ftdi_sio` and `pl2303` were already on), and an HCI transport for Bluetooth -
+  `CONFIG_BT` and `CONFIG_BT_LE` were on but *every* transport driver was off,
+  so the stack had no way to reach a controller and `bluetoothd` found no
+  adapter. The bbappend is `linux-yocto_%` only; `raspberrypi3-64` builds
+  `linux-raspberrypi` and has not been checked.
+* **`--touch-events` defaults to `disabled` on Linux**, not `auto`. Finger input
+  still arrives as synthesized mouse events, but `ontouchstart` and
+  `navigator.maxTouchPoints` are absent, so a site's own feature detection sees
+  no touch at all. `KIOSK_TOUCH=auto` ties it to Weston's `wl_seat` capability.
 
 ### Removing the container runtime
 

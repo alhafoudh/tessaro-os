@@ -46,11 +46,21 @@ EnvironmentFile=-/etc/default/tessaro-kiosk
 
 User=weston
 Group=weston
-# Redundant - systemd already grants the groups the weston user holds in
-# /etc/group - but named as documentation: "wayland" is what makes
-# /run/wayland-0 (0775, group wayland) reachable, and video/render are what let
-# the GPU process open /dev/dri.
-SupplementaryGroups=video input render wayland
+# The first four are redundant - systemd already grants the groups the weston
+# user holds in /etc/group - but named as documentation: "wayland" is what
+# makes /run/wayland-0 (0775, group wayland) reachable, and video/render are
+# what let the GPU process open /dev/dri.
+#
+# dialout and plugdev are not redundant: the weston user is in neither, and
+# this is what grants them. They are what the device APIs need, because
+# Chromium's device service runs in-process in the browser and opens the node
+# itself - there is no privileged helper outside ChromeOS.
+#   dialout - /dev/ttyUSB*, /dev/ttyACM* for Web Serial. systemd's
+#     50-udev-default.rules already puts them in this group at 0660.
+#   plugdev - /dev/hidraw* for WebHID and /dev/bus/usb/* for WebUSB, both of
+#     which need 70-tessaro-devices.rules from this recipe to get there;
+#     hidraw has no group at all by default and usbfs is 0664 root:root.
+SupplementaryGroups=video input render wayland dialout plugdev
 
 # An absolute path, so finding the compositor needs no XDG_RUNTIME_DIR. Same
 # value /etc/profile.d/weston-socket.sh exports for interactive logins.
@@ -71,31 +81,61 @@ Environment=XDG_RUNTIME_DIR=/run/tessaro-kiosk-xdg
 Environment=HOME=/home/weston
 WorkingDirectory=/home/weston
 
-# /usr/bin/chromium is the chromium-wrapper the recipe installs: it prepends
-# CHROMIUM_EXTRA_ARGS - --ozone-platform=wayland, plus --kiosk --no-first-run
-# --incognito because tessaro.conf enables the kiosk-mode PACKAGECONFIG - and
-# then appends our flags and ${KIOSK_URL}. Do not duplicate the ozone or kiosk
-# flags here.
+# /usr/bin/chromium is the chromium-wrapper the recipe installs. It prepends
+# CHROMIUM_EXTRA_ARGS, which tessaro.conf pins to exactly
 #
-# --remote-debugging-address=127.0.0.1 keeps CDP on the loopback, where
-#   tessaro-agent reaches it and nothing off the device can.
+#     --kiosk --no-first-run --ozone-platform=wayland
+#
+# Do not repeat any of those three here. Note in particular that --incognito
+# is no longer among them: tessaro.conf overrides CHROMIUM_EXTRA_ARGS to drop
+# it, because it threw away cookies, localStorage and service worker caches on
+# every restart. Read the comment there before touching either end.
+#
+# --hide-crash-restore-bubble is load-bearing *because* incognito is gone.
+#   With a persistent profile plus Restart=always and field power cuts,
+#   Chromium would otherwise put a "Restore pages?" bubble on a public screen.
+# --remote-debugging-port=9222 is the agent's health channel. There is no
+#   --remote-debugging-address to go with it - that switch exists only in
+#   content_shell. The chrome binary hardcodes the loopback bind (127.0.0.1,
+#   falling back to ::1) in remote_debugging_server.cc, so CDP is on the
+#   loopback structurally and nothing here can widen it.
 # --user-data-dir points at the persistent partition and must stay non-default:
 #   recent Chromium refuses to open the DevTools port with the default profile.
+# --disk-cache-size caps the HTTP cache at 200MB. Also a consequence of losing
+#   incognito: the profile now grows, and /data is not large.
 # --disable-dev-shm-usage stops Chromium using /dev/shm for shared memory; on
 #   the Pi half the RAM goes to /dev/shm, which is not enough.
-# --disable-crash-reporter drops crashpad's outbound uploads and most of its
-#   disk writes; a kiosk is not going to ship minidumps home.
+# --disable-breakpad turns the crash reporter off. Note this is *not*
+#   --disable-crash-reporter, which used to be here and did nothing at all:
+#   that switch is defined only in chromecast and headless, never in the chrome
+#   binary, so it was silently ignored every start.
 # --password-store=basic keeps Chromium off the keyring. It has a private
-#   session bus now (see dbus-run-session below) but no secret service on it,
-#   and the kiosk runs incognito and stores no passwords anyway.
+#   session bus (see dbus-run-session below) but no secret service on it.
 # --disable-background-networking turns off the component updater and
 #   variations fetches: pointless on a kiosk, and recurring outbound requests
 #   on a connection that may be metered. It does not silence the one GCM
 #   registration line at startup, which is harmless and left alone.
 # --autoplay-policy=no-user-gesture-required lets the kiosk page autoplay
 #   video with sound - nobody is there to click first.
-# ${KIOSK_URL} is substituted by systemd as a single argument and never touches
-#   a shell.
+# --touch-events tells Chromium whether to expose ontouchstart and
+#   navigator.maxTouchPoints to the page. Its default on Linux is *disabled*,
+#   not auto, so a real touch panel is invisible to feature detection without
+#   this; "auto" ties it to Weston's wl_seat touch capability. Finger input
+#   arrives as synthesized mouse events either way. KIOSK_TOUCH.
+# --enable-features is the single place base::Features are named, because
+#   duplicate occurrences of that switch do not merge - the last one wins - so
+#   routing them through one variable is what stops KIOSK_CHROMIUM_ARGS_EXTRA
+#   silently dropping whatever the default set. Empty is inert.
+#   KIOSK_ENABLE_FEATURES; Web Bluetooth is the reason it exists.
+# $KIOSK_CHROMIUM_ARGS_EXTRA is deliberately *unbraced*. systemd splits $VAR at
+#   whitespace and passes ${VAR} as one argument, so this is what lets an
+#   operator add several flags from /etc/default/tessaro-kiosk. Empty expands
+#   to no arguments at all. Anything put in the fixed set above has to be
+#   counterable from here - which is why --disable-pinch is not in it, since
+#   Chromium 147 has no --enable-pinch to undo it with.
+# ${KIOSK_URL} is braced for the opposite reason: it is one argument even if
+#   someone puts a space in it, and it never touches a shell.
+#
 # dbus-run-session gives Chromium a private session bus for the lifetime of the
 # browser, and is the fix for the burst of
 #
@@ -116,15 +156,24 @@ WorkingDirectory=/home/weston
 # behaves. It does become the unit's MainPID, which tessaro-agent reads to
 # notice a browser restart - that still works, since what it compares is the
 # unit's main pid changing, not which binary it belongs to.
+#
+# It is only the *session* bus. Web Bluetooth talks to org.bluez on the
+# *system* bus (chrome_browser_main_linux.cc initialises BluezDBusManager from
+# the shared system bus), which this does not touch and which BlueZ's shipped
+# policy already opens to any user.
 ExecStart=/usr/bin/dbus-run-session -- /usr/bin/chromium \
-    --remote-debugging-address=127.0.0.1 \
+    --hide-crash-restore-bubble \
     --remote-debugging-port=9222 \
     --user-data-dir=/data/kiosk/chromium \
+    --disk-cache-size=209715200 \
     --disable-dev-shm-usage \
-    --disable-crash-reporter \
+    --disable-breakpad \
     --password-store=basic \
     --disable-background-networking \
     --autoplay-policy=no-user-gesture-required \
+    --touch-events=${KIOSK_TOUCH} \
+    --enable-features=${KIOSK_ENABLE_FEATURES} \
+    $KIOSK_CHROMIUM_ARGS_EXTRA \
     ${KIOSK_URL}
 
 # Restart=always, not on-failure: Chromium exits 0 on some user paths and a

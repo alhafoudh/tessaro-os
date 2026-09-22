@@ -1,0 +1,24 @@
+# Device nodes the kiosk browser opens directly, for WebHID and WebUSB.
+#
+# Chromium's device service is in-process in the *browser* process on Linux -
+# there is no privileged helper and no permission broker outside ChromeOS - so
+# these nodes have to be openable by the user in tessaro-kiosk.service, which
+# is `weston`. That unit names `plugdev` in SupplementaryGroups=; the group
+# already exists in the image (base-passwd, gid 46) and is otherwise empty.
+#
+# 70- rather than a lower number on purpose: systemd's own 50-udev-default.rules
+# sets a mode for usb_device, and last matching rule wins.
+#
+# Serial is deliberately absent. 50-udev-default.rules already puts
+# /dev/ttyUSB*, /dev/ttyACM* and friends in `dialout` at 0660, so the unit
+# naming that group is the whole of it.
+
+# WebHID. Nothing in the default rules gives hidraw a group or a mode, so the
+# kernel default of root:root 0600 stands and the browser cannot open it at
+# all. Chromium opens these read-write and falls back to read-only on EACCES,
+# which would silently give input reports and no output reports.
+SUBSYSTEM=="hidraw", GROUP="plugdev", MODE="0660"
+
+# WebUSB, against the usbfs node. 50-udev-default.rules makes this 0664
+# root:root - readable but not writable for us, and libusb needs both.
+SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", GROUP="plugdev", MODE="0660"

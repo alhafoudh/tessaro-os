@@ -1,0 +1,99 @@
+#!/bin/sh
+# Generate Weston's effective config, with an output scale that suits the
+# panel actually attached.
+#
+# Why this exists at all: Chromium cannot scale itself on this stack. It only
+# honours --force-device-scale-factor when the compositor advertises
+# wp_fractional_scale_manager_v1, and Weston 13 does not implement that
+# protocol server side - the XML in its tree is used by its own demo clients.
+# Chromium's own source calls the switch "TEST ONLY" on Wayland. So the scale
+# has to come from weston.ini, and weston.ini's [output] sections match an
+# exact connector name, with no wildcards and no command-line equivalent on the
+# DRM backend. Hence: generate it, per boot, from what is plugged in.
+#
+# Run as ExecStartPre= of weston.service (see the drop-in next to this file),
+# as User=weston. /sys/class/drm is world readable and $RUNTIME_DIRECTORY is
+# ours, so no privilege is needed.
+#
+# The technician-facing file is still /etc/xdg/weston/weston.ini, which is on
+# the /etc overlay and therefore persists. It is used as the base below, and an
+# [output] section written there by hand always wins over what this computes.
+# /run/weston/weston.ini is generated and must never be edited.
+#
+# POSIX sh, because the image has busybox and nothing else this early.
+set -eu
+
+DRM_ROOT="${TESSARO_DRM_ROOT:-/sys/class/drm}"
+BASE="${TESSARO_WESTON_BASE:-/etc/xdg/weston/weston.ini}"
+OUT="${TESSARO_WESTON_CONFIG:-/run/weston/weston.ini}"
+
+DEFAULTS=/usr/lib/tessaro-kiosk/tessaro-kiosk.env
+OVERRIDE=/etc/default/tessaro-kiosk
+
+# Read one key out of a systemd environment file.
+#
+# Deliberately not `.` or `source`: these files legitimately contain values
+# like KIOSK_CHROMIUM_ARGS_EXTRA=--foo --bar, which a shell would try to
+# execute. sed also means a missing file is just no output. systemd strips
+# surrounding quotes and sed does not, so do that here.
+read_key() {
+    [ -r "$1" ] || return 0
+    sed -n "s/^[[:space:]]*$2=//p" "$1" | tail -n 1 | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'$/\1/"
+}
+
+scale_override=$(read_key "$DEFAULTS" KIOSK_SCALE)
+o=$(read_key "$OVERRIDE" KIOSK_SCALE)
+[ -n "$o" ] && scale_override=$o
+
+mkdir -p "$(dirname "$OUT")"
+
+# Start from the shipped config so Moonforge's [core]/[shell] settings and any
+# local edits survive. A missing base is not fatal - Weston has defaults for
+# everything in it - but it does mean something is wrong, so say so.
+if [ -r "$BASE" ]; then
+    cat "$BASE" > "$OUT"
+else
+    echo "tessaro-weston-config: $BASE is missing, generating from nothing" >&2
+    : > "$OUT"
+fi
+
+if [ "$scale_override" = none ]; then
+    echo "tessaro-weston-config: KIOSK_SCALE=none, writing no [output] sections"
+    exit 0
+fi
+
+for dev in "$DRM_ROOT"/card*-*; do
+    [ -r "$dev/status" ] || continue
+    [ "$(cat "$dev/status")" = connected ] || continue
+
+    # card0-HDMI-A-1 -> HDMI-A-1. Weston names outputs after the connector,
+    # without the card prefix.
+    name=${dev##*/}
+    name=${name#*-}
+
+    # An [output] section in the base file wins, including one a technician
+    # added. Two cards can also expose the same connector name; the first
+    # iteration writes it and this skips the rest.
+    if grep -q "^[[:space:]]*name[[:space:]]*=[[:space:]]*$name[[:space:]]*$" "$OUT"; then
+        echo "tessaro-weston-config: $name already configured, leaving it alone"
+        continue
+    fi
+
+    if [ -n "$scale_override" ]; then
+        scale=$scale_override
+        why="KIOSK_SCALE"
+    else
+        # First line of modes is the connector's preferred mode.
+        width=$(sed -n '1s/x.*//p' "$dev/modes" 2>/dev/null || true)
+        scale=1
+        # 3400 rather than 3840: it sits above every 2560-wide panel and below
+        # every 4K one, including the 3440x1440 ultrawides.
+        if [ -n "$width" ] && [ "$width" -ge 3400 ] 2>/dev/null; then
+            scale=2
+        fi
+        why="auto from ${width:-unknown}px"
+    fi
+
+    printf '\n[output]\nname=%s\nscale=%s\n' "$name" "$scale" >> "$OUT"
+    echo "tessaro-weston-config: $name scale=$scale ($why)"
+done

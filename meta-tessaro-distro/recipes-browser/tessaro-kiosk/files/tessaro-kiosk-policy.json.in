@@ -1,0 +1,109 @@
+// Tessaro kiosk: Chromium enterprise policy.
+//
+// Installed as /etc/chromium/policies/managed/10-tessaro.json. That path is
+// compiled into the binary (components/policy/core/common/policy_paths.cc, the
+// non-Google-branded branch), so unlike every other default this product ships
+// it cannot live under /usr/lib. /etc is an overlayfs upper on /data: the copy
+// below is the lower layer and works as shipped, but the first on-device write
+// to this path shadows it permanently and no later image can move it again.
+// Edit /etc/default/tessaro-kiosk for anything that has a knob there instead.
+//
+// Comments and trailing commas are legal here: the loader parses with
+// JSON_PARSE_CHROMIUM_EXTENSIONS | JSON_ALLOW_TRAILING_COMMAS. A syntax error
+// makes Chromium drop the *whole file* with one SYSLOG(WARNING) and carry on,
+// so after any change confirm on chrome://policy that these still show as
+// "Platform policy" rather than assuming.
+//
+// The kiosk origin in the device grants below is substituted at build time
+// from TESSARO_KIOSK_URL. See those entries, and the warning there about
+// pointing KIOSK_URL at a different origin.
+{
+  // --- the reason this file exists ----------------------------------------
+  //
+  // The kiosk site is Slovak and the image sets no locale, so Chromium's UI
+  // language is en-US and it offers to translate the page the moment it
+  // loads - a bubble over a public screen. There is no --disable-translate
+  // switch in Chromium 147 any more; this policy is the only way to stop it.
+  "TranslateEnabled": false,
+
+  // --- nothing may appear over the page -----------------------------------
+  "DefaultNotificationsSetting": 2,
+  "DefaultPopupsSetting": 2,
+  "DefaultGeolocationSetting": 2,
+  "PromotionalTabsEnabled": false,
+  "DefaultBrowserSettingEnabled": false,
+  "BookmarkBarEnabled": false,
+  "SpellcheckEnabled": false,
+
+  // --- no account, no sync, no profile services ---------------------------
+  "BrowserSignin": 0,
+  "SyncDisabled": true,
+  "PasswordManagerEnabled": false,
+  "AutofillAddressEnabled": false,
+  "AutofillCreditCardEnabled": false,
+  "SearchSuggestEnabled": false,
+
+  // --- no background traffic ----------------------------------------------
+  //
+  // MetricsReporting and SafeBrowsing also mean no outbound requests we did
+  // not ask for, on a link that may be metered. The unit's
+  // --disable-background-networking covers the network side of the component
+  // updater; ComponentUpdatesEnabled covers the rest of it.
+  "MetricsReportingEnabled": false,
+  "SafeBrowsingEnabled": false,
+  "BackgroundModeEnabled": false,
+  "ComponentUpdatesEnabled": false,
+  "PrintingEnabled": false,
+
+  // --- device APIs --------------------------------------------------------
+  //
+  // 3 = "Ask", 2 = "Block". There is no "Allow" value for any of these four;
+  // the *AllowDevicesForUrls policies below are the only way to grant access
+  // without a human in front of the screen, and they override the guard.
+  //
+  // IMPORTANT, and it is a requirement on the *web page*, not on the image:
+  // a pre-granted permission is only visible to navigator.serial.getPorts(),
+  // navigator.hid.getDevices() and navigator.usb.getDevices(). Calling
+  // requestPort()/requestDevice() still opens a chooser dialog that nobody is
+  // there to click. A kiosk page must enumerate, never request.
+  "DefaultSerialGuardSetting": 3,
+  "DefaultWebHidGuardSetting": 3,
+  "DefaultWebUsbGuardSetting": 3,
+  "DefaultWebBluetoothGuardSetting": 3,
+
+  // Serial and HID are granted wholesale to the kiosk origin. These match on
+  // *origin* only - scheme, host and port - with no [*.]host wildcard support,
+  // unlike the Ask/Blocked variants.
+  //
+  // Changing KIOSK_URL in /etc/default/tessaro-kiosk to a different origin
+  // silently voids both lines, because the origin here is baked in at build
+  // time from TESSARO_KIOSK_URL. Point the kiosk somewhere else and you have
+  // to edit this file too.
+  //
+  // Note the Serial and HID blocklists are consulted *before* policy, so a
+  // blocklisted device stays blocked no matter what is listed here.
+  // --disable-features=WebSerialBlocklist via KIOSK_CHROMIUM_ARGS_EXTRA is the
+  // escape hatch if that is ever actually hit.
+  "SerialAllowAllPortsForUrls": ["@kiosk-origin@"],
+  "WebHidAllowAllDevicesForUrls": ["@kiosk-origin@"],
+
+  // WebUSB has no "allow all" policy, and blanket raw USB is a bigger grant
+  // than blanket serial or HID, so this ships empty. Add explicit IDs to
+  // commission a device:
+  //
+  //   "WebUsbAllowDevicesForUrls": [
+  //     { "devices": [{ "vendor_id": 1027, "product_id": 24577 }],
+  //       "urls": ["@kiosk-origin@"] }
+  //   ]
+  //
+  // The schema does not mark vendor_id required, so "devices": [{}] is a true
+  // wildcard if that is ever what you want. It is not the default on purpose.
+  "WebUsbAllowDevicesForUrls": [],
+
+  // Web Bluetooth is deliberately absent from the list above: no allowlist
+  // policy exists for it in Chromium 147, and the guard cannot go past "Ask".
+  // A Bluetooth peripheral therefore needs one real chooser interaction by a
+  // technician, once per device. With WebBluetoothNewPermissionsBackend (see
+  // KIOSK_ENABLE_FEATURES in /etc/default/tessaro-kiosk) that grant persists
+  // and navigator.bluetooth.getDevices() returns it on later boots.
+}
