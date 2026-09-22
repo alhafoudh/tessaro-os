@@ -162,6 +162,13 @@ WorkingDirectory=/home/weston
 #   routing them through one variable is what stops KIOSK_CHROMIUM_ARGS_EXTRA
 #   silently dropping whatever the default set. Empty is inert.
 #   KIOSK_ENABLE_FEATURES; Web Bluetooth is the reason it exists.
+# --disable-features is the same switch in the other direction, with the same
+#   no-merge rule, hence the same one-variable treatment.
+#   KIOSK_DISABLE_FEATURES ships non-empty: it carries
+#   FallbackToSWIfGLES3NotSupported, which is what stops the GPU process
+#   refusing an ES 2.0 context and dropping the whole browser to software
+#   rendering on the Raspberry Pi 3. The reasoning is in the env file, next to
+#   the value.
 # $KIOSK_CHROMIUM_ARGS_EXTRA is deliberately *unbraced*. systemd splits $VAR at
 #   whitespace and passes ${VAR} as one argument, so this is what lets an
 #   operator add several flags from /etc/default/tessaro-kiosk. Empty expands
@@ -210,6 +217,7 @@ ExecStart=/usr/bin/dbus-run-session -- /usr/bin/chromium \
     --enable-wayland-ime \
     --wayland-text-input-version=1 \
     --enable-features=${KIOSK_ENABLE_FEATURES} \
+    --disable-features=${KIOSK_DISABLE_FEATURES} \
     $KIOSK_CHROMIUM_ARGS_EXTRA \
     ${KIOSK_URL}
 

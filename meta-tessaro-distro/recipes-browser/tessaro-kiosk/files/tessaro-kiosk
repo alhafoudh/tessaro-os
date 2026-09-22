@@ -84,6 +84,23 @@
 # policy file.
 #KIOSK_ENABLE_FEATURES="WebBluetooth,WebBluetoothNewPermissionsBackend"
 
+# Chromium base::Feature names to switch *off*, comma separated.
+#
+# Unlike every other key here this one ships non-empty, and setting it replaces
+# the shipped value rather than adding to it - so copy the default in before
+# appending, or you will turn the Pi 3's GPU acceleration back off by accident:
+#
+#   FallbackToSWIfGLES3NotSupported
+#
+# That feature makes Chromium's GPU process fall back to software rendering
+# when the driver cannot give it an OpenGL ES 3.0 context, instead of taking
+# the ES 2.0 context on offer. The Pi 3's VideoCore IV is ES 2.0 only, so with
+# the feature on the GPU process dies at every boot and the entire page is
+# rasterized on the CPU. It is inert on hardware that has ES 3.0.
+#
+# Clear it only to confirm that a rendering artefact is caused by the ES2 path.
+#KIOSK_DISABLE_FEATURES="FallbackToSWIfGLES3NotSupported"
+
 # --- the display -----------------------------------------------------------
 
 # Weston output scale, for a panel where the default guess is wrong.
