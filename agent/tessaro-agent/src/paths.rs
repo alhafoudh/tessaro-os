@@ -82,6 +82,11 @@ impl Paths {
         self.run_dir.join("generated.env")
     }
 
+    /// The last public address found, written by the agent's refresher.
+    pub fn public_ip_file(&self) -> PathBuf {
+        self.run_dir.join("public-ip")
+    }
+
     pub fn tls_dir(&self) -> PathBuf {
         self.state_dir.join("tls")
     }

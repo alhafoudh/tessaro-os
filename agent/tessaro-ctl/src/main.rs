@@ -591,6 +591,7 @@ fn show_net(net: &Net) {
             .unwrap_or_else(|| none.clone())
     );
     println!("gateway      {}", net.gateway.as_ref().unwrap_or(&none));
+    println!("public ip    {}", net.public_ip.as_ref().unwrap_or(&none));
     println!(
         "dns          {}",
         if net.dns.is_empty() {

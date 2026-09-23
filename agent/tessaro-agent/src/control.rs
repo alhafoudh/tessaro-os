@@ -272,6 +272,8 @@ impl Control {
     }
 
     async fn net(&self) -> Result<protocol::Net, String> {
+        // naked: the lookup's every phase is under its own within()
+        self.refresh_public_ip_now().await;
         let paths = self.paths.clone();
         blocking("reading the network", move || {
             Ok(crate::net::snapshot(&paths))
@@ -393,6 +395,10 @@ impl Control {
     }
 
     async fn get(&self, key: Option<String>) -> Result<Settings, String> {
+        if key.as_deref() == Some("net.public_ip") {
+            // naked: the lookup's every phase is under its own within()
+            self.refresh_public_ip_now().await;
+        }
         let state = self.read_state().await?;
         // The registry, then every custom data.* that is set, by its name.
         let wanted: Vec<(String, &Key)> = match &key {
@@ -650,6 +656,107 @@ impl Control {
                 control.check_url().await;
             }
         });
+    }
+
+    /// Keeps `net.public_ip` current while kiosk.url uses it, and only then:
+    /// a link may be metered, so a device whose URL does not name
+    /// `{net.public_ip}` never asks. While it does, Cloudflare's trace is
+    /// asked every 5 minutes (every 30s until the first answer, and after a
+    /// failure), and the answer goes to `/run/tessaro-kiosk/public-ip`, which
+    /// is all the read-only key ever reads. A failure keeps the last address
+    /// rather than emptying it, so one lost request never moves the URL;
+    /// `watch_url` notices when it does change. The template is checked every
+    /// 15s, so a `set` that starts using the key is answered within that.
+    pub fn watch_public_ip(self: &Arc<Self>) {
+        const TICK: Duration = Duration::from_secs(15);
+        const EVERY: Duration = Duration::from_secs(300);
+        const RETRY: Duration = Duration::from_secs(30);
+
+        let control = Arc::clone(self);
+        let mut shutdown = self.shutdown.clone();
+        tokio::spawn(async move {
+            let http = crate::http::HyperHttp::new(5, 5, 4096, Heartbeat::detached());
+            // When the next request is due; `None` asks at once.
+            let mut due: Option<Instant> = None;
+            loop {
+                // naked: a disk read under blocking()'s within()
+                let wanted = control.url_uses("net.public_ip").await;
+                if !wanted {
+                    // Asked afresh the moment the URL uses it again.
+                    due = None;
+                } else if due.is_none_or(|at| Instant::now() >= at) {
+                    // naked: public_ip's every phase is under its own within()
+                    let wait = match control.refresh_public_ip(&http).await {
+                        Ok(()) => EVERY,
+                        Err(()) => RETRY,
+                    };
+                    due = Some(Instant::now() + wait);
+                }
+                // naked: a timer and the shutdown signal, not the outside world
+                tokio::select! {
+                    _ = tokio::time::sleep(TICK) => {}
+                    _ = shutdown.changed() => return,
+                }
+            }
+        });
+    }
+
+    /// Does the kiosk.url template - as set, else the image default - name
+    /// this key as a placeholder?
+    async fn url_uses(&self, key: &str) -> bool {
+        let Ok(state) = self.read_state().await else {
+            return false;
+        };
+        let template = state
+            .settings
+            .get("kiosk.url")
+            .or_else(|| self.defaults.get("KIOSK_URL"))
+            .cloned()
+            .unwrap_or_default();
+        keys::placeholders(&template).contains(&key)
+    }
+
+    /// One lookup, saved on success. A failure is logged at debug and leaves
+    /// the last address in place.
+    async fn refresh_public_ip(&self, http: &crate::http::HyperHttp) -> Result<(), ()> {
+        // naked: public_ip's every phase is under its own within()
+        match crate::net::public_ip(http).await {
+            Ok(ip) => {
+                // naked: a file write under blocking()'s within()
+                self.store_public_ip(ip.to_string()).await;
+                Ok(())
+            }
+            Err(err) => {
+                self.log
+                    .debug(format!("public address: {} {err}", crate::net::TRACE_URL));
+                Err(())
+            }
+        }
+    }
+
+    /// Someone asked for the public address outright - `net`, or
+    /// `get net.public_ip` - so look it up now, whatever kiosk.url uses.
+    /// One request per ask; at worst the command waits out the 5s budgets.
+    async fn refresh_public_ip_now(&self) {
+        let http = crate::http::HyperHttp::new(5, 5, 4096, Heartbeat::detached());
+        // naked: public_ip's every phase is under its own within()
+        let _ = self.refresh_public_ip(&http).await;
+    }
+
+    async fn store_public_ip(&self, ip: String) {
+        let paths = self.paths.clone();
+        let body = format!("{ip}\n");
+        let written = blocking("writing the public address", move || {
+            let file = paths.public_ip_file();
+            crate::store::replace_if_changed(&file, body.as_bytes(), 0o644)
+                .map_err(|err| format!("{}: {err}", file.display()))
+        })
+        .await;
+        match written {
+            Ok(true) => self.log.info(format!("public address is {ip}")),
+            Ok(false) => {}
+            Err(err) => self.log.info(format!("public address: {err}")),
+        }
     }
 
     async fn check_url(&self) {

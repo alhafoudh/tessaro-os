@@ -275,6 +275,7 @@ async fn start_control(
 
     control.arm_if_pending().await; // naked: a disk read under blocking()'s within()
     control.watch_url();
+    control.watch_public_ip();
 }
 
 async fn run(config: Config, log: Arc<Log>, device: Device) {

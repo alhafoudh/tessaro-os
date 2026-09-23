@@ -294,6 +294,10 @@ pub struct Net {
     /// The upstream servers, not systemd-resolved's 127.0.0.53 stub.
     pub dns: Vec<String>,
     pub interfaces: Vec<NetInterface>,
+    /// The address the internet sees, as the agent last found it through
+    /// Cloudflare's trace; `None` until it has. Defaulted for older devices.
+    #[serde(default)]
+    pub public_ip: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

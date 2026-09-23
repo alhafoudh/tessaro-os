@@ -8,16 +8,47 @@
 //! broken thing, and nothing here changes anything.
 //!
 //! Everything is blocking file I/O and one syscall; call it through
-//! `control::blocking`.
+//! `control::blocking`. The one exception is the public address, which only
+//! the outside world knows: `public_ip` asks Cloudflare over the network, and
+//! the agent keeps the answer in `/run/tessaro-kiosk/public-ip`, which is all
+//! `snapshot` reads - so the boot render and every `get` stay local.
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::net::Ipv4Addr;
+use std::net::{IpAddr, Ipv4Addr};
 use std::path::Path;
 
 use protocol::{Net, NetAddress, NetInterface};
 
+use crate::http::HyperHttp;
 use crate::paths::Paths;
+
+/// Cloudflare's trace endpoint, by address: no DNS in the way, and the
+/// certificate carries 1.1.1.1 as an IP SAN, so TLS verifies as usual.
+pub const TRACE_URL: &str = "https://1.1.1.1/cdn-cgi/trace";
+
+/// The address the internet sees this device at, from the `ip=` line of
+/// Cloudflare's trace. Every phase of the request has its own deadline.
+pub async fn public_ip(http: &HyperHttp) -> Result<IpAddr, String> {
+    // naked: every phase inside fetch() has its own within()
+    let response = http.fetch(TRACE_URL).await.map_err(|err| err.to_string())?;
+    if response.status != 200 {
+        return Err(format!("answered HTTP {}", response.status));
+    }
+    parse_trace(&response.body).ok_or_else(|| "no ip= line in the answer".to_string())
+}
+
+/// The `ip=` line of a `/cdn-cgi/trace` body.
+pub fn parse_trace(body: &str) -> Option<IpAddr> {
+    body.lines()
+        .find_map(|line| line.strip_prefix("ip="))
+        .and_then(|ip| ip.trim().parse().ok())
+}
+
+/// The last public address the agent found, if it found one this boot.
+pub fn cached_public_ip(paths: &Paths) -> Option<String> {
+    read(&paths.public_ip_file())
+}
 
 pub fn snapshot(paths: &Paths) -> Net {
     let addresses = if_addrs::get_if_addrs().unwrap_or_default();
@@ -95,6 +126,7 @@ pub fn snapshot(paths: &Paths) -> Net {
             .map(|text| nameservers(&text))
             .unwrap_or_default(),
         interfaces,
+        public_ip: cached_public_ip(paths),
     }
 }
 
@@ -148,6 +180,7 @@ pub fn values(net: &Net) -> BTreeMap<String, String> {
     put("net.dns", net.dns.join(","));
     put("net.ipv4", every("ipv4"));
     put("net.ipv6", every("ipv6"));
+    put("net.public_ip", net.public_ip.clone().unwrap_or_default());
     out
 }
 
@@ -314,6 +347,7 @@ eth0\t0000000A\t00000000\t0001\t0\t0\t100\t00FFFFFF\t0\t0\t0
                     vec![address("192.168.1.7", 24, "ipv4", "global")],
                 ),
             ],
+            public_ip: Some("203.0.113.9".to_string()),
         };
 
         let values = values(&net);
@@ -327,6 +361,7 @@ eth0\t0000000A\t00000000\t0001\t0\t0\t100\t00FFFFFF\t0\t0\t0
         assert_eq!(values["net.mac"], "02:00:00:00:00:4");
         assert_eq!(values["net.ipv4"], "10.0.0.20,192.168.1.7");
         assert_eq!(values["net.ipv6"], "fe80::1");
+        assert_eq!(values["net.public_ip"], "203.0.113.9");
         // Every read-only net.* key in the registry has a value here.
         for key in protocol::keys::KEYS {
             if key.name.starts_with("net.") {
@@ -343,10 +378,30 @@ eth0\t0000000A\t00000000\t0001\t0\t0\t100\t00FFFFFF\t0\t0\t0
             gateway: None,
             dns: Vec::new(),
             interfaces: Vec::new(),
+            public_ip: None,
         };
         let values = values(&net);
         assert_eq!(values["net.ip"], "");
+        assert_eq!(values["net.public_ip"], "");
         assert_eq!(values["net.hostname"], "tessaro");
+    }
+
+    #[test]
+    fn the_public_address_is_the_ip_line_of_the_trace() {
+        let body = "fl=12f1\nh=1.1.1.1\nip=203.0.113.9\nts=1758000000.1\nvisit_scheme=https\n";
+        assert_eq!(parse_trace(body), "203.0.113.9".parse().ok());
+        assert_eq!(parse_trace("ip=2001:db8::7\n"), "2001:db8::7".parse().ok());
+        assert_eq!(parse_trace("h=1.1.1.1\n"), None);
+        assert_eq!(parse_trace("ip=not-an-address\n"), None);
+    }
+
+    /// Against the real endpoint: the IP SAN has to verify through openssl.
+    #[tokio::test]
+    #[ignore = "needs the internet"]
+    async fn cloudflare_answers_with_an_address() {
+        let http = HyperHttp::new(5, 5, 4096, crate::watchdog::Heartbeat::detached());
+        let ip = public_ip(&http).await.expect("the trace answers");
+        assert!(!ip.is_loopback());
     }
 
     #[test]

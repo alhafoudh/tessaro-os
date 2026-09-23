@@ -230,6 +230,7 @@ pub static KEYS: &[Key] = &[
     live("net.dns", "DNS servers in use, comma separated."),
     live("net.ipv4", "Every IPv4 address on every interface but loopback, comma separated."),
     live("net.ipv6", "Every IPv6 address on every interface but loopback, comma separated."),
+    live("net.public_ip", "The address the internet sees, from Cloudflare's trace; looked up by `net` and `get net.public_ip`, and every 5 minutes while kiosk.url uses it."),
 ];
 
 /// Custom values: `data.<name>`, named by whoever sets them. The kiosk gives

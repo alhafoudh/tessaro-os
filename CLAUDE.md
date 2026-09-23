@@ -812,7 +812,17 @@ kiosk origin, Weston restarts - taking the browser and agent with it - for a
   (`agent/tessaro-agent/src/net.rs`: `/sys/class/net`, `getifaddrs`,
   `/proc/net/route`, and resolved's own `/run/systemd/resolve/resolv.conf`,
   since `/etc/resolv.conf` is its 127.0.0.53 stub), not from NetworkManager,
-  so they answer even when NM is the broken thing. "Primary" means the
+  so they answer even when NM is the broken thing. The exception is
+  `net.public_ip`, which only the outside world knows. **It is looked up only
+  while `kiosk.url` uses `{net.public_ip}`** - a link may be metered - and
+  then the agent asks `https://1.1.1.1/cdn-cgi/trace` every 5 minutes (30s
+  until it has an answer, and after a failure), keeps it in
+  `/run/tessaro-kiosk/public-ip`, and keeps the last address when a request
+  fails. So it is empty at the boot render and fills in shortly after.
+  `tessaro-ctl net` and `get net.public_ip` look it up on the spot whatever
+  the URL uses - one request per ask, up to ~5s when offline - while `keys`
+  and a plain `get` only show the last address found this boot. "Primary"
+  means the
   interface carrying the IPv4 default route. `tessaro-ctl net` shows the same
   as an overview, `net interfaces` every interface with kind, state, carrier,
   MAC, MTU, speed and addresses. Nothing here edits the network yet.
