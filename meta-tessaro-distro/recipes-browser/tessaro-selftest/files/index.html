@@ -503,6 +503,11 @@
   <div class="row">
     <button id="serial-list">List authorised ports</button>
     <button id="serial-request" class="primary">Request a port</button>
+    <label>port
+      <select id="serial-port" style="min-height:44px" disabled>
+        <option>list or request one first</option>
+      </select>
+    </label>
     <label>baud
       <select id="serial-baud" style="min-height:44px">
         <option>9600</option><option selected>115200</option><option>57600</option>
@@ -1244,9 +1249,17 @@ function buildTouchpad() {
 /* 6 - WebSerial                                                          */
 /* ===================================================================== */
 
+function isUsbPort(port) {
+  return port.getInfo && port.getInfo().usbVendorId !== undefined;
+}
+
+// A port with no USB ids is an on-board UART. On the Pi that is ttyS0, the
+// serial console: root:tty 0620 with a getty on it, so opening it from the
+// browser fails by design - which is why it must never be the default pick.
 function describePort(port) {
-  const info = port.getInfo ? port.getInfo() : {};
-  const hex = n => n === undefined ? "?" : "0x" + n.toString(16).padStart(4, "0");
+  if (!isUsbPort(port)) return "on-board UART, not USB (the serial console on a Pi)";
+  const info = port.getInfo();
+  const hex = n => "0x" + n.toString(16).padStart(4, "0");
   return "usbVendorId " + hex(info.usbVendorId) + ", usbProductId " + hex(info.usbProductId);
 }
 
@@ -1273,7 +1286,26 @@ function buildSerial() {
 
   setCheck("serial", "info", "API present, no port opened");
 
-  let port = null, reader = null, keepReading = false;
+  let port = null, reader = null, keepReading = false, known = [];
+  const picker = document.getElementById("serial-port");
+
+  // Fill the picker and select the first USB port, falling back to whatever
+  // is first. Selecting by hand overrides it.
+  function offer(ports) {
+    known = ports;
+    picker.innerHTML = "";
+    ports.forEach((p, i) => picker.add(new Option(i + ": " + describePort(p), String(i))));
+    const preferred = Math.max(0, ports.findIndex(isUsbPort));
+    picker.value = String(preferred);
+    picker.disabled = !ports.length;
+    port = ports[preferred] || null;
+    if (port) logTo("serial-log", "selected port " + preferred + ": " + describePort(port));
+  }
+
+  picker.addEventListener("change", () => {
+    port = known[Number(picker.value)] || null;
+    if (port) logTo("serial-log", "selected port " + picker.value + ": " + describePort(port));
+  });
 
   document.getElementById("serial-list").addEventListener("click", async () => {
     try {
@@ -1282,16 +1314,20 @@ function buildSerial() {
         logTo("serial-log", "no authorised ports" + (fileOrigin ? " (expected on file://)" : ""));
       } else {
         ports.forEach((p, i) => logTo("serial-log", "authorised port " + i + ": " + describePort(p)));
-        port = ports[0];
       }
+      offer(ports);
     } catch (err) { logTo("serial-log", "getPorts failed: " + err); }
   });
 
   document.getElementById("serial-request").addEventListener("click", async () => {
     try {
-      port = await navigator.serial.requestPort();
-      logTo("serial-log", "chooser returned: " + describePort(port));
+      const granted = await navigator.serial.requestPort();
+      logTo("serial-log", "chooser returned: " + describePort(granted));
       setCheck("serial", "ok", "port granted via chooser");
+      const ports = await navigator.serial.getPorts();
+      offer(ports);
+      port = granted;
+      picker.value = String(Math.max(0, ports.indexOf(granted)));
     } catch (err) { logTo("serial-log", "requestPort: " + err); }
   });
 

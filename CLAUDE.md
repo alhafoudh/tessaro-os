@@ -771,6 +771,24 @@ What was actually missing was kernel drivers and file permissions.
 * **Blocklists beat policy.** Serial and HID consult their blocklist *before*
   the policy grant, so a blocklisted device stays blocked no matter what is
   listed. `--disable-features=WebSerialBlocklist` is the escape hatch.
+* **The serial grant includes the console UART, so pick ports by USB id.**
+  `SerialAllowAllPortsForUrls` means *all*: on the Pi, `getPorts()` returns
+  `/dev/ttyS0` first, with an empty `getInfo()`. That is the serial console
+  (`console=ttyS0`, a getty on it, `root:tty 0620`), so `open()` on it fails
+  with `NetworkError: Failed to open serial port.` - by design, and not
+  something to grant. A page that takes `ports[0]` never reaches the USB
+  adapter listed after it. Select on `getInfo().usbVendorId` instead; the
+  self-test page does that and offers a picker.
+* **WebHID lists keyboard-mode devices but never delivers their input.** A
+  barcode scanner in keyboard emulation shows up in `getDevices()` with a
+  single `1:6` (Generic Desktop / Keyboard) collection, and Chromium blocks
+  reports from protected keyboard collections. Only a scanner that exposes a
+  HID POS collection (usage page `0x8C`) can be read, and that is a setting on
+  the scanner, not here. Check it with `hexdump -C
+  /sys/class/hidraw/hidrawN/device/report_descriptor`: HID POS contains `05 8c`.
+  A TMS/TEEMI-type scanner (`f126:0288`) never changed its descriptor through
+  four "HID POS" configuration codes - it stays keyboard plus CDC serial, and
+  its serial port is the non-keyboard channel it actually has.
 * **Device nodes are group-owned, not `uaccess`.** Chromium's device service is
   in-process in the browser and opens the node itself - no privileged helper
   outside ChromeOS - so the `weston` user needs the permission directly.
