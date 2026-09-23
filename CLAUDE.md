@@ -24,9 +24,10 @@ Use the mise tasks rather than calling `kas-container` directly:
 | `mise run run-vnc` | Boot in QEMU with VNC on localhost:5900 |
 | `mise run image-sizes` | Size of every built `.wic`, all machines at once |
 | `mise run clean` | Drop build artifacts, keep sstate and downloads |
-| `mise run agent-test` | `cargo test` for the kiosk agent |
-| `mise run agent-lint` | `cargo fmt --check` plus clippy for the agent |
-| `mise run agent-integration` | The agent against a real headless Chromium |
+| `mise run agent-test` | `cargo test` for the agent workspace (protocol, agent, ctl) |
+| `mise run agent-lint` | `cargo fmt --check` plus clippy for the workspace |
+| `mise run agent-integration` | The agent against a real headless Chromium, control plane in a sandbox |
+| `mise run ctl-build` | Release `tessaro-ctl` for this host, to manage devices remotely |
 | `mise run agent-e2e` | Boot the qemu image, provoke each agent behaviour, assert on its journal |
 | `mise run image:pull` | Workstation: fetch the image and bmap from the build host |
 | `mise run image:flash` | Workstation: write the pulled image to a card or disk |
@@ -49,8 +50,13 @@ variable, so each machine gets its own TOPDIR under `build/<machine>/` while
 basenames in `kas/machine/`. `run`, `run-vnc` and OVMF are qemu-only and refuse
 to run on anything else. `build` has no prerequisites beyond kas.
 
-The agent is an ordinary Rust project under `agent/`, built into the image by
-the `tessaro-kiosk` recipe. Its tests run on the host (`mise run agent-test`);
+The agent is an ordinary Rust workspace under `agent/`, built into the image by
+the `tessaro-kiosk` recipe: `protocol/` (the wire types and the settings
+registry, no Linux-only dependencies), `tessaro-agent/` (the device side) and
+`tessaro-ctl/` (the client, on the device and on a laptop). cargo.bbclass
+installs every binary in the workspace, so both land in `/usr/bin`. The no-
+blocking `clippy.toml` lives in `tessaro-agent/` only: `tessaro-ctl` is a plain
+blocking client on purpose. Its tests run on the host (`mise run agent-test`);
 mise pins the host toolchain to **rust 1.95.0**, the same version bitbake uses,
 because that version is dictated by the Chromium pin
 (`meta-lts-mixins-rust` in `kas/repo/meta-chromium.yml`) and not chosen freely.
@@ -58,8 +64,8 @@ because that version is dictated by the Chromium pin
 fetches `agent/` with a `file://` SRC_URI, so a `target/` inside it would be
 copied into `WORKDIR` and hashed on every build.
 
-After changing `agent/Cargo.toml` or `Cargo.lock`, regenerate the crate list
-the recipe requires and commit it:
+After changing any `Cargo.toml` in the workspace or `agent/Cargo.lock`,
+regenerate the crate list the recipe requires and commit it:
 
 ```sh
 mise run shell                          # then, inside:
@@ -172,20 +178,25 @@ Everything else is `meta-tessaro-distro/recipes-browser/tessaro-kiosk/`:
 * `tessaro-agent.service` runs `/usr/bin/tessaro-agent`, the native binary
   built from `agent/` by this same recipe. `Type=simple`, `User=root`,
   `Restart=always`, and `WatchdogSec=60` - see **The agent's deadlines and
-  watchdog** below.
+  watchdog** below. It is also the device's control plane - see **Settings,
+  tessaro-ctl and the claim model** below.
+* `tessaro-config.service` is a oneshot, `tessaro-agent boot`, ordered before
+  Weston, the browser and the agent. It renders the device's settings, keeps
+  the claim invariant and is the factory-reset escape hatch.
 * `/usr/lib/tessaro-kiosk/tessaro-kiosk.env` carries the build-time defaults
-  (`TESSARO_KIOSK_URL` from `tessaro.conf`), `/etc/default/tessaro-kiosk`
-  overrides them and ships entirely **commented out**. **Both units read them
-  as systemd `EnvironmentFile=`**, in that order, so the browser and its
-  supervisor can never disagree about what the kiosk URL is. The `-` on the
-  second makes a missing override file a non-event, which is what `/etc` being
-  an overlay demands.
+  (`TESSARO_KIOSK_URL` from `tessaro.conf`). What was set on the device lives
+  in `/data/tessaro/state.json` and reaches the units as
+  `/run/tessaro-kiosk/generated.env`, which the browser unit and
+  `tessaro-weston-config` read *after* the defaults. The agent reads only the
+  defaults and lays `state.json` over them itself. There is no
+  `/etc/default/tessaro-kiosk` any more.
 
 The defaults deliberately live under `/usr/lib`, not `/etc`: `/etc` is an
 overlayfs upper on `/data`, so the first write to a file there shadows the
 image's copy permanently and no later image could move the default again.
 
-Apply a change with `systemctl restart tessaro-kiosk tessaro-agent`.
+Change a setting with `tessaro-ctl set KEY=VALUE`; it restarts exactly what
+reads that key.
 
 The agent used to be a Ruby program in a podman container. It is now a Rust
 binary, and podman is gone from the image with it - see **Removing the
@@ -342,8 +353,8 @@ Things to know:
   `ca-certificates` - so there is no compiled-in root store to pick by
   mistake. A missing provider is a link error now; the *silent* failure left
   is an https URL that never takes the TLS path and fails like a dead site.
-  `agent/src/http.rs` has a test for each, and `readelf -d` on the built
-  binary should always show `libssl.so.3`. Not rustls: it would freeze the
+  `agent/tessaro-agent/src/http.rs` has a test for each, and `readelf -d` on
+  both built binaries should always show `libssl.so.3`. Not rustls: it would freeze the
   roots at build time, and `ring`/`aws-lc-rs` want a C toolchain and per-arch
   asm under bitbake.
 
@@ -375,7 +386,7 @@ unsupervised.
   keepalive task pings only while the pledge holds, and logs
   `watchdog: <call> is Ns overdue` once before it stops. A timer would keep
   pinging through a wedge; pinging once per cycle would tie `WatchdogSec` to
-  the probe timeouts in `/etc/default/tessaro-kiosk`. So `WatchdogSec=60` is
+  the probe timeouts, which are settings. So `WatchdogSec=60` is
   independent of them, a wedge is caught in about 75s, and waiting between
   cycles - including the `KIOSK_AGENT_ENABLE=0` park - pledges too, so idle
   is alive. A pledge is capped at 120s; a configured timeout above that is
@@ -418,7 +429,10 @@ exists to handle and asserts on the lines it writes to its journal - the site
 going down, the page wandering off the origin, a crashed renderer, a killed
 browser, a wedged browser, an operator-stopped unit, a DNS server that
 swallows queries, the agent itself wedging, a short agent stall, a parked
-agent, SIGTERM. About eight minutes; exits non-zero on any failure and prints
+agent, SIGTERM - and the control plane: a `tessaro-ctl set` that restarts the
+agent onto the new value, a claim and unclaim round trip, and a resolution
+change that refuses an unoffered mode and reverts unconfirmed. About ten
+minutes; exits non-zero on any failure and prints
 the journal lines the failing case saw. `ruby test/e2e/agent_e2e.rb --list`
 names the cases, `--only a,b` runs some, `--boot --keep` leaves the VM up, and
 without `--boot` it reuses a VM left up that way.
@@ -426,11 +440,16 @@ without `--boot` it reuses a VM left up that way.
 * **It boots its own VM, not through `mise run run`.** The guest is driven over
   SSH, and runqemu's slirp forwards `127.0.0.1:2222` - but inside the kas
   container's network namespace, where `-p` publishing cannot reach it. The
-  harness passes `--network=host` so that loopback is the host's. dropbear's
-  empty root password means no credential is involved.
-* **It retunes the agent for the run** through `/etc/default/tessaro-kiosk`
-  (5s probes, a 15s restart backoff, no periodic refresh) and puts the file
-  back. The VM runs with `snapshot`, so a power-off discards everything anyway.
+  harness passes `--network=host` so that loopback is the host's. An
+  unclaimed device's empty root password means no credential is involved -
+  which is why the suite never leaves the device claimed: its claim case
+  claims, checks and unclaims inside one SSH command, with a local-socket
+  unclaim in a `trap`.
+* **It retunes the agent for the run** with `tessaro-ctl set --no-apply` over
+  the guest's local socket (5s probes, a 15s restart backoff, no periodic
+  refresh) and unsets those keys afterwards. The VM runs with `snapshot`, so a
+  power-off discards everything anyway. mDNS cannot be exercised here: slirp
+  carries no multicast.
 * **DevTools is driven from the host** through an SSH tunnel to the guest's
   `127.0.0.1:9222`, with a small websocket client in the script - the image has
   no curl or Python. Chromium's DevTools HTTP server answers HTTP/1.0 with
@@ -444,8 +463,8 @@ without `--boot` it reuses a VM left up that way.
 ### Self-test page
 
 **This is what a factory image opens.** `TESSARO_KIOSK_URL` in `tessaro.conf`
-defaults to `http://127.0.0.1/`; a deployment repoints it, at build time or in
-`/etc/default/tessaro-kiosk`.
+defaults to `http://127.0.0.1/`; a deployment repoints it, at build time or
+with `tessaro-ctl set kiosk.url=...`.
 
 `meta-tessaro-distro/recipes-browser/tessaro-selftest/` ships one static page at
 `/usr/share/tessaro-selftest/index.html`, with its media beside it. It exercises
@@ -453,8 +472,8 @@ rendering, fonts, emoji, every `<input>` type, touch and mouse scrolling plus
 multi-touch, WebSerial and WebHID, audio and video playback, and WebAudio
 synthesis - from local files, with the network down. Passive checks grade
 themselves in a strip at the top; interactive ones stay `pending` until someone
-actually does something. To get back to it on a deployed device, set
-`KIOSK_URL=http://127.0.0.1/` and restart both units.
+actually does something. To get back to it on a deployed device,
+`tessaro-ctl set kiosk.url=http://127.0.0.1/`, and `unset` it afterwards.
 
 * **It is served by nginx, and that is not a preference.** A `file://` page has
   a null origin, and `SerialAllowAllPortsForUrls` /
@@ -477,7 +496,7 @@ actually does something. To get back to it on a deployed device, set
   which has to stay in `/etc`, its path being compiled in by `--conf-path` -
   and deletes the stock `default_server` symlink, which would otherwise answer
   on `0.0.0.0:80` with the nginx welcome page. Ours binds `127.0.0.1` only.
-* **Set `KIOSK_REFRESH_INTERVAL=0` before a manual pass.** The agent
+* **`tessaro-ctl set agent.refresh_interval=0` before a manual pass.** The agent
   re-navigates on that timer, 600s by default, and a reload closes any serial
   port the page has open and wipes every form value. Put it back afterwards:
   on a real site the periodic reload is what recovers a stale page.
@@ -485,7 +504,7 @@ actually does something. To get back to it on a deployed device, set
   nginx dying puts the offline page on screen like any other outage, rather
   than going unnoticed.
 * **The on-screen keyboard only appears on a device with no keyboard**, so the
-  text inputs need a USB keyboard or `KIOSK_OSK=always` - see **On-screen
+  text inputs need a USB keyboard or `display.osk=always` - see **On-screen
   keyboard** below. Everything that is a tap, a slider or a picker works with a
   finger. The page carries this as a note.
 * **It is a separate recipe from `tessaro-kiosk` on purpose.** That recipe
@@ -531,8 +550,20 @@ connector will be called, the config is generated per boot:
   as `ExecStartPre=`, and those lines do not come back under the unit even
   though the compositor's own do. Every decision it makes - connector, scale
   and why, keyboard and why - is one line there.
-* Scale is `KIOSK_SCALE` if set, otherwise 2 above 3400px wide and 1 below.
-  `KIOSK_SCALE=none` disables the mechanism entirely.
+* Scale is `display.scale` (`KIOSK_SCALE`) if set, otherwise 2 above 3400px
+  wide and 1 below - measured on the mode being set, if one is. `none` writes
+  no `scale=`.
+* **Resolution is `display.resolution` (`KIOSK_RESOLUTION`)**: `preferred`, or
+  a `WIDTHxHEIGHT` written as `mode=` into each connector's `[output]`. It is
+  the one setting that can leave nobody able to see the screen, so it has
+  three guards. The agent only accepts a mode some connected connector lists
+  in `/sys/class/drm/*/modes` (`tessaro-ctl modes` prints them); the
+  generator writes it only for connectors that list it and leaves the rest on
+  their preferred mode; and the change is on **probation** - it reverts on its
+  own unless `tessaro-ctl confirm` arrives within 60s. The pending change is in
+  `state.json`, so it survives the agent restarting with Weston, and the boot
+  oneshot reverts a change still pending at boot: a reboot is not a confirm.
+  The timer is monotonic, never the wall clock.
 * **The technician-facing file is still `/etc/xdg/weston/weston.ini`**, which is
   on the `/etc` overlay and persists. It is the base the generator copies, and
   any connector already named in an `[output]` section there is left alone - so
@@ -541,9 +572,9 @@ connector will be called, the config is generated per boot:
 * The empty `ExecStart=` in the drop-in is required to clear oe-core's line
   before replacing it, and `--modules=systemd-notify.so` has to be carried over
   verbatim - `weston.service` is `Type=notify` and hangs without it.
-* `KIOSK_SCALE` is one of the three keys in `/etc/default/tessaro-kiosk` that
-  need `systemctl restart weston` rather than `systemctl restart tessaro-kiosk`.
-  `KIOSK_OSK` and `KIOSK_VNC` are the others.
+* The `display.*` keys are the ones read by the compositor, so
+  `tessaro-ctl set` restarts Weston for them - and with it the browser and the
+  agent - rather than just the browser.
 
 ### On-screen keyboard
 
@@ -594,18 +625,17 @@ keyboard attached", and how that is decided matters:
   boots x86 with `-machine q35,i8042=off -usb -device usb-kbd`, so the guest
   has a real USB keyboard (`QEMU QEMU USB Keyboard`) and `auto` hides the
   panel. Exercising the keyboard under `mise run run-vnc` therefore needs
-  `KIOSK_OSK=always` in `/etc/default/tessaro-kiosk` plus
-  `systemctl restart weston`; note `run`/`run-vnc` pass `-snapshot`, so that
-  edit does not survive a reboot of the VM.
+  `tessaro-ctl set display.osk=always`; note `run`/`run-vnc` pass
+  `-snapshot`, so that does not survive a reboot of the VM.
 * **Keyboard-shaped peripherals will fool it.** A barcode scanner, an RFID
-  reader or a KVM dongle enumerates as a USB HID keyboard. `KIOSK_OSK=always`
+  reader or a KVM dongle enumerates as a USB HID keyboard. `display.osk=always`
   is the answer, which is why that value exists.
 * **It fails towards showing the keyboard.** No `udevadm`, an unpopulated udev
   database, anything unexpected: the verdict is "no keyboard" and the panel is
   offered. A superfluous keyboard on screen is a nuisance; a touch-only device
   with no way to type is a brick.
 * **The decision is made once, at compositor start.** Hotplug does nothing
-  until `systemctl restart weston`, which takes the browser and the agent with
+  until `tessaro-ctl restart weston`, which takes the browser and the agent with
   it. A udev rule that recomputes and restarts on change is the obvious
   follow-up and is deliberately not built yet - the detection wants proving
   against real peripherals first.
@@ -711,15 +741,134 @@ which is the half that does not reach the browser, see above.
   is the first thing to try on a Pi that feels slow.
 * **One client at a time** - a second connection disconnects the first - and
   **only outputs present when Weston starts are shared**, so a monitor plugged
-  in later needs `systemctl restart weston`, the same limitation `KIOSK_OSK`
-  has.
+  in later needs `tessaro-ctl restart weston`, the same limitation
+  `display.osk` has.
 * **SSH now ships in every image**, not only debug ones:
   `ssh-server-dropbear empty-root-password allow-empty-password` in
   `moonforge-image-base.bbappend`. `allow-empty-password` is the one that
   matters for dropbear - it adds `-B`, without which a blank password is
-  refused whatever the hash says. This is a root shell with no credential on
-  any network the device joins; an `authorized_keys` story is the obvious next
-  step and the only thing that would let the empty password go.
+  refused whatever the hash says. **The empty root password now only lasts
+  while the device is unclaimed**: claiming it (below) sets a random one, and
+  unclaiming or a factory reset empties it again. So a fresh or reset device
+  is a root shell with no credential on any network it joins - accepted, and
+  the reason to claim a device before it leaves the bench. An
+  `authorized_keys` story is still the obvious next step.
+
+### Settings, tessaro-ctl and the claim model
+
+**One management surface.** A device's settings live in
+`/data/tessaro/state.json`, the only way to change them is `tessaro-ctl`, and
+`tessaro-agent` is the only thing that writes the file. `tessaro-ctl keys`
+lists every setting (the registry is `agent/protocol/src/keys.rs`), `get`,
+`set KEY=VALUE ...` and `unset KEY ...` do what they say, and each change
+restarts exactly what reads the key: the agent restarts itself for an agent
+key (invisible on screen), the browser restarts for a browser key or a new
+kiosk origin, Weston restarts - taking the browser and agent with it - for a
+`display.*` key.
+
+* **`state.json` is sparse**: only what was set, as the registry's dotted
+  names. Everything else follows `/usr/lib/tessaro-kiosk/tessaro-kiosk.env`,
+  so a later image still moves a default.
+* **Writes are locked and survive a power cut.** `flock` on a separate
+  `.lock` file (a rename swaps the data file's inode, so the lock cannot live
+  on it), the new content to `.tmp` and `fsync`, the current file hard-linked
+  to `.prev`, `rename`, `fsync` of the directory. A read falls back from the
+  file to `.prev` to the defaults and logs it; a torn file never stops the
+  kiosk. `auth.json` uses the same store. Nothing in either file is a
+  timestamp: device clocks drift, and `revision` is a counter
+  (`set --if-revision N` is compare-and-set).
+* **The CLI documents itself.** `tessaro-ctl keys` prints every setting with
+  its description, current value or default, what it accepts and what a
+  change restarts; `keys KEY` prints one. The text comes from the registry on
+  the device (`Kind::describe` plus each key's `doc`), so a client never
+  documents settings a device does not have. `tessaro-ctl --help` carries
+  worked examples.
+* **URL parameters.** Any `url.NAME=VALUE` fills a `{NAME}` placeholder
+  anywhere in `kiosk.url` - host, path or query - percent-encoded, so a value
+  cannot change the URL's structure:
+  `set 'kiosk.url=https://{store}.shop.test/?lang={lang}' url.store=north url.lang=sk`.
+  Expansion happens once, in `state::Effective`: the browser unit gets the
+  expanded URL in `generated.env`, and the agent's origin checks and the
+  device-API policy see the same one, so a placeholder in the host moves the
+  grants too. **Every setting is a placeholder too**, by its dotted name:
+  `{display.osk}`, `{browser.fps_counter}`, `{node.name}` - its effective
+  value, set or image default, and `{node.name}` is the name the device
+  actually answers to even when none was set. Only `{kiosk.url}` is refused,
+  as it cannot contain itself. Because any setting can move the URL, whether
+  the agent restarts is decided by comparing the expanded URL with the one the
+  running agent started with, not by which key changed. `set` refuses a
+  template with an unset `url.*` or a name that is no setting, and an `unset`
+  of a `url.*` still in use; parameters and template can go in one command.
+  Nothing is added implicitly - only what the template names.
+* **Values are validated once, at `set`**: enums, ranges, URLs, modes - and no
+  control characters, quotes, backslashes or `$` anywhere, because the value
+  ends up in an env file systemd parses. A newline would write a second
+  variable.
+* **Rendering.** `generated.env` in `/run/tessaro-kiosk` and the Chromium
+  policy are re-rendered after every change and by `tessaro-config.service`
+  at boot, and written only when the content differs - a no-op must never
+  restart anything on a public screen.
+* **The agent never spawns Chromium.** It only ever drives the units over
+  `org.freedesktop.systemd1`, and the browser unit keeps `WantedBy=`, so a
+  crashlooping agent still leaves a browser on the defaults.
+* **Escape hatch**: `/data/tessaro/factory-reset`, or `tessaro.factory_reset`
+  typed on the kernel command line at the boot loader for one boot, is acted
+  on by the boot oneshot before the agent starts. `tessaro-ctl factory-reset`
+  does the same while the agent runs.
+* **Migration**: a leftover `/etc/default/tessaro-kiosk` is imported into
+  `state.json` once at boot - valid keys only, the rest named in
+  `journalctl -t tessaro-config` - and renamed `.migrated`.
+
+**Two transports, one protocol** (newline-delimited JSON,
+`agent/protocol/src/lib.rs`):
+
+* **`/run/tessaro-agent.sock`**, mode 0600 root: no auth, no TLS, full power.
+  Not group accessible on purpose - Chromium runs as `weston`, and a
+  compromised browser must not be one `connect()` from the control plane.
+* **TLS on `api.listen`** (default `0.0.0.0:7400`, `off` disables it). The
+  device makes an EC P-256 key and a self-signed certificate in
+  `/data/tessaro/tls/` on first boot, valid from 1970 to 9999 so a wrong clock
+  cannot break it. Clients **pin** its SHA-256 on first use, keyed by node id,
+  and check the pin before any token is sent.
+
+**The claim model:**
+
+* A fresh device is **unclaimed**: no tokens, empty root password. Over TCP it
+  answers only `id` and `claim`.
+* **The first `claim` wins.** It gets a token and the root password becomes a
+  random 20-character one, which `tessaro-ctl` shows exactly once. Order
+  matters for power loss: the password is set first, then the token
+  committed, so a cut in between leaves "no tokens, a password", which the
+  boot oneshot resets to empty. The reverse would leave a claimed device with
+  an empty root.
+* **Further tokens are issued only against a valid token** (`token create`),
+  or over the local socket. Tokens never expire; revoking one deletes it.
+  Only SHA-256s are stored, compared in constant time. The device is claimed
+  exactly when a token exists, so revoking the last one unclaims it.
+* **`unclaim`** removes every token and empties the root password;
+  **`factory-reset`** also wipes the settings. After either, the first client
+  to claim wins again. The TLS key survives both, so pins stay valid.
+* `password set` (prompted, or `--random`) changes the root password on a
+  claimed device; an unclaimed one keeps it empty.
+* Failed tokens are rate-limited per address, but a valid token always gets
+  in - the tokens are 256 bits, the limiter only keeps scans quiet.
+* **Accepted exposure**: whoever reaches a fresh or reset device first owns it,
+  and the mDNS record says which devices are unclaimed.
+
+**Names.** The node id is systemd's app-specific machine id (HMAC-SHA256 of
+`/etc/machine-id` over a fixed Tessaro app id, stamped v4) - it matches
+`systemd-id128 -a 8a6c7b172d5443cd9033a24d0df85022 machine-id`, and the
+machine id itself never leaves the device. **Never change that app id**: it
+would rename every device. The name is `adjective-noun-xxxx` from the id, or
+`node.name`. The agent announces `NAME.local` and `_tessaro._tcp` over mDNS
+(`mdns-sd`, TXT `id`, `fp`, `ver`, `machine`, `claimed`; `api.mdns=off`
+stops it), and `tessaro-ctl --node NAME` finds a device by name, falling back
+to the last address it was seen at. `tessaro-ctl nodes` lists what answers.
+Wiping `/data` or the `/etc` overlay re-identifies a device.
+
+`tessaro-ctl` on a laptop: `mise run ctl-build`, then
+`tessaro-ctl --node NAME claim` (or `login --token` with a token someone
+issued). Pins and tokens are kept in `~/.config/tessaro/nodes.json`, 0600.
 
 ### Device APIs: WebSerial, WebHID, WebUSB, Web Bluetooth
 
@@ -740,14 +889,16 @@ What was actually missing was kernel drivers and file permissions.
   unattended device access.
 * **Serial and HID are pre-granted to two origins** by
   `SerialAllowAllPortsForUrls` and `WebHidAllowAllDevicesForUrls` in the policy
-  file: the kiosk's own, derived from `TESSARO_KIOSK_URL`, and the self-test's
-  `http://127.0.0.1`. They collapse to one entry on a factory image, where
-  those are the same string. These match on *origin* only - scheme, host, port,
-  no `[*.]host` wildcards - and both are substituted at build time
-  (`TESSARO_DEVICE_ORIGINS` in the recipe). **Pointing `KIOSK_URL` at a third
-  origin in `/etc/default/tessaro-kiosk` silently voids the grant for it**,
-  which is the one sharp edge here; building the image with the right
-  `TESSARO_KIOSK_URL` avoids it.
+  file: the kiosk's own and the self-test's `http://127.0.0.1`, plus any in
+  `browser.device_origins`. They collapse to one entry on a factory image,
+  where the first two are the same string. These match on *origin* only -
+  scheme, host, port, no `[*.]host` wildcards. The image ships them
+  substituted at build time (`TESSARO_DEVICE_ORIGINS` in the recipe), and on
+  the device **tessaro-agent re-renders the policy from `kiosk.url` as set**,
+  from the `/usr/lib/tessaro-kiosk/policy.json` copy, so pointing a device at
+  a new origin moves the grants with it. A change of origin therefore restarts
+  the browser, not just the agent: Chromium reads the policy at start. The
+  render goes through serde, because a syntax error would drop the whole file.
 * **WebUSB ships granted to nothing.** It is the only one of the three with no
   "allow all" policy, and blanket raw USB is a bigger grant than blanket serial
   or HID, so `WebUsbAllowDevicesForUrls` is an empty list with a worked example

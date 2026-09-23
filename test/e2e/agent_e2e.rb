@@ -19,13 +19,14 @@
 # The guest is reached over SSH on 127.0.0.1:2222. runqemu's slirp forwards
 # that port, but inside the kas container's network namespace - which is why
 # --boot starts the VM with --network=host rather than going through
-# `mise run run`. The image ships dropbear with an empty root password, so no
-# credential is involved.
+# `mise run run`. An unclaimed image has an empty root password, which is
+# what lets the suite log in with no credential - so the suite never claims
+# the device.
 #
-# The agent is retuned for the run through /etc/default/tessaro-kiosk (short
-# probe intervals, a short restart backoff, no periodic refresh), and the file
-# is put back afterwards. The VM runs with `snapshot`, so nothing survives a
-# power-off anyway.
+# The agent is retuned for the run with `tessaro-ctl set --no-apply` on the
+# guest (short probe intervals, a short restart backoff, no periodic
+# refresh), and those keys are unset afterwards. The VM runs with `snapshot`,
+# so nothing survives a power-off anyway.
 
 require "fileutils"
 require "json"
@@ -52,13 +53,16 @@ module AgentE2E
   # seconds rather than minutes, a restart backoff short enough that one
   # case's restart does not block the next, and no periodic refresh, so the
   # only navigations in the journal are the ones a case provoked.
-  TEST_ENV = {
-    "KIOSK_PROBE_INTERVAL" => "5",
-    "KIOSK_PROBE_INTERVAL_FAIL" => "3",
-    "KIOSK_FAIL_THRESHOLD" => "2",
-    "KIOSK_REFRESH_INTERVAL" => "0",
-    "KIOSK_RESTART_BACKOFF" => "15"
+  TEST_SETTINGS = {
+    "agent.probe_interval" => "5",
+    "agent.probe_interval_fail" => "3",
+    "agent.fail_threshold" => "2",
+    "agent.refresh_interval" => "0",
+    "agent.restart_backoff" => "15"
   }.freeze
+
+  # Keys a case may add on top, unset again before the next case configures.
+  CASE_SETTINGS = %w[kiosk.probe_url agent.enable].freeze
 
   class Failure < StandardError; end
 
@@ -127,24 +131,21 @@ module AgentE2E
         .lines.map { JSON.parse(_1) }
     end
 
-    # The override file, as the case wants it: the original, then the test
-    # settings, then whatever this case adds. Later lines win in systemd's
-    # EnvironmentFile= parser.
+    # The settings as the case wants them: the test settings plus whatever
+    # this case adds, everything else back at the image default. Saved and
+    # rendered only (--no-apply); the case restarts what it needs itself.
+    # Goes through the local socket on the guest, which needs no token.
     def configure(extra = {})
-      settings = TEST_ENV.merge(extra).map { |key, value| "#{key}=#{value}\n" }.join
-      run("cat /tmp/e2e-tessaro-kiosk.orig - > /etc/default/tessaro-kiosk",
-          input: "# --- agent e2e ---\n#{settings}")
-    end
-
-    def save_original_config
-      run("test -f /tmp/e2e-tessaro-kiosk.orig || cp /etc/default/tessaro-kiosk /tmp/e2e-tessaro-kiosk.orig")
+      run("tessaro-ctl unset #{CASE_SETTINGS.join(" ")} --no-apply")
+      pairs = TEST_SETTINGS.merge(extra).map { |key, value| "'#{key}=#{value}'" }.join(" ")
+      run("tessaro-ctl set #{pairs} --no-apply")
     end
 
     def restore
       run(<<~SH, allow_failure: true)
         pids=$(pgrep -f /usr/lib/chromium/chromium-bi[n]); test -n "$pids" && kill -CONT $pids
         kill -CONT $(systemctl show -p MainPID --value tessaro-agent) 2>/dev/null
-        test -f /tmp/e2e-tessaro-kiosk.orig && cp /tmp/e2e-tessaro-kiosk.orig /etc/default/tessaro-kiosk
+        tessaro-ctl unset #{(TEST_SETTINGS.keys + CASE_SETTINGS).join(" ")} --no-apply
         test -L /etc/resolv.conf || { rm -f /etc/resolv.conf; ln -s ../run/systemd/resolve/stub-resolv.conf /etc/resolv.conf; }
         systemctl start nginx tessaro-kiosk
         systemctl restart tessaro-agent
@@ -371,7 +372,7 @@ module AgentE2E
   end
 
   check "dns", "names a swallowed DNS query as DNS, and does not leak threads" do |guest, journal|
-    guest.configure("KIOSK_PROBE_URL" => "https://kiosk.example.com/")
+    guest.configure("kiosk.probe_url" => "https://kiosk.example.com/")
     guest.run("rm /etc/resolv.conf && echo 'nameserver 203.0.113.1' > /etc/resolv.conf")
     guest.run("systemctl restart tessaro-agent")
     journal.wait_for(%r{^https://kiosk\.example\.com/ unreachable: DNS did not answer within 5s$}, timeout: 40)
@@ -417,7 +418,7 @@ module AgentE2E
   end
 
   check "parked", "a parked agent (KIOSK_AGENT_ENABLE=0) outlives WatchdogSec" do |guest, journal|
-    guest.configure("KIOSK_AGENT_ENABLE" => "0")
+    guest.configure("agent.enable" => "0")
     guest.run("systemctl restart tessaro-agent")
     journal.wait_for(/^KIOSK_AGENT_ENABLE is off; idling$/, timeout: 15)
     pid = guest.agent_pid
@@ -443,6 +444,69 @@ module AgentE2E
   ensure
     guest.run("systemctl start tessaro-agent", allow_failure: true)
   end
+
+  check "settings", "tessaro-ctl set restarts the agent, which comes back on the new value" do |guest, journal|
+    out = guest.run("tessaro-ctl set agent.probe_interval=7")
+    raise Failure, "set did not restart the agent:\n#{out}" unless out.include?("restarting tessaro-agent.service")
+
+    journal.wait_for(/^watching #{Regexp.escape(KIOSK_URL)} \(probe every 7s/, timeout: 30)
+    env = guest.run("cat /run/tessaro-kiosk/generated.env")
+    raise Failure, "generated.env does not carry it:\n#{env}" unless env.include?("KIOSK_PROBE_INTERVAL=7")
+  ensure
+    guest.configure
+    guest.restart_agent
+  end
+
+  # Claimed, the root password is not empty any more, and this suite logs in
+  # with an empty one - so the whole round trip is one guest command, with a
+  # local-socket unclaim on the way out whatever happens.
+  check "claim", "claim sets a root password and issues a token; unclaim empties it" do |guest, _journal|
+    guest.run(<<~SH)
+      set -e
+      trap 'tessaro-ctl unclaim --yes >/dev/null 2>&1 || true' EXIT
+      export TESSARO_CONFIG_DIR=/tmp/e2e-ctl
+      rm -rf "$TESSARO_CONFIG_DIR"
+      grep -q '^root::' /etc/shadow
+      tessaro-ctl -n 127.0.0.1 id | grep -q 'claimed      no'
+      tessaro-ctl -n 127.0.0.1 --json claim --yes --name e2e > /tmp/e2e-claim.json
+      grep -q '"root_password"' /tmp/e2e-claim.json
+      grep -q '^root:[$]6[$]' /etc/shadow
+      ! TESSARO_CONFIG_DIR=/tmp/e2e-other tessaro-ctl -n 127.0.0.1 claim --yes 2>/dev/null
+      tessaro-ctl -n 127.0.0.1 token list | grep -q 'e2e'
+      tessaro-ctl -n 127.0.0.1 unclaim --yes
+      grep -q '^root::' /etc/shadow
+      tessaro-ctl -n 127.0.0.1 id | grep -q 'claimed      no'
+    SH
+  end
+
+  check "resolution", "only an offered mode is accepted, it waits for confirm, and reverts without it" do |guest, _journal|
+    modes = JSON.parse(guest.run("tessaro-ctl --json modes")).flat_map { _1["modes"] }
+    raise Failure, "no display reports its modes" if modes.empty?
+
+    refused = guest.run("tessaro-ctl set display.resolution=16000x9000 2>&1", allow_failure: true)
+    raise Failure, "an unoffered mode was accepted" unless refused.include?("no connected display offers")
+
+    target = modes[1] || modes[0]
+    guest.run("tessaro-ctl set display.resolution=#{target}")
+    # Weston - and with it the agent - restarts; the new agent arms the timer.
+    deadline = Time.now + 60
+    sleep 2 until guest.run("tessaro-ctl status 2>/dev/null", allow_failure: true).include?("on probation") ||
+                  Time.now > deadline
+    ini = guest.run("cat /run/weston/weston.ini")
+    raise Failure, "weston.ini has no mode=#{target}:\n#{ini}" unless ini.include?("mode=#{target}")
+
+    sleep protocol_confirm_seconds + 10
+    value = guest.run("tessaro-ctl get display.resolution")
+    raise Failure, "an unconfirmed mode stuck: #{value}" unless value.include?("(default)")
+  ensure
+    guest.run("tessaro-ctl unset display.resolution", allow_failure: true)
+    sleep 5
+    guest.configure
+    guest.restart_agent
+  end
+
+  # CONFIRM_SECONDS in the protocol crate.
+  def self.protocol_confirm_seconds = 60
 
   # Boots the image with runqemu inside the kas container, sharing the host's
   # network namespace so runqemu's 127.0.0.1:2222 forward is the host's too.
@@ -542,7 +606,6 @@ module AgentE2E
 
       # Once, before any case, so `--only` runs with the same settings as the
       # full suite.
-      guest.save_original_config
       guest.configure
       guest.restart_agent
 

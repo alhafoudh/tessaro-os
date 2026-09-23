@@ -6,7 +6,14 @@
 // it cannot live under /usr/lib. /etc is an overlayfs upper on /data: the copy
 // below is the lower layer and works as shipped, but the first on-device write
 // to this path shadows it permanently and no later image can move it again.
-// Edit /etc/default/tessaro-kiosk for anything that has a knob there instead.
+//
+// It is also generated. This file ships twice: here, as what Chromium reads on
+// the very first boot, and as /usr/lib/tessaro-kiosk/policy.json, which
+// tessaro-agent renders the /etc copy from on every boot and after every
+// change, rewriting the two device-API origin lists below for kiosk.url and
+// browser.device_origins as set on the device. Edit neither on a device: the
+// agent puts /etc back, and /usr/lib is the image. Settings go through
+// tessaro-ctl.
 //
 // Comments and trailing commas are legal here: the loader parses with
 // JSON_PARSE_CHROMIUM_EXTENSIONS | JSON_ALLOW_TRAILING_COMMAS. A syntax error
@@ -82,11 +89,10 @@
   // wildcard support, unlike the Ask/Blocked variants. A host served on a
   // non-default port needs that port here.
   //
-  // Changing KIOSK_URL in /etc/default/tessaro-kiosk at *runtime* to an origin
-  // that is not in this list silently voids the grant for it, because the list
-  // is baked in at build time. Point a shipped device somewhere new and you
-  // have to edit this file too; build the image with the right
-  // TESSARO_KIOSK_URL and you do not.
+  // The lists below are what the image was built with: TESSARO_KIOSK_URL's
+  // origin and the self-test page's. On a device they are rewritten by
+  // tessaro-agent from kiosk.url as set there, plus browser.device_origins,
+  // so pointing a shipped device at a new site moves the grants with it.
   //
   // Note the Serial and HID blocklists are consulted *before* policy, so a
   // blocklisted device stays blocked no matter what is listed here.
@@ -112,6 +118,6 @@
   // policy exists for it in Chromium 147, and the guard cannot go past "Ask".
   // A Bluetooth peripheral therefore needs one real chooser interaction by a
   // technician, once per device. With WebBluetoothNewPermissionsBackend (see
-  // KIOSK_ENABLE_FEATURES in /etc/default/tessaro-kiosk) that grant persists
+  // `tessaro-ctl set browser.enable_features=...`) that grant persists
   // and navigator.bluetooth.getDevices() returns it on later boots.
 }

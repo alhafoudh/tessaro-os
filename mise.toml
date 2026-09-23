@@ -6,8 +6,11 @@ python = "3.12.11"
 # feature the image's compiler does not have.
 rust = "1.95.0"
 # For `mise run image:flash`. Not on PyPI, so it comes straight from the upstream
-# repo; mise installs it into its own tool dir, no venv to manage.
-"pipx:yoctoproject/bmaptool" = "3.9.0"
+# repo; mise installs it into its own tool dir, no venv to manage. The version
+# is the git tag verbatim, and upstream tags carry a "v" - "3.9.0" asks for a
+# ref that does not exist, and then every `mise run`/`mise exec` fails trying
+# to install it.
+"pipx:yoctoproject/bmaptool" = "v3.9.0"
 
 [vars]
 # The machine every task acts on. Override it per command:
@@ -48,17 +51,29 @@ WIC = "tmp/deploy/images/{{vars.machine}}/tessaro-os-{{vars.machine}}.rootfs.wic
 CARGO_TARGET_DIR = "{{config_root}}/build/cargo-target"
 
 [tasks.agent-test]
-description = "Run the tessaro-agent unit tests"
+description = "Run the unit tests of the agent workspace (protocol, tessaro-agent, tessaro-ctl)"
 dir = "{{config_root}}/agent"
-run = "cargo test"
+run = "cargo test --workspace"
 
 [tasks.agent-lint]
-description = "Check formatting and run clippy on tessaro-agent"
+description = "Check formatting and run clippy on the agent workspace"
 dir = "{{config_root}}/agent"
 run = '''
 set -e
-cargo fmt --check
-cargo clippy --all-targets -- -D warnings
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
+'''
+
+[tasks.ctl-build]
+description = "Build tessaro-ctl for this host, to manage devices remotely"
+dir = "{{config_root}}/agent"
+# A release build of the client only - no zbus, no tokio - for the machine
+# this runs on. The device gets its own copy from the image; this one is for a
+# technician's laptop. Copy it anywhere on PATH.
+run = '''
+set -e
+cargo build --release -p tessaro-ctl
+echo "$CARGO_TARGET_DIR/release/tessaro-ctl"
 '''
 
 [tasks.agent-integration]
@@ -84,8 +99,28 @@ done
 # always starts Chromium with a URL, so open one here to match.
 curl -sf -X PUT "http://127.0.0.1:9222/json/new?about:blank" >/dev/null
 
+# Everything the agent owns on a device - state.json, the TLS identity, the
+# socket, a shadow file to set a root password in, the rendered files - goes
+# into one sandbox here, so the control plane runs for real without touching
+# the host. Drive it from another terminal with
+#   TESSARO_SOCKET=<sandbox>/agent.sock tessaro-ctl status
+#   tessaro-ctl --node 127.0.0.1:17400 claim
+sandbox="$(mktemp -d)"
+mkdir -p "$sandbox/etc"
+printf 'root::19000:0:99999:7:::\n' > "$sandbox/etc/shadow"
+echo "sandbox: $sandbox"
+
 # The CDP server doubles as the probe target - it is the one HTTP endpoint
 # guaranteed to be up here, and /json/version is cheap.
+KIOSK_STATE_DIR="$sandbox/data" \
+KIOSK_RUN_DIR="$sandbox/run" \
+KIOSK_POLICY="$sandbox/policy.json" \
+KIOSK_POLICY_BASE=/nonexistent \
+KIOSK_SOCKET="$sandbox/agent.sock" \
+KIOSK_SHADOW="$sandbox/etc/shadow" \
+KIOSK_LEGACY_OVERRIDE=/nonexistent \
+KIOSK_API_LISTEN=127.0.0.1:17400 \
+KIOSK_MDNS=off \
 KIOSK_URL="data:text/html,<h1>integration target</h1>" \
 KIOSK_CDP_URL=http://127.0.0.1:9222 \
 KIOSK_PROBE_URL=http://127.0.0.1:9222/json/version \
@@ -98,7 +133,7 @@ KIOSK_RESTART_AFTER=0 \
 KIOSK_OFFLINE_DIR="$(mktemp -d)" \
 KIOSK_OFFLINE_PAGE_DEFAULT="{{config_root}}/meta-tessaro-distro/recipes-browser/tessaro-kiosk/files/offline.html" \
 KIOSK_DEBUG=1 \
-    cargo run
+    cargo run -p tessaro-agent
 '''
 
 [tasks.agent-e2e]

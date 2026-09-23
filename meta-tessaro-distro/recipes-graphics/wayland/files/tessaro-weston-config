@@ -42,7 +42,10 @@ BASE="${TESSARO_WESTON_BASE:-/etc/xdg/weston/weston.ini}"
 OUT="${TESSARO_WESTON_CONFIG:-/run/weston/weston.ini}"
 
 DEFAULTS=/usr/lib/tessaro-kiosk/tessaro-kiosk.env
-OVERRIDE=/etc/default/tessaro-kiosk
+# What was set on this device, rendered by tessaro-agent from
+# /data/tessaro/state.json (tessaro-config.service runs before weston.service).
+# Change a key with tessaro-ctl, never here.
+OVERRIDE="${TESSARO_OVERRIDE:-/run/tessaro-kiosk/generated.env}"
 
 # Where the VNC screen share listens, and the certificate it needs. Loopback
 # only: the way in is an SSH tunnel, which is what actually authenticates the
@@ -69,6 +72,15 @@ read_key() {
 scale_override=$(read_key "$DEFAULTS" KIOSK_SCALE)
 o=$(read_key "$OVERRIDE" KIOSK_SCALE)
 [ -n "$o" ] && scale_override=$o
+
+# WIDTHxHEIGHT, or preferred (Weston's own default: the connector's preferred
+# mode). tessaro-agent only accepts a mode some connected display advertised,
+# and the change reverts unless confirmed; the per-connector check below is
+# the last line of defence, for a display that was swapped since.
+resolution=$(read_key "$DEFAULTS" KIOSK_RESOLUTION)
+o=$(read_key "$OVERRIDE" KIOSK_RESOLUTION)
+[ -n "$o" ] && resolution=$o
+[ -n "$resolution" ] || resolution=preferred
 
 osk=$(read_key "$DEFAULTS" KIOSK_OSK)
 o=$(read_key "$OVERRIDE" KIOSK_OSK)
@@ -236,7 +248,7 @@ else
     echo "tessaro-weston-config: remote access on, VNC on $VNC_ADDRESS:$VNC_PORT"
 fi
 
-if [ "$scale_override" = none ]; then
+if [ "$scale_override" = none ] && [ "$resolution" = preferred ]; then
     echo "tessaro-weston-config: KIOSK_SCALE=none, writing no [output] sections"
     exit 0
 fi
@@ -258,12 +270,31 @@ for dev in "$DRM_ROOT"/card*-*; do
         continue
     fi
 
-    if [ -n "$scale_override" ]; then
+    # The mode, only if this connector lists it. A display that does not is
+    # left on its preferred mode rather than driven out of range.
+    mode=
+    if [ "$resolution" != preferred ]; then
+        if grep -qx "$resolution" "$dev/modes" 2>/dev/null; then
+            mode=$resolution
+        else
+            echo "tessaro-weston-config: $name does not offer $resolution, keeping its preferred mode" >&2
+        fi
+    fi
+
+    if [ "$scale_override" = none ]; then
+        scale=
+        why="KIOSK_SCALE=none"
+    elif [ -n "$scale_override" ]; then
         scale=$scale_override
         why="KIOSK_SCALE"
     else
-        # First line of modes is the connector's preferred mode.
-        width=$(sed -n '1s/x.*//p' "$dev/modes" 2>/dev/null || true)
+        # The mode being set, or else the first line of modes, which is the
+        # connector's preferred one.
+        if [ -n "$mode" ]; then
+            width=${mode%%x*}
+        else
+            width=$(sed -n '1s/x.*//p' "$dev/modes" 2>/dev/null || true)
+        fi
         scale=1
         # 3400 rather than 3840: it sits above every 2560-wide panel and below
         # every 4K one, including the 3440x1440 ultrawides.
@@ -273,6 +304,12 @@ for dev in "$DRM_ROOT"/card*-*; do
         why="auto from ${width:-unknown}px"
     fi
 
-    printf '\n[output]\nname=%s\nscale=%s\n' "$name" "$scale" >> "$OUT"
-    echo "tessaro-weston-config: $name scale=$scale ($why)"
+    printf '\n[output]\nname=%s\n' "$name" >> "$OUT"
+    if [ -n "$scale" ]; then
+        printf 'scale=%s\n' "$scale" >> "$OUT"
+    fi
+    if [ -n "$mode" ]; then
+        printf 'mode=%s\n' "$mode" >> "$OUT"
+    fi
+    echo "tessaro-weston-config: $name scale=${scale:-default} mode=${mode:-preferred} ($why)"
 done

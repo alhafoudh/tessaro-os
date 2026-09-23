@@ -136,6 +136,11 @@ impl SessionHandle {
         self.state.borrow().generation
     }
 
+    /// Is there a live session to the page right now?
+    pub fn is_up(&self) -> bool {
+        self.state.borrow().up
+    }
+
     /// Resolves once the driver's first connection attempt has concluded,
     /// whichever way it went. The one-socket-per-command client connected
     /// inside the first cycle; without this wait the first cycle would run

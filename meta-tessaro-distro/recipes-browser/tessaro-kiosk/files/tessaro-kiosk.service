@@ -22,6 +22,11 @@ After=weston.socket
 After=systemd-tmpfiles-setup.service
 After=dbus.socket
 
+# generated.env and the Chromium policy are rendered by this oneshot. Wants=,
+# not Requires=: if it failed, the image defaults are still a working kiosk.
+Wants=tessaro-config.service
+After=tessaro-config.service
+
 # The default kiosk URL is served by nginx on the loopback, and nginx.service
 # is Type=forking with an ExecStartPre config test, so After= here means the
 # socket is actually accepting by the time Chromium asks for the page.
@@ -51,12 +56,14 @@ StartLimitIntervalSec=0
 Type=exec
 
 # Build-time defaults live under /usr/lib, outside the /etc overlay, so image
-# updates can still move them. /etc/default/tessaro-kiosk is read second and
-# therefore wins; it ships with every assignment commented out, because /etc is
-# an overlayfs upper on /data and the first write to a path there shadows the
-# image copy for good.
+# updates can still move them. generated.env is read second and therefore
+# wins: it is what tessaro-agent renders from /data/tessaro/state.json - only
+# the keys set on this device - and it is written by tessaro-config.service,
+# which runs before this unit on every boot. Change it with tessaro-ctl, never
+# by hand. The "-" makes a missing file (a render that failed) mean "image
+# defaults", not "no browser".
 EnvironmentFile=/usr/lib/tessaro-kiosk/tessaro-kiosk.env
-EnvironmentFile=-/etc/default/tessaro-kiosk
+EnvironmentFile=-/run/tessaro-kiosk/generated.env
 
 User=weston
 Group=weston
@@ -169,10 +176,14 @@ WorkingDirectory=/home/weston
 #   refusing an ES 2.0 context and dropping the whole browser to software
 #   rendering on the Raspberry Pi 3. The reasoning is in the env file, next to
 #   the value.
+# $KIOSK_FPS_ARGS is --show-fps-counter or nothing, rendered by tessaro-agent
+#   from browser.fps_counter: systemd cannot make a flag conditional on a
+#   0/1, so the agent turns the setting into the switch. Unbraced, so empty
+#   is no argument at all.
 # $KIOSK_CHROMIUM_ARGS_EXTRA is deliberately *unbraced*. systemd splits $VAR at
 #   whitespace and passes ${VAR} as one argument, so this is what lets an
-#   operator add several flags from /etc/default/tessaro-kiosk. Empty expands
-#   to no arguments at all. Anything put in the fixed set above has to be
+#   operator add several flags (`tessaro-ctl set browser.args_extra=...`).
+#   Empty expands to no arguments at all. Anything put in the fixed set above has to be
 #   counterable from here - which is why --disable-pinch is not in it, since
 #   Chromium 147 has no --enable-pinch to undo it with.
 # ${KIOSK_URL} is braced for the opposite reason: it is one argument even if
@@ -218,6 +229,7 @@ ExecStart=/usr/bin/dbus-run-session -- /usr/bin/chromium \
     --wayland-text-input-version=1 \
     --enable-features=${KIOSK_ENABLE_FEATURES} \
     --disable-features=${KIOSK_DISABLE_FEATURES} \
+    $KIOSK_FPS_ARGS \
     $KIOSK_CHROMIUM_ARGS_EXTRA \
     ${KIOSK_URL}
 

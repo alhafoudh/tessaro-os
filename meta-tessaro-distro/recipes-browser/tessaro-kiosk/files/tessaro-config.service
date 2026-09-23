@@ -1,0 +1,38 @@
+[Unit]
+Description=Tessaro configuration (render settings, claim invariant, factory reset)
+
+# Runs once per boot, before anything that reads what it renders:
+# tessaro-weston-config (via weston.service) reads generated.env for the
+# display keys, the browser reads it plus the Chromium policy, and the agent
+# expects the TLS identity and the claim invariant to be settled. See
+# agent/tessaro-agent/src/boot.rs for what it does, in order.
+#
+# It is also the escape hatch: /data/tessaro/factory-reset, or
+# `tessaro.factory_reset` typed on the kernel command line at the boot loader,
+# resets the device here, before the agent - which might be the broken thing -
+# ever starts.
+Before=weston.service tessaro-kiosk.service tessaro-agent.service
+
+# /data (state.json, the TLS identity) and /etc (the overlay: shadow, the
+# policy) are mounted by local-fs.target; /run/tessaro-kiosk comes from
+# tmpfiles.
+After=local-fs.target systemd-tmpfiles-setup.service
+RequiresMountsFor=/data
+
+[Service]
+Type=oneshot
+# Once per boot, and that is load-bearing. weston.service and both kiosk units
+# Want= this one; without RemainAfterExit it goes inactive when it exits, so
+# every `tessaro-ctl restart weston` - and every display.* change - would run
+# it again, and its "a change still pending at boot was never confirmed" step
+# would revert display.resolution the moment it was applied.
+RemainAfterExit=yes
+# The image defaults, the same file every other kiosk unit reads first.
+EnvironmentFile=/usr/lib/tessaro-kiosk/tessaro-kiosk.env
+ExecStart=/usr/bin/tessaro-agent boot
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=tessaro-config
+
+[Install]
+WantedBy=graphical.target

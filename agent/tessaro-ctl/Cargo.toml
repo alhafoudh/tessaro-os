@@ -1,0 +1,40 @@
+[package]
+name = "tessaro-ctl"
+description = "Manage Tessaro kiosks: locally on the device, or remotely over TLS"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "tessaro-ctl"
+path = "src/main.rs"
+
+# Runs on the device and on a technician's laptop, macOS included, so no
+# zbus, no tokio and no openssl crate: plain blocking sockets are all a
+# one-request-at-a-time client needs.
+[dependencies]
+protocol = { path = "../protocol" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+clap = { version = "4", features = ["derive", "env"] }
+
+# The platform's TLS: openssl on Linux, Security.framework on macOS. Chain
+# verification is off on purpose - devices are self-signed - and replaced by
+# a pin check on the certificate's SHA-256 before a single byte is sent.
+native-tls = "0.2"
+sha2 = "0.10"
+
+# NAME.local discovery. Blocking API, its own thread.
+mdns-sd = { version = "0.21", default-features = false }
+
+# Password prompts without echo.
+rpassword = "7"
+
+# Screenshots arrive base64-encoded. Already in the lock through tungstenite.
+data-encoding = "2"
+
+[dev-dependencies]
+tempfile = "3"

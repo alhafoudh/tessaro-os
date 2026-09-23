@@ -131,6 +131,48 @@ mod tests {
             .is_some_and(|method| !method.is_empty() && !method.contains('.'))
     }
 
+    /// `callee(` for the call that `prefix` ends with, found by walking back
+    /// to the parenthesis that opens it, however many lines up that is.
+    fn awaited_call(prefix: &str) -> Option<String> {
+        let body = prefix.trim_end().strip_suffix(')')?;
+        let mut depth = 1;
+        let mut open = None;
+        for (at, ch) in body.char_indices().rev() {
+            match ch {
+                ')' => depth += 1,
+                '(' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        open = Some(at);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let head = &body[..open?];
+        let callee: String = head
+            .chars()
+            .rev()
+            .take_while(|ch| ch.is_alphanumeric() || matches!(ch, '_' | '.' | ':'))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        (!callee.is_empty()).then(|| format!("{callee}("))
+    }
+
+    #[test]
+    fn a_multi_line_call_is_found_by_its_opening() {
+        let prefix = "let x = blocking(\"what\", move || {\n    store.update(|s| {\n        Ok(())\n    })\n})\n";
+        assert_eq!(awaited_call(prefix).as_deref(), Some("blocking("));
+        assert_eq!(
+            awaited_call("proxy.get_unit(&self.unit)").as_deref(),
+            Some("proxy.get_unit(")
+        );
+        assert_eq!(awaited_call("rx"), None);
+    }
+
     #[test]
     fn the_own_method_exemption_is_narrow() {
         assert!(awaits_own_method("let x = self.manager()"));
@@ -166,6 +208,25 @@ mod tests {
             "src/cdp/mod.rs",
             "src/cdp/session.rs",
             "src/cdp/targets.rs",
+            "src/control.rs",
+            "src/server.rs",
+        ];
+
+        // Helpers whose every wait is already under `within()` in their own
+        // body, so a call to them is as bounded as a call to `within()`.
+        // Each one is reviewed where it is defined; this list is the claim.
+        let bounded = [
+            // control::blocking - spawn_blocking under within().
+            "blocking(",
+            // server::send - write_all and flush under within().
+            "send(",
+            // systemd::Bus - every method is within() inside.
+            "self.bus.",
+            // The in-process write lock. Not the outside world: every holder
+            // only waits on bounded calls, so it is released in bounded time.
+            "self.writes.lock()",
+            // The probation timer's own expiry, which is all of the above.
+            ".expire_probation(",
         ];
 
         let mut offences = Vec::new();
@@ -212,8 +273,22 @@ mod tests {
                     text
                 };
 
+                // A multi-line call - `blocking("..", move || { .. })` then
+                // `.await` - whose opening the statement scan above stops
+                // short of: find the call the `.await` belongs to.
+                let whole_prefix = {
+                    let mut text = lines[..index].join("\n");
+                    text.push('\n');
+                    text.push_str(&code[..code.find(".await").unwrap_or(code.len())]);
+                    text
+                };
+                let awaited = awaited_call(&whole_prefix);
+
                 if !statement.contains("within(")
                     && !statement.contains("// naked:")
+                    && !bounded.iter().any(|helper| before_await.contains(helper))
+                    && !awaited
+                        .is_some_and(|call| bounded.iter().any(|helper| call.contains(helper)))
                     && !awaits_own_method(&before_await)
                 {
                     offences.push(format!("{file}:{}: {}", index + 1, line.trim()));

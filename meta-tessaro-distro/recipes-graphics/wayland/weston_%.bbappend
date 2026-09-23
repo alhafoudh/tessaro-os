@@ -9,10 +9,9 @@
 # succeed there is "weston".
 #
 # So the stack is replaced with pam_exec calling our own checker, which
-# compares against KIOSK_VNC_USER / KIOSK_VNC_PASSWORD from the kiosk's
-# environment files. No system account, no /etc/shadow, no privilege, and the
-# credential becomes something an operator can change in
-# /etc/default/tessaro-kiosk without a rebuild.
+# compares against KIOSK_VNC_USER / KIOSK_VNC_PASSWORD from the kiosk's image
+# defaults. No system account, no /etc/shadow, no privilege. The credential is
+# static, an image property: tessaro-ctl deliberately has no key for it.
 #
 # Both files land in the *weston* package rather than weston-init because the
 # PAM service file has to replace the one weston's own do_install writes -

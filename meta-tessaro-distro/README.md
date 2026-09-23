@@ -14,8 +14,10 @@ It provides:
   additions to the Moonforge base image.
 * `recipes-browser/tessaro-kiosk/` - the kiosk itself: the systemd units that
   run Chromium under Weston, the `tessaro-agent` binary that supervises it
-  (built from `agent/` at the root of this repo), the runtime configuration in
-  `/etc/default/tessaro-kiosk`, and the offline page.
+  (built from the `agent/` workspace at the root of this repo, along with
+  `tessaro-ctl`, the one way to change a device's settings), the boot oneshot
+  that renders those settings, the image defaults in
+  `/usr/lib/tessaro-kiosk/tessaro-kiosk.env`, and the offline page.
 * `recipes-connectivity/tessaro-network/` - NetworkManager's configuration: the
   `conf.d` drop-in that defers DNS to systemd-resolved and leaves
   `/etc/resolv.conf` alone, and the unit that keeps `/var/lib/NetworkManager`

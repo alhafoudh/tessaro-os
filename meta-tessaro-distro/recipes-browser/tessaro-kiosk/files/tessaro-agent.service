@@ -1,5 +1,5 @@
 [Unit]
-Description=Tessaro agent (CDP probe, refresh, offline page)
+Description=Tessaro agent (CDP probe, refresh, offline page, tessaro-ctl API)
 
 # Wants= and deliberately not Requires=/BindsTo=/PartOf= on the browser:
 # restarting tessaro-kiosk.service is one of this unit's jobs, and a binding
@@ -19,6 +19,15 @@ PartOf=weston.service
 After=systemd-tmpfiles-setup.service
 After=dbus.socket
 
+# The TLS identity, the claim invariant and the rendered configuration are
+# all settled by the boot oneshot first.
+Wants=tessaro-config.service
+After=tessaro-config.service
+
+# The TCP API has to bind an address that exists. Ordering only - a device
+# with no link still gets its local socket and its kiosk.
+After=network.target
+
 StartLimitIntervalSec=0
 
 [Service]
@@ -33,8 +42,9 @@ Type=simple
 #
 # 60s is not a cycle budget. Before every external call the agent pledges when
 # that call will be over, and pings only while the pledge holds
-# (agent/src/watchdog.rs), so the probe timeouts in /etc/default/tessaro-kiosk
-# can be raised without touching this. It is only how long systemd waits after
+# (agent/tessaro-agent/src/watchdog.rs), so the probe timeouts
+# (`tessaro-ctl set agent.probe_timeout=...`) can be raised without touching
+# this. It is only how long systemd waits after
 # the last ping: the agent pings every 15s, and a real wedge is caught in
 # about 75s - the longest single pledge at the shipped timeouts (the probe's
 # 10s read, plus 5s grace) plus this.
@@ -46,16 +56,15 @@ Type=simple
 # its own pledges.
 WatchdogSec=60
 
-# Root: it speaks org.freedesktop.systemd1 on the system bus, and it writes the
-# offline page into root-owned /run/tessaro-kiosk. Nothing else needs it.
+# Root: it speaks org.freedesktop.systemd1 on the system bus, writes the
+# offline page into root-owned /run/tessaro-kiosk, owns /data/tessaro, renders
+# the Chromium policy under /etc, and sets the root password on claim.
 User=root
 
-# The same two files in the same order as the browser unit, so both halves of
-# the kiosk see exactly one set of values with exactly one parser behind them.
-# The "-" on the second makes a missing override file a non-event, which is
-# what /etc being an overlay demands.
+# The image defaults only. The agent lays /data/tessaro/state.json over them
+# itself - it is the one program that owns that file - so it does not read the
+# generated.env it renders for the browser and the compositor.
 EnvironmentFile=/usr/lib/tessaro-kiosk/tessaro-kiosk.env
-EnvironmentFile=-/etc/default/tessaro-kiosk
 
 ExecStart=/usr/bin/tessaro-agent
 

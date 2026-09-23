@@ -1,0 +1,310 @@
+//! `state.json`: what has been set on this device, and nothing else.
+//!
+//! Sparse on purpose. A key that was never set is not in the file, so it
+//! follows the image's default in `/usr/lib/tessaro-kiosk/tessaro-kiosk.env`,
+//! and a later image can still move that default. Keys are the registry's
+//! dotted names (`kiosk.url`), never env names, so a rename of an env
+//! variable is a registry change and not a migration.
+//!
+//! There is no clock anywhere in here. `revision` is a counter, which is all
+//! compare-and-set needs, and it cannot be skewed.
+
+use std::collections::{BTreeMap, HashMap};
+
+use serde::{Deserialize, Serialize};
+
+use crate::config::Env;
+use crate::log::Log;
+
+pub const FILE: &str = "state.json";
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct State {
+    #[serde(default)]
+    pub revision: u64,
+    #[serde(default)]
+    pub settings: BTreeMap<String, String>,
+    /// A guarded change on probation. Survives an agent restart - which the
+    /// change itself causes, by restarting Weston - but not a reboot: the
+    /// boot oneshot reverts it, because nobody confirmed it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending: Option<PendingChange>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingChange {
+    pub key: String,
+    pub value: String,
+    /// What to go back to. `None` means the key was not set.
+    pub previous: Option<String>,
+}
+
+impl State {
+    /// Put a pending change back. Returns whether there was one.
+    pub fn revert_pending(&mut self) -> Option<PendingChange> {
+        let pending = self.pending.take()?;
+        match &pending.previous {
+            Some(value) => self.settings.insert(pending.key.clone(), value.clone()),
+            None => self.settings.remove(&pending.key),
+        };
+        self.revision += 1;
+        Some(pending)
+    }
+}
+
+/// The settings as env variables, for the keys the registry knows. A key it
+/// does not know - written by a newer agent, or renamed since - is skipped
+/// and named in the journal rather than dropped from the file.
+pub fn overrides(settings: &BTreeMap<String, String>, log: &Log) -> Vec<(&'static str, String)> {
+    let mut out = Vec::new();
+    for (name, value) in settings {
+        match protocol::keys::find(name) {
+            // url.* has no variable of its own; it only exists inside the
+            // expanded kiosk.url.
+            Some(key) if key.env.is_empty() => {}
+            Some(key) => out.push((key.env, value.clone())),
+            None => log.info(format!("state.json: ignoring unknown key {name}")),
+        }
+    }
+    out
+}
+
+/// A kiosk.url template filled in, and the placeholders nothing could fill.
+///
+/// `{name}` is `url.name`. `{any.key}` is that setting's effective value -
+/// what is set, else the image default, else empty - and `{node.name}` falls
+/// back to `derived_name`, the name the device actually answers to when none
+/// was set. Only a `url.*` nobody set, or a name that is no setting at all,
+/// counts as missing.
+pub fn expand_url(
+    template: &str,
+    settings: &BTreeMap<String, String>,
+    defaults: &dyn Env,
+    derived_name: Option<&str>,
+) -> (String, Vec<String>) {
+    use protocol::keys::Placeholder;
+
+    protocol::keys::expand(template, |name| match protocol::keys::placeholder(name) {
+        Placeholder::Param(param) => settings.get(&format!("url.{param}")).cloned(),
+        Placeholder::Key(key) => {
+            let value = settings
+                .get(key.name)
+                .cloned()
+                .or_else(|| defaults.get(key.env))
+                .unwrap_or_default();
+            if key.name == "node.name" && value.is_empty() {
+                return Some(derived_name.unwrap_or_default().to_string());
+            }
+            Some(value)
+        }
+        Placeholder::Unknown => None,
+    })
+}
+
+/// The image's defaults with this device's settings on top - what every
+/// consumer ends up seeing. `KIOSK_URL` comes out expanded: the browser, the
+/// agent's origin checks and the device-API policy all see the same URL, and
+/// none of them ever sees a `{placeholder}`.
+pub struct Effective<'a> {
+    base: &'a dyn Env,
+    overrides: HashMap<&'static str, String>,
+    settings: BTreeMap<String, String>,
+    derived_name: Option<String>,
+}
+
+impl<'a> Effective<'a> {
+    pub fn new(base: &'a dyn Env, settings: &BTreeMap<String, String>, log: &Log) -> Self {
+        Self {
+            base,
+            overrides: overrides(settings, log).into_iter().collect(),
+            settings: settings.clone(),
+            derived_name: None,
+        }
+    }
+
+    /// The name derived from the node id, for `{node.name}` when none is set.
+    pub fn with_derived_name(mut self, name: Option<String>) -> Self {
+        self.derived_name = name;
+        self
+    }
+
+    fn raw(&self, key: &str) -> Option<String> {
+        match self.overrides.get(key) {
+            Some(value) => Some(value.clone()),
+            None => self.base.get(key),
+        }
+    }
+}
+
+impl Env for Effective<'_> {
+    fn get(&self, key: &str) -> Option<String> {
+        let value = self.raw(key)?;
+        if key == "KIOSK_URL" {
+            // A placeholder with no value expands to nothing. `set` refuses
+            // that; only an image default with a placeholder nobody set can
+            // get here, and an empty segment beats a literal brace.
+            return Some(
+                expand_url(
+                    &value,
+                    &self.settings,
+                    self.base,
+                    self.derived_name.as_deref(),
+                )
+                .0,
+            );
+        }
+        Some(value)
+    }
+}
+
+/// The image defaults for every registry key, captured once from the
+/// process environment, which systemd filled from the `/usr/lib` env file.
+/// Captured rather than read live so a test, or a host run, is deterministic.
+pub fn defaults(env: &dyn Env) -> HashMap<String, String> {
+    protocol::keys::KEYS
+        .iter()
+        .filter_map(|key| env.get(key.env).map(|value| (key.env.to_string(), value)))
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn settings(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn settings_win_over_defaults_and_the_rest_falls_through() {
+        let log = Log::buffered(true);
+        let base: HashMap<String, String> = [
+            ("KIOSK_URL".to_string(), "http://127.0.0.1/".to_string()),
+            ("KIOSK_OSK".to_string(), "auto".to_string()),
+        ]
+        .into();
+
+        let set = settings(&[("kiosk.url", "https://a.test/")]);
+        let effective = Effective::new(&base, &set, &log);
+
+        assert_eq!(effective.get("KIOSK_URL").unwrap(), "https://a.test/");
+        assert_eq!(effective.get("KIOSK_OSK").unwrap(), "auto");
+        assert_eq!(effective.get("KIOSK_NOPE"), None);
+    }
+
+    #[test]
+    fn the_kiosk_url_comes_out_expanded() {
+        let log = Log::buffered(true);
+        let base: HashMap<String, String> =
+            [("KIOSK_URL".to_string(), "http://127.0.0.1/".to_string())].into();
+        let set = settings(&[
+            ("kiosk.url", "https://{shop}.test/?lang={lang}"),
+            ("url.shop", "north"),
+            ("url.lang", "sk"),
+        ]);
+
+        let effective = Effective::new(&base, &set, &log);
+
+        assert_eq!(
+            effective.get("KIOSK_URL").unwrap(),
+            "https://north.test/?lang=sk"
+        );
+        // Parameters are not variables, and are not "unknown keys" either.
+        assert_eq!(overrides(&set, &log).len(), 1);
+        assert!(log.lines().is_empty());
+    }
+
+    #[test]
+    fn any_setting_is_a_placeholder_with_its_effective_value() {
+        let log = Log::buffered(true);
+        let base: HashMap<String, String> = [
+            ("KIOSK_URL".to_string(), "http://127.0.0.1/".to_string()),
+            ("KIOSK_OSK".to_string(), "auto".to_string()),
+        ]
+        .into();
+        let set = settings(&[
+            (
+                "kiosk.url",
+                "https://{node.name}.test/?osk={display.osk}&scale={display.scale}&s={browser.fps_counter}",
+            ),
+            ("browser.fps_counter", "1"),
+        ]);
+
+        let effective =
+            Effective::new(&base, &set, &log).with_derived_name(Some("brave-otter-3fa2".into()));
+
+        assert_eq!(
+            effective.get("KIOSK_URL").unwrap(),
+            "https://brave-otter-3fa2.test/?osk=auto&scale=&s=1"
+        );
+
+        let named = settings(&[
+            ("kiosk.url", "https://{node.name}.test/"),
+            ("node.name", "lobby"),
+        ]);
+        let effective =
+            Effective::new(&base, &named, &log).with_derived_name(Some("brave-otter-3fa2".into()));
+        assert_eq!(effective.get("KIOSK_URL").unwrap(), "https://lobby.test/");
+    }
+
+    #[test]
+    fn only_unset_parameters_and_non_settings_are_missing() {
+        let base: HashMap<String, String> = HashMap::new();
+        let (_, missing) = expand_url(
+            "https://x.test/{store}/{no.such}/{kiosk.url}/{display.scale}",
+            &BTreeMap::new(),
+            &base,
+            None,
+        );
+        assert_eq!(missing, ["store", "no.such", "kiosk.url"]);
+    }
+
+    #[test]
+    fn unknown_keys_are_named_not_fatal() {
+        let log = Log::buffered(true);
+        let set = settings(&[("kiosk.url", "https://a.test/"), ("future.thing", "x")]);
+
+        let env = overrides(&set, &log);
+
+        assert_eq!(env, vec![("KIOSK_URL", "https://a.test/".to_string())]);
+        assert!(log.lines().iter().any(|line| line.contains("future.thing")));
+    }
+
+    #[test]
+    fn reverting_restores_or_removes() {
+        let mut state = State {
+            revision: 4,
+            settings: settings(&[("display.resolution", "1280x720")]),
+            pending: Some(PendingChange {
+                key: "display.resolution".to_string(),
+                value: "1280x720".to_string(),
+                previous: None,
+            }),
+        };
+        assert!(state.revert_pending().is_some());
+        assert!(state.settings.is_empty());
+        assert_eq!(state.revision, 5);
+        assert!(state.revert_pending().is_none());
+
+        state
+            .settings
+            .insert("display.resolution".to_string(), "800x600".to_string());
+        state.pending = Some(PendingChange {
+            key: "display.resolution".to_string(),
+            value: "800x600".to_string(),
+            previous: Some("1920x1080".to_string()),
+        });
+        state.revert_pending();
+        assert_eq!(state.settings["display.resolution"], "1920x1080");
+    }
+
+    #[test]
+    fn an_old_file_without_newer_fields_still_parses() {
+        let state: State = serde_json::from_str(r#"{"settings":{"kiosk.url":"x"}}"#).unwrap();
+        assert_eq!(state.revision, 0);
+        assert!(state.pending.is_none());
+    }
+}

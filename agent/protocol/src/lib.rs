@@ -1,0 +1,388 @@
+//! The Tessaro control protocol.
+//!
+//! One command model, every transport an encoding of it (TODO.md item 8).
+//! Today there are two transports and one encoding: newline-delimited JSON
+//! over the local unix socket, and the same over TLS on TCP.
+//!
+//! A conversation is:
+//!
+//! ```text
+//! client: {"protocol":1,"client":"tessaro-ctl 1.0.0"}              Hello
+//! server: {"type":"welcome","protocol":1,"node":{...}}             Frame::Welcome
+//! client: {"id":1,"token":"tsr_...","command":{"cmd":"status"}}   Request
+//! server: {"type":"ok","id":1,"result":{...}}                      Frame::Ok
+//! ```
+//!
+//! Requests on one connection are answered in order. A streaming command
+//! (`logs --follow`) answers with `event` frames and ends with `end`.
+//! `token` is only looked at over TCP; the local socket is root-only and
+//! needs none.
+
+pub mod keys;
+
+use std::collections::BTreeMap;
+
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+/// Bumped on any change a client of the previous version would misread.
+pub const PROTOCOL_VERSION: u32 = 1;
+
+pub const DEFAULT_PORT: u16 = 7400;
+pub const DEFAULT_SOCKET: &str = "/run/tessaro-agent.sock";
+
+/// mDNS service type, in the fully qualified form mdns-sd expects.
+pub const SERVICE_TYPE: &str = "_tessaro._tcp.local.";
+
+/// How long a guarded change (`display.resolution`) waits for `confirm`
+/// before it reverts itself.
+pub const CONFIRM_SECONDS: u64 = 60;
+
+/// Longest line either side accepts. A screenshot is the largest thing on
+/// the wire; a 4K JPEG in base64 fits with room to spare.
+pub const MAX_LINE: usize = 32 * 1024 * 1024;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Hello {
+    pub protocol: u32,
+    pub client: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NodeInfo {
+    /// The app-specific id derived from /etc/machine-id. Never the machine id.
+    pub id: String,
+    pub name: String,
+    pub version: String,
+    pub machine: String,
+    /// SHA-256 of the device's TLS certificate, lower-case hex.
+    pub fingerprint: String,
+    pub claimed: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Request {
+    pub id: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
+    pub command: Command,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Target {
+    Browser,
+    Weston,
+    Agent,
+}
+
+fn yes() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "cmd", rename_all = "kebab-case")]
+pub enum Command {
+    Status,
+    Id,
+    Keys,
+    /// Output modes every connected connector advertises.
+    Modes,
+    Get {
+        #[serde(default)]
+        key: Option<String>,
+    },
+    Set {
+        values: BTreeMap<String, String>,
+        #[serde(default)]
+        if_revision: Option<u64>,
+        #[serde(default = "yes")]
+        apply: bool,
+    },
+    Unset {
+        keys: Vec<String>,
+        #[serde(default)]
+        if_revision: Option<u64>,
+        #[serde(default = "yes")]
+        apply: bool,
+    },
+    /// Keep a guarded change that is on probation.
+    Confirm,
+    Navigate {
+        url: String,
+    },
+    Restart {
+        what: Target,
+    },
+    Reboot,
+    Screenshot,
+    Logs {
+        #[serde(default)]
+        follow: bool,
+        #[serde(default)]
+        unit: Option<String>,
+        #[serde(default)]
+        lines: Option<u32>,
+    },
+    /// Take an unclaimed device. TCP only.
+    Claim {
+        name: String,
+    },
+    TokenCreate {
+        name: String,
+    },
+    TokenList,
+    TokenRevoke {
+        id: String,
+    },
+    /// `None` generates one and returns it.
+    PasswordSet {
+        #[serde(default)]
+        password: Option<String>,
+    },
+    Unclaim,
+    FactoryReset,
+}
+
+impl Command {
+    /// Allowed over TCP without a token.
+    pub fn is_public(&self) -> bool {
+        matches!(self, Command::Id | Command::Claim { .. })
+    }
+}
+
+/// Everything the server sends.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "kebab-case")]
+pub enum Frame {
+    Welcome { protocol: u32, node: NodeInfo },
+    Ok { id: u64, result: Value },
+    Error { id: u64, error: String },
+    Event { id: u64, event: Value },
+    End { id: u64 },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Pending {
+    pub key: String,
+    pub value: String,
+    pub previous: Option<String>,
+    pub seconds_left: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Status {
+    pub node: NodeInfo,
+    pub revision: u64,
+    pub kiosk_url: String,
+    pub current_url: Option<String>,
+    pub browser_answering: bool,
+    pub units: BTreeMap<String, String>,
+    pub pending: Option<Pending>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Source {
+    /// The image's default, from /usr/lib/tessaro-kiosk/tessaro-kiosk.env.
+    Default,
+    /// Set on this device.
+    Set,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Setting {
+    pub key: String,
+    pub env: String,
+    pub value: Option<String>,
+    pub source: Source,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Settings {
+    pub revision: u64,
+    pub settings: Vec<Setting>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Applied {
+    pub revision: u64,
+    pub changed: Vec<String>,
+    /// Units restarted, or to be restarted once this reply is out.
+    pub restarted: Vec<String>,
+    pub pending: Option<Pending>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeyInfo {
+    pub name: String,
+    pub env: String,
+    pub applies: Vec<keys::Consumer>,
+    pub guarded: bool,
+    pub doc: String,
+    /// What a value may be, in words.
+    #[serde(default)]
+    pub values: String,
+    /// The image's default, if it has one.
+    #[serde(default)]
+    pub default: Option<String>,
+    /// What this device has set, if anything.
+    #[serde(default)]
+    pub value: Option<String>,
+}
+
+impl From<&keys::Key> for KeyInfo {
+    fn from(key: &keys::Key) -> Self {
+        Self {
+            name: key.name.to_string(),
+            env: key.env.to_string(),
+            applies: key.consumers.to_vec(),
+            guarded: key.guarded,
+            doc: key.doc.to_string(),
+            values: key.kind.describe(),
+            default: None,
+            value: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Connector {
+    pub name: String,
+    pub modes: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Claimed {
+    pub token_id: String,
+    pub token: String,
+    pub root_password: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TokenInfo {
+    pub id: String,
+    pub name: String,
+    /// The id of the token that issued it, `claim`, or `local`.
+    pub issued_by: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TokenCreated {
+    pub id: String,
+    pub token: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Password {
+    /// The generated password, when the server chose it. Shown once.
+    pub password: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Screenshot {
+    pub format: String,
+    /// Base64, as CDP returns it.
+    pub data: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Done {
+    pub message: String,
+}
+
+/// One frame, newline terminated.
+pub fn to_line<T: Serialize>(value: &T) -> String {
+    let mut line = serde_json::to_string(value).expect("protocol types always serialize");
+    line.push('\n');
+    line
+}
+
+pub fn from_line<T: DeserializeOwned>(line: &str) -> Result<T, String> {
+    serde_json::from_str(line.trim_end()).map_err(|err| format!("malformed frame: {err}"))
+}
+
+/// A root password or a token value a human may have to type. Kept here so
+/// the agent's generator and the client's prompt agree on what is valid.
+pub fn check_password(password: &str) -> Result<(), String> {
+    if password.is_empty() {
+        return Err("the password must not be empty".to_string());
+    }
+    if password.len() > 256 {
+        return Err("the password is too long".to_string());
+    }
+    if password.chars().any(|ch| ch.is_control() || ch == ':') {
+        return Err("the password must not contain ':' or control characters".to_string());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_request_round_trips() {
+        let request = Request {
+            id: 7,
+            token: Some("tsr_x".to_string()),
+            command: Command::Set {
+                values: [("kiosk.url".to_string(), "https://a.test/".to_string())].into(),
+                if_revision: Some(3),
+                apply: false,
+            },
+        };
+
+        let line = to_line(&request);
+        assert!(line.ends_with('\n'));
+        assert_eq!(from_line::<Request>(&line).unwrap(), request);
+    }
+
+    #[test]
+    fn the_wire_form_is_readable() {
+        let line = to_line(&Request {
+            id: 1,
+            token: None,
+            command: Command::Restart {
+                what: Target::Browser,
+            },
+        });
+        assert_eq!(
+            line,
+            "{\"id\":1,\"command\":{\"cmd\":\"restart\",\"what\":\"browser\"}}\n"
+        );
+    }
+
+    #[test]
+    fn set_applies_unless_told_otherwise() {
+        let request: Request =
+            from_line(r#"{"id":1,"command":{"cmd":"set","values":{"a":"b"}}}"#).unwrap();
+        assert!(matches!(request.command, Command::Set { apply: true, .. }));
+    }
+
+    #[test]
+    fn frames_round_trip() {
+        let frame = Frame::Error {
+            id: 2,
+            error: "nope".to_string(),
+        };
+        assert_eq!(from_line::<Frame>(&to_line(&frame)).unwrap(), frame);
+    }
+
+    #[test]
+    fn only_id_and_claim_are_public() {
+        assert!(Command::Id.is_public());
+        assert!(Command::Claim { name: "x".into() }.is_public());
+        assert!(!Command::Status.is_public());
+        assert!(!Command::TokenCreate { name: "x".into() }.is_public());
+    }
+
+    #[test]
+    fn passwords() {
+        assert!(check_password("abc").is_ok());
+        assert!(check_password("").is_err());
+        assert!(check_password("a:b").is_err());
+        assert!(check_password("a\nb").is_err());
+    }
+}

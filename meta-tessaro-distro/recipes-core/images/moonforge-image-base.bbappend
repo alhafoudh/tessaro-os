@@ -106,10 +106,13 @@ CORE_IMAGE_EXTRA_INSTALL += " \
 # pair. Development builds get all of this from debug-tweaks as well; stating
 # it twice costs nothing.
 #
-# This is a root shell with no credential on every device, reachable from
-# whatever network NetworkManager attaches to - not just over loopback. It is a
-# deliberate choice for now. An authorized_keys story is the obvious next step,
-# and it is the one change that would let the empty password go.
+# The empty password is the *unclaimed* state, not a permanent one. The first
+# `tessaro-ctl claim` sets a random root password (shown to that client once),
+# and unclaim or a factory reset empties it again - tessaro-agent owns root's
+# /etc/shadow entry from the first boot on (agent/tessaro-agent/src/shadow.rs).
+# So a fresh or reset device is a root shell with no credential on whatever
+# network NetworkManager attaches it to, until someone claims it. An
+# authorized_keys story is still the obvious next step.
 IMAGE_FEATURES += "ssh-server-dropbear empty-root-password allow-empty-password"
 
 # No account is created for the VNC login on purpose. It was tried: Weston

@@ -23,8 +23,8 @@ SRC_URI = " \
     file://agent \
     file://tessaro-kiosk.service \
     file://tessaro-agent.service \
+    file://tessaro-config.service \
     file://tessaro-kiosk.env.in \
-    file://tessaro-kiosk \
     file://tessaro-kiosk-policy.json.in \
     file://70-tessaro-devices.rules \
     file://tmpfiles-tessaro-kiosk.conf \
@@ -47,6 +47,10 @@ S = "${WORKDIR}/agent"
 # below), not a copy of the Mozilla roots baked into the binary.
 DEPENDS += "openssl"
 export OPENSSL_NO_VENDOR = "1"
+
+# crypt(3), for the SHA-512 root password hash the agent writes into
+# /etc/shadow when a device is claimed (agent/tessaro-agent/src/shadow.rs).
+DEPENDS += "libxcrypt"
 
 # Build-time default only; tessaro.conf sets the product value.
 TESSARO_KIOSK_URL ?= "https://www.moonforgelinux.org"
@@ -89,22 +93,33 @@ do_install:append() {
         ${D}${systemd_system_unitdir}/tessaro-kiosk.service
     install -Dm0644 ${WORKDIR}/tessaro-agent.service \
         ${D}${systemd_system_unitdir}/tessaro-agent.service
+    install -Dm0644 ${WORKDIR}/tessaro-config.service \
+        ${D}${systemd_system_unitdir}/tessaro-config.service
 
     # Build-time defaults under /usr/lib, outside the /etc overlay, so a later
-    # image can still move them. See the comments in the file itself.
+    # image can still move them. See the comments in the file itself. There is
+    # no /etc/default/tessaro-kiosk any more: a device's settings live in
+    # /data/tessaro/state.json and are changed with tessaro-ctl, and the boot
+    # oneshot imports a leftover override file once.
     sed -e "s|@kiosk-url@|${TESSARO_KIOSK_URL}|g" \
+        -e "s|@selftest-origin@|${TESSARO_SELFTEST_ORIGIN}|g" \
+        -e "s|@machine@|${MACHINE}|g" \
         ${WORKDIR}/tessaro-kiosk.env.in > ${WORKDIR}/tessaro-kiosk.env
     install -Dm0644 ${WORKDIR}/tessaro-kiosk.env \
         ${D}${nonarch_libdir}/tessaro-kiosk/tessaro-kiosk.env
-
-    # Runtime override, shipped with every assignment commented out.
-    install -Dm0644 ${WORKDIR}/tessaro-kiosk ${D}${sysconfdir}/default/tessaro-kiosk
 
     # Chromium enterprise policy. This one path cannot follow the /usr/lib
     # convention above: it is compiled into the binary (policy_paths.cc), and
     # /etc/chromium/policies/managed is where Chromium looks, full stop.
     # JSON-quote the origins here rather than in the bitbake variable - see the
     # comment on tessaro_device_origins above for why that matters.
+    #
+    # The same file goes to two places. The copy in /etc is what Chromium
+    # reads on a first boot before anything else has run. The copy in /usr/lib
+    # is what tessaro-agent renders the /etc one from, with the device-API
+    # origins rewritten for the kiosk URL as set on the device - so the /etc
+    # copy is, after the first render, generated, and the /usr/lib one is
+    # where its documentation lives.
     device_origins=""
     for origin in ${TESSARO_DEVICE_ORIGINS}; do
         if [ -n "$device_origins" ]; then
@@ -118,6 +133,8 @@ do_install:append() {
         ${WORKDIR}/tessaro-kiosk-policy.json.in > ${WORKDIR}/10-tessaro.json
     install -Dm0644 ${WORKDIR}/10-tessaro.json \
         ${D}${sysconfdir}/chromium/policies/managed/10-tessaro.json
+    install -Dm0644 ${WORKDIR}/10-tessaro.json \
+        ${D}${nonarch_libdir}/tessaro-kiosk/policy.json
 
     # /dev/hidraw* and /dev/bus/usb/* for WebHID and WebUSB. The matching
     # SupplementaryGroups= line is in tessaro-kiosk.service.
@@ -131,7 +148,7 @@ do_install:append() {
         ${D}${datadir}/tessaro-kiosk/offline.html
 }
 
-SYSTEMD_SERVICE:${PN} = "tessaro-kiosk.service tessaro-agent.service"
+SYSTEMD_SERVICE:${PN} = "tessaro-config.service tessaro-kiosk.service tessaro-agent.service"
 SYSTEMD_AUTO_ENABLE:${PN} = "enable"
 
 # systemd.bbclass only packages the units named in SYSTEMD_SERVICE, and the
@@ -144,11 +161,10 @@ FILES:${PN} += " \
     ${datadir}/tessaro-kiosk \
 "
 
-# Both are ours and both are in /etc, so mark them as configuration: an
-# upgrade must not silently overwrite a device that has been retuned. The
-# policy file is only in /etc because Chromium's search path leaves no choice.
+# Ours and in /etc, so marked as configuration. It is only in /etc because
+# Chromium's search path leaves no choice, and tessaro-agent regenerates it on
+# every boot from the /usr/lib copy, which an image update does move.
 CONFFILES:${PN} += " \
-    ${sysconfdir}/default/tessaro-kiosk \
     ${sysconfdir}/chromium/policies/managed/10-tessaro.json \
 "
 

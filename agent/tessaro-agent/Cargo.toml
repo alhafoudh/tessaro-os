@@ -1,0 +1,81 @@
+[package]
+name = "tessaro-agent"
+description = "Supervises the Tessaro kiosk browser over CDP and the system bus"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "tessaro-agent"
+path = "src/main.rs"
+
+[dependencies]
+protocol = { path = "../protocol" }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+
+# The device's TLS identity, token and node-id hashing, and the randomness for
+# tokens and root passwords. Already linked through native-tls, so naming it
+# directly adds no crate - only the API.
+openssl = "0.10"
+
+# `<name>.local` and `_tessaro._tcp`. Pure Rust, answers and browses, and runs
+# on its own thread, so nothing it does can stall the runtime. It watches the
+# interface list itself, which is what survives NetworkManager bringing links
+# up and down.
+mdns-sd = { version = "0.21", default-features = false }
+
+# The reactor. Current-thread on purpose - see main.rs: a stray blocking call
+# then stalls the watchdog keepalive too, and systemd restarts us, which turns
+# the watchdog into a standing test of the no-blocking-calls rule.
+#
+# `process` is for `logs`, which streams `journalctl -o json`: there is no
+# journal API without linking libsystemd, and reading the journal files by hand
+# is not a thing to reimplement.
+tokio = { version = "1", features = ["rt", "macros", "net", "time", "signal", "io-util", "sync", "process"] }
+
+# The four ports are async traits held as `&dyn`, and `async fn` in a trait is
+# not dyn-compatible. Already in the lock through zbus, so it costs nothing.
+async-trait = "0.1"
+
+# `catch_unwind` on a future (agent.rs), `StreamExt`/`SinkExt` on the CDP
+# websocket. Also already in the lock through zbus.
+futures-util = { version = "0.3", default-features = false, features = ["std", "sink"] }
+
+# HTTP, for the reachability probe and for CDP's /json/list. hyper's low-level
+# client, not reqwest: probe.rs already walks redirects by hand and url.rs
+# already parses origins, and reqwest would add url + idna + the whole ICU
+# stack (~48 crates) to redo both. hyper-util is only here for TokioIo.
+hyper = { version = "1", features = ["client", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+bytes = "1"
+
+# TLS: openssl through native-tls, used directly. native_tls::TlsConnector
+# uses openssl's default verify paths, i.e. the device's /etc/ssl/certs from
+# ca-certificates (an RDEPENDS of tessaro-kiosk), so rotating the trust store
+# stays an image concern. There is no compiled-in root store to select by
+# mistake. Not rustls: it would freeze the roots at build time, and ring /
+# aws-lc-rs want a C toolchain and per-arch asm under bitbake, where
+# openssl-sys already cross-compiles.
+native-tls = "0.2"
+tokio-native-tls = "0.3"
+
+# CDP itself, over one persistent session. Handshake only; no TLS, because the
+# DevTools endpoint is plaintext on the loopback and stays there. 0.30 pins
+# tungstenite 0.30, which is re-exported as tokio_tungstenite::tungstenite.
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
+
+# org.freedesktop.systemd1 on the system bus, on tokio's reactor. Default
+# features off is what drops async-io, async-executor, async-process, blocking
+# and polling from the lock, along with the blocking API we no longer use.
+zbus = { version = "5", default-features = false, features = ["tokio"] }
+
+[dev-dependencies]
+tempfile = "3"
+# Paused virtual time, so the watchdog and deadline tests run in microseconds.
+tokio = { version = "1", features = ["test-util"] }

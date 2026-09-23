@@ -4,8 +4,8 @@
 //! keeps patting the dog while the state machine sits wedged in an await that
 //! never returns - the one failure this exists to catch. Pinging at the end of
 //! each cycle does catch it, but then `WatchdogSec=` must exceed the probe
-//! interval plus the slowest legitimate cycle, and both are tunable in
-//! `/etc/default/tessaro-kiosk`: someone raising `KIOSK_PROBE_TIMEOUT` for a
+//! interval plus the slowest legitimate cycle, and both are settings
+//! (`tessaro-ctl set`): someone raising `agent.probe_timeout` for a
 //! slow link would silently turn a healthy agent into a restart loop against
 //! a number baked into the image.
 //!

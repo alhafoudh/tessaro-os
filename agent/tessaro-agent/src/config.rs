@@ -1,11 +1,11 @@
 //! Environment-driven configuration.
 //!
-//! systemd has already parsed `/usr/lib/tessaro-kiosk/tessaro-kiosk.env` and
-//! `/etc/default/tessaro-kiosk` by the time this runs - both are
-//! `EnvironmentFile=` on the unit - so this only reads the resulting
-//! variables. The defaults file stays data, never code. The defaults below
-//! mirror the ones in `tessaro-kiosk.env.in` and exist so the binary is
-//! runnable by hand.
+//! systemd has already parsed `/usr/lib/tessaro-kiosk/tessaro-kiosk.env` -
+//! the unit's `EnvironmentFile=` - by the time this runs, and `main` lays
+//! the device's settings from `state.json` over it (`state::Effective`), so
+//! this only ever reads variables. The defaults file stays data, never code.
+//! The defaults below mirror the ones in `tessaro-kiosk.env.in` and exist so
+//! the binary is runnable by hand.
 
 use std::collections::HashMap;
 
@@ -78,10 +78,6 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn from_env() -> Self {
-        Self::load(&SystemEnv)
-    }
-
     pub fn load(env: &dyn Env) -> Self {
         Self {
             kiosk_url: string(env, "KIOSK_URL", ""),
@@ -164,9 +160,9 @@ fn string(env: &dyn Env, name: &str, default: &str) -> String {
     env.get(name).unwrap_or_else(|| default.to_string())
 }
 
-/// Unset, empty or unparseable all fall back to the default. A malformed
-/// override in `/etc/default/tessaro-kiosk` must never stop the kiosk from
-/// coming up - it is the one file a technician edits in the field.
+/// Unset, empty or unparseable all fall back to the default. `tessaro-ctl`
+/// validates what it stores, but a `state.json` written by another version,
+/// or a hand-edited image default, must never stop the kiosk from coming up.
 fn int(env: &dyn Env, name: &str, default: i64) -> i64 {
     match env.get(name) {
         None => default,

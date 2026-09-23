@@ -30,12 +30,14 @@
 # POSIX sh: same constraint as every other script in this image.
 set -u
 
+# The image defaults only. The VNC credential is static - an image property,
+# not a device setting - so tessaro-ctl has no key for it and there is no
+# override to read.
 DEFAULTS=/usr/lib/tessaro-kiosk/tessaro-kiosk.env
-OVERRIDE=/etc/default/tessaro-kiosk
 
-# Same accessor as tessaro-weston-config, and for the same reason: these files
-# are systemd environment files that legitimately contain values a shell would
-# try to execute, so they are read, never sourced.
+# Same accessor as tessaro-weston-config, and for the same reason: this is a
+# systemd environment file that legitimately contains values a shell would
+# try to execute, so it is read, never sourced.
 read_key() {
     [ -r "$1" ] || return 0
     sed -n "s/^[[:space:]]*$2=//p" "$1" | tail -n 1 | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'$/\1/"
@@ -43,8 +45,6 @@ read_key() {
 
 read_setting() {
     value=$(read_key "$DEFAULTS" "$1")
-    override=$(read_key "$OVERRIDE" "$1")
-    [ -n "$override" ] && value=$override
     [ -n "$value" ] || value=$2
     printf '%s' "$value"
 }
