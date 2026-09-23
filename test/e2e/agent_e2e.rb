@@ -62,7 +62,7 @@ module AgentE2E
   }.freeze
 
   # Keys a case may add on top, unset again before the next case configures.
-  CASE_SETTINGS = %w[kiosk.probe_url agent.enable].freeze
+  CASE_SETTINGS = %w[kiosk.probe_url agent.enable debug.enable debug.template].freeze
 
   class Failure < StandardError; end
 
@@ -452,6 +452,29 @@ module AgentE2E
     journal.wait_for(/^watching #{Regexp.escape(KIOSK_URL)} \(probe every 7s/, timeout: 30)
     env = guest.run("cat /run/tessaro-kiosk/generated.env")
     raise Failure, "generated.env does not carry it:\n#{env}" unless env.include?("KIOSK_PROBE_INTERVAL=7")
+  ensure
+    guest.configure
+    guest.restart_agent
+  end
+
+  # The template's \n is typed as a backslash and an n, which the single
+  # quotes `configure` puts around every pair carry through the guest shell.
+  check "debug-screen", "debug.enable swaps the site for the filled-in debug text, and back" do |guest, journal, cdp|
+    hostname = guest.run("cat /proc/sys/kernel/hostname").strip
+    guest.configure("debug.enable" => "1", "debug.template" => "e2e {net.hostname}\\nurl {kiosk.url}")
+    guest.run("systemctl restart tessaro-agent")
+    journal.wait_for(/^debug screen on: showing debug\.template instead of /, timeout: 15)
+    journal.wait_for(%r{^navigated to the debug screen \(file:///run/tessaro-kiosk/debug\.html\)$}, timeout: 30)
+
+    want = "e2e #{hostname}\nurl #{KIOSK_URL}"
+    deadline = Time.now + 10
+    text = ""
+    until text.include?(want) || Time.now > deadline
+      sleep 1
+      text = cdp.command("Runtime.evaluate", expression: "document.body.innerText", returnByValue: true)
+                .dig("result", "value").to_s
+    end
+    raise Failure, "the debug screen reads #{text.inspect}" unless text.include?(want)
   ensure
     guest.configure
     guest.restart_agent

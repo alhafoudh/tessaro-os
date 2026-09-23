@@ -181,7 +181,28 @@ pub fn values(net: &Net) -> BTreeMap<String, String> {
     put("net.ipv4", every("ipv4"));
     put("net.ipv6", every("ipv6"));
     put("net.public_ip", net.public_ip.clone().unwrap_or_default());
+    put("net.interfaces", interfaces(net));
     out
+}
+
+/// `eth0 up 10.0.0.20/24 fe80::1/64; wlan0 down` - every interface but
+/// loopback, addressed or not, for a screen a technician reads at a glance.
+fn interfaces(net: &Net) -> String {
+    net.interfaces
+        .iter()
+        .filter(|iface| iface.kind != "loopback")
+        .map(|iface| {
+            let mut words = vec![iface.name.clone(), iface.state.clone()];
+            words.extend(
+                iface
+                    .addresses
+                    .iter()
+                    .map(|a| format!("{}/{}", a.address, a.prefix)),
+            );
+            words.join(" ")
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 /// The interface and gateway of the IPv4 default route, from
@@ -313,7 +334,7 @@ eth0\t0000000A\t00000000\t0001\t0\t0\t100\t00FFFFFF\t0\t0\t0
         };
         let interface = |name: &str, default_route, addresses| NetInterface {
             name: name.to_string(),
-            kind: "ethernet".to_string(),
+            kind: if name == "lo" { "loopback" } else { "ethernet" }.to_string(),
             mac: Some(format!("02:00:00:00:00:{}", name.len())),
             state: "up".to_string(),
             carrier: Some(true),
@@ -362,6 +383,10 @@ eth0\t0000000A\t00000000\t0001\t0\t0\t100\t00FFFFFF\t0\t0\t0
         assert_eq!(values["net.ipv4"], "10.0.0.20,192.168.1.7");
         assert_eq!(values["net.ipv6"], "fe80::1");
         assert_eq!(values["net.public_ip"], "203.0.113.9");
+        assert_eq!(
+            values["net.interfaces"],
+            "eth0 up 10.0.0.20/24 fe80::1/64; wlan0 up 192.168.1.7/24"
+        );
         // Every read-only net.* key in the registry has a value here.
         for key in protocol::keys::KEYS {
             if key.name.starts_with("net.") {

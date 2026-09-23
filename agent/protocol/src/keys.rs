@@ -61,6 +61,10 @@ pub enum Kind {
     Listen,
     /// A free-form custom value, used in kiosk.url as `{data.<name>}`.
     Param,
+    /// Text for the debug screen: `{key}` placeholders like kiosk.url, and
+    /// `\n` - a literal backslash and `n` - for a line break, the one
+    /// backslash any value may carry.
+    Template,
     /// Not a setting: something the device reports - its address, its id.
     /// Listed with `keys`, readable with `get`, usable in kiosk.url, and
     /// refused by `set`.
@@ -88,6 +92,10 @@ impl Kind {
             Kind::Name => "letters, digits and dashes, up to 40; empty derives one".to_string(),
             Kind::Listen => "address:port, or off".to_string(),
             Kind::Param => "any text; percent-encoded where kiosk.url uses it".to_string(),
+            Kind::Template => {
+                "text; \\n breaks a line; {key} placeholders as in kiosk.url, plus {kiosk.url}"
+                    .to_string()
+            }
             Kind::ReadOnly => "read-only: reported by the device, cannot be set".to_string(),
         }
     }
@@ -217,6 +225,10 @@ pub static KEYS: &[Key] = &[
         "Where the TLS control API listens, address:port, or off."),
     key("api.mdns", "KIOSK_MDNS", Kind::Choice(&["on", "off"]), AGENT,
         "Advertise the device as NAME.local and _tessaro._tcp."),
+    key("debug.enable", "KIOSK_DEBUG_SCREEN", Kind::Flag, AGENT,
+        "Show debug.template full screen instead of the kiosk page. Not agent.debug, which is journal verbosity."),
+    key("debug.template", "KIOSK_DEBUG_TEMPLATE", Kind::Template, AGENT,
+        "What the debug screen shows: text with {key} placeholders, \\n for a new line, e.g. IP {net.ip}\\nGW {net.gateway}."),
     // Read-only: what the device reports right now. `tessaro-ctl net` shows
     // the same in full, per interface.
     live("node.id", "The node id: systemd's app-specific machine id, never the machine id itself."),
@@ -231,6 +243,7 @@ pub static KEYS: &[Key] = &[
     live("net.ipv4", "Every IPv4 address on every interface but loopback, comma separated."),
     live("net.ipv6", "Every IPv6 address on every interface but loopback, comma separated."),
     live("net.public_ip", "The address the internet sees, from Cloudflare's trace; looked up by `net` and `get net.public_ip`, and every 5 minutes while kiosk.url uses it."),
+    live("net.interfaces", "Every interface but loopback with its state and addresses, as eth0 up 10.0.0.20/24; wlan0 down."),
 ];
 
 /// Custom values: `data.<name>`, named by whoever sets them. The kiosk gives
@@ -278,7 +291,9 @@ pub enum Placeholder<'a> {
     Param(&'a str),
     /// `{node.name}`: the effective value of a registry key.
     Key(&'static Key),
-    /// Neither - including `{kiosk.url}`, which cannot contain itself.
+    /// Neither - including `{kiosk.url}` and `{debug.template}`, which
+    /// cannot contain themselves. The debug template resolves `{kiosk.url}`
+    /// on its own.
     Unknown,
 }
 
@@ -302,7 +317,7 @@ pub fn placeholder(name: &str) -> Placeholder<'_> {
         return Placeholder::Param(custom);
     }
     match KEYS.iter().find(|key| key.name == name) {
-        Some(key) if key.name != "kiosk.url" => Placeholder::Key(key),
+        Some(key) if key.kind != Kind::Url && key.kind != Kind::Template => Placeholder::Key(key),
         _ => Placeholder::Unknown,
     }
 }
@@ -344,6 +359,16 @@ pub fn placeholders(template: &str) -> Vec<&str> {
 /// change the URL's structure. Returns the names that had no value; those
 /// placeholders expand to nothing.
 pub fn expand(template: &str, value: impl Fn(&str) -> Option<String>) -> (String, Vec<String>) {
+    expand_with(template, value, percent_encode)
+}
+
+/// `expand`, with each value put in through `encode` - raw text for the
+/// debug screen, which escapes for HTML itself.
+pub fn expand_with(
+    template: &str,
+    value: impl Fn(&str) -> Option<String>,
+    encode: fn(&str) -> String,
+) -> (String, Vec<String>) {
     let mut out = String::with_capacity(template.len());
     let mut missing = Vec::new();
     let mut rest = template;
@@ -355,7 +380,7 @@ pub fn expand(template: &str, value: impl Fn(&str) -> Option<String>) -> (String
             Some(close) if is_placeholder(&after[..close]) => {
                 let name = &after[..close];
                 match value(name) {
-                    Some(value) => out.push_str(&percent_encode(&value)),
+                    Some(value) => out.push_str(&encode(&value)),
                     None => {
                         if !missing.iter().any(|known| known == name) {
                             missing.push(name.to_string());
@@ -387,6 +412,10 @@ pub fn percent_encode(value: &str) -> String {
     out
 }
 
+/// What breaks a line in the debug template: a backslash and an `n`, as
+/// typed - a real newline could never survive the env file.
+pub const LINE_BREAK: &str = "\\n";
+
 pub fn find_env(env: &str) -> Option<&'static Key> {
     KEYS.iter()
         .find(|key| !key.env.is_empty() && key.env == env)
@@ -394,7 +423,15 @@ pub fn find_env(env: &str) -> Option<&'static Key> {
 
 /// The value as it will be stored, or why it cannot be.
 pub fn validate(key: &Key, value: &str) -> Result<String, String> {
-    if let Some(bad) = value
+    // The debug template's `\n` is the one backslash allowed anywhere. It
+    // never reaches an env file systemd parses unquoted: only the agent reads
+    // it, from state.json.
+    let checked = if key.kind == Kind::Template {
+        value.replace(LINE_BREAK, "")
+    } else {
+        value.to_string()
+    };
+    if let Some(bad) = checked
         .chars()
         .find(|ch| ch.is_control() || matches!(ch, '"' | '\'' | '\\' | '$' | '`'))
     {
@@ -417,7 +454,7 @@ pub fn validate(key: &Key, value: &str) -> Result<String, String> {
                 .map(|_| value.to_string())
                 .or_else(|why| fail(&why))
         }
-        Kind::Param => Ok(value.to_string()),
+        Kind::Param | Kind::Template => Ok(value.to_string()),
         Kind::ReadOnly => fail("is read-only: the device reports it, it cannot be set"),
         Kind::OptionalUrl => {
             if value.is_empty() {
@@ -770,6 +807,40 @@ mod tests {
             assert!(check(name, "1.2.3.4").unwrap_err().contains("read-only"));
             assert_eq!(placeholder(name), Placeholder::Key(key));
         }
+    }
+
+    #[test]
+    fn the_debug_template_allows_backslash_n_and_no_other_backslash() {
+        assert_eq!(
+            check("debug.template", "IP {net.ip}\\nGW {net.gateway}").unwrap(),
+            "IP {net.ip}\\nGW {net.gateway}"
+        );
+        for bad in ["a\\tb", "a\\\\b", "a\\", "it's", "a\"b", "${HOME}", "a\nb"] {
+            assert!(check("debug.template", bad).is_err(), "{bad}");
+        }
+        // Everywhere else a backslash is still refused.
+        assert!(check("data.x", "a\\nb").is_err());
+    }
+
+    #[test]
+    fn templates_cannot_contain_themselves() {
+        assert_eq!(placeholder("debug.template"), Placeholder::Unknown);
+        assert_eq!(placeholder("kiosk.url"), Placeholder::Unknown);
+        assert_eq!(
+            placeholder("debug.enable"),
+            Placeholder::Key(find("debug.enable").unwrap())
+        );
+    }
+
+    #[test]
+    fn expansion_can_leave_values_raw() {
+        let (text, missing) = expand_with(
+            "ip {net.ip} q {data.q}",
+            |name| (name == "net.ip").then(|| "10.0.0.2/24 x&y".to_string()),
+            str::to_string,
+        );
+        assert_eq!(text, "ip 10.0.0.2/24 x&y q ");
+        assert_eq!(missing, ["data.q"]);
     }
 
     #[test]

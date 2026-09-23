@@ -17,7 +17,7 @@ use tokio::sync::watch;
 
 use crate::config::Config;
 use crate::log::Log;
-use crate::ports::{Cdp, OfflinePage, ProbeResult, Prober, Units};
+use crate::ports::{Cdp, DebugScreen, OfflinePage, ProbeResult, Prober, Units};
 use crate::watchdog::{Heartbeat, GRACE, MAX_PLEDGE};
 
 /// What we believe is on screen. "Unknown" is not ignorance for its own sake -
@@ -28,7 +28,13 @@ pub enum NavState {
     Unknown,
     Live,
     Offline,
+    /// The debug screen, which `debug.enable` puts up instead of the site.
+    Debug,
 }
+
+/// How often the debug screen is re-rendered, so an address that moves is on
+/// screen within seconds. Only a changed page is navigated to.
+const DEBUG_REFRESH: i64 = 5;
 
 pub struct Agent<'a> {
     config: &'a Config,
@@ -37,6 +43,7 @@ pub struct Agent<'a> {
     cdp: &'a dyn Cdp,
     units: &'a dyn Units,
     offline: &'a dyn OfflinePage,
+    debug_screen: &'a dyn DebugScreen,
 
     /// Level-triggered, so a signal that arrived while a cycle was running is
     /// still seen by the nap that follows it.
@@ -75,6 +82,7 @@ impl<'a> Agent<'a> {
         cdp: &'a dyn Cdp,
         units: &'a dyn Units,
         offline: &'a dyn OfflinePage,
+        debug_screen: &'a dyn DebugScreen,
         shutdown: watch::Receiver<bool>,
         heartbeat: Heartbeat,
     ) -> Self {
@@ -85,6 +93,7 @@ impl<'a> Agent<'a> {
             cdp,
             units,
             offline,
+            debug_screen,
             shutdown,
             heartbeat,
             fails: 0,
@@ -113,7 +122,12 @@ impl<'a> Agent<'a> {
             return;
         }
 
-        if self.config.probe_enabled() {
+        if self.config.debug_screen {
+            self.log.info(format!(
+                "debug screen on: showing debug.template instead of {}",
+                self.config.kiosk_url
+            ));
+        } else if self.config.probe_enabled() {
             self.offline.stage().await;
             self.log.info(format!(
                 "watching {} (probe every {}s, refresh every {}s)",
@@ -129,7 +143,9 @@ impl<'a> Agent<'a> {
         while self.running() {
             self.cycle(now()).await;
 
-            let interval = if self.fails > 0 {
+            let interval = if self.config.debug_screen {
+                self.config.probe_interval.min(DEBUG_REFRESH)
+            } else if self.fails > 0 {
                 self.config.probe_interval_fail
             } else {
                 self.config.probe_interval
@@ -213,6 +229,30 @@ impl<'a> Agent<'a> {
             self.nav_state = NavState::Unknown;
         }
 
+        if config.debug_screen {
+            // The screen is the debug text whatever the site is doing: no
+            // probe, no offline page, no origin to enforce. What stays is the
+            // browser escalation below - a wedged browser shows no text either.
+            self.show_debug(now).await;
+        } else {
+            self.follow_site(now).await;
+        }
+
+        // Escalation, the other trigger: chromium itself stopped answering.
+        // Independent of the probe, because this one is about the browser and
+        // not the network, and so deliberately not gated by restart_done.
+        if self.ping_fails >= config.ping_fails {
+            self.restart(
+                &format!("no CDP reply after {} attempts", self.ping_fails),
+                now,
+            )
+            .await;
+        }
+    }
+
+    /// Probe the site and put it, or the offline page, on screen.
+    async fn follow_site(&mut self, now: i64) {
+        let config = self.config;
         let result = if config.probe_enabled() {
             self.probe.call(config.probe_target()).await
         } else {
@@ -284,16 +324,36 @@ impl<'a> Agent<'a> {
                 self.restart_done = true;
             }
         }
+    }
 
-        // Escalation, the other trigger: chromium itself stopped answering.
-        // Independent of the probe, because this one is about the browser and
-        // not the network, and so deliberately not gated by restart_done.
-        if self.ping_fails >= config.ping_fails {
-            self.restart(
-                &format!("no CDP reply after {} attempts", self.ping_fails),
-                now,
-            )
-            .await;
+    /// Put the debug screen up, and bring it up to date when its text moved.
+    async fn show_debug(&mut self, now: i64) {
+        let Some(staged) = self.debug_screen.stage().await else {
+            return;
+        };
+        if self.nav_state == NavState::Debug && !staged.changed {
+            return;
+        }
+
+        match self.cdp.navigate(&staged.uri).await {
+            Ok(()) => {
+                // Info once, when it goes up; its updates are only news to
+                // someone debugging the agent itself.
+                let message = format!("navigated to the debug screen ({})", staged.uri);
+                if self.nav_state == NavState::Debug {
+                    self.log.debug(message);
+                } else {
+                    self.log.info(message);
+                }
+                self.nav_state = NavState::Debug;
+                self.last_nav = now;
+            }
+            Err(err) => {
+                self.ping_fails += 1;
+                self.report_cdp_failure(format!(
+                    "could not tell chromium to open the debug screen ({err})"
+                ));
+            }
         }
     }
 
@@ -641,12 +701,14 @@ mod tests {
 
     struct FakeProbe {
         result: RefCell<ProbeResult>,
+        calls: Cell<usize>,
     }
 
     impl Default for FakeProbe {
         fn default() -> Self {
             Self {
                 result: RefCell::new(ProbeResult::ok(200)),
+                calls: Cell::new(0),
             }
         }
     }
@@ -664,7 +726,26 @@ mod tests {
     #[async_trait(?Send)]
     impl Prober for FakeProbe {
         async fn call(&self, _url: &str) -> ProbeResult {
+            self.calls.set(self.calls.get() + 1);
             self.result.borrow().clone()
+        }
+    }
+
+    const DEBUG_URI: &str = "file:///run/tessaro-kiosk/debug.html";
+
+    /// A debug screen whose text moves when the test says so.
+    #[derive(Default)]
+    struct FakeDebug {
+        changed: Cell<bool>,
+    }
+
+    #[async_trait(?Send)]
+    impl DebugScreen for FakeDebug {
+        async fn stage(&self) -> Option<crate::ports::Staged> {
+            Some(crate::ports::Staged {
+                uri: DEBUG_URI.to_string(),
+                changed: self.changed.replace(false),
+            })
         }
     }
 
@@ -690,6 +771,7 @@ mod tests {
         units: FakeUnits,
         probe: FakeProbe,
         offline: FakeOffline,
+        debug: FakeDebug,
         /// Kept alive deliberately: a dropped sender makes every
         /// `Receiver::changed()` resolve at once. Nothing cycle-driven naps
         /// today, but the day a test does, this is why it still works.
@@ -707,6 +789,7 @@ mod tests {
                 units: FakeUnits::default(),
                 probe: FakeProbe::default(),
                 offline: FakeOffline::default(),
+                debug: FakeDebug::default(),
                 stop: watch::channel(false).0,
             }
         }
@@ -719,6 +802,7 @@ mod tests {
                 &self.cdp,
                 &self.units,
                 &self.offline,
+                &self.debug,
                 self.stop.subscribe(),
                 Heartbeat::detached(),
             )
@@ -727,6 +811,53 @@ mod tests {
         fn navigations(&self) -> Vec<String> {
             self.cdp.navigations.borrow().clone()
         }
+    }
+
+    #[tokio::test]
+    async fn the_debug_screen_replaces_the_site_and_is_never_probed() {
+        let world = World::new(&[("KIOSK_DEBUG_SCREEN", "1")]);
+        world.probe.fail();
+        let mut agent = world.agent();
+
+        for now in [1000, 1005, 1010, 1100] {
+            agent.cycle(now).await;
+        }
+
+        assert_eq!(world.navigations(), vec![DEBUG_URI]);
+        assert_eq!(world.probe.calls.get(), 0);
+        assert_eq!(world.offline.staged.get(), 0);
+        assert!(world
+            .log
+            .lines()
+            .iter()
+            .any(|line| line.contains("navigated to the debug screen")));
+    }
+
+    #[tokio::test]
+    async fn the_debug_screen_is_reloaded_only_when_its_text_moved() {
+        let world = World::new(&[("KIOSK_DEBUG_SCREEN", "1")]);
+        let mut agent = world.agent();
+
+        agent.cycle(1000).await;
+        agent.cycle(1005).await;
+        world.debug.changed.set(true);
+        agent.cycle(1010).await;
+        agent.cycle(1015).await;
+
+        assert_eq!(world.navigations(), vec![DEBUG_URI, DEBUG_URI]);
+    }
+
+    #[tokio::test]
+    async fn a_silent_browser_is_still_restarted_under_the_debug_screen() {
+        let world = World::new(&[("KIOSK_DEBUG_SCREEN", "1")]);
+        world.cdp.alive.set(false);
+        let mut agent = world.agent();
+
+        for now in [1000, 1005, 1010, 1015] {
+            agent.cycle(now).await;
+        }
+
+        assert_eq!(world.units.restarts.get(), 1);
     }
 
     #[tokio::test]

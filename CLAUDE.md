@@ -430,7 +430,8 @@ going down, the page wandering off the origin, a crashed renderer, a killed
 browser, a wedged browser, an operator-stopped unit, a DNS server that
 swallows queries, the agent itself wedging, a short agent stall, a parked
 agent, SIGTERM - and the control plane: a `tessaro-ctl set` that restarts the
-agent onto the new value, a claim and unclaim round trip, and a resolution
+agent onto the new value, the debug screen going up with its template filled
+in and coming down again, a claim and unclaim round trip, and a resolution
 change that refuses an unoffered mode and reverts unconfirmed. About ten
 minutes; exits non-zero on any failure and prints
 the journal lines the failing case saw. `ruby test/e2e/agent_e2e.rb --list`
@@ -905,6 +906,49 @@ Wiping `/data` or the `/etc` overlay re-identifies a device.
 `tessaro-ctl` on a laptop: `mise run build-ctl`, then
 `tessaro-ctl --node NAME claim` (or `login --token` with a token someone
 issued). Pins and tokens are kept in `~/.config/tessaro/nodes.json`, 0600.
+
+### Debug screen
+
+**`tessaro-ctl set debug.enable=1` swaps the page for a full-screen text
+screen**: `debug.template` filled in, in large DejaVu Sans Mono, white on
+black, shrunk until the longest line fits. `unset debug.enable` brings the
+site back. Both keys are agent keys, so either change restarts only the
+agent, which is invisible on screen. `debug.enable` is not `agent.debug`,
+which is journal verbosity; its env name is `KIOSK_DEBUG_SCREEN` because
+`KIOSK_DEBUG` was taken.
+
+* **The template is kiosk.url's templating with raw values.** It accepts the
+  same `{key}` placeholders (any setting, read-only or `data.*`), plus
+  `{kiosk.url}` itself, expanded. `set` holds it to the same rules: an unset
+  `data.*` or a name that is no setting is refused. Values go in as they are,
+  not percent-encoded, and `debug.rs` escapes them for HTML
+  (`state::expand_text` next to `expand_url`, both on `keys::expand_with`).
+  The default shows the name, node id, hostname, the default route, IP, MAC,
+  DNS, the public address, every interface (`net.interfaces`, read-only,
+  added for this) and IPv6.
+* **`\n` - a backslash and an n, as typed - is the line break**, and it is
+  the one backslash any value may carry (`Kind::Template` in `keys.rs`). The
+  generic no-backslash rule exists because values end up in env files, so two
+  things keep that true here. `render::env_file` never writes the template
+  into `generated.env`, since only the agent reads it and it reads state.json.
+  And the image default in `tessaro-kiosk.env.in` is **single-quoted**,
+  because systemd keeps a backslash only inside single quotes. Measured:
+  unquoted `a\nb` reaches the process as `anb`.
+* **It replaces the page. It is not an overlay.** The agent stages
+  `/run/tessaro-kiosk/debug.html` next to the offline page (same
+  temp-and-rename, `offline::replace`) and navigates to it. While it is up
+  there is no probe, no offline page and no origin enforcement: a technician
+  wants the addresses most exactly when the site is down. The CDP liveness
+  check and the browser restart still run. An overlay injected into the site
+  would be lost on every navigation, and the page could hide it.
+* **It re-renders every 5s and navigates only when the text changed**, so a
+  DHCP renewal shows up within seconds without a reload loop. The template is
+  filled in from the settings the agent started with and the device as it is
+  at that moment (`render::live`).
+* **`{net.public_ip}` asks Cloudflare only while the screen shows it.**
+  `watch_public_ip` treats the debug template as in use only while
+  `debug.enable` is on, so the default template costs no request on a
+  device that is not in debug mode.
 
 ### Device APIs: WebSerial, WebHID, WebUSB, Web Bluetooth
 

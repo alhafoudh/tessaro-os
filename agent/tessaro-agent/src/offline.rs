@@ -91,11 +91,7 @@ impl Offline<'_> {
             }
         }
 
-        let temp = dir.join(temp_name());
-        if let Err(err) = write_then_rename(&temp, &dir.join("index.html"), &contents) {
-            // Best-effort: if the rename is what failed, the copy is still
-            // sitting there, and the directory is small and root-owned.
-            let _ = fs::remove_file(&temp);
+        if let Err(err) = replace(dir, "index.html", &contents) {
             self.log.info(format!(
                 "staging {source} failed: {err}; keeping the previous page"
             ));
@@ -104,6 +100,18 @@ impl Offline<'_> {
 
         Some(format!("file://{}/index.html", self.config.offline_dir))
     }
+}
+
+/// Put `contents` at `dir/name` through a temporary file and a rename, so the
+/// browser is never served a half-written page. The debug screen stages its
+/// page the same way, next to this one.
+pub(crate) fn replace(dir: &Path, name: &str, contents: &[u8]) -> std::io::Result<()> {
+    let temp = dir.join(temp_name(name));
+    write_then_rename(&temp, &dir.join(name), contents).inspect_err(|_| {
+        // Best-effort: if the rename is what failed, the copy is still
+        // sitting there, and the directory is small and root-owned.
+        let _ = fs::remove_file(&temp);
+    })
 }
 
 fn write_then_rename(temp: &Path, target: &Path, contents: &[u8]) -> std::io::Result<()> {
@@ -122,13 +130,13 @@ fn set_mode(path: &Path, mode: u32) -> std::io::Result<()> {
 
 /// Unique within the directory without pulling in an RNG: this process is the
 /// only writer, and the clock moves between staging attempts.
-fn temp_name() -> PathBuf {
+fn temp_name(name: &str) -> PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|elapsed| elapsed.subsec_nanos())
         .unwrap_or(0);
 
-    PathBuf::from(format!(".index.html.{}.{nanos}", process::id()))
+    PathBuf::from(format!(".{name}.{}.{nanos}", process::id()))
 }
 
 #[cfg(test)]

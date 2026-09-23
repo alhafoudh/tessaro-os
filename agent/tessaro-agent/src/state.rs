@@ -84,9 +84,46 @@ pub fn expand_url(
     defaults: &dyn Env,
     live: &Live,
 ) -> (String, Vec<String>) {
+    protocol::keys::expand(template, |name| resolve(name, settings, defaults, live))
+}
+
+/// The debug screen's template filled in: the same placeholders as kiosk.url,
+/// with values left raw rather than percent-encoded - the page escapes them
+/// for HTML - and `{kiosk.url}` too, as the URL it expands to.
+pub fn expand_text(
+    template: &str,
+    settings: &BTreeMap<String, String>,
+    defaults: &dyn Env,
+    live: &Live,
+) -> (String, Vec<String>) {
+    let kiosk_url = || {
+        let url = settings
+            .get("kiosk.url")
+            .cloned()
+            .or_else(|| defaults.get("KIOSK_URL"))
+            .unwrap_or_default();
+        expand_url(&url, settings, defaults, live).0
+    };
+    protocol::keys::expand_with(
+        template,
+        |name| match name {
+            "kiosk.url" => Some(kiosk_url()),
+            _ => resolve(name, settings, defaults, live),
+        },
+        str::to_string,
+    )
+}
+
+/// What one placeholder stands for, as `expand_url` describes.
+fn resolve(
+    name: &str,
+    settings: &BTreeMap<String, String>,
+    defaults: &dyn Env,
+    live: &Live,
+) -> Option<String> {
     use protocol::keys::{Kind, Placeholder};
 
-    protocol::keys::expand(template, |name| match protocol::keys::placeholder(name) {
+    match protocol::keys::placeholder(name) {
         // The placeholder is the key itself.
         Placeholder::Param(_) => settings.get(name).cloned(),
         Placeholder::Key(key) if key.kind == Kind::ReadOnly => {
@@ -104,7 +141,7 @@ pub fn expand_url(
             Some(value)
         }
         Placeholder::Unknown => None,
-    })
+    }
 }
 
 /// What the device reports rather than stores: the name derived from its
@@ -315,6 +352,33 @@ mod tests {
         );
         assert!(Live::moves("https://x.test/?ip={net.ip}"));
         assert!(!Live::moves("https://x.test/?n={node.name}&t={data.t}"));
+    }
+
+    #[test]
+    fn the_debug_text_is_raw_and_can_name_the_kiosk_url() {
+        let base: HashMap<String, String> =
+            [("KIOSK_URL".to_string(), "http://127.0.0.1/".to_string())].into();
+        let set = settings(&[
+            ("kiosk.url", "https://menu.test/?t={data.table}"),
+            ("data.table", "a b"),
+        ]);
+        let live = Live {
+            derived_name: Some("brave-otter-3fa2".into()),
+            values: [("net.cidr".to_string(), "10.0.0.20/24".to_string())].into(),
+        };
+
+        let (text, missing) = expand_text(
+            "{node.name}\\nip {net.cidr}\\nurl {kiosk.url}\\nt {data.table}\\n{debug.template}",
+            &set,
+            &base,
+            &live,
+        );
+
+        assert_eq!(
+            text,
+            "brave-otter-3fa2\\nip 10.0.0.20/24\\nurl https://menu.test/?t=a%20b\\nt a b\\n"
+        );
+        assert_eq!(missing, ["debug.template"]);
     }
 
     #[test]

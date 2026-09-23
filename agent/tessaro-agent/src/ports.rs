@@ -1,7 +1,7 @@
 //! The seams the state machine is written against.
 //!
 //! `Agent` never touches Chromium, the bus or the filesystem directly - it
-//! only knows these four traits. That is what lets the whole state machine be
+//! only knows these traits. That is what lets the whole state machine be
 //! tested against fakes with a fixed clock, and what makes a new health
 //! signal a matter of one more trait plus one branch in `Agent::cycle`,
 //! instead of a rewrite.
@@ -63,6 +63,22 @@ pub trait OfflinePage {
     /// Put the page where the browser can load it and return the URL to
     /// navigate to, or `None` when there is nothing readable to stage.
     async fn stage(&self) -> Option<String>;
+}
+
+/// The debug screen: `debug.template`, filled in with the device as it is now.
+#[async_trait(?Send)]
+pub trait DebugScreen {
+    /// Render the page where the browser can load it, or `None` when it
+    /// could not be written.
+    async fn stage(&self) -> Option<Staged>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Staged {
+    pub uri: String,
+    /// The page differs from the one staged before, so what is on screen is
+    /// out of date.
+    pub changed: bool,
 }
 
 /// The outcome of a probe. Always a value, never an error - "the site is

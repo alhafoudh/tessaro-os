@@ -57,6 +57,8 @@ pub struct Config {
     pub agent_enable: bool,
     pub enforce_origin: bool,
     pub debug: bool,
+    /// Show the debug screen instead of the kiosk page (`debug.enable`).
+    pub debug_screen: bool,
 
     pub cdp_url: String,
     /// The whole budget for one DevTools command. Used to be
@@ -110,6 +112,7 @@ impl Config {
             agent_enable: flag(env, "KIOSK_AGENT_ENABLE", true),
             enforce_origin: flag(env, "KIOSK_ENFORCE_ORIGIN", true),
             debug: flag(env, "KIOSK_DEBUG", false),
+            debug_screen: flag(env, "KIOSK_DEBUG_SCREEN", false),
 
             cdp_url: string(env, "KIOSK_CDP_URL", "http://127.0.0.1:9222"),
             cdp_timeout: int(env, "KIOSK_CDP_TIMEOUT", 5),

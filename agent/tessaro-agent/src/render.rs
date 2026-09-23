@@ -46,6 +46,12 @@ pub fn env_file(
         if key.env == "KIOSK_URL" {
             continue; // below, expanded
         }
+        if key.kind == protocol::keys::Kind::Template {
+            // The debug template's `\n` is the one backslash a value may hold,
+            // and systemd would eat it unquoted. Only the agent reads it, and
+            // it reads state.json.
+            continue;
+        }
         if let Some((env, value)) = overrides.iter().find(|(env, _)| *env == key.env) {
             out.push_str(&format!("{env}={value}\n"));
         }
@@ -321,6 +327,23 @@ mod tests {
             "{text}"
         );
         assert!(!text.contains('{'), "{text}");
+    }
+
+    #[test]
+    fn the_debug_template_never_reaches_the_env_file() {
+        let log = Log::buffered(true);
+        let text = env_file(
+            &settings(&[
+                ("debug.enable", "1"),
+                ("debug.template", "IP {net.ip}\\nGW {net.gateway}"),
+            ]),
+            &factory(),
+            &state::Live::default(),
+            &log,
+        );
+
+        let lines: Vec<&str> = text.lines().filter(|line| !line.starts_with('#')).collect();
+        assert_eq!(lines, ["KIOSK_DEBUG_SCREEN=1"]);
     }
 
     #[test]

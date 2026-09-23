@@ -25,6 +25,7 @@ mod cdp;
 mod config;
 mod control;
 mod deadline;
+mod debug;
 mod display;
 mod error;
 mod http;
@@ -133,7 +134,7 @@ fn main() -> ExitCode {
         }
     };
 
-    runtime.block_on(run(config, log, device));
+    runtime.block_on(run(config, log, device, settings.settings));
     ExitCode::SUCCESS
 }
 
@@ -278,7 +279,12 @@ async fn start_control(
     control.watch_public_ip();
 }
 
-async fn run(config: Config, log: Arc<Log>, device: Device) {
+async fn run(
+    config: Config,
+    log: Arc<Log>,
+    device: Device,
+    settings: std::collections::BTreeMap<String, String>,
+) {
     // First, before anything that can touch the network or the bus: systemd
     // armed the watchdog at exec, so the keepalive has to be running already.
     let heartbeat = Heartbeat::new(STARTUP);
@@ -329,10 +335,15 @@ async fn run(config: Config, log: Arc<Log>, device: Device) {
     let control_session = session.clone();
     let cdp = cdp::CdpClient::new(&log, session, heartbeat.clone(), config.cdp_timeout);
 
+    // The debug screen fills its template in afresh every time, from the
+    // settings this agent started with and the device as it is then.
+    let paths = device.paths.clone();
+    let defaults = device.defaults.clone();
     start_control(device, &config.kiosk_url, control_session, &log, &stop).await;
 
     let units = systemd::Systemd::connect(&config.unit, &log, heartbeat.clone()).await;
     let offline = offline::Offline::new(&log, &config);
+    let debug_screen = debug::Debug::new(&log, &config, &paths, &defaults, &settings);
 
     // Let the session try once before the first cycle asks it anything. At
     // boot Chromium's port is usually still closed and this returns at once;
@@ -352,6 +363,7 @@ async fn run(config: Config, log: Arc<Log>, device: Device) {
         &cdp,
         &units,
         &offline,
+        &debug_screen,
         stop.subscribe(),
         heartbeat,
     )

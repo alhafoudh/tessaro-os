@@ -326,13 +326,10 @@ impl Control {
             })
             .collect();
 
-        let template = state
-            .settings
-            .get("kiosk.url")
-            .or_else(|| self.defaults.get("KIOSK_URL"))
-            .cloned()
-            .unwrap_or_default();
-        let used = keys::placeholders(&template);
+        let url_template = self.template(&state.settings, "kiosk.url");
+        let debug_template = self.template(&state.settings, "debug.template");
+        let in_url = keys::placeholders(&url_template);
+        let in_debug = keys::placeholders(&debug_template);
         let custom: Vec<(&String, &String)> = state
             .settings
             .iter()
@@ -358,10 +355,15 @@ impl Control {
 
         for (name, value) in custom {
             // The placeholder is the key itself.
-            let usage = if used.contains(&name.as_str()) {
-                format!("kiosk.url uses it as {{{name}}}.")
+            let users: Vec<&str> = [("kiosk.url", &in_url), ("debug.template", &in_debug)]
+                .into_iter()
+                .filter(|(_, used)| used.contains(&name.as_str()))
+                .map(|(template, _)| template)
+                .collect();
+            let usage = if users.is_empty() {
+                format!("Neither kiosk.url nor debug.template uses it; add {{{name}}} to use it.")
             } else {
-                format!("kiosk.url does not use it; add {{{name}}} to use it.")
+                format!("{} uses it as {{{name}}}.", users.join(" and "))
             };
             out.push(KeyInfo {
                 name: name.clone(),
@@ -371,6 +373,16 @@ impl Control {
             });
         }
         Ok(out)
+    }
+
+    /// A template setting as set on this device, else the image default.
+    fn template(&self, settings: &BTreeMap<String, String>, name: &str) -> String {
+        let env = keys::find(name).map(|key| key.env).unwrap_or_default();
+        settings
+            .get(name)
+            .or_else(|| self.defaults.get(env))
+            .cloned()
+            .unwrap_or_default()
     }
 
     fn pending(&self, state: &State) -> Option<Pending> {
@@ -498,6 +510,11 @@ impl Control {
         let log = Arc::clone(&self.log);
         let guarded_names: Vec<&'static str> = guarded.iter().map(|key| key.name).collect();
         let default_url = self.defaults.get("KIOSK_URL").cloned().unwrap_or_default();
+        let default_debug = self
+            .defaults
+            .get("KIOSK_DEBUG_TEMPLATE")
+            .cloned()
+            .unwrap_or_default();
         let defaults = self.defaults.clone();
         let committed = blocking("updating state.json", move || {
             store.update(&log, |state: &mut State| {
@@ -529,51 +546,31 @@ impl Control {
                     return Ok((before, state.clone()));
                 }
 
-                // Every {placeholder} the kiosk URL uses must have a value -
+                // Every {placeholder} either template uses must have a value -
                 // checked on the result, so setting a template and its values
                 // in one command works, and unsetting a value still in use
-                // does not.
+                // does not. Read-only keys always have a value, so no live
+                // values are needed to know what is missing.
                 let template = state.settings.get("kiosk.url").unwrap_or(&default_url);
-                // Read-only keys always have a value, so no live values are
-                // needed to know what is missing.
                 let (_, missing) = state::expand_url(
                     template,
                     &state.settings,
                     &defaults,
                     &state::Live::default(),
                 );
-                // A custom data.* nobody set yet just needs a value; anything
-                // else is not a setting at all.
-                let (unset, typos): (Vec<&String>, Vec<&String>) = missing
-                    .iter()
-                    .partition(|name| keys::param_name(name).is_some());
-                if let Some(typo) = typos.first() {
-                    // The likeliest slip: {table} for {data.table}.
-                    let hint = if keys::is_param(typo) {
-                        format!("; a custom value is written in full: {{{}{typo}}}", keys::DATA_PREFIX)
-                    } else {
-                        String::new()
-                    };
-                    return Err(format!(
-                        "kiosk.url {template} uses {{{typo}}}, which is not a setting \
-                         (and kiosk.url cannot contain itself){hint}; `tessaro-ctl keys` lists them"
-                    ));
-                }
-                if !unset.is_empty() {
-                    return Err(format!(
-                        "kiosk.url {template} uses {}; set {} (it can go in the same command)",
-                        unset
-                            .iter()
-                            .map(|name| format!("{{{name}}}"))
-                            .collect::<Vec<_>>()
-                            .join(", "),
-                        unset
-                            .iter()
-                            .map(|name| name.as_str())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    ));
-                }
+                check_template("kiosk.url", template, &missing)?;
+
+                let template = state
+                    .settings
+                    .get("debug.template")
+                    .unwrap_or(&default_debug);
+                let (_, missing) = state::expand_text(
+                    template,
+                    &state.settings,
+                    &defaults,
+                    &state::Live::default(),
+                );
+                check_template("debug.template", template, &missing)?;
 
                 state.revision += 1;
                 for name in &guarded_names {
@@ -658,9 +655,10 @@ impl Control {
         });
     }
 
-    /// Keeps `net.public_ip` current while kiosk.url uses it, and only then:
-    /// a link may be metered, so a device whose URL does not name
-    /// `{net.public_ip}` never asks. While it does, Cloudflare's trace is
+    /// Keeps `net.public_ip` current while kiosk.url uses it - or the debug
+    /// screen is on and its template does - and only then: a link may be
+    /// metered, so a device that shows no `{net.public_ip}` never asks.
+    /// While one does, Cloudflare's trace is
     /// asked every 5 minutes (every 30s until the first answer, and after a
     /// failure), and the answer goes to `/run/tessaro-kiosk/public-ip`, which
     /// is all the read-only key ever reads. A failure keeps the last address
@@ -701,19 +699,21 @@ impl Control {
         });
     }
 
-    /// Does the kiosk.url template - as set, else the image default - name
-    /// this key as a placeholder?
+    /// Does what is on screen name this key as a placeholder - the kiosk.url
+    /// template, or the debug template while the debug screen is on, each as
+    /// set, else the image default?
     async fn url_uses(&self, key: &str) -> bool {
         let Ok(state) = self.read_state().await else {
             return false;
         };
-        let template = state
+        let uses =
+            |name: &str| keys::placeholders(&self.template(&state.settings, name)).contains(&key);
+        let debug_screen = state
             .settings
-            .get("kiosk.url")
-            .or_else(|| self.defaults.get("KIOSK_URL"))
-            .cloned()
-            .unwrap_or_default();
-        keys::placeholders(&template).contains(&key)
+            .get("debug.enable")
+            .or_else(|| self.defaults.get("KIOSK_DEBUG_SCREEN"))
+            .is_some_and(|value| value == "1");
+        uses("kiosk.url") || (debug_screen && uses("debug.template"))
     }
 
     /// One lookup, saved on success. A failure is logged at debug and leaves
@@ -1370,6 +1370,47 @@ fn changed_keys(
         .collect()
 }
 
+/// Why a template (`kiosk.url`, `debug.template`) cannot be saved with these
+/// placeholders missing, if it cannot.
+fn check_template(key: &str, template: &str, missing: &[String]) -> Result<(), String> {
+    // A custom data.* nobody set yet just needs a value; anything else is not
+    // a setting at all.
+    let (unset, typos): (Vec<&String>, Vec<&String>) = missing
+        .iter()
+        .partition(|name| keys::param_name(name).is_some());
+    if let Some(typo) = typos.first() {
+        // The likeliest slip: {table} for {data.table}.
+        let hint = if keys::is_param(typo) {
+            format!(
+                "; a custom value is written in full: {{{}{typo}}}",
+                keys::DATA_PREFIX
+            )
+        } else {
+            String::new()
+        };
+        return Err(format!(
+            "{key} {template} uses {{{typo}}}, which is not a setting \
+             (and {key} cannot contain itself){hint}; `tessaro-ctl keys` lists them"
+        ));
+    }
+    if !unset.is_empty() {
+        return Err(format!(
+            "{key} {template} uses {}; set {} (it can go in the same command)",
+            unset
+                .iter()
+                .map(|name| format!("{{{name}}}"))
+                .collect::<Vec<_>>()
+                .join(", "),
+            unset
+                .iter()
+                .map(|name| name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    Ok(())
+}
+
 fn unknown(name: &str) -> String {
     format!("{name} is not a setting; `tessaro-ctl keys` lists them")
 }
@@ -1999,7 +2040,64 @@ mod tests {
             table.doc
         );
         let spare = keys.iter().find(|k| k.name == "data.spare").unwrap();
-        assert!(spare.doc.contains("does not use it"), "{}", spare.doc);
+        assert!(
+            spare
+                .doc
+                .contains("Neither kiosk.url nor debug.template uses it"),
+            "{}",
+            spare.doc
+        );
+
+        let _: Applied = ok(
+            &fx.control,
+            &Caller::Local,
+            set(&[("debug.template", "spare {data.spare}")]),
+        )
+        .await;
+        let keys: Vec<KeyInfo> = ok(&fx.control, &Caller::Local, Command::Keys).await;
+        let spare = keys.iter().find(|k| k.name == "data.spare").unwrap();
+        assert!(
+            spare.doc.contains("debug.template uses it as {data.spare}"),
+            "{}",
+            spare.doc
+        );
+    }
+
+    #[tokio::test]
+    async fn the_debug_template_is_held_to_the_same_placeholder_rules() {
+        let fx = fixture();
+
+        let typo = err(
+            &fx.control,
+            &Caller::Local,
+            set(&[("debug.template", "ip {net.ip}\\nt {table}")]),
+        )
+        .await;
+        assert!(
+            typo.contains("debug.template") && typo.contains("{data.table}"),
+            "{typo}"
+        );
+
+        let unset = err(
+            &fx.control,
+            &Caller::Local,
+            set(&[("debug.template", "t {data.table}")]),
+        )
+        .await;
+        assert!(unset.contains("set data.table"), "{unset}");
+
+        let _: Applied = ok(
+            &fx.control,
+            &Caller::Local,
+            set(&[
+                (
+                    "debug.template",
+                    "{node.name}\\nurl {kiosk.url}\\nt {data.table}",
+                ),
+                ("data.table", "12"),
+            ]),
+        )
+        .await;
     }
 
     #[tokio::test]
