@@ -59,8 +59,8 @@ pub fn overrides(settings: &BTreeMap<String, String>, log: &Log) -> Vec<(&'stati
     let mut out = Vec::new();
     for (name, value) in settings {
         match protocol::keys::find(name) {
-            // url.* has no variable of its own; it only exists inside the
-            // expanded kiosk.url.
+            // A custom data.* has no variable of its own; it only exists
+            // inside the expanded kiosk.url.
             Some(key) if key.env.is_empty() => {}
             Some(key) => out.push((key.env, value.clone())),
             None => log.info(format!("state.json: ignoring unknown key {name}")),
@@ -71,11 +71,12 @@ pub fn overrides(settings: &BTreeMap<String, String>, log: &Log) -> Vec<(&'stati
 
 /// A kiosk.url template filled in, and the placeholders nothing could fill.
 ///
-/// `{name}` is `url.name`. `{any.key}` is that setting's effective value -
-/// what is set, else the image default, else empty - and `{node.name}` falls
-/// back to `derived_name`, the name the device actually answers to when none
-/// was set. Only a `url.*` nobody set, or a name that is no setting at all,
-/// counts as missing.
+/// A placeholder is a setting's full key. `{data.name}` is that custom value;
+/// `{any.key}` is that setting's effective value - what is set, else the
+/// image default, else empty - and `{node.name}` falls back to
+/// `derived_name`, the name the device actually answers to when none was
+/// set. Only a `data.*` nobody set, or a name that is no setting at all
+/// (a bare `{name}` included), counts as missing.
 pub fn expand_url(
     template: &str,
     settings: &BTreeMap<String, String>,
@@ -85,7 +86,8 @@ pub fn expand_url(
     use protocol::keys::Placeholder;
 
     protocol::keys::expand(template, |name| match protocol::keys::placeholder(name) {
-        Placeholder::Param(param) => settings.get(&format!("url.{param}")).cloned(),
+        // The placeholder is the key itself.
+        Placeholder::Param(_) => settings.get(name).cloned(),
         Placeholder::Key(key) => {
             let value = settings
                 .get(key.name)
@@ -201,9 +203,9 @@ mod tests {
         let base: HashMap<String, String> =
             [("KIOSK_URL".to_string(), "http://127.0.0.1/".to_string())].into();
         let set = settings(&[
-            ("kiosk.url", "https://{shop}.test/?lang={lang}"),
-            ("url.shop", "north"),
-            ("url.lang", "sk"),
+            ("kiosk.url", "https://{data.shop}.test/?lang={data.lang}"),
+            ("data.shop", "north"),
+            ("data.lang", "sk"),
         ]);
 
         let effective = Effective::new(&base, &set, &log);
@@ -254,12 +256,12 @@ mod tests {
     fn only_unset_parameters_and_non_settings_are_missing() {
         let base: HashMap<String, String> = HashMap::new();
         let (_, missing) = expand_url(
-            "https://x.test/{store}/{no.such}/{kiosk.url}/{display.scale}",
+            "https://x.test/{data.store}/{store}/{no.such}/{kiosk.url}/{display.scale}",
             &BTreeMap::new(),
             &base,
             None,
         );
-        assert_eq!(missing, ["store", "no.such", "kiosk.url"]);
+        assert_eq!(missing, ["data.store", "store", "no.such", "kiosk.url"]);
     }
 
     #[test]

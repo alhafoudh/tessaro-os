@@ -1,8 +1,9 @@
 //! Finding a device and opening a conversation with it.
 //!
 //! `--node` takes the local socket (nothing, or `local`), an IP, `ip:port`,
-//! a name, `name.local`, or a DNS host name. A bare name or `.local` is
-//! looked up with mDNS, falling back to the address last seen for it.
+//! a name, `name.local`, or a DNS host name. A bare name or `.local` goes to
+//! the address last seen for it first, and to an mDNS scan only when nothing
+//! answers there or a different device does (`open_named`).
 //!
 //! Over TCP the certificate is never *verified* - every device is
 //! self-signed - it is **pinned**: its SHA-256 is compared with the one stored
@@ -24,6 +25,9 @@ use sha2::{Digest, Sha256};
 use crate::nodes::{Node, Nodes};
 
 const CONNECT: Duration = Duration::from_secs(5);
+/// A cached address gets less: on a LAN a live device answers in
+/// milliseconds, and a silent one should cost little before the scan.
+const CACHED_CONNECT: Duration = Duration::from_secs(2);
 const IO: Duration = Duration::from_secs(60);
 pub const BROWSE: Duration = Duration::from_secs(3);
 
@@ -39,6 +43,12 @@ pub enum Target {
         expected: Option<String>,
         /// How the user named it, for messages and for a new entry.
         label: String,
+    },
+    /// `NAME` or `NAME.local`: the cached address if there is one, then mDNS.
+    Named {
+        name: String,
+        port: Option<u16>,
+        known: Option<Node>,
     },
 }
 
@@ -96,33 +106,12 @@ pub fn resolve(node: Option<&str>, nodes: &Nodes) -> Result<Target, String> {
         .strip_suffix(".local")
         .or((!host.contains('.')).then_some(host));
     if let Some(name) = mdns_name {
-        let known = nodes.by_name(name);
-        if let Some(found) = browse(BROWSE).into_iter().find(|found| {
-            found.name == name
-                || (known.is_some() && found.id.as_deref() == known.map(|k| k.id.as_str()))
-        }) {
-            let address = SocketAddr::new(found.address.ip(), port.unwrap_or(found.address.port()));
-            return Ok(Target::Remote {
-                address,
-                expected: found.id.or_else(|| known.map(|k| k.id.clone())),
-                label: name.to_string(),
-            });
-        }
-        if let Some(known) = known {
-            let address: SocketAddr = known
-                .address
-                .parse()
-                .map_err(|_| format!("{}: bad stored address {}", known.name, known.address))?;
-            eprintln!("{name}: not answering on mDNS, trying its last address {address}");
-            return Ok(Target::Remote {
-                address,
-                expected: Some(known.id.clone()),
-                label: name.to_string(),
-            });
-        }
-        return Err(format!(
-            "{name}: not found on the network (mDNS) and not a known node"
-        ));
+        // Resolved when opened: the cached address first, then a scan.
+        return Ok(Target::Named {
+            name: name.to_string(),
+            port,
+            known: nodes.by_name(name).cloned(),
+        });
     }
 
     let address = (host, port.unwrap_or(protocol::DEFAULT_PORT))
@@ -203,7 +192,19 @@ pub fn open(target: &Target, nodes: &Nodes, trust: Trust, follow: bool) -> Resul
             address,
             expected,
             label,
-        } => open_remote(*address, expected.as_deref(), label, nodes, trust, follow),
+        } => open_remote(
+            *address,
+            expected.as_deref(),
+            label,
+            nodes,
+            trust,
+            follow,
+            CONNECT,
+        )
+        .map_err(Failure::message),
+        Target::Named { name, port, known } => {
+            open_named(name, *port, known.as_ref(), nodes, trust, follow)
+        }
     }
 }
 
@@ -223,6 +224,29 @@ fn open_local(_: &std::path::Path) -> Result<Session, String> {
     Err("no local socket on this platform; pass --node".to_string())
 }
 
+/// Why a remote conversation did not open. The difference matters for a
+/// named node's cached address: nothing there means "it moved, look for it",
+/// something else there means the same - but worth a warning.
+#[derive(Debug)]
+enum Failure {
+    /// Nothing answered, or not with TLS.
+    Unreachable(String),
+    /// Something answered, but not the device that is pinned: another
+    /// certificate, or another node id.
+    Mismatch(String),
+    /// The right device, or an unknown one, and it went wrong anyway.
+    Refused(String),
+}
+
+impl Failure {
+    fn message(self) -> String {
+        match self {
+            Failure::Unreachable(why) | Failure::Mismatch(why) | Failure::Refused(why) => why,
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn open_remote(
     address: SocketAddr,
     expected: Option<&str>,
@@ -230,83 +254,162 @@ fn open_remote(
     nodes: &Nodes,
     trust: Trust,
     follow: bool,
-) -> Result<Session, String> {
-    let tcp =
-        TcpStream::connect_timeout(&address, CONNECT).map_err(|err| format!("{address}: {err}"))?;
+    connect: Duration,
+) -> Result<Session, Failure> {
+    let tcp = TcpStream::connect_timeout(&address, connect)
+        .map_err(|err| Failure::Unreachable(format!("{address}: {err}")))?;
     tcp.set_read_timeout(if follow { None } else { Some(IO) })
         .and_then(|()| tcp.set_write_timeout(Some(IO)))
-        .map_err(|err| err.to_string())?;
+        .map_err(|err| Failure::Refused(err.to_string()))?;
 
     let connector = native_tls::TlsConnector::builder()
         .danger_accept_invalid_certs(true)
         .danger_accept_invalid_hostnames(true)
         .build()
-        .map_err(|err| err.to_string())?;
+        .map_err(|err| Failure::Refused(err.to_string()))?;
     let tls = connector
         .connect("tessaro", tcp)
-        .map_err(|err| format!("{address}: TLS: {err}"))?;
+        .map_err(|err| Failure::Unreachable(format!("{address}: TLS: {err}")))?;
 
     let der = tls
         .peer_certificate()
-        .map_err(|err| err.to_string())?
-        .ok_or_else(|| format!("{address}: presented no certificate"))?
+        .map_err(|err| Failure::Refused(err.to_string()))?
+        .ok_or_else(|| Failure::Unreachable(format!("{address}: presented no certificate")))?
         .to_der()
-        .map_err(|err| err.to_string())?;
+        .map_err(|err| Failure::Refused(err.to_string()))?;
     let fingerprint = hex(&Sha256::digest(&der));
 
     // The hello carries nothing secret, and the welcome says which node this
-    // claims to be - so a known device that DHCP moved is still recognised.
-    // The pin is checked against *that* node before any token is sent.
-    let mut session = handshake(Box::new(tls), None, None)?;
-    let known: Option<&Node> = nodes
-        .by_id(&session.node.id)
-        .or_else(|| expected.and_then(|id| nodes.by_id(id)));
+    // claims to be. The pin is checked before any token is sent.
+    let mut session = handshake(Box::new(tls), None, None)
+        .map_err(|why| Failure::Unreachable(format!("{address}: {why}")))?;
+
+    // The node we meant, if we meant one. Only without an expectation - an
+    // IP typed by hand - is the answering device looked up by its own id,
+    // so a known device that DHCP moved is still recognised. With one, the
+    // expected pin comes first: another known device answering at that
+    // address must be a mismatch, not a silent switch to the wrong kiosk.
+    let known: Option<&Node> = match expected.and_then(|id| nodes.by_id(id)) {
+        Some(node) => Some(node),
+        None => nodes.by_id(&session.node.id),
+    };
     match known {
+        Some(node) if node.id != session.node.id => {
+            return Err(Failure::Mismatch(format!(
+                "{label}: a different device answers at {address} (node {} {}, not {} {})",
+                session.node.name, session.node.id, node.name, node.id
+            )));
+        }
         Some(node) if node.fingerprint != fingerprint => {
-            return Err(format!(
+            return Err(Failure::Mismatch(format!(
                 "{label} ({address}) presented certificate {fingerprint},\n\
                  but {} is pinned to {}.\n\
                  This is either a different device or someone in the middle. If the device\n\
                  was reinstalled or its /data wiped, `tessaro-ctl forget {}` and pin it again.",
                 node.name, node.fingerprint, node.name
-            ));
+            )));
         }
         Some(_) => {}
         None => match trust {
             Trust::KnownOnly => {
-                return Err(format!(
+                return Err(Failure::Refused(format!(
                     "{label} ({address}) is not a known node; `tessaro-ctl claim` or `tessaro-ctl login` it first"
-                ))
+                )))
             }
             Trust::Peek => {}
             Trust::Pin { assume_yes } => {
                 eprintln!("{label} ({address}) presents certificate\n  {fingerprint}");
-                if !assume_yes && !ask("Pin it and continue?")? {
-                    return Err("not pinned".to_string());
+                if !assume_yes && !ask("Pin it and continue?").map_err(Failure::Refused)? {
+                    return Err(Failure::Refused("not pinned".to_string()));
                 }
             }
         },
     }
 
     if session.node.fingerprint != fingerprint {
-        return Err(format!(
+        return Err(Failure::Mismatch(format!(
             "{label}: says its fingerprint is {} but presented {fingerprint}",
             session.node.fingerprint
-        ));
-    }
-    if let Some(node) = known {
-        if node.id != session.node.id {
-            return Err(format!(
-                "{label}: pinned as node {} but answers as {}",
-                node.id, session.node.id
-            ));
-        }
+        )));
     }
     session.token = std::env::var("TESSARO_TOKEN")
         .ok()
         .or_else(|| known.and_then(|node| node.token.clone()));
     session.remote = Some((address, fingerprint));
     Ok(session)
+}
+
+/// A node asked for by name: its cached address first, then mDNS.
+///
+/// * The cached address answers as the pinned device: done, no scan at all.
+/// * Something else answers there - another certificate, another node id -
+///   warn, then scan: the device most likely moved and its old address went
+///   to someone else. The scan result is held to the pin as strictly.
+/// * Nothing answers there: scan, quietly.
+fn open_named(
+    name: &str,
+    port: Option<u16>,
+    known: Option<&Node>,
+    nodes: &Nodes,
+    trust: Trust,
+    follow: bool,
+) -> Result<Session, String> {
+    let with_port =
+        |address: SocketAddr| SocketAddr::new(address.ip(), port.unwrap_or(address.port()));
+
+    let cached = known.and_then(|node| {
+        node.address
+            .parse::<SocketAddr>()
+            .ok()
+            .map(|a| (node, with_port(a)))
+    });
+    // What happened at the cached address, for the final error.
+    let mut at_cached = "not answering at";
+    if let Some((node, address)) = cached {
+        match open_remote(
+            address,
+            Some(&node.id),
+            name,
+            nodes,
+            trust,
+            follow,
+            CACHED_CONNECT,
+        ) {
+            Ok(session) => return Ok(session),
+            Err(Failure::Mismatch(why)) => {
+                eprintln!("warning: {why}\nwarning: looking for {name} on the network instead");
+                at_cached = "another device now at";
+            }
+            Err(Failure::Unreachable(_)) => {}
+            Err(Failure::Refused(why)) => return Err(why),
+        }
+    }
+
+    let found = browse(BROWSE).into_iter().find(|found| {
+        found.name == name
+            || known.is_some_and(|node| found.id.as_deref() == Some(node.id.as_str()))
+    });
+    match found {
+        Some(found) => {
+            let expected = known.map(|node| node.id.clone()).or(found.id);
+            open_remote(
+                with_port(found.address),
+                expected.as_deref(),
+                name,
+                nodes,
+                trust,
+                follow,
+                CONNECT,
+            )
+            .map_err(Failure::message)
+        }
+        None => Err(match cached {
+            Some((_, address)) => format!(
+                "{name}: {at_cached} its last address {address}, and not found on the network (mDNS)"
+            ),
+            None => format!("{name}: not found on the network (mDNS) and not a known node"),
+        }),
+    }
 }
 
 fn handshake(

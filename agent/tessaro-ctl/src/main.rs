@@ -43,7 +43,8 @@ use nodes::{Node, Nodes};
         \x20 tessaro-ctl keys                               every setting, documented\n\
         \x20 tessaro-ctl keys display.resolution            one setting in full\n\
         \x20 tessaro-ctl set kiosk.url=https://shop.test/\n\
-        \x20 tessaro-ctl set 'kiosk.url=https://{store}.shop.test/?lang={lang}' url.store=north url.lang=sk\n\
+        \x20 tessaro-ctl set 'kiosk.url=https://menu.test/?table={data.table}' data.table=12\n\
+        \x20 tessaro-ctl set 'kiosk.url=https://{node.name}.menu.test/'  any setting is a placeholder too\n\
         \x20 tessaro-ctl modes && tessaro-ctl set display.resolution=1920x1080 && tessaro-ctl confirm\n\
         \x20 tessaro-ctl set browser.fps_counter=on\n\
         \x20 tessaro-ctl unset kiosk.url                    back to the image default\n\
@@ -89,10 +90,12 @@ enum Cmd {
     /// Change settings: KEY=VALUE ... Restarts only what reads them.
     ///
     /// `tessaro-ctl keys` lists every KEY with what it accepts. Several pairs
-    /// are applied as one change. Any `url.NAME=VALUE` fills the `{NAME}`
-    /// placeholder in kiosk.url, percent-encoded, e.g.
+    /// are applied as one change. `data.NAME=VALUE` defines a custom value,
+    /// with a NAME you choose. Any setting's full key in braces is a
+    /// placeholder in kiosk.url, filled percent-encoded: `{data.NAME}`,
+    /// `{node.name}`, `{display.osk}`, ...
     ///
-    ///   tessaro-ctl set 'kiosk.url=https://{store}.shop.test/?lang={lang}' url.store=north url.lang=sk
+    ///   tessaro-ctl set 'kiosk.url=https://menu.test/?table={data.table}&screen={data.screen}' data.table=12 data.screen=entrance
     Set {
         #[arg(required = true, value_name = "KEY=VALUE")]
         pairs: Vec<String>,
@@ -265,6 +268,7 @@ fn run(cli: Cli) -> Result<(), String> {
     };
     let follow = matches!(cli.command, Cmd::Logs { follow: true, .. });
     let mut session = connect::open(&target, &nodes, trust, follow)?;
+    refresh_address(&mut nodes, &session)?;
     let json = cli.json;
 
     match cli.command {
@@ -279,8 +283,8 @@ fn run(cli: Cli) -> Result<(), String> {
         Cmd::Keys { key } => {
             let mut keys: Vec<KeyInfo> = call(&mut session, Command::Keys)?;
             if let Some(wanted) = &key {
-                let template = wanted.starts_with("url.");
-                keys.retain(|k| &k.name == wanted || (template && k.name == "url.<name>"));
+                let template = wanted.starts_with(protocol::keys::DATA_PREFIX);
+                keys.retain(|k| &k.name == wanted || (template && k.name == "data.<name>"));
                 if keys.len() > 1 {
                     keys.retain(|k| &k.name == wanted);
                 }
@@ -673,6 +677,33 @@ fn default_client_name() -> String {
         .or_else(|| std::env::var("HOSTNAME").ok())
         .unwrap_or_else(|| "a laptop".to_string());
     format!("{user}@{host}")
+}
+
+/// A known device that answered, pin and id checked, somewhere other than its
+/// cached address has moved: remember where, so the next command by name
+/// goes straight there instead of scanning.
+fn refresh_address(nodes: &mut Nodes, session: &Session) -> Result<(), String> {
+    let Some((address, _)) = &session.remote else {
+        return Ok(());
+    };
+    let address = address.to_string();
+    let Some(known) = nodes.by_id(&session.node.id) else {
+        return Ok(());
+    };
+    if known.address == address {
+        return Ok(());
+    }
+
+    eprintln!(
+        "{}: now at {address} (was {}), remembered",
+        known.name, known.address
+    );
+    let moved = Node {
+        address,
+        ..known.clone()
+    };
+    nodes.put(moved);
+    nodes.save()
 }
 
 fn remember(

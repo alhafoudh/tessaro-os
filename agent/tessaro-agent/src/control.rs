@@ -291,8 +291,9 @@ impl Control {
     }
 
     /// The registry, documented: what each key accepts, the image default,
-    /// and what this device has set. `url.<name>` appears once as the
-    /// template entry, then once per parameter that is set.
+    /// and what this device has set. `data.<name>` appears once as the
+    /// template entry, saying which custom values exist, then once per
+    /// custom value, saying whether kiosk.url uses it.
     async fn keys(&self) -> Result<Vec<KeyInfo>, String> {
         let state = self.read_state().await?;
         let mut out: Vec<KeyInfo> = keys::KEYS
@@ -304,15 +305,49 @@ impl Control {
             })
             .collect();
 
-        out.push(KeyInfo::from(&keys::URL_PARAM));
-        for (name, value) in &state.settings {
-            if keys::param_name(name).is_some() {
-                out.push(KeyInfo {
-                    name: name.clone(),
-                    value: Some(value.clone()),
-                    ..KeyInfo::from(&keys::URL_PARAM)
-                });
-            }
+        let template = state
+            .settings
+            .get("kiosk.url")
+            .or_else(|| self.defaults.get("KIOSK_URL"))
+            .cloned()
+            .unwrap_or_default();
+        let used = keys::placeholders(&template);
+        let custom: Vec<(&String, &String)> = state
+            .settings
+            .iter()
+            .filter(|(name, _)| keys::param_name(name).is_some())
+            .collect();
+
+        let defined = if custom.is_empty() {
+            "No custom values are defined on this device yet.".to_string()
+        } else {
+            format!(
+                "Defined on this device: {}.",
+                custom
+                    .iter()
+                    .map(|(name, _)| name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        };
+        out.push(KeyInfo {
+            doc: format!("{} {defined}", keys::DATA.doc),
+            ..KeyInfo::from(&keys::DATA)
+        });
+
+        for (name, value) in custom {
+            // The placeholder is the key itself.
+            let usage = if used.contains(&name.as_str()) {
+                format!("kiosk.url uses it as {{{name}}}.")
+            } else {
+                format!("kiosk.url does not use it; add {{{name}}} to use it.")
+            };
+            out.push(KeyInfo {
+                name: name.clone(),
+                value: Some(value.clone()),
+                doc: format!("Custom value. {usage}"),
+                ..KeyInfo::from(&keys::DATA)
+            });
         }
         Ok(out)
     }
@@ -340,7 +375,7 @@ impl Control {
 
     async fn get(&self, key: Option<String>) -> Result<Settings, String> {
         let state = self.read_state().await?;
-        // The registry, then every url.* that is set, under its own name.
+        // The registry, then every custom data.* that is set, by its name.
         let wanted: Vec<(String, &Key)> = match &key {
             Some(name) => vec![(name.clone(), keys::find(name).ok_or_else(|| unknown(name))?)],
             None => keys::KEYS
@@ -351,7 +386,7 @@ impl Control {
                         .settings
                         .keys()
                         .filter(|name| keys::param_name(name).is_some())
-                        .map(|name| (name.clone(), &keys::URL_PARAM)),
+                        .map(|name| (name.clone(), &keys::DATA)),
                 )
                 .collect(),
         };
@@ -394,7 +429,7 @@ impl Control {
         }
 
         // Validate everything before touching anything. Keyed by the name as
-        // given, not the registry entry's: every url.* shares one entry.
+        // given, not the registry entry's: every data.* shares one entry.
         let mut normalized: BTreeMap<String, Option<String>> = BTreeMap::new();
         let mut guarded: Vec<&'static Key> = Vec::new();
         for (name, value) in changes {
@@ -468,19 +503,24 @@ impl Control {
                 // does not.
                 let template = state.settings.get("kiosk.url").unwrap_or(&default_url);
                 let (_, missing) = state::expand_url(template, &state.settings, &defaults, None);
-                // A dotted name that is not a setting is a typo; a plain one
-                // is a url.* nobody set yet.
-                let (typos, unset): (Vec<&String>, Vec<&String>) =
-                    missing.iter().partition(|name| name.contains('.'));
+                // A custom data.* nobody set yet just needs a value; anything
+                // else is not a setting at all.
+                let (unset, typos): (Vec<&String>, Vec<&String>) = missing
+                    .iter()
+                    .partition(|name| keys::param_name(name).is_some());
                 if let Some(typo) = typos.first() {
+                    // The likeliest slip: {table} for {data.table}.
+                    let hint = if keys::is_param(typo) {
+                        format!("; a custom value is written in full: {{{}{typo}}}", keys::DATA_PREFIX)
+                    } else {
+                        String::new()
+                    };
                     return Err(format!(
                         "kiosk.url {template} uses {{{typo}}}, which is not a setting \
-                         (and kiosk.url cannot contain itself); `tessaro-ctl keys` lists them"
+                         (and kiosk.url cannot contain itself){hint}; `tessaro-ctl keys` lists them"
                     ));
                 }
                 if !unset.is_empty() {
-                    let needed: Vec<String> =
-                        unset.iter().map(|name| format!("url.{name}")).collect();
                     return Err(format!(
                         "kiosk.url {template} uses {}; set {} (it can go in the same command)",
                         unset
@@ -488,7 +528,11 @@ impl Control {
                             .map(|name| format!("{{{name}}}"))
                             .collect::<Vec<_>>()
                             .join(", "),
-                        needed.join(", ")
+                        unset
+                            .iter()
+                            .map(|name| name.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
                     ));
                 }
 
@@ -1647,7 +1691,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn url_parameters_fill_the_kiosk_url_template() {
+    async fn custom_values_fill_the_kiosk_url_template() {
         let fx = fixture();
 
         let missing = err(
@@ -1655,22 +1699,28 @@ mod tests {
             &Caller::Local,
             // Same origin as the default, so the policy - and with it a
             // browser restart, which needs a bus - stays out of this test.
-            set(&[("kiosk.url", "http://127.0.0.1/?store={store}&lang={lang}")]),
+            set(&[(
+                "kiosk.url",
+                "http://127.0.0.1/?store={data.store}&lang={data.lang}",
+            )]),
         )
         .await;
-        assert!(missing.contains("url.store, url.lang"), "{missing}");
+        assert!(missing.contains("data.store, data.lang"), "{missing}");
 
         let applied: Applied = ok(
             &fx.control,
             &Caller::Local,
             set(&[
-                ("kiosk.url", "http://127.0.0.1/?store={store}&lang={lang}"),
-                ("url.store", "42"),
-                ("url.lang", "sk"),
+                (
+                    "kiosk.url",
+                    "http://127.0.0.1/?store={data.store}&lang={data.lang}",
+                ),
+                ("data.store", "42"),
+                ("data.lang", "sk"),
             ]),
         )
         .await;
-        assert_eq!(applied.changed, ["kiosk.url", "url.lang", "url.store"]);
+        assert_eq!(applied.changed, ["data.lang", "data.store", "kiosk.url"]);
         let env = fs::read_to_string(fx.paths.generated_env()).unwrap();
         assert!(
             env.contains("KIOSK_URL=http://127.0.0.1/?store=42&lang=sk\n"),
@@ -1682,21 +1732,77 @@ mod tests {
             &fx.control,
             &Caller::Local,
             Command::Unset {
-                keys: vec!["url.store".into()],
+                keys: vec!["data.store".into()],
                 if_revision: None,
                 apply: true,
             },
         )
         .await;
-        assert!(in_use.contains("{store}"), "{in_use}");
+        assert!(in_use.contains("{data.store}"), "{in_use}");
 
-        let _: Applied = ok(&fx.control, &Caller::Local, set(&[("url.lang", "en")])).await;
+        // The short form is not a placeholder, and the error says so.
+        let short = err(
+            &fx.control,
+            &Caller::Local,
+            set(&[("kiosk.url", "http://127.0.0.1/?store={store}")]),
+        )
+        .await;
+        assert!(short.contains("{data.store}"), "{short}");
+
+        let _: Applied = ok(&fx.control, &Caller::Local, set(&[("data.lang", "en")])).await;
         let env = fs::read_to_string(fx.paths.generated_env()).unwrap();
         assert!(env.contains("lang=en\n"), "{env}");
 
         let settings: Settings = ok(&fx.control, &Caller::Local, Command::Get { key: None }).await;
         let names: Vec<&str> = settings.settings.iter().map(|s| s.key.as_str()).collect();
-        assert!(names.contains(&"url.store") && names.contains(&"url.lang"));
+        assert!(names.contains(&"data.store") && names.contains(&"data.lang"));
+
+        // The old prefix is not a setting.
+        let old = err(&fx.control, &Caller::Local, set(&[("url.lang", "en")])).await;
+        assert!(old.contains("not a setting"), "{old}");
+    }
+
+    #[tokio::test]
+    async fn keys_list_the_custom_values_that_exist_and_whether_they_are_used() {
+        let fx = fixture();
+
+        let keys: Vec<KeyInfo> = ok(&fx.control, &Caller::Local, Command::Keys).await;
+        let template = keys.iter().find(|k| k.name == "data.<name>").unwrap();
+        assert!(
+            template.doc.contains("No custom values"),
+            "{}",
+            template.doc
+        );
+
+        let _: Applied = ok(
+            &fx.control,
+            &Caller::Local,
+            set(&[
+                ("kiosk.url", "http://127.0.0.1/?t={data.table}"),
+                ("data.table", "12"),
+                ("data.spare", "x"),
+            ]),
+        )
+        .await;
+
+        let keys: Vec<KeyInfo> = ok(&fx.control, &Caller::Local, Command::Keys).await;
+        let template = keys.iter().find(|k| k.name == "data.<name>").unwrap();
+        assert!(
+            template
+                .doc
+                .contains("Defined on this device: data.spare, data.table"),
+            "{}",
+            template.doc
+        );
+        let table = keys.iter().find(|k| k.name == "data.table").unwrap();
+        assert_eq!(table.value.as_deref(), Some("12"));
+        assert!(
+            table.doc.contains("uses it as {data.table}"),
+            "{}",
+            table.doc
+        );
+        let spare = keys.iter().find(|k| k.name == "data.spare").unwrap();
+        assert!(spare.doc.contains("does not use it"), "{}", spare.doc);
     }
 
     #[tokio::test]
@@ -1716,7 +1822,7 @@ mod tests {
         assert_eq!(osk.value.as_deref(), Some("never"));
         let url = keys.iter().find(|k| k.name == "kiosk.url").unwrap();
         assert_eq!(url.default.as_deref(), Some("http://127.0.0.1/"));
-        assert!(keys.iter().any(|k| k.name == "url.<name>"));
+        assert!(keys.iter().any(|k| k.name == "data.<name>"));
     }
 
     #[tokio::test]

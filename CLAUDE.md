@@ -783,22 +783,26 @@ kiosk origin, Weston restarts - taking the browser and agent with it - for a
   the device (`Kind::describe` plus each key's `doc`), so a client never
   documents settings a device does not have. `tessaro-ctl --help` carries
   worked examples.
-* **URL parameters.** Any `url.NAME=VALUE` fills a `{NAME}` placeholder
-  anywhere in `kiosk.url` - host, path or query - percent-encoded, so a value
-  cannot change the URL's structure:
-  `set 'kiosk.url=https://{store}.shop.test/?lang={lang}' url.store=north url.lang=sk`.
-  Expansion happens once, in `state::Effective`: the browser unit gets the
-  expanded URL in `generated.env`, and the agent's origin checks and the
-  device-API policy see the same one, so a placeholder in the host moves the
-  grants too. **Every setting is a placeholder too**, by its dotted name:
-  `{display.osk}`, `{browser.fps_counter}`, `{node.name}` - its effective
-  value, set or image default, and `{node.name}` is the name the device
-  actually answers to even when none was set. Only `{kiosk.url}` is refused,
-  as it cannot contain itself. Because any setting can move the URL, whether
+* **Custom values and URL placeholders.** `data.NAME=VALUE` defines a custom
+  value - the NAME is whatever the site needs, the kiosk gives it no meaning.
+  **A placeholder is always a setting's full key in braces**, custom or
+  built-in, anywhere in `kiosk.url` - host, path or query - percent-encoded so
+  a value cannot change the URL's structure:
+  `set 'kiosk.url=https://menu.test/?table={data.table}' data.table=12`.
+  There is no short form: `{table}` is refused, with a hint to write
+  `{data.table}`. `tessaro-ctl keys` lists every custom value defined, and
+  says whether the URL uses it. Expansion happens once, in `state::Effective`:
+  the browser unit gets the expanded URL in `generated.env`, and the agent's
+  origin checks and the device-API policy see the same one, so a placeholder
+  in the host moves the grants too. Built-in settings expand to their
+  effective value, set or image default - `{display.osk}`,
+  `{browser.fps_counter}` - and `{node.name}` is the name the device actually
+  answers to even when none was set. Only `{kiosk.url}` is refused, as it
+  cannot contain itself. Because any setting can move the URL, whether
   the agent restarts is decided by comparing the expanded URL with the one the
   running agent started with, not by which key changed. `set` refuses a
-  template with an unset `url.*` or a name that is no setting, and an `unset`
-  of a `url.*` still in use; parameters and template can go in one command.
+  template with an unset `data.*` or a name that is no setting, and an `unset`
+  of a `data.*` still in use; custom values and template can go in one command.
   Nothing is added implicitly - only what the template names.
 * **Values are validated once, at `set`**: enums, ranges, URLs, modes - and no
   control characters, quotes, backslashes or `$` anywhere, because the value
@@ -862,8 +866,14 @@ machine id itself never leaves the device. **Never change that app id**: it
 would rename every device. The name is `adjective-noun-xxxx` from the id, or
 `node.name`. The agent announces `NAME.local` and `_tessaro._tcp` over mDNS
 (`mdns-sd`, TXT `id`, `fp`, `ver`, `machine`, `claimed`; `api.mdns=off`
-stops it), and `tessaro-ctl --node NAME` finds a device by name, falling back
-to the last address it was seen at. `tessaro-ctl nodes` lists what answers.
+stops it). `tessaro-ctl --node NAME` goes to the address it last saw that
+device at first - instant, no scan - and scans mDNS only when nothing answers
+there, or when a different certificate or node id does (then with a warning:
+the device most likely moved and its old address went to someone else). A
+device found at a new address has it updated in `nodes.json`. With an
+expected node, its own pin is always checked first, so another known kiosk
+answering at that address is a mismatch, never a silent switch.
+`tessaro-ctl nodes` lists what answers.
 Wiping `/data` or the `/etc` overlay re-identifies a device.
 
 `tessaro-ctl` on a laptop: `mise run build-ctl`, then

@@ -294,9 +294,9 @@ mod tests {
         let log = Log::buffered(true);
         let text = env_file(
             &settings(&[
-                ("kiosk.url", "https://{shop}.test/?t={table}"),
-                ("url.shop", "north"),
-                ("url.table", "7 a"),
+                ("kiosk.url", "https://{data.shop}.test/?t={data.table}"),
+                ("data.shop", "north"),
+                ("data.table", "7 a"),
             ]),
             &factory(),
             None,
@@ -313,7 +313,10 @@ mod tests {
     #[test]
     fn a_placeholder_in_the_host_moves_the_device_grants() {
         let log = Log::buffered(true);
-        let set = settings(&[("kiosk.url", "https://{shop}.test/"), ("url.shop", "north")]);
+        let set = settings(&[
+            ("kiosk.url", "https://{data.shop}.test/"),
+            ("data.shop", "north"),
+        ]);
         let defaults = factory();
         let effective = state::Effective::new(&defaults, &set, &log);
 

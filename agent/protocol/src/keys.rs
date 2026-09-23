@@ -59,7 +59,7 @@ pub enum Kind {
     Name,
     /// `off`, or an `address:port` to listen on.
     Listen,
-    /// A free-form value for a `{name}` placeholder in kiosk.url.
+    /// A free-form custom value, used in kiosk.url as `{data.<name>}`.
     Param,
 }
 
@@ -68,7 +68,7 @@ impl Kind {
     pub fn describe(&self) -> String {
         match self {
             Kind::Url => {
-                "an http, https, file or data URL; may contain {name} (url.name) and {any.setting} placeholders"
+                "an http, https, file or data URL; may contain {key} placeholders - any setting's key, e.g. {data.table} or {node.name}"
                     .to_string()
             }
             Kind::OptionalUrl => "an http, https, file or data URL, or empty".to_string(),
@@ -208,28 +208,33 @@ pub static KEYS: &[Key] = &[
         "Advertise the device as NAME.local and _tessaro._tcp."),
 ];
 
-/// Every `url.<name>` setting shares this entry. It has no env variable of its
-/// own: its value only exists inside the expanded kiosk.url.
-pub static URL_PARAM: Key = Key {
-    name: "url.<name>",
+/// Custom values: `data.<name>`, named by whoever sets them. The kiosk gives
+/// them no meaning; they exist to be put into kiosk.url as `{<name>}`.
+pub const DATA_PREFIX: &str = "data.";
+
+/// Every custom `data.<name>` setting shares this entry. It has no env
+/// variable of its own: its value only exists inside the expanded kiosk.url.
+pub static DATA: Key = Key {
+    name: "data.<name>",
     env: "",
     kind: Kind::Param,
     consumers: AGENT,
     guarded: false,
-    doc: "A value for the {name} placeholder in kiosk.url, e.g. url.store=42 for https://{store}.shop.test/. \
-          Any number of them; set them before or together with a kiosk.url that uses them. Every other \
-          setting is a placeholder too, by its own name: {node.name}, {display.scale}, ...",
+    doc: "Custom values with names you choose, for kiosk.url: data.table=12 fills {data.table}, as in \
+          https://menu.test/?table={data.table}. The kiosk gives them no meaning of its own. Set them \
+          before or together with a kiosk.url that uses them. A placeholder is always a full key, so \
+          built-in settings work the same way: {node.name}, {display.scale}, ...",
 };
 
 pub fn find(name: &str) -> Option<&'static Key> {
     KEYS.iter()
         .find(|key| key.name == name)
-        .or_else(|| param_name(name).map(|_| &URL_PARAM))
+        .or_else(|| param_name(name).map(|_| &DATA))
 }
 
-/// `store` for `url.store`, if the rest is a valid placeholder name.
+/// `table` for `data.table`, if the rest is a valid placeholder name.
 pub fn param_name(key: &str) -> Option<&str> {
-    key.strip_prefix("url.").filter(|name| is_param(name))
+    key.strip_prefix(DATA_PREFIX).filter(|name| is_param(name))
 }
 
 /// Placeholder names: lower-case letters, digits and `_`, up to 32.
@@ -244,7 +249,7 @@ pub fn is_param(name: &str) -> bool {
 /// What a `{name}` in kiosk.url stands for.
 #[derive(Debug, Clone, Copy)]
 pub enum Placeholder<'a> {
-    /// `{store}`: the value of `url.store`.
+    /// `{data.table}`: the custom value `data.table`; holds `table`.
     Param(&'a str),
     /// `{node.name}`: the effective value of a registry key.
     Key(&'static Key),
@@ -264,9 +269,12 @@ impl PartialEq for Placeholder<'_> {
     }
 }
 
+/// A placeholder is always a setting's full key: `{data.table}` for the
+/// custom `data.table`, `{node.name}` for `node.name`. One rule, no short
+/// forms, so a template reads exactly like the `set` that fills it.
 pub fn placeholder(name: &str) -> Placeholder<'_> {
-    if is_param(name) {
-        return Placeholder::Param(name);
+    if let Some(custom) = param_name(name) {
+        return Placeholder::Param(custom);
     }
     match KEYS.iter().find(|key| key.name == name) {
         Some(key) if key.name != "kiosk.url" => Placeholder::Key(key),
@@ -656,30 +664,33 @@ mod tests {
     }
 
     #[test]
-    fn any_url_dot_name_is_a_parameter() {
-        assert_eq!(find("url.store").unwrap().kind, Kind::Param);
-        assert_eq!(find("url.store_2").unwrap().kind, Kind::Param);
-        assert!(find("url.").is_none());
-        assert!(find("url.Store").is_none());
-        assert!(find("url.a-b").is_none());
-        assert_eq!(param_name("url.lang"), Some("lang"));
-        assert_eq!(check("url.store", " 42 ").unwrap(), "42");
-        assert!(check("url.store", "a\nb").is_err());
+    fn any_data_dot_name_is_a_custom_value() {
+        assert_eq!(find("data.store").unwrap().kind, Kind::Param);
+        assert_eq!(find("data.store_2").unwrap().kind, Kind::Param);
+        assert!(find("data.").is_none());
+        assert!(find("data.Store").is_none());
+        assert!(find("data.a-b").is_none());
+        assert!(find("url.store").is_none());
+        assert_eq!(param_name("data.lang"), Some("lang"));
+        assert_eq!(check("data.store", " 42 ").unwrap(), "42");
+        assert!(check("data.store", "a\nb").is_err());
     }
 
     #[test]
     fn placeholders_are_found_once_and_odd_braces_left_alone() {
         assert_eq!(
             placeholders(
-                "https://{shop}.test/{lang}/x?s={shop}&j={not-one}&k={}&n={node.name}&z={.x}"
+                "https://{data.shop}.test/{data.lang}/x?s={data.shop}&j={not-one}&k={}&n={node.name}&z={.x}"
             ),
-            ["shop", "lang", "node.name"]
+            ["data.shop", "data.lang", "node.name"]
         );
     }
 
     #[test]
-    fn a_placeholder_is_a_parameter_or_any_key_but_the_url_itself() {
-        assert_eq!(placeholder("store"), Placeholder::Param("store"));
+    fn a_placeholder_is_always_a_full_key_but_never_the_url_itself() {
+        assert_eq!(placeholder("data.store"), Placeholder::Param("store"));
+        // No short form: {store} is not data.store.
+        assert_eq!(placeholder("store"), Placeholder::Unknown);
         assert_eq!(
             placeholder("node.name"),
             Placeholder::Key(find("node.name").unwrap())
@@ -695,31 +706,34 @@ mod tests {
     #[test]
     fn expansion_encodes_values_and_names_what_is_missing() {
         let values = |name: &str| match name {
-            "shop" => Some("north".to_string()),
-            "q" => Some("a b&c=d/é".to_string()),
+            "data.shop" => Some("north".to_string()),
+            "data.q" => Some("a b&c=d/é".to_string()),
             _ => None,
         };
-        let (url, missing) = expand("https://{shop}.test/?q={q}&x={gone}&y={a-b}", values);
+        let (url, missing) = expand(
+            "https://{data.shop}.test/?q={data.q}&x={data.gone}&y={a-b}",
+            values,
+        );
 
         assert_eq!(
             url,
             "https://north.test/?q=a%20b%26c%3Dd%2F%C3%A9&x=&y={a-b}"
         );
-        assert_eq!(missing, ["gone"]);
+        assert_eq!(missing, ["data.gone"]);
     }
 
     #[test]
     fn a_url_template_is_validated_as_the_url_it_becomes() {
         assert_eq!(
-            check("kiosk.url", "https://{shop}.test/?lang={lang}").unwrap(),
-            "https://{shop}.test/?lang={lang}"
+            check("kiosk.url", "https://{data.shop}.test/?lang={data.lang}").unwrap(),
+            "https://{data.shop}.test/?lang={data.lang}"
         );
-        assert!(check("kiosk.url", "{scheme}://x.test/").is_err());
+        assert!(check("kiosk.url", "{data.scheme}://x.test/").is_err());
     }
 
     #[test]
     fn every_kind_describes_itself() {
-        for key in KEYS.iter().chain([&URL_PARAM]) {
+        for key in KEYS.iter().chain([&DATA]) {
             assert!(!key.kind.describe().is_empty(), "{}", key.name);
         }
     }
