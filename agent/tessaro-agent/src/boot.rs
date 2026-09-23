@@ -11,15 +11,16 @@
 //! 0. **The last update**: what the initramfs did with a pending image, put
 //!    in the journal once (`updates::report`).
 //! 1. **Factory reset**, if `/data/tessaro/factory-reset` exists or the
-//!    kernel command line says `tessaro.factory_reset`: settings, tokens and
-//!    root password cleared - the fresh-install state. The marker is removed
+//!    kernel command line says `tessaro.factory_reset`: settings, tokens, ssh
+//!    keys and root password cleared - the fresh-install state. The marker is removed
 //!    afterwards; the command-line flag is meant to be typed at the boot
 //!    loader for one boot, not written into its config.
 //! 2. **Migration** of a leftover `/etc/default/tessaro-kiosk`, once.
 //! 3. **Probation**: a guarded change still pending at boot was never
 //!    confirmed - the device was rebooted instead - so it reverts.
-//! 4. **The claim invariant**: unclaimed means an empty root password. This
-//!    is also what heals a power cut in the middle of a claim.
+//! 4. **The claim invariant**: unclaimed means an empty root password and no
+//!    ssh keys. This is also what heals a power cut in the middle of a claim
+//!    or an unclaim.
 //! 5. **The TLS identity**, made if missing, so its fingerprint is in the
 //!    journal from the first boot.
 //! 6. **Render.**
@@ -36,6 +37,7 @@ use crate::log::Log;
 use crate::paths::Paths;
 use crate::render;
 use crate::shadow;
+use crate::ssh;
 use crate::state::{self, State};
 use crate::store::Store;
 use crate::updates;
@@ -110,6 +112,9 @@ fn factory_reset(paths: &Paths, state_store: &Store, auth_store: &Store, log: &L
     if let Err(err) = auth_store.remove() {
         log.info(format!("factory reset: auth.json: {err}"));
     }
+    if let Err(err) = ssh::clear(&paths.authorized_keys) {
+        log.info(format!("factory reset: authorized_keys: {err}"));
+    }
     if let Err(err) = shadow::set_root(&paths.shadow, None) {
         log.info(format!("factory reset: root password: {err}"));
     }
@@ -121,7 +126,7 @@ fn factory_reset(paths: &Paths, state_store: &Store, auth_store: &Store, log: &L
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
         Err(err) => log.info(format!("factory reset: cannot remove the marker: {err}")),
     }
-    log.info("factory reset: settings, tokens and root password cleared");
+    log.info("factory reset: settings, tokens, ssh keys and root password cleared");
 }
 
 /// Import the old runtime override file into `state.json`, once. Only the
@@ -210,6 +215,14 @@ fn reconcile(paths: &Paths, auth_store: &Store, log: &Log) {
     if auth.claimed() {
         return;
     }
+    match ssh::clear(&paths.authorized_keys) {
+        Ok(true) => log.info("unclaimed but root had ssh keys: removed them"),
+        Ok(false) => {}
+        Err(err) => log.info(format!(
+            "could not empty {}: {err}",
+            paths.authorized_keys.display()
+        )),
+    }
     match shadow::root_has_password(&paths.shadow) {
         Ok(true) => match shadow::set_root(&paths.shadow, None) {
             Ok(()) => log.info("unclaimed but root had a password: emptied it"),
@@ -246,6 +259,7 @@ mod tests {
                 ("KIOSK_POLICY", at("policy.json")),
                 ("KIOSK_POLICY_BASE", at("policy-base.json")),
                 ("KIOSK_SHADOW", at("etc/shadow")),
+                ("KIOSK_AUTHORIZED_KEYS", at("root/.ssh/authorized_keys")),
                 ("KIOSK_LEGACY_OVERRIDE", at("etc/default-tessaro-kiosk")),
                 ("KIOSK_CMDLINE", at("cmdline")),
                 ("KIOSK_URL", "http://127.0.0.1/".to_string()),
@@ -303,6 +317,26 @@ mod tests {
     }
 
     #[test]
+    fn unclaimed_means_no_ssh_keys() {
+        let device = Device::new();
+        let keys = device.paths().authorized_keys;
+        let key = protocol::sshkey::PublicKey::parse(SSH_KEY).unwrap();
+        ssh::add(&keys, &key).unwrap();
+
+        let log = Log::buffered(true);
+        run(&device.env, &log);
+
+        assert!(ssh::list(&keys).unwrap().is_empty());
+        assert!(log
+            .lines()
+            .iter()
+            .any(|line| line.contains("root had ssh keys")));
+    }
+
+    const SSH_KEY: &str =
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIO7gEEtj0g4zaawVIwrP4wxLZQ2TqgASR86NTHDJ66jj a@laptop";
+
+    #[test]
     fn a_claimed_device_keeps_its_password() {
         let device = Device::new();
         let paths = device.paths();
@@ -313,10 +347,13 @@ mod tests {
             })
             .unwrap();
         shadow::set_root(&paths.shadow, Some(&shadow::hash("kept").unwrap())).unwrap();
+        let key = protocol::sshkey::PublicKey::parse(SSH_KEY).unwrap();
+        ssh::add(&paths.authorized_keys, &key).unwrap();
 
         run(&device.env, &log);
 
         assert!(!root_is_empty(&paths.shadow));
+        assert_eq!(ssh::list(&paths.authorized_keys).unwrap(), vec![key]);
     }
 
     #[test]

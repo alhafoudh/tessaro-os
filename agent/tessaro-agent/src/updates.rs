@@ -878,6 +878,7 @@ mod tests {
         let at = |name: &str| dir.path().join(name).display().to_string();
         let env: HashMap<String, String> = [
             ("KIOSK_STATE_DIR", at("data")),
+            ("KIOSK_AUTHORIZED_KEYS", at("root/.ssh/authorized_keys")),
             ("KIOSK_CMDLINE", probe.cmdline.display().to_string()),
             ("KIOSK_SYS_BLOCK", probe.sys_block.display().to_string()),
             ("KIOSK_BY_PARTUUID", probe.by_partuuid.display().to_string()),

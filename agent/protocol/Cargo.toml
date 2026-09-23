@@ -13,3 +13,9 @@ publish.workspace = true
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+# SSH public keys: the base64 blob, and its SHA256 fingerprint in the form
+# ssh-keygen prints, so both ends name a key the same way. Both are pure
+# Rust and already in the lock through tessaro-ctl.
+data-encoding = "2"
+sha2 = "0.10"

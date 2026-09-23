@@ -34,6 +34,7 @@ require "open3"
 require "optparse"
 require "securerandom"
 require "socket"
+require "tmpdir"
 require "uri"
 
 module AgentE2E
@@ -68,10 +69,17 @@ module AgentE2E
 
   # The VM, over SSH.
   class Guest
+    # Extra ssh options go in front of SSH's own, because ssh keeps the first
+    # value it sees for an option: a case can log in with a key or pin a host
+    # key and override StrictHostKeyChecking=no that way.
+    def initialize(*options)
+      @ssh = [SSH.first, *options, *SSH.drop(1)]
+    end
+
     # Every guest command is bounded, so a hang shows up as a failure rather
     # than as a suite that never finishes.
     def run(command, allow_failure: false, input: "", timeout: 120)
-      out, err, status = Open3.capture3("timeout", timeout.to_s, *SSH, command, stdin_data: input)
+      out, err, status = Open3.capture3("timeout", timeout.to_s, *@ssh, command, stdin_data: input)
       raise Failure, "guest command timed out after #{timeout}s: #{command}" if status.exitstatus == 124
       unless status.success? || allow_failure
         raise Failure, "guest command failed (exit #{status.exitstatus}): #{command}\n#{err}#{out}".strip
@@ -81,7 +89,7 @@ module AgentE2E
     end
 
     def reachable?
-      _, _, status = Open3.capture3(*SSH, "true")
+      _, _, status = Open3.capture3(*@ssh, "true")
       status.success?
     end
 
@@ -506,6 +514,9 @@ module AgentE2E
     sleep 16
     raise Failure, "the offline page replaced it: #{cdp.current_url}" unless cdp.current_url == maintenance
 
+    # The dead probe URL has to go first: out of maintenance it is probed
+    # again, and the agent would rightly put the offline page up instead.
+    guest.run("tessaro-ctl unset kiosk.probe_url --no-apply")
     guest.run("tessaro-ctl maintenance off")
     journal.wait_for(/^navigated to #{Regexp.escape(KIOSK_URL)}$/, timeout: 30)
     raise Failure, "the browser was restarted (#{browser} -> #{guest.kiosk_pid})" unless guest.kiosk_pid == browser
@@ -534,6 +545,76 @@ module AgentE2E
       grep -q '^root::' /etc/shadow
       tessaro-ctl -n 127.0.0.1 id | grep -q 'claimed      no'
     SH
+  end
+
+  # While the device is claimed the root password is random, so the suite's
+  # own passwordless login stops working and every step in the middle logs in
+  # with a key instead. Two keys, so one can be revoked and the other still
+  # gets back in to unclaim. If no key gets in at all, the device would stay
+  # claimed and every later case would fail to log in, so a guard started on
+  # the guest unclaims it after GUARD seconds on its own; the case kills the
+  # guard once it has unclaimed, and `ensure` waits for it otherwise.
+  SSH_KEY_GUARD = 90
+
+  check "ssh-key", "tessaro-ctl ssh authorizes a key with a pinned host key; revoke and unclaim remove it" do |guest, _journal|
+    Dir.mktmpdir("e2e-ssh") do |dir|
+      keys = %w[e2e-key e2e-keep].to_h do |name|
+        path = File.join(dir, name)
+        _, err, status = Open3.capture3("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", name, "-f", path)
+        raise Failure, "ssh-keygen failed: #{err}" unless status.success?
+
+        [name, path]
+      end
+      by_key = ->(name, *extra) {
+        Guest.new("-i", keys[name], "-o", "IdentitiesOnly=yes", "-o", "PreferredAuthentications=publickey", *extra)
+      }
+
+      begin
+        pubs = keys.values.map { File.read("#{_1}.pub") }.join
+        out = guest.run(<<~SH, input: pubs)
+          set -e
+          read -r line; printf '%s\\n' "$line" > /tmp/e2e-key.pub
+          read -r line; printf '%s\\n' "$line" > /tmp/e2e-keep.pub
+          export TESSARO_CONFIG_DIR=/tmp/e2e-ctl
+          rm -rf "$TESSARO_CONFIG_DIR"
+          tessaro-ctl -n 127.0.0.1 claim --yes --name e2e >/dev/null
+          setsid sh -c 'sleep #{SSH_KEY_GUARD}; tessaro-ctl unclaim --yes' </dev/null >/dev/null 2>&1 &
+          echo $! > /tmp/e2e-guard.pid
+          tessaro-ctl -n 127.0.0.1 ssh --key /tmp/e2e-keep.pub --print >/dev/null 2>&1
+          tessaro-ctl -n 127.0.0.1 --json ssh --key /tmp/e2e-key.pub
+        SH
+        access = JSON.parse(out)["access"]
+        raise Failure, "the key was reported as already there" unless access["added"]
+        raise Failure, "the device sent no host key" if access["host_keys"].empty?
+
+        # The host key the pinned channel reported is the one dropbear
+        # actually presents: with it as the only known key, ssh must connect.
+        known = File.join(dir, "known_hosts")
+        File.write(known, access["host_keys"].map { "e2e-node #{_1}\n" }.join)
+        pinned = ["-o", "HostKeyAlias=e2e-node", "-o", "UserKnownHostsFile=#{known}",
+                  "-o", "StrictHostKeyChecking=yes"]
+        listed = by_key.("e2e-key", *pinned).run("tessaro-ctl ssh-key list")
+        %w[e2e-key e2e-keep].each do |name|
+          raise Failure, "ssh-key list does not show #{name}:\n#{listed}" unless listed.include?(name)
+        end
+        raise Failure, "the password still works while claimed" if guest.reachable?
+
+        left = by_key.("e2e-keep").run("tessaro-ctl ssh-key revoke e2e-key && tessaro-ctl ssh-key list")
+        raise Failure, "e2e-key is still listed after revoke:\n#{left}" if left.include?("e2e-key")
+        raise Failure, "a revoked key still logs in" if by_key.("e2e-key").reachable?
+
+        by_key.("e2e-keep").run("tessaro-ctl unclaim --yes")
+        remaining = guest.run("kill $(cat /tmp/e2e-guard.pid) 2>/dev/null; cat /root/.ssh/authorized_keys")
+        raise Failure, "unclaim left keys behind:\n#{remaining}" unless remaining.strip.empty?
+      ensure
+        unless guest.reachable?
+          by_key.("e2e-keep").run("tessaro-ctl unclaim --yes", allow_failure: true)
+          # No key got in: the guard unclaims on its own, so wait for it.
+          deadline = Time.now + SSH_KEY_GUARD + 30
+          sleep 5 until guest.reachable? || Time.now > deadline
+        end
+      end
+    end
   end
 
   check "resolution", "only an offered mode is accepted, it waits for confirm, and reverts without it" do |guest, _journal|

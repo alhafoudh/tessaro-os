@@ -118,6 +118,8 @@ KIOSK_POLICY="$sandbox/policy.json" \
 KIOSK_POLICY_BASE=/nonexistent \
 KIOSK_SOCKET="$sandbox/agent.sock" \
 KIOSK_SHADOW="$sandbox/etc/shadow" \
+KIOSK_AUTHORIZED_KEYS="$sandbox/root/.ssh/authorized_keys" \
+KIOSK_SSH_HOST_KEY_DIRS="$sandbox/dropbear" \
 KIOSK_LEGACY_OVERRIDE=/nonexistent \
 KIOSK_API_LISTEN=127.0.0.1:17400 \
 KIOSK_MDNS=off \
@@ -234,7 +236,10 @@ else
     GPU_RUNTIME=""
     GPU_OPT="nographic"
 fi
-kas-container --runtime-args "$KVM_RUNTIME $GPU_RUNTIME" shell $KAS_CONFIG \
+# --network=host, so runqemu's slirp forwards (127.0.0.1:2222 ssh,
+# 127.0.0.1:7400 tessaro-ctl - QB_SLIRP_OPT in kas/machine/qemux86-64.yml)
+# are the host's loopback and not the container's.
+kas-container --runtime-args "$KVM_RUNTIME $GPU_RUNTIME --network=host" shell $KAS_CONFIG \
     -c "runqemu $WIC ovmf slirp snapshot $KVM_OPT $GPU_OPT serialstdio"
 '''
 
@@ -271,7 +276,9 @@ else
     GPU_RUNTIME=""
     GPU_OPT=""
 fi
-kas-container --runtime-args "$KVM_RUNTIME $GPU_RUNTIME -p 5900:5900" shell $KAS_CONFIG \
+# --network=host as in the run task: the ssh and tessaro-ctl forwards reach
+# the host, and publicvnc's 5900 is the host's port with no -p needed.
+kas-container --runtime-args "$KVM_RUNTIME $GPU_RUNTIME --network=host" shell $KAS_CONFIG \
     -c "runqemu $WIC ovmf slirp snapshot $KVM_OPT $GPU_OPT publicvnc serialstdio"
 '''
 

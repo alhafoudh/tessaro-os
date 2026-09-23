@@ -21,9 +21,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use protocol::keys::{self, Consumer, Key};
+use protocol::sshkey::PublicKey;
 use protocol::{
     Applied, Claimed, Command, Done, KeyInfo, NodeInfo, Password, Pending, Screenshot, Setting,
-    Settings, Source, Status, Target, TokenCreated, TokenInfo,
+    Settings, Source, SshAccess, SshKeyInfo, Status, Target, TokenCreated, TokenInfo,
 };
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -39,6 +40,7 @@ use crate::paths::Paths;
 use crate::render;
 use crate::shadow;
 use crate::speedtest;
+use crate::ssh;
 use crate::state::{self, PendingChange, State};
 use crate::store::Store;
 use crate::systemd::Bus;
@@ -278,6 +280,9 @@ impl Control {
             Command::PasswordSet { password } => self.password_set(caller, password).await.into(),
             Command::Unclaim => self.unclaim(caller).await.into(),
             Command::FactoryReset => self.factory_reset(caller).await,
+            Command::SshAuthorize { key } => self.ssh_authorize(caller, &key).await.into(),
+            Command::SshKeyList => self.ssh_key_list().await.into(),
+            Command::SshKeyRevoke { key } => self.ssh_key_revoke(caller, &key).await.into(),
             Command::UpdateBegin {
                 name,
                 size,
@@ -1274,10 +1279,16 @@ impl Control {
         ));
 
         if now_unclaimed {
+            let path = self.paths.authorized_keys.clone();
+            blocking("emptying authorized_keys", move || {
+                ssh::clear(&path).map_err(|err| format!("{}: {err}", path.display()))
+            })
+            .await?;
             self.set_root(None).await?;
             self.announce_claimed(false);
-            self.log
-                .info("the last token was revoked: unclaimed, root password emptied");
+            self.log.info(
+                "the last token was revoked: unclaimed, ssh keys removed, root password emptied",
+            );
             return Ok(Done {
                 message: format!(
                     "revoked {}; that was the last token, the device is unclaimed",
@@ -1323,16 +1334,18 @@ impl Control {
         let _writes = self.writes.lock().await;
         self.drop_claim().await?;
         self.log.info(format!(
-            "unclaimed by {}: every token removed, root password emptied",
+            "unclaimed by {}: every token and ssh key removed, root password emptied",
             caller.describe()
         ));
         Ok(Done {
-            message: "unclaimed: every token is gone and the root password is empty".to_string(),
+            message: "unclaimed: every token and ssh key is gone and the root password is empty"
+                .to_string(),
         })
     }
 
-    /// Tokens first, then the password - the order that a power cut in
-    /// between leaves healable (see `claim`).
+    /// Tokens first, then SSH keys, then the password - the order that a
+    /// power cut in between leaves healable: the boot oneshot empties both
+    /// credentials on a device with no tokens (see `claim`).
     async fn drop_claim(&self) -> Result<(), String> {
         let store = self.auth_store.clone();
         let log = Arc::clone(&self.log);
@@ -1345,7 +1358,89 @@ impl Control {
         .await?;
         *lock(&self.auth) = auth;
         self.announce_claimed(false);
+        let path = self.paths.authorized_keys.clone();
+        blocking("emptying authorized_keys", move || {
+            ssh::clear(&path).map_err(|err| format!("{}: {err}", path.display()))
+        })
+        .await?;
         self.set_root(None).await
+    }
+
+    async fn ssh_authorize(&self, caller: &Caller, key: &str) -> Result<SshAccess, String> {
+        let _writes = self.writes.lock().await;
+        if !self.claimed() {
+            return Err(
+                "this device is unclaimed, and an unclaimed device has no credentials; claim it first"
+                    .to_string(),
+            );
+        }
+        let key = PublicKey::parse(key)?;
+        let fingerprint = key.fingerprint();
+
+        let path = self.paths.authorized_keys.clone();
+        let dirs = self.paths.ssh_host_key_dirs.clone();
+        let (added, generated, host_keys) = blocking("updating authorized_keys", move || {
+            let added =
+                ssh::add(&path, &key).map_err(|err| format!("{}: {err}", path.display()))?;
+            let generated = ssh::ensure_host_key(&dirs);
+            Ok((added, generated, ssh::host_keys(&dirs)))
+        })
+        .await?;
+        if let Err(err) = generated {
+            self.log
+                .info(format!("no ssh host key, and making one failed: {err}"));
+        }
+
+        if added {
+            self.log.info(format!(
+                "ssh key {fingerprint} authorized by {}",
+                caller.describe()
+            ));
+        }
+        if host_keys.is_empty() {
+            self.log
+                .info("no ssh host key could be read; the client will ask about it");
+        }
+        Ok(SshAccess {
+            fingerprint,
+            added,
+            host_keys,
+        })
+    }
+
+    async fn ssh_key_list(&self) -> Result<Vec<SshKeyInfo>, String> {
+        let path = self.paths.authorized_keys.clone();
+        let keys = blocking("reading authorized_keys", move || {
+            ssh::list(&path).map_err(|err| format!("{}: {err}", path.display()))
+        })
+        .await?;
+        Ok(keys
+            .into_iter()
+            .map(|key| SshKeyInfo {
+                fingerprint: key.fingerprint(),
+                kind: key.kind,
+                comment: key.comment,
+            })
+            .collect())
+    }
+
+    async fn ssh_key_revoke(&self, caller: &Caller, query: &str) -> Result<Done, String> {
+        let _writes = self.writes.lock().await;
+        let path = self.paths.authorized_keys.clone();
+        let query = query.to_string();
+        let key = blocking("updating authorized_keys", move || {
+            ssh::remove(&path, &query)
+        })
+        .await?;
+        let fingerprint = key.fingerprint();
+        self.log.info(format!(
+            "ssh key {fingerprint} ({:?}) revoked by {}",
+            key.comment,
+            caller.describe()
+        ));
+        Ok(Done {
+            message: format!("revoked {fingerprint}"),
+        })
     }
 
     async fn factory_reset(&self, caller: &Caller) -> Reply {
@@ -1369,7 +1464,7 @@ impl Control {
         }
 
         self.log.info(format!(
-            "factory reset by {}: settings, tokens and root password cleared",
+            "factory reset by {}: settings, tokens, ssh keys and root password cleared",
             caller.describe()
         ));
         // Weston takes the browser and the agent with it (PartOf=), so every
@@ -1557,6 +1652,9 @@ mod tests {
             ("KIOSK_POLICY", at("policy.json")),
             ("KIOSK_POLICY_BASE", at("policy-base.json")),
             ("KIOSK_SHADOW", at("etc/shadow")),
+            ("KIOSK_AUTHORIZED_KEYS", at("root/.ssh/authorized_keys")),
+            // None: nothing runs dropbearkey on the host.
+            ("KIOSK_SSH_HOST_KEY_DIRS", String::new()),
             ("KIOSK_DRM", at("drm")),
         ]
         .into_iter()
@@ -1778,11 +1876,124 @@ mod tests {
             peer: peer(),
         };
 
+        let _: SshAccess = ok(&fx.control, &holder, authorize(SSH_KEY)).await;
+
         let _: Done = ok(&fx.control, &holder, Command::Unclaim).await;
 
         assert!(!fx.control.claimed());
         assert!(fx.control.verify(&claimed.token).is_none());
         assert!(!shadow::root_has_password(&fx.paths.shadow).unwrap());
+        assert!(ssh::list(&fx.paths.authorized_keys).unwrap().is_empty());
+    }
+
+    const SSH_KEY: &str =
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIO7gEEtj0g4zaawVIwrP4wxLZQ2TqgASR86NTHDJ66jj a@laptop";
+    const SSH_FINGERPRINT: &str = "SHA256:YY7C2uXwz+G0YAPdSZsL/SANSo5RStBfYENHBRMPE7A";
+
+    fn authorize(key: &str) -> Command {
+        Command::SshAuthorize { key: key.into() }
+    }
+
+    async fn claimed(fx: &Fixture) -> Caller {
+        let claimed: Claimed = ok(
+            &fx.control,
+            &anonymous(),
+            Command::Claim {
+                name: "laptop".into(),
+            },
+        )
+        .await;
+        Caller::Token {
+            id: claimed.token_id,
+            peer: peer(),
+        }
+    }
+
+    #[tokio::test]
+    async fn an_ssh_key_is_authorized_once_listed_and_revoked() {
+        let fx = fixture();
+        let holder = claimed(&fx).await;
+
+        let access: SshAccess = ok(&fx.control, &holder, authorize(SSH_KEY)).await;
+        assert_eq!(access.fingerprint, SSH_FINGERPRINT);
+        assert!(access.added);
+        // No dropbear in the fixture: no host keys, and that is not an error.
+        assert!(access.host_keys.is_empty());
+
+        let again: SshAccess = ok(&fx.control, &holder, authorize(SSH_KEY)).await;
+        assert!(!again.added);
+
+        let keys: Vec<SshKeyInfo> = ok(&fx.control, &holder, Command::SshKeyList).await;
+        assert_eq!(
+            keys,
+            vec![SshKeyInfo {
+                fingerprint: SSH_FINGERPRINT.to_string(),
+                kind: "ssh-ed25519".to_string(),
+                comment: "a@laptop".to_string(),
+            }]
+        );
+
+        let done: Done = ok(
+            &fx.control,
+            &holder,
+            Command::SshKeyRevoke {
+                key: "a@laptop".into(),
+            },
+        )
+        .await;
+        assert!(done.message.contains(SSH_FINGERPRINT));
+        let keys: Vec<SshKeyInfo> = ok(&fx.control, &holder, Command::SshKeyList).await;
+        assert!(keys.is_empty());
+        // Keys are not what makes a device claimed.
+        assert!(fx.control.claimed());
+
+        let missing = err(
+            &fx.control,
+            &holder,
+            Command::SshKeyRevoke {
+                key: "a@laptop".into(),
+            },
+        )
+        .await;
+        assert!(missing.contains("no key matches"), "{missing}");
+    }
+
+    #[tokio::test]
+    async fn an_ssh_key_needs_a_claimed_device_and_a_bare_key() {
+        let fx = fixture();
+        let refused = err(&fx.control, &Caller::Local, authorize(SSH_KEY)).await;
+        assert!(refused.contains("unclaimed"), "{refused}");
+        assert!(!fx.paths.authorized_keys.exists());
+
+        let holder = claimed(&fx).await;
+        let refused = err(
+            &fx.control,
+            &holder,
+            authorize(&format!("command=\"/bin/sh\" {SSH_KEY}")),
+        )
+        .await;
+        assert!(refused.contains("options"), "{refused}");
+        assert!(ssh::list(&fx.paths.authorized_keys).unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn revoking_the_last_token_removes_the_ssh_keys() {
+        let fx = fixture();
+        let holder = claimed(&fx).await;
+        let _: SshAccess = ok(&fx.control, &holder, authorize(SSH_KEY)).await;
+        let Caller::Token { id, .. } = &holder else {
+            unreachable!()
+        };
+
+        let _: Done = ok(
+            &fx.control,
+            &holder,
+            Command::TokenRevoke { id: id.clone() },
+        )
+        .await;
+
+        assert!(!fx.control.claimed());
+        assert!(ssh::list(&fx.paths.authorized_keys).unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -1855,6 +2066,7 @@ mod tests {
         )
         .await;
         let _: Applied = ok(&fx.control, &Caller::Local, set(&[("agent.debug", "1")])).await;
+        let _: SshAccess = ok(&fx.control, &Caller::Local, authorize(SSH_KEY)).await;
 
         let reply = fx
             .control
@@ -1868,6 +2080,7 @@ mod tests {
 
         assert!(!fx.control.claimed());
         assert!(!shadow::root_has_password(&fx.paths.shadow).unwrap());
+        assert!(ssh::list(&fx.paths.authorized_keys).unwrap().is_empty());
         let settings: Settings = ok(
             &fx.control,
             &Caller::Local,

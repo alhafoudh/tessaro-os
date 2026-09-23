@@ -11,6 +11,7 @@
 
 mod connect;
 mod nodes;
+mod ssh;
 mod style;
 mod update;
 
@@ -24,8 +25,8 @@ use clap::{ColorChoice, Parser, Subcommand, ValueEnum};
 use protocol::speedtest_size_label as size_label;
 use protocol::{
     Applied, Claimed, Command, Connector, Direction, Done, KeyInfo, Net, NetInterface, NodeInfo,
-    Password, Screenshot, Settings, Source, SpeedtestEvent, Status, Target as RestartTarget,
-    TokenCreated, TokenInfo,
+    Password, Screenshot, Settings, Source, SpeedtestEvent, SshKeyInfo, Status,
+    Target as RestartTarget, TokenCreated, TokenInfo,
 };
 use serde_json::Value;
 
@@ -74,7 +75,11 @@ const HELP_STYLES: Styles = Styles::styled()
         \x20 tessaro-ctl unset kiosk.url                    back to the image default\n\
         \x20 tessaro-ctl logs -f -u tessaro-agent.service\n\
         \x20 tessaro-ctl update send tessaro-os-qemux86-64.rootfs.wic.bz2   a new image; settings are kept\n\
-        \x20 tessaro-ctl token create phone                 a token for a second client\n\n\
+        \x20 tessaro-ctl token create phone                 a token for a second client\n\
+        \x20 tessaro-ctl -n brave-otter-3fa2 ssh            a root shell, by your ~/.ssh key\n\
+        \x20 tessaro-ctl -n brave-otter-3fa2 ssh -- journalctl -fu tessaro-agent\n\
+        \x20 tessaro-ctl ssh-key list                       keys that can log in as root\n\
+        \x20 tessaro-ctl ssh-key revoke user@laptop         by comment or fingerprint\n\n\
         ENVIRONMENT:\n\
         \x20 TESSARO_NODE        default for --node\n\
         \x20 TESSARO_TOKEN       use this token instead of the stored one\n\
@@ -245,7 +250,33 @@ enum Cmd {
         #[command(subcommand)]
         command: PasswordCmd,
     },
-    /// Release the device: every token removed, root password emptied.
+    /// A root shell on the device. Sends your SSH public key over this
+    /// pinned connection, adds it to root's authorized_keys, then runs ssh
+    /// with the host key the device reported - no password, no first-use
+    /// prompt. Anything after `--` goes to ssh: options or a command.
+    Ssh {
+        /// The key to send: a .pub file, or a private key with its .pub
+        /// next to it. Default: the first of ~/.ssh/id_ed25519.pub,
+        /// id_ecdsa.pub, id_ecdsa_sk.pub, id_ed25519_sk.pub, id_rsa.pub.
+        #[arg(long, short = 'i', value_name = "PATH")]
+        key: Option<std::path::PathBuf>,
+        /// The device's SSH port.
+        #[arg(long, default_value_t = 22)]
+        port: u16,
+        /// Send the key and print the ssh command instead of running it.
+        #[arg(long)]
+        print: bool,
+        #[arg(last = true, value_name = "SSH_ARGS")]
+        args: Vec<String>,
+    },
+    /// The SSH keys that can log in as root. Unclaiming or a factory reset
+    /// removes them all.
+    SshKey {
+        #[command(subcommand)]
+        command: SshKeyCmd,
+    },
+    /// Release the device: every token and ssh key removed, root password
+    /// emptied.
     Unclaim {
         #[arg(long, short)]
         yes: bool,
@@ -285,6 +316,15 @@ enum TokenCmd {
     Revoke {
         id: String,
     },
+}
+
+#[derive(Subcommand)]
+enum SshKeyCmd {
+    /// Every key in root's authorized_keys: fingerprint, type, comment.
+    List,
+    /// Remove one: its SHA256 fingerprint, a unique prefix of it, or its
+    /// exact comment.
+    Revoke { key: String },
 }
 
 #[derive(Subcommand)]
@@ -746,11 +786,61 @@ fn run(cli: Cli) -> Result<(), String> {
                 })
             }
         },
+        Cmd::Ssh {
+            key,
+            port,
+            print,
+            args,
+        } => ssh::run(
+            &mut session,
+            ssh::Options {
+                key,
+                port,
+                print,
+                args,
+            },
+            json,
+        ),
+        Cmd::SshKey { command } => match command {
+            SshKeyCmd::List => {
+                let keys: Vec<SshKeyInfo> = call(&mut session, Command::SshKeyList)?;
+                print(json, &keys, || {
+                    if keys.is_empty() {
+                        println!("{}", paint(style::MUTED, "no ssh keys"));
+                    }
+                    for key in &keys {
+                        let comment = if key.comment.is_empty() {
+                            paint(style::MUTED, "(no comment)")
+                        } else {
+                            paint(style::HEADING, &key.comment)
+                        };
+                        println!(
+                            "{}  {} {comment}",
+                            paint(style::MUTED, &key.fingerprint),
+                            pad(style::LABEL, &key.kind, 12)
+                        );
+                    }
+                })
+            }
+            SshKeyCmd::Revoke { key } => {
+                let done: Done = call(&mut session, Command::SshKeyRevoke { key })?;
+                print(json, &done, || {
+                    match done.message.strip_prefix("revoked ") {
+                        Some(fingerprint) => println!(
+                            "{} {}",
+                            paint(style::OK, "revoked"),
+                            paint(style::MUTED, fingerprint)
+                        ),
+                        None => println!("{}", done.message),
+                    }
+                })
+            }
+        },
         Cmd::Unclaim { yes } => {
             confirm_destructive(
                 &session,
                 yes,
-                "remove every token and empty the root password",
+                "remove every token and ssh key and empty the root password",
             )?;
             done(&mut session, Command::Unclaim, json)?;
             forget_session(&mut nodes, &session)
@@ -759,7 +849,7 @@ fn run(cli: Cli) -> Result<(), String> {
             confirm_destructive(
                 &session,
                 yes,
-                "erase every setting, remove every token and empty the root password",
+                "erase every setting, remove every token and ssh key and empty the root password",
             )?;
             done(&mut session, Command::FactoryReset, json)?;
             forget_session(&mut nodes, &session)

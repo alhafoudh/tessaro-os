@@ -19,6 +19,7 @@
 //! needs none.
 
 pub mod keys;
+pub mod sshkey;
 
 use std::collections::BTreeMap;
 
@@ -151,6 +152,18 @@ pub enum Command {
     },
     Unclaim,
     FactoryReset,
+    /// Add a public key to root's `authorized_keys`, one `.pub` line. The
+    /// answer carries the device's SSH host keys, so the client can check
+    /// them without trusting on first use.
+    SshAuthorize {
+        key: String,
+    },
+    SshKeyList,
+    /// Remove one key: its `SHA256:` fingerprint, a unique prefix of it,
+    /// or its exact comment.
+    SshKeyRevoke {
+        key: String,
+    },
     /// Start, or resume, uploading an image: the `.wic.bz2` is described
     /// here and sent in `UpdateChunk`s. The answer says where to resume.
     UpdateBegin {
@@ -453,6 +466,26 @@ pub struct Password {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SshAccess {
+    /// SHA256 fingerprint of the key sent.
+    pub fingerprint: String,
+    /// False when the key was already there.
+    pub added: bool,
+    /// The device's host keys, as OpenSSH `TYPE BASE64` lines. Empty when
+    /// the device could not read them; the client then falls back to
+    /// ssh's own first-use prompt.
+    pub host_keys: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SshKeyInfo {
+    pub fingerprint: String,
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub comment: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Screenshot {
     pub format: String,
     /// Base64, as CDP returns it.
@@ -609,6 +642,8 @@ mod tests {
         assert!(Command::Claim { name: "x".into() }.is_public());
         assert!(!Command::Status.is_public());
         assert!(!Command::TokenCreate { name: "x".into() }.is_public());
+        assert!(!Command::SshAuthorize { key: "x".into() }.is_public());
+        assert!(!Command::SshKeyList.is_public());
     }
 
     #[test]

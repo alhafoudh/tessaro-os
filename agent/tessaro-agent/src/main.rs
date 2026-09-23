@@ -42,6 +42,7 @@ mod render;
 mod server;
 mod shadow;
 mod speedtest;
+mod ssh;
 mod state;
 mod store;
 mod systemd;

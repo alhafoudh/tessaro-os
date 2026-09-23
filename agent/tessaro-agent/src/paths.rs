@@ -36,6 +36,17 @@ pub struct Paths {
     /// its 127.0.0.53 stub, which says nothing about the network.
     pub resolv: PathBuf,
     pub hostname: PathBuf,
+    /// Root's `authorized_keys`, in root's real home (`/etc/passwd` says
+    /// `/root`, which is where dropbear looks). `/root` is a bind of
+    /// `/data/overlay-root`, so it persists; the claim model owns it like
+    /// the root password.
+    pub authorized_keys: PathBuf,
+    /// Where dropbear keeps its host keys, first match wins. `/etc/dropbear`
+    /// is on the `/etc` overlay, so a key made at first boot stays.
+    /// `/var/lib/dropbear` is where oe-core's read-only-rootfs hook would put
+    /// them (tmpfs, a new key every boot) if the image ever lost
+    /// `overlayfs-etc`; the hook skips images that have it.
+    pub ssh_host_key_dirs: Vec<PathBuf>,
     /// `/sys/class/block` and `/dev/disk/by-partuuid`: which partition is
     /// root, for checking that an update was built for this disk.
     pub sys_block: PathBuf,
@@ -79,6 +90,12 @@ impl Paths {
             proc_route: path("KIOSK_PROC_ROUTE", "/proc/net/route"),
             resolv: path("KIOSK_RESOLV", "/run/systemd/resolve/resolv.conf"),
             hostname: path("KIOSK_HOSTNAME", "/proc/sys/kernel/hostname"),
+            authorized_keys: path("KIOSK_AUTHORIZED_KEYS", "/root/.ssh/authorized_keys"),
+            ssh_host_key_dirs: text("KIOSK_SSH_HOST_KEY_DIRS", "/etc/dropbear:/var/lib/dropbear")
+                .split(':')
+                .filter(|dir| !dir.is_empty())
+                .map(PathBuf::from)
+                .collect(),
             sys_block: path("KIOSK_SYS_BLOCK", "/sys/class/block"),
             by_partuuid: path("KIOSK_BY_PARTUUID", "/dev/disk/by-partuuid"),
             os_release: path("KIOSK_OS_RELEASE", "/usr/lib/os-release"),

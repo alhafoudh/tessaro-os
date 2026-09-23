@@ -449,7 +449,8 @@ browser, a wedged browser, an operator-stopped unit, a DNS server that
 swallows queries, the agent itself wedging, a short agent stall, a parked
 agent, SIGTERM - and the control plane: a `tessaro-ctl set` that restarts the
 agent onto the new value, the debug screen and maintenance mode each on and
-off with the browser left running, a claim and unclaim round trip, and a resolution
+off with the browser left running, a claim and unclaim round trip, an ssh key
+authorized with a pinned host key, then revoked and cleared by unclaim, and a resolution
 change that refuses an unoffered mode and reverts unconfirmed. Last, because
 each reboots the VM, three image updates of the image it booted from:
 damaged staging refused at boot with nothing written, an update that keeps
@@ -772,8 +773,59 @@ which is the half that does not reach the browser, see above.
   while the device is unclaimed**: claiming it (below) sets a random one, and
   unclaiming or a factory reset empties it again. So a fresh or reset device
   is a root shell with no credential on any network it joins - accepted, and
-  the reason to claim a device before it leaves the bench. An
-  `authorized_keys` story is still the obvious next step.
+  the reason to claim a device before it leaves the bench. On a claimed
+  device the way in is a key: see **SSH keys** below.
+
+### SSH keys
+
+**`tessaro-ctl --node NAME ssh` is a root shell by key, with no password and
+no first-use prompt.** It sends your public key (`~/.ssh/id_ed25519.pub` and
+the other ssh-keygen defaults, or `--key PATH`) over the pinned, token-
+authenticated control connection; the agent adds it to root's
+`authorized_keys` and answers with the device's host key; the client writes
+that to `~/.config/tessaro/known_hosts` under `tessaro-<node id>` and execs
+`ssh -o HostKeyAlias=... -o StrictHostKeyChecking=yes root@<address>`.
+Anything after `--` goes to ssh. `--print` pushes the key and prints the
+command instead. `tessaro-ctl ssh-key list` and `ssh-key revoke
+<fingerprint|prefix|comment>` manage what is there. The logic is
+`agent/tessaro-agent/src/ssh.rs`; key parsing is `agent/protocol/src/sshkey.rs`,
+shared so both ends refuse the same keys.
+
+* **The claim model owns `authorized_keys`, as it owns the root password.**
+  Unclaim, factory reset and revoking the last token empty it, and the boot
+  oneshot empties it on any device with no tokens, which heals a power cut
+  in the middle of an unclaim. An unclaimed device refuses a key outright.
+  Revoking a key never unclaims: only tokens decide that.
+* **Options are refused.** A line with `command=`, `from=`, `no-pty` and the
+  like is rejected on both ends. Whoever holds a token could otherwise plant a
+  forced command for root. Lines already in the file that the agent does not
+  understand are kept by add and revoke, and go with unclaim.
+* **The file lives in `/root/.ssh`, and `/root` had to be made writable.**
+  `ROOT_HOME` is `/root` on a systemd distro (oe-core's
+  `init-manager-systemd.inc`, not `/home/root`), it is on the read-only
+  rootfs, and dropbear 2022.83 only ever reads `$HOME/.ssh/authorized_keys` -
+  there is no option to point it elsewhere. So the volatile-binds bbappend
+  binds `/data/overlay-root` over `/root`, like `/home`. The first e2e run,
+  with the file under `/home/root`, got `Permission denied (publickey)`. It
+  persists and survives updates. Every write replaces it whole, `.ssh`
+  at 0700 and the file at 0600, set explicitly: dropbear silently ignores a
+  key file that is group or world writable.
+* **The host key already persists, and that was checked, not assumed.**
+  oe-core's `read_only_rootfs_hook` moves dropbear's key to tmpfs
+  `/var/lib/dropbear` - a new key every boot - but only on images without
+  `overlayfs-etc`. Ours has it, so the key stays in `/etc/dropbear` on the
+  overlay (the built rootfs's `/etc/default/dropbear` has no
+  `DROPBEAR_RSAKEY_DIR`). Losing `overlayfs-etc` would bring the per-boot key
+  back, and the pin with it would refuse every login after a reboot.
+* **Dropbear is socket-activated**, and `dropbearkey.service` only runs on the
+  first connection. So a device nobody has logged in to has no host key yet;
+  the agent makes it (`dropbearkey -t rsa`, the unit's own command) before
+  answering, and the first `tessaro-ctl ssh` already gets a pin. When no host
+  key can be read, the client drops the stale pin and ssh asks as usual.
+* **The address is the one the control connection used**, from `nodes.json`
+  or mDNS, so a device that moved is found the same way `status` finds it -
+  and a different device at the old address fails the TLS pin before any
+  key is sent.
 
 ### Settings, tessaro-ctl and the claim model
 
@@ -899,7 +951,7 @@ kiosk origin, Weston restarts - taking the browser and agent with it - for a
   or over the local socket. Tokens never expire; revoking one deletes it.
   Only SHA-256s are stored, compared in constant time. The device is claimed
   exactly when a token exists, so revoking the last one unclaims it.
-* **`unclaim`** removes every token and empties the root password;
+* **`unclaim`** removes every token and ssh key and empties the root password;
   **`factory-reset`** also wipes the settings. After either, the first client
   to claim wins again. The TLS key survives both, so pins stay valid.
 * `password set` (prompted, or `--random`) changes the root password on a
