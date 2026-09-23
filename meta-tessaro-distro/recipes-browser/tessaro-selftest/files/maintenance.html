@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<!--
+  Shown while the device is in maintenance mode:
+
+      tessaro-ctl maintenance on        (or: set maintenance.enable=1)
+      tessaro-ctl maintenance off
+
+  maintenance.url points here by default, http://127.0.0.1/maintenance.html,
+  served by the self-test's loopback nginx. kiosk.url is left as it is, so
+  turning maintenance off goes straight back to the site.
+
+  Everything is inline on purpose: maintenance is often exactly when the site
+  or the network is down, so a single external byte could stop it rendering.
+
+  Two optional query parameters replace the text, as plain text - never HTML:
+
+      ?title=Back%20soon&message=We%20are%20restocking%20the%20menu.
+
+  From a device, with a custom value so the text is easy to change later:
+
+      tessaro-ctl set 'maintenance.url=http://127.0.0.1/maintenance.html?message={data.maintenance_message}' \
+          'data.maintenance_message=Back at 14:00'
+
+  The placeholder is percent-encoded by the agent, so spaces and punctuation
+  in the value are fine.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Under maintenance</title>
+<style>
+  /* Dark, unconditionally, for the same reason as the offline page: with no
+     settings portal prefers-color-scheme resolves to light, and a full-screen
+     white glare in a dark room is the one outcome worth ruling out. */
+  :root {
+    color-scheme: dark;
+    --bg: #0a0d14;
+    --glow-a: #10243a;
+    --glow-b: #1d1733;
+    --fg: #eaf0f8;
+    --dim: #8e9bb0;
+    --accent: #5cc8ff;
+    --accent-2: #9d8cff;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+
+  body {
+    margin: 0;
+    padding: clamp(18px, 4.5vmin, 64px);
+    overflow: hidden;
+    /* The families the image installs; see offline.html for why DejaVu leads. */
+    font-family: system-ui, "DejaVu Sans", "Liberation Sans", sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    -webkit-font-smoothing: antialiased;
+    user-select: none;
+    cursor: none;
+  }
+
+  /* Two soft glows drifting slowly behind everything. Transform-only, so the
+     compositor moves them without repainting the page every frame. */
+  .glow {
+    position: fixed;
+    width: 90vmax;
+    height: 90vmax;
+    border-radius: 50%;
+    filter: blur(8vmax);
+    opacity: 0.7;
+    pointer-events: none;
+    z-index: 0;
+  }
+  .glow.a {
+    background: radial-gradient(circle, var(--glow-a), transparent 65%);
+    top: -35vmax;
+    left: -25vmax;
+    animation: drift-a 38s ease-in-out infinite alternate;
+  }
+  .glow.b {
+    background: radial-gradient(circle, var(--glow-b), transparent 65%);
+    bottom: -40vmax;
+    right: -30vmax;
+    animation: drift-b 46s ease-in-out infinite alternate;
+  }
+  @keyframes drift-a { to { transform: translate(18vmax, 14vmax); } }
+  @keyframes drift-b { to { transform: translate(-16vmax, -12vmax); } }
+
+  main {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: clamp(14px, 2.8vmin, 34px);
+    max-width: 92vw;
+  }
+
+  .mark {
+    width: clamp(84px, 17vmin, 210px);
+    height: auto;
+    flex: none;
+    filter: drop-shadow(0 0 3vmin rgba(92, 200, 255, 0.25));
+  }
+  .mark .big   { transform-origin: 40px 40px; animation: spin 14s linear infinite; }
+  .mark .small { transform-origin: 84px 78px; animation: spin 9.33s linear infinite reverse; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  h1 {
+    margin: 0;
+    font-weight: 650;
+    line-height: 1.08;
+    letter-spacing: -0.02em;
+    font-size: clamp(2rem, 7.6vmin, 6rem);
+    background: linear-gradient(100deg, var(--fg) 30%, var(--accent) 70%, var(--accent-2));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  p {
+    margin: 0;
+    color: var(--dim);
+    line-height: 1.45;
+    font-size: clamp(1rem, 2.8vmin, 2rem);
+    white-space: pre-line;
+    max-width: 30em;
+  }
+
+  /* An indeterminate bar: something is happening, with no promise of when it
+     ends - nobody on this device knows that. */
+  .bar {
+    width: clamp(160px, 34vmin, 420px);
+    height: clamp(4px, 0.7vmin, 8px);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.07);
+    overflow: hidden;
+    margin-top: 0.6em;
+  }
+  .bar span {
+    display: block;
+    width: 40%;
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, transparent, var(--accent), var(--accent-2), transparent);
+    animation: sweep 2.6s ease-in-out infinite;
+  }
+  @keyframes sweep {
+    from { transform: translateX(-100%); }
+    to   { transform: translateX(250%); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .glow, .mark .big, .mark .small, .bar span { animation: none; }
+    .bar span { width: 100%; opacity: 0.5; }
+  }
+</style>
+</head>
+<body>
+<div class="glow a"></div>
+<div class="glow b"></div>
+
+<main>
+  <svg class="mark" viewBox="0 0 112 104" aria-hidden="true">
+    <defs>
+      <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#5cc8ff"/>
+        <stop offset="1" stop-color="#9d8cff"/>
+      </linearGradient>
+    </defs>
+    <!-- Large gear, centred at 40,40. -->
+    <g class="big" fill="url(#g)">
+      <path d="M36 4h8l1.6 8.4a28 28 0 0 1 7.3 3l7-4.8 5.7 5.7-4.8 7a28 28 0 0 1 3 7.3L72 36v8l-8.4 1.6a28 28 0 0 1-3 7.3l4.8 7-5.7 5.7-7-4.8a28 28 0 0 1-7.3 3L44 72h-8l-1.6-8.4a28 28 0 0 1-7.3-3l-7 4.8-5.7-5.7 4.8-7a28 28 0 0 1-3-7.3L8 44v-8l8.4-1.6a28 28 0 0 1 3-7.3l-4.8-7 5.7-5.7 7 4.8a28 28 0 0 1 7.3-3zM40 27a13 13 0 1 0 0 26 13 13 0 0 0 0-26z"/>
+    </g>
+    <!-- Small gear, centred at 84,78, turning the other way. -->
+    <g class="small" fill="url(#g)" opacity=".75">
+      <path d="M81.5 58h5l1 5.3a16 16 0 0 1 4.3 1.8l4.4-3 3.5 3.5-3 4.4a16 16 0 0 1 1.8 4.3l5.3 1v5l-5.3 1a16 16 0 0 1-1.8 4.3l3 4.4-3.5 3.5-4.4-3a16 16 0 0 1-4.3 1.8l-1 5.3h-5l-1-5.3a16 16 0 0 1-4.3-1.8l-4.4 3-3.5-3.5 3-4.4a16 16 0 0 1-1.8-4.3l-5.3-1v-5l5.3-1a16 16 0 0 1 1.8-4.3l-3-4.4 3.5-3.5 4.4 3a16 16 0 0 1 4.3-1.8zM84 70.5a7.5 7.5 0 1 0 0 15 7.5 7.5 0 0 0 0-15z"/>
+    </g>
+  </svg>
+
+  <h1 id="title">Under maintenance</h1>
+
+  <p id="message">We are making a few improvements.
+We will be back shortly.</p>
+
+  <div class="bar"><span></span></div>
+</main>
+
+<script>
+  // ?title= and ?message= replace the text. textContent only: whatever is in
+  // the URL is shown as text, never parsed as markup.
+  (function () {
+    var params = new URLSearchParams(location.search);
+    [["title", "title"], ["message", "message"]].forEach(function (pair) {
+      var value = params.get(pair[0]);
+      if (value && value.trim()) {
+        document.getElementById(pair[1]).textContent = value.trim();
+      }
+    });
+    var title = params.get("title");
+    if (title && title.trim()) document.title = title.trim();
+  })();
+</script>
+</body>
+</html>

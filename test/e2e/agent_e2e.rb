@@ -62,7 +62,7 @@ module AgentE2E
   }.freeze
 
   # Keys a case may add on top, unset again before the next case configures.
-  CASE_SETTINGS = %w[kiosk.probe_url agent.enable].freeze
+  CASE_SETTINGS = %w[kiosk.probe_url agent.enable maintenance.enable].freeze
 
   class Failure < StandardError; end
 
@@ -452,6 +452,33 @@ module AgentE2E
     journal.wait_for(/^watching #{Regexp.escape(KIOSK_URL)} \(probe every 7s/, timeout: 30)
     env = guest.run("cat /run/tessaro-kiosk/generated.env")
     raise Failure, "generated.env does not carry it:\n#{env}" unless env.include?("KIOSK_PROBE_INTERVAL=7")
+  ensure
+    guest.configure
+    guest.restart_agent
+  end
+
+  # The probe URL points at something that does not answer, so the case also
+  # proves maintenance mode probes the maintenance page, not kiosk.probe_url:
+  # otherwise the offline page would replace the maintenance page.
+  check "maintenance", "maintenance on shows the maintenance page without restarting the browser; off returns" do |guest, journal, cdp|
+    maintenance = "http://127.0.0.1/maintenance.html"
+    browser = guest.kiosk_pid
+    guest.run("tessaro-ctl set kiosk.probe_url=http://127.0.0.1:1/ --no-apply")
+
+    out = guest.run("tessaro-ctl maintenance on")
+    raise Failure, "maintenance on did not restart the agent:\n#{out}" unless out.include?("restarting tessaro-agent.service")
+
+    journal.wait_for(/^navigated to #{Regexp.escape(maintenance)}$/, timeout: 30)
+    raise Failure, "the browser is on #{cdp.current_url}" unless cdp.current_url == maintenance
+    status = guest.run("tessaro-ctl status")
+    raise Failure, "status does not say so:\n#{status}" unless status.include?("maintenance  on")
+    # Three probe intervals: a probe of kiosk.probe_url would have failed by now.
+    sleep 16
+    raise Failure, "the offline page replaced it: #{cdp.current_url}" unless cdp.current_url == maintenance
+
+    guest.run("tessaro-ctl maintenance off")
+    journal.wait_for(/^navigated to #{Regexp.escape(KIOSK_URL)}$/, timeout: 30)
+    raise Failure, "the browser was restarted (#{browser} -> #{guest.kiosk_pid})" unless guest.kiosk_pid == browser
   ensure
     guest.configure
     guest.restart_agent

@@ -67,6 +67,7 @@ const HELP_STYLES: Styles = Styles::styled()
         \x20 tessaro-ctl get net.ip                         one read-only value\n\
         \x20 tessaro-ctl set 'kiosk.url=https://menu.test/?ip={net.ip}'  read-only keys are placeholders too\n\
         \x20 tessaro-ctl set browser.fps_counter=on\n\
+        \x20 tessaro-ctl maintenance on                     show the maintenance page; `off` goes back\n\
         \x20 tessaro-ctl unset kiosk.url                    back to the image default\n\
         \x20 tessaro-ctl logs -f -u tessaro-agent.service\n\
         \x20 tessaro-ctl update send tessaro-os-qemux86-64.rootfs.wic.bz2   a new image; settings are kept\n\
@@ -149,6 +150,16 @@ enum Cmd {
     },
     /// Keep a change that is on probation (display.resolution).
     Confirm,
+    /// Maintenance mode: show maintenance.url instead of kiosk.url, which is
+    /// left as it is. The same as `set maintenance.enable=1|0`.
+    ///
+    ///   tessaro-ctl maintenance on --url 'http://127.0.0.1/maintenance.html?message=Back%20at%2014:00'
+    Maintenance {
+        state: Toggle,
+        /// With `on`: set maintenance.url in the same change.
+        #[arg(long)]
+        url: Option<String>,
+    },
     /// Point the browser at a URL until the next refresh.
     Navigate {
         url: String,
@@ -291,6 +302,12 @@ enum PasswordCmd {
         #[arg(long)]
         random: bool,
     },
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum Toggle {
+    On,
+    Off,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -492,6 +509,40 @@ fn run(cli: Cli) -> Result<(), String> {
             print(json, &applied, || show_applied(&applied, no_apply))
         }
         Cmd::Confirm => done(&mut session, Command::Confirm, json),
+        Cmd::Maintenance { state, url } => {
+            if url.is_some() && state == Toggle::Off {
+                return Err("--url goes with `maintenance on`".to_string());
+            }
+            let mut values = BTreeMap::new();
+            let flag = if state == Toggle::On { "1" } else { "0" };
+            values.insert("maintenance.enable".to_string(), flag.to_string());
+            if let Some(url) = url {
+                values.insert("maintenance.url".to_string(), url);
+            }
+            let applied: Applied = call(
+                &mut session,
+                Command::Set {
+                    values,
+                    if_revision: None,
+                    apply: true,
+                },
+            )?;
+            print(json, &applied, || {
+                let (label, rest) = match (state, applied.changed.is_empty()) {
+                    (Toggle::On, false) => (
+                        paint(style::WARN, "maintenance on"),
+                        "- the screen shows maintenance.url",
+                    ),
+                    (Toggle::On, true) => (paint(style::WARN, "maintenance was already on"), ""),
+                    (Toggle::Off, false) => {
+                        (paint(style::OK, "maintenance off"), "- back on kiosk.url")
+                    }
+                    (Toggle::Off, true) => (paint(style::OK, "maintenance was already off"), ""),
+                };
+                println!("{label} {}", paint(style::MUTED, rest));
+                show_applied(&applied, false)
+            })
+        }
         Cmd::Navigate { url } => done(&mut session, Command::Navigate { url }, json),
         Cmd::Restart { what } => {
             let what = match what {
@@ -908,6 +959,18 @@ fn show_status(status: &Status) {
         }
     }
     node_row("revision", &status.revision.to_string());
+    if status.maintenance {
+        node_row(
+            "maintenance",
+            &format!(
+                "{} {} {} {}",
+                paint(style::WARN, "on"),
+                paint(style::MUTED, "-"),
+                paint(style::CMD, "tessaro-ctl maintenance off"),
+                paint(style::MUTED, "returns to kiosk.url")
+            ),
+        );
+    }
     node_row("kiosk url", &status.kiosk_url);
     node_row(
         "showing",

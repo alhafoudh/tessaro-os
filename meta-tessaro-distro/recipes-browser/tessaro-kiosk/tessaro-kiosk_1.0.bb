@@ -55,6 +55,10 @@ DEPENDS += "libxcrypt"
 # Build-time default only; tessaro.conf sets the product value.
 TESSARO_KIOSK_URL ?= "https://www.moonforgelinux.org"
 
+# The page maintenance mode shows. The default is tessaro-selftest's
+# maintenance.html, on the same loopback nginx as the self-test page.
+TESSARO_MAINTENANCE_URL ?= "http://127.0.0.1/maintenance.html"
+
 # The same site as an *origin* - scheme, host and port, no path. Chromium's
 # device-permission policies match on origin only, and reject the whole policy
 # file if a value is not a valid one, so a TESSARO_KIOSK_URL with a path in it
@@ -114,6 +118,7 @@ do_install:append() {
     # /data/tessaro/state.json and are changed with tessaro-ctl, and the boot
     # oneshot imports a leftover override file once.
     sed -e "s|@kiosk-url@|${TESSARO_KIOSK_URL}|g" \
+        -e "s|@maintenance-url@|${TESSARO_MAINTENANCE_URL}|g" \
         -e "s|@selftest-origin@|${TESSARO_SELFTEST_ORIGIN}|g" \
         -e "s|@machine@|${MACHINE}|g" \
         -e "s|@kernel-file@|${TESSARO_KERNEL_FILE}|g" \

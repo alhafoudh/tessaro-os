@@ -225,6 +225,10 @@ pub struct Status {
     pub os: Option<String>,
     #[serde(default)]
     pub image_version: Option<String>,
+    /// In maintenance mode `kiosk_url` is the maintenance page's. Defaulted,
+    /// so a client still reads an agent that predates it.
+    #[serde(default)]
+    pub maintenance: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

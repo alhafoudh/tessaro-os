@@ -358,7 +358,20 @@ impl Control {
             browser_answering: self.session.is_up(),
             units,
             pending: self.pending(&state),
+            maintenance: state::maintenance(&state.settings, &self.defaults),
         })
+    }
+
+    /// A URL template (`keys::TEMPLATES`) as set, else the image default.
+    fn template(&self, settings: &BTreeMap<String, String>, name: &str) -> String {
+        settings
+            .get(name)
+            .cloned()
+            .or_else(|| {
+                let key = keys::find(name)?;
+                self.defaults.get(key.env).cloned()
+            })
+            .unwrap_or_default()
     }
 
     /// The registry, documented: what each key accepts, the image default,
@@ -382,13 +395,10 @@ impl Control {
             })
             .collect();
 
-        let template = state
-            .settings
-            .get("kiosk.url")
-            .or_else(|| self.defaults.get("KIOSK_URL"))
-            .cloned()
-            .unwrap_or_default();
-        let used = keys::placeholders(&template);
+        let templates: Vec<(&str, String)> = keys::TEMPLATES
+            .iter()
+            .map(|name| (*name, self.template(&state.settings, name)))
+            .collect();
         let custom: Vec<(&String, &String)> = state
             .settings
             .iter()
@@ -414,10 +424,15 @@ impl Control {
 
         for (name, value) in custom {
             // The placeholder is the key itself.
-            let usage = if used.contains(&name.as_str()) {
-                format!("kiosk.url uses it as {{{name}}}.")
-            } else {
+            let users: Vec<&str> = templates
+                .iter()
+                .filter(|(_, template)| keys::placeholders(template).contains(&name.as_str()))
+                .map(|(key, _)| *key)
+                .collect();
+            let usage = if users.is_empty() {
                 format!("kiosk.url does not use it; add {{{name}}} to use it.")
+            } else {
+                format!("{} uses it as {{{name}}}.", users.join(" and "))
             };
             out.push(KeyInfo {
                 name: name.clone(),
@@ -553,7 +568,10 @@ impl Control {
         let store = self.state.clone();
         let log = Arc::clone(&self.log);
         let guarded_names: Vec<&'static str> = guarded.iter().map(|key| key.name).collect();
-        let default_url = self.defaults.get("KIOSK_URL").cloned().unwrap_or_default();
+        let default_templates: Vec<(&'static str, String)> = keys::TEMPLATES
+            .iter()
+            .map(|name| (*name, self.template(&BTreeMap::new(), name)))
+            .collect();
         let defaults = self.defaults.clone();
         let committed = blocking("updating state.json", move || {
             store.update(&log, |state: &mut State| {
@@ -585,50 +603,54 @@ impl Control {
                     return Ok((before, state.clone()));
                 }
 
-                // Every {placeholder} the kiosk URL uses must have a value -
+                // Every {placeholder} a URL template uses must have a value -
                 // checked on the result, so setting a template and its values
                 // in one command works, and unsetting a value still in use
-                // does not.
-                let template = state.settings.get("kiosk.url").unwrap_or(&default_url);
-                // Read-only keys always have a value, so no live values are
-                // needed to know what is missing.
-                let (_, missing) = state::expand_url(
-                    template,
-                    &state.settings,
-                    &defaults,
-                    &state::Live::default(),
-                );
-                // A custom data.* nobody set yet just needs a value; anything
-                // else is not a setting at all.
-                let (unset, typos): (Vec<&String>, Vec<&String>) = missing
-                    .iter()
-                    .partition(|name| keys::param_name(name).is_some());
-                if let Some(typo) = typos.first() {
-                    // The likeliest slip: {table} for {data.table}.
-                    let hint = if keys::is_param(typo) {
-                        format!("; a custom value is written in full: {{{}{typo}}}", keys::DATA_PREFIX)
-                    } else {
-                        String::new()
-                    };
-                    return Err(format!(
-                        "kiosk.url {template} uses {{{typo}}}, which is not a setting \
-                         (and kiosk.url cannot contain itself){hint}; `tessaro-ctl keys` lists them"
-                    ));
-                }
-                if !unset.is_empty() {
-                    return Err(format!(
-                        "kiosk.url {template} uses {}; set {} (it can go in the same command)",
-                        unset
-                            .iter()
-                            .map(|name| format!("{{{name}}}"))
-                            .collect::<Vec<_>>()
-                            .join(", "),
-                        unset
-                            .iter()
-                            .map(|name| name.as_str())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    ));
+                // does not. Both templates, whichever mode the device is in:
+                // a maintenance page that cannot expand is found at `set`,
+                // not when someone needs it.
+                for (key, default) in &default_templates {
+                    let template = state.settings.get(*key).unwrap_or(default);
+                    // Read-only keys always have a value, so no live values
+                    // are needed to know what is missing.
+                    let (_, missing) = state::expand_url(
+                        template,
+                        &state.settings,
+                        &defaults,
+                        &state::Live::default(),
+                    );
+                    // A custom data.* nobody set yet just needs a value;
+                    // anything else is not a setting at all.
+                    let (unset, typos): (Vec<&String>, Vec<&String>) = missing
+                        .iter()
+                        .partition(|name| keys::param_name(name).is_some());
+                    if let Some(typo) = typos.first() {
+                        // The likeliest slip: {table} for {data.table}.
+                        let hint = if keys::is_param(typo) {
+                            format!("; a custom value is written in full: {{{}{typo}}}", keys::DATA_PREFIX)
+                        } else {
+                            String::new()
+                        };
+                        return Err(format!(
+                            "{key} {template} uses {{{typo}}}, which is not a setting \
+                             (and neither URL can contain a URL){hint}; `tessaro-ctl keys` lists them"
+                        ));
+                    }
+                    if !unset.is_empty() {
+                        return Err(format!(
+                            "{key} {template} uses {}; set {} (it can go in the same command)",
+                            unset
+                                .iter()
+                                .map(|name| format!("{{{name}}}"))
+                                .collect::<Vec<_>>()
+                                .join(", "),
+                            unset
+                                .iter()
+                                .map(|name| name.as_str())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ));
+                    }
                 }
 
                 state.revision += 1;
@@ -757,18 +779,14 @@ impl Control {
         });
     }
 
-    /// Does the kiosk.url template - as set, else the image default - name
-    /// this key as a placeholder?
+    /// Does the template on screen - kiosk.url, or maintenance.url in
+    /// maintenance mode, as set, else the image default - name this key as a
+    /// placeholder?
     async fn url_uses(&self, key: &str) -> bool {
         let Ok(state) = self.read_state().await else {
             return false;
         };
-        let template = state
-            .settings
-            .get("kiosk.url")
-            .or_else(|| self.defaults.get("KIOSK_URL"))
-            .cloned()
-            .unwrap_or_default();
+        let (_, template) = state::shown_template(&state.settings, &self.defaults);
         keys::placeholders(&template).contains(&key)
     }
 
@@ -819,12 +837,7 @@ impl Control {
         let Ok(state) = self.read_state().await else {
             return;
         };
-        let template = state
-            .settings
-            .get("kiosk.url")
-            .or_else(|| self.defaults.get("KIOSK_URL"))
-            .cloned()
-            .unwrap_or_default();
+        let (name, template) = state::shown_template(&state.settings, &self.defaults);
         if !state::Live::moves(&template) {
             return;
         }
@@ -836,12 +849,12 @@ impl Control {
 
         let _writes = self.writes.lock().await;
         self.log.info(format!(
-            "kiosk.url now expands to {url} (the agent is on {}); applying",
+            "{name} now expands to {url} (the agent is on {}); applying",
             self.agent_url
         ));
         let reply = self.converge(&[], &state, true).await;
         if let Err(err) = &reply.result {
-            self.log.info(format!("applying the new kiosk.url: {err}"));
+            self.log.info(format!("applying the new {name}: {err}"));
         }
         if let Some(after) = reply.after {
             self.run_after(after).await;
@@ -1507,8 +1520,14 @@ mod tests {
         fs::write(connector.join("modes"), "1920x1080\n1280x720\n").unwrap();
 
         let paths = Paths::load(&env);
-        let defaults: HashMap<String, String> =
-            [("KIOSK_URL".to_string(), "http://127.0.0.1/".to_string())].into();
+        let defaults: HashMap<String, String> = [
+            ("KIOSK_URL".to_string(), "http://127.0.0.1/".to_string()),
+            (
+                "KIOSK_MAINTENANCE_URL".to_string(),
+                "http://127.0.0.1/maintenance.html".to_string(),
+            ),
+        ]
+        .into();
         let (stop, shutdown) = watch::channel(false);
         let log = Arc::new(Log::buffered(true));
         // What the boot oneshot has always done by the time the agent runs.
@@ -1806,6 +1825,56 @@ mod tests {
         )
         .await;
         assert_eq!(settings.settings[0].source, Source::Default);
+    }
+
+    #[tokio::test]
+    async fn maintenance_mode_restarts_only_the_agent_onto_the_maintenance_page() {
+        let fx = fixture();
+        // A deployed device: the site's origin in the policy.
+        let _: Applied = ok(
+            &fx.control,
+            &Caller::Local,
+            Command::Set {
+                values: [("kiosk.url".to_string(), "https://shop.test/".to_string())].into(),
+                if_revision: None,
+                apply: false,
+            },
+        )
+        .await;
+
+        let reply = fx
+            .control
+            .handle(&Caller::Local, set(&[("maintenance.enable", "on")]))
+            .await;
+        let applied: Applied = serde_json::from_value(reply.result.unwrap()).unwrap();
+
+        // The agent, not the browser: the grants did not move.
+        assert_eq!(applied.restarted, ["tessaro-agent.service"]);
+        let env = fs::read_to_string(fx.paths.generated_env()).unwrap();
+        assert!(
+            env.contains("KIOSK_URL=http://127.0.0.1/maintenance.html\n"),
+            "{env}"
+        );
+        let status: Status = ok(&fx.control, &Caller::Local, Command::Status).await;
+        assert!(status.maintenance);
+        assert_eq!(status.kiosk_url, "http://127.0.0.1/maintenance.html");
+
+        // A maintenance page that cannot expand is refused at `set`, even
+        // while it is not the one on screen.
+        let refused = err(
+            &fx.control,
+            &Caller::Local,
+            set(&[
+                ("maintenance.enable", "0"),
+                (
+                    "maintenance.url",
+                    "http://127.0.0.1/maintenance.html?m={data.msg}",
+                ),
+            ]),
+        )
+        .await;
+        assert!(refused.contains("maintenance.url"), "{refused}");
+        assert!(refused.contains("data.msg"), "{refused}");
     }
 
     #[tokio::test]

@@ -448,7 +448,8 @@ going down, the page wandering off the origin, a crashed renderer, a killed
 browser, a wedged browser, an operator-stopped unit, a DNS server that
 swallows queries, the agent itself wedging, a short agent stall, a parked
 agent, SIGTERM - and the control plane: a `tessaro-ctl set` that restarts the
-agent onto the new value, a claim and unclaim round trip, and a resolution
+agent onto the new value, maintenance mode on and off with the browser left
+running, a claim and unclaim round trip, and a resolution
 change that refuses an unoffered mode and reverts unconfirmed. Last, because
 each reboots the VM, three image updates of the image it booted from:
 damaged staging refused at boot with nothing written, an update that keeps
@@ -817,8 +818,10 @@ kiosk origin, Weston restarts - taking the browser and agent with it - for a
   in the host moves the grants too. Built-in settings expand to their
   effective value, set or image default - `{display.osk}`,
   `{browser.fps_counter}` - and `{node.name}` is the name the device actually
-  answers to even when none was set. Only `{kiosk.url}` is refused, as it
-  cannot contain itself. Because any setting can move the URL, whether
+  answers to even when none was set. Only `{kiosk.url}` and
+  `{maintenance.url}` are refused, as neither URL may contain a URL.
+  `maintenance.url` is a template by the same rules, and `set` checks both
+  templates whichever one is on screen. Because any setting can move the URL, whether
   the agent restarts is decided by comparing the expanded URL with the one the
   running agent started with, not by which key changed. `set` refuses a
   template with an unset `data.*` or a name that is no setting, and an `unset`
@@ -925,6 +928,34 @@ Wiping `/data` or the `/etc` overlay re-identifies a device.
 `tessaro-ctl` on a laptop: `mise run build-ctl`, then
 `tessaro-ctl --node NAME claim` (or `login --token` with a token someone
 issued). Pins and tokens are kept in `~/.config/tessaro/nodes.json`, 0600.
+
+### Maintenance mode
+
+**`tessaro-ctl maintenance on|off`** - the same as `set maintenance.enable=1|0`
+- puts `maintenance.url` on screen and leaves `kiosk.url` as it is, so `off`
+goes straight back to the site. The default page is
+`http://127.0.0.1/maintenance.html` (`TESSARO_MAINTENANCE_URL` in
+`tessaro.conf`), shipped by `tessaro-selftest` next to the self-test page,
+self-contained so it renders with the network down. It takes `?title=` and
+`?message=` as plain text, which is how a device customises it without an
+image: `maintenance on --url 'http://127.0.0.1/maintenance.html?message={data.msg}'`
+plus `data.msg=...`.
+
+* **The swap is one place, `state::Effective`.** With `KIOSK_MAINTENANCE=1`,
+  `KIOSK_URL` *is* the expanded maintenance URL, so every consumer follows it
+  without knowing the mode exists: `generated.env` (a reboot in maintenance
+  never flashes the site), the agent's navigation and origin enforcement, the
+  periodic refresh, `status`, the `url_moved` restart check and the read-only
+  key watcher.
+* **`KIOSK_PROBE_URL` reads as empty meanwhile**, so the agent probes the
+  maintenance page. Probing the site's health endpoint instead would put the
+  offline page over the maintenance page the moment the site went down - and
+  maintenance is often exactly when it is down.
+* **The device-API grants do not move.** `render::device_origins` uses
+  `Effective::kiosk_url()`, kiosk.url's origin whatever the mode. Following the
+  maintenance page would rewrite the policy on every toggle, restart the
+  browser on a public screen and take the site's grants away. So a toggle
+  restarts the agent only, which re-navigates; the browser keeps running.
 
 ### Device APIs: WebSerial, WebHID, WebUSB, Web Bluetooth
 

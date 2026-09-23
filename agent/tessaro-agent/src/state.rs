@@ -128,10 +128,46 @@ impl Live {
     }
 }
 
+/// A setting as set, else the image default.
+fn setting(settings: &BTreeMap<String, String>, defaults: &dyn Env, name: &str) -> Option<String> {
+    let key = protocol::keys::find(name)?;
+    settings
+        .get(name)
+        .cloned()
+        .or_else(|| defaults.get(key.env))
+}
+
+/// Is the device in maintenance mode?
+pub fn maintenance(settings: &BTreeMap<String, String>, defaults: &dyn Env) -> bool {
+    setting(settings, defaults, "maintenance.enable").as_deref() == Some("1")
+}
+
+/// The URL template the screen follows, and the key it came from:
+/// maintenance.url in maintenance mode, else kiosk.url - each as set, else
+/// the image default.
+pub fn shown_template(
+    settings: &BTreeMap<String, String>,
+    defaults: &dyn Env,
+) -> (&'static str, String) {
+    let name = if maintenance(settings, defaults) {
+        "maintenance.url"
+    } else {
+        "kiosk.url"
+    };
+    (name, setting(settings, defaults, name).unwrap_or_default())
+}
+
 /// The image's defaults with this device's settings on top - what every
 /// consumer ends up seeing. `KIOSK_URL` comes out expanded: the browser, the
-/// agent's origin checks and the device-API policy all see the same URL, and
-/// none of them ever sees a `{placeholder}`.
+/// agent's origin checks and the probe all see the same URL, and none of them
+/// ever sees a `{placeholder}`.
+///
+/// In maintenance mode `KIOSK_URL` *is* the maintenance page, so every one of
+/// them follows it without knowing the mode exists: the browser starts on it
+/// after a reboot, the agent navigates to it and keeps the browser on its
+/// origin. `KIOSK_PROBE_URL` reads as empty then, so a site that is down does
+/// not put the offline page over the maintenance page. The one consumer that
+/// must not follow it is the device-API policy - see `kiosk_url`.
 pub struct Effective<'a> {
     base: &'a dyn Env,
     overrides: HashMap<&'static str, String>,
@@ -168,18 +204,36 @@ impl<'a> Effective<'a> {
             None => self.base.get(key),
         }
     }
+
+    // A placeholder with no value expands to nothing. `set` refuses that;
+    // only an image default with a placeholder nobody set can get here, and
+    // an empty segment beats a literal brace.
+    fn expand(&self, template: &str) -> String {
+        expand_url(template, &self.settings, self.base, &self.live).0
+    }
+
+    pub fn maintenance(&self) -> bool {
+        maintenance(&self.settings, self.base)
+    }
+
+    /// kiosk.url expanded, maintenance mode or not. The device-API grants
+    /// follow this one: toggling maintenance must not rewrite the policy,
+    /// which would restart the browser and take the site's grants away.
+    pub fn kiosk_url(&self) -> Option<String> {
+        self.raw("KIOSK_URL").map(|template| self.expand(&template))
+    }
 }
 
 impl Env for Effective<'_> {
     fn get(&self, key: &str) -> Option<String> {
-        let value = self.raw(key)?;
-        if key == "KIOSK_URL" {
-            // A placeholder with no value expands to nothing. `set` refuses
-            // that; only an image default with a placeholder nobody set can
-            // get here, and an empty segment beats a literal brace.
-            return Some(expand_url(&value, &self.settings, self.base, &self.live).0);
+        match key {
+            "KIOSK_URL" if self.maintenance() => {
+                Some(self.expand(&self.raw("KIOSK_MAINTENANCE_URL").unwrap_or_default()))
+            }
+            "KIOSK_URL" => self.kiosk_url(),
+            "KIOSK_PROBE_URL" if self.maintenance() => Some(String::new()),
+            _ => self.raw(key),
         }
-        Some(value)
     }
 }
 
@@ -280,12 +334,86 @@ mod tests {
     fn only_unset_parameters_and_non_settings_are_missing() {
         let base: HashMap<String, String> = HashMap::new();
         let (_, missing) = expand_url(
-            "https://x.test/{data.store}/{store}/{no.such}/{kiosk.url}/{display.scale}/{net.ip}",
+            "https://x.test/{data.store}/{store}/{no.such}/{kiosk.url}/{display.scale}/{net.ip}/{maintenance.url}",
             &BTreeMap::new(),
             &base,
             &Live::default(),
         );
-        assert_eq!(missing, ["data.store", "store", "no.such", "kiosk.url"]);
+        assert_eq!(
+            missing,
+            [
+                "data.store",
+                "store",
+                "no.such",
+                "kiosk.url",
+                "maintenance.url"
+            ]
+        );
+    }
+
+    #[test]
+    fn maintenance_mode_shows_the_maintenance_page_and_keeps_the_kiosk_url() {
+        let log = Log::buffered(true);
+        let base: HashMap<String, String> = [
+            ("KIOSK_URL".to_string(), "http://127.0.0.1/".to_string()),
+            ("KIOSK_MAINTENANCE".to_string(), "0".to_string()),
+            (
+                "KIOSK_MAINTENANCE_URL".to_string(),
+                "http://127.0.0.1/maintenance.html".to_string(),
+            ),
+        ]
+        .into();
+        let deployed = [
+            ("kiosk.url", "https://shop.test/"),
+            ("kiosk.probe_url", "https://shop.test/health"),
+        ];
+
+        let off = settings(&deployed);
+        let effective = Effective::new(&base, &off, &log);
+        assert!(!effective.maintenance());
+        assert_eq!(effective.get("KIOSK_URL").unwrap(), "https://shop.test/");
+        assert_eq!(
+            effective.get("KIOSK_PROBE_URL").unwrap(),
+            "https://shop.test/health"
+        );
+
+        let mut on = off.clone();
+        on.insert("maintenance.enable".into(), "1".into());
+        let effective = Effective::new(&base, &on, &log);
+        assert!(effective.maintenance());
+        assert_eq!(
+            effective.get("KIOSK_URL").unwrap(),
+            "http://127.0.0.1/maintenance.html"
+        );
+        // The probe follows the page on screen, not the site's health check.
+        assert_eq!(effective.get("KIOSK_PROBE_URL").unwrap(), "");
+        // What the device-API grants follow does not move.
+        assert_eq!(effective.kiosk_url().unwrap(), "https://shop.test/");
+        assert_eq!(shown_template(&on, &base).0, "maintenance.url");
+        assert_eq!(shown_template(&off, &base).0, "kiosk.url");
+    }
+
+    #[test]
+    fn the_maintenance_url_is_a_template_too() {
+        let log = Log::buffered(true);
+        let base: HashMap<String, String> =
+            [("KIOSK_URL".to_string(), "http://127.0.0.1/".to_string())].into();
+        let set = settings(&[
+            ("maintenance.enable", "1"),
+            (
+                "maintenance.url",
+                "http://127.0.0.1/maintenance.html?title={data.title}&n={node.name}",
+            ),
+            ("data.title", "Back at 14:00"),
+            ("node.name", "lobby"),
+        ]);
+
+        let effective = Effective::new(&base, &set, &log);
+
+        assert_eq!(
+            effective.get("KIOSK_URL").unwrap(),
+            "http://127.0.0.1/maintenance.html?title=Back%20at%2014%3A00&n=lobby"
+        );
     }
 
     #[test]
