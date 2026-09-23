@@ -21,6 +21,12 @@ serde_json = "1"
 
 clap = { version = "4", features = ["derive", "env"] }
 
+# Colored output. Both already in the lock through clap. anstream's print
+# macros strip the codes again when the stream is not a terminal, under
+# NO_COLOR, or with --color never.
+anstream = "1"
+anstyle = "1"
+
 # The platform's TLS: openssl on Linux, Security.framework on macOS. Chain
 # verification is off on purpose - devices are self-signed - and replaced by
 # a pin check on the certificate's SHA-256 before a single byte is sent.

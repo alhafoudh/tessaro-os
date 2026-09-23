@@ -11,12 +11,16 @@
 
 mod connect;
 mod nodes;
+mod style;
 mod update;
 
 use std::collections::BTreeMap;
 use std::process::ExitCode;
 
-use clap::{Parser, Subcommand, ValueEnum};
+// Shadow the std macros: these strip colors when stdout is not a terminal.
+use anstream::{eprint, eprintln, println};
+use clap::builder::styling::Styles;
+use clap::{ColorChoice, Parser, Subcommand, ValueEnum};
 use protocol::{
     Applied, Claimed, Command, Connector, Done, KeyInfo, Net, NetInterface, NodeInfo, Password,
     Screenshot, Settings, Source, Status, Target as RestartTarget, TokenCreated, TokenInfo,
@@ -25,11 +29,22 @@ use serde_json::Value;
 
 use connect::{Session, Target, Trust};
 use nodes::{Node, Nodes};
+use style::{pad, paint};
+
+/// `--help` in the same palette as everything else.
+const HELP_STYLES: Styles = Styles::styled()
+    .header(style::HEADING.underline())
+    .usage(style::HEADING.underline())
+    .literal(style::SOURCE)
+    .error(style::BAD)
+    .valid(style::OK)
+    .invalid(style::WARN);
 
 #[derive(Parser)]
 #[command(
     name = "tessaro-ctl",
     version,
+    styles = HELP_STYLES,
     about = "Manage Tessaro kiosks",
     long_about = "Manage Tessaro kiosks: settings, the browser, the display, tokens and the root password.\n\n\
         On the device, as root, it talks to the agent over the local socket and needs nothing else. \
@@ -71,6 +86,11 @@ struct Cli {
     /// Print the raw JSON the device answered.
     #[arg(long, global = true)]
     json: bool,
+
+    /// Color the output: auto (only on a terminal, and not under NO_COLOR),
+    /// always, or never.
+    #[arg(long, global = true, value_name = "WHEN", default_value_t = ColorChoice::Auto)]
+    color: ColorChoice,
 
     #[command(subcommand)]
     command: Cmd,
@@ -301,10 +321,15 @@ fn main() -> ExitCode {
     default_sigpipe();
 
     let cli = Cli::parse();
+    match cli.color {
+        ColorChoice::Auto => {}
+        ColorChoice::Always => anstream::ColorChoice::Always.write_global(),
+        ColorChoice::Never => anstream::ColorChoice::Never.write_global(),
+    }
     match run(cli) {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
-            eprintln!("tessaro-ctl: {err}");
+            eprintln!("{} {err}", paint(style::BAD, "tessaro-ctl:"));
             ExitCode::FAILURE
         }
     }
@@ -382,16 +407,29 @@ fn run(cli: Cli) -> Result<(), String> {
             let connectors: Vec<Connector> = call(&mut session, Command::Modes)?;
             print(json, &connectors, || {
                 if connectors.is_empty() {
-                    println!("no connected display reports its modes");
+                    println!(
+                        "{}",
+                        paint(style::WARN, "no connected display reports its modes")
+                    );
                 }
                 for connector in &connectors {
-                    println!("{}:", connector.name);
+                    println!("{}", paint(style::HEADING, format!("{}:", connector.name)));
                     for (at, mode) in connector.modes.iter().enumerate() {
-                        let note = if at == 0 { "  (preferred)" } else { "" };
+                        let note = if at == 0 {
+                            paint(style::MUTED, "  (preferred)")
+                        } else {
+                            String::new()
+                        };
                         println!("  {mode}{note}");
                     }
                 }
-                println!("\nset one with: tessaro-ctl set display.resolution=WIDTHxHEIGHT");
+                println!(
+                    "\nset one with: {}",
+                    paint(
+                        style::CMD,
+                        "tessaro-ctl set display.resolution=WIDTHxHEIGHT"
+                    )
+                );
             })
         }
         Cmd::Get { key } => {
@@ -400,13 +438,20 @@ fn run(cli: Cli) -> Result<(), String> {
                 for setting in &settings.settings {
                     let value = setting.value.as_deref().unwrap_or("");
                     let source = match setting.source {
-                        Source::Set => "",
-                        Source::Default => "  (default)",
-                        Source::Live => "  (read-only)",
+                        Source::Set => String::new(),
+                        Source::Default => paint(style::MUTED, "  (default)"),
+                        Source::Live => paint(style::MUTED, "  (read-only)"),
                     };
-                    println!("{} = {value}{source}", setting.key);
+                    println!(
+                        "{} {} {value}{source}",
+                        paint(style::HEADING, &setting.key),
+                        paint(style::LABEL, "=")
+                    );
                 }
-                println!("# revision {}", settings.revision);
+                println!(
+                    "{}",
+                    paint(style::MUTED, format!("# revision {}", settings.revision))
+                );
             })
         }
         Cmd::Set {
@@ -464,7 +509,11 @@ fn run(cli: Cli) -> Result<(), String> {
                 .map_err(|err| format!("the image is not base64: {err}"))?;
             let path = output.unwrap_or_else(|| format!("{}.jpg", session.node.name));
             std::fs::write(&path, &bytes).map_err(|err| format!("{path}: {err}"))?;
-            println!("{path} ({} bytes)", bytes.len());
+            println!(
+                "{} {}",
+                paint(style::OK, &path),
+                paint(style::MUTED, format!("({} bytes)", bytes.len()))
+            );
             Ok(())
         }
         Cmd::Logs {
@@ -494,17 +543,22 @@ fn run(cli: Cli) -> Result<(), String> {
             if json {
                 return print(true, &claimed, || {});
             }
-            println!("claimed {} ({})", session.node.name, session.node.id);
+            println!(
+                "{} {} {}",
+                paint(style::OK, "claimed"),
+                paint(style::HEADING, &session.node.name),
+                paint(style::MUTED, format!("({})", session.node.id))
+            );
             println!(
                 "token {} saved in {}",
                 claimed.token_id,
                 nodes::dir().join("nodes.json").display()
             );
             println!();
-            println!("root password - shown this once, store it now:");
-            println!();
-            println!("    {}", claimed.root_password);
-            println!();
+            show_once(
+                "root password - shown this once, store it now:",
+                &claimed.root_password,
+            );
             Ok(())
         }
         Cmd::Login { token, .. } => {
@@ -512,7 +566,12 @@ fn run(cli: Cli) -> Result<(), String> {
             // Prove the token before storing it.
             let _: Vec<TokenInfo> = call(&mut session, Command::TokenList)?;
             remember(&mut nodes, &session, Some(token), local)?;
-            println!("logged in to {} ({})", session.node.name, session.node.id);
+            println!(
+                "{} {} {}",
+                paint(style::OK, "logged in to"),
+                paint(style::HEADING, &session.node.name),
+                paint(style::MUTED, format!("({})", session.node.id))
+            );
             Ok(())
         }
         Cmd::Forget { .. } | Cmd::Nodes { .. } => unreachable!("handled above"),
@@ -520,13 +579,19 @@ fn run(cli: Cli) -> Result<(), String> {
             TokenCmd::Create { name } => {
                 let created: TokenCreated = call(&mut session, Command::TokenCreate { name })?;
                 print(json, &created, || {
-                    println!("token {} - shown this once:", created.id);
-                    println!();
-                    println!("    {}", created.token);
-                    println!();
+                    show_once(
+                        &format!("token {} - shown this once:", created.id),
+                        &created.token,
+                    );
                     println!(
-                        "use it with: tessaro-ctl --node {} login --token <token>",
-                        session.node.name
+                        "use it with: {}",
+                        paint(
+                            style::CMD,
+                            format!(
+                                "tessaro-ctl --node {} login --token <token>",
+                                session.node.name
+                            )
+                        )
                     );
                 })
             }
@@ -535,8 +600,11 @@ fn run(cli: Cli) -> Result<(), String> {
                 print(json, &tokens, || {
                     for token in &tokens {
                         println!(
-                            "{}  {:<24} issued by {}",
-                            token.id, token.name, token.issued_by
+                            "{}  {} {} {}",
+                            paint(style::MUTED, &token.id),
+                            pad(style::HEADING, &token.name, 24),
+                            paint(style::LABEL, "issued by"),
+                            token.issued_by
                         );
                     }
                 })
@@ -561,12 +629,9 @@ fn run(cli: Cli) -> Result<(), String> {
                 let set: Password = call(&mut session, Command::PasswordSet { password })?;
                 print(json, &set, || match &set.password {
                     Some(password) => {
-                        println!("root password - shown this once, store it now:");
-                        println!();
-                        println!("    {password}");
-                        println!();
+                        show_once("root password - shown this once, store it now:", password)
                     }
-                    None => println!("root password changed"),
+                    None => println!("{}", paint(style::OK, "root password changed")),
                 })
             }
         },
@@ -631,6 +696,15 @@ fn done(session: &mut Session, command: Command, json: bool) -> Result<(), Strin
     print(json, &done, || println!("{}", done.message))
 }
 
+/// A secret the device will never show again: the intro, then the secret
+/// set off by blank lines so it is easy to select.
+fn show_once(intro: &str, secret: &str) {
+    println!("{}", paint(style::WARN, intro));
+    println!();
+    println!("    {}", paint(style::SECRET, secret));
+    println!();
+}
+
 fn print<T: serde::Serialize>(json: bool, value: &T, human: impl FnOnce()) -> Result<(), String> {
     if json {
         println!(
@@ -649,81 +723,103 @@ fn show_net(net: &Net) {
         .as_deref()
         .and_then(|name| net.interfaces.iter().find(|iface| iface.name == name));
     let address = primary.and_then(|iface| iface.addresses.iter().find(|a| a.family == "ipv4"));
-    let none = "(none)".to_string();
+    let none = paint(style::MUTED, "(none)");
+    let row = |label: &str, value: &str| println!("{} {value}", pad(style::LABEL, label, 12));
 
-    println!("hostname     {}", net.hostname);
-    println!(
-        "interface    {}",
-        net.interface.as_deref().unwrap_or("(no default route)")
+    row("hostname", &paint(style::HEADING, &net.hostname));
+    row(
+        "interface",
+        &net.interface
+            .clone()
+            .unwrap_or_else(|| paint(style::WARN, "(no default route)")),
     );
-    println!(
-        "address      {}",
-        address
+    row(
+        "address",
+        &address
             .map(|a| format!("{}/{}", a.address, a.prefix))
-            .unwrap_or_else(|| none.clone())
+            .unwrap_or_else(|| none.clone()),
     );
-    println!("gateway      {}", net.gateway.as_ref().unwrap_or(&none));
-    println!("public ip    {}", net.public_ip.as_ref().unwrap_or(&none));
-    println!(
-        "dns          {}",
-        if net.dns.is_empty() {
+    row("gateway", net.gateway.as_ref().unwrap_or(&none));
+    row("public ip", net.public_ip.as_ref().unwrap_or(&none));
+    row(
+        "dns",
+        &if net.dns.is_empty() {
             none.clone()
         } else {
             net.dns.join(", ")
-        }
+        },
     );
     if let Some(mac) = primary.and_then(|iface| iface.mac.as_ref()) {
-        println!("mac          {mac}");
+        row("mac", mac);
     }
     println!();
-    println!("interfaces:");
+    println!("{}", paint(style::HEADING, "interfaces:"));
     for iface in &net.interfaces {
         let addresses: Vec<String> = iface
             .addresses
             .iter()
             .map(|a| format!("{}/{}", a.address, a.prefix))
             .collect();
-        let marker = if iface.default_route { " *" } else { "" };
+        let marker = if iface.default_route {
+            paint(style::OK, " *")
+        } else {
+            String::new()
+        };
         println!(
-            "  {:<12} {:<9} {:<8} {}{marker}",
-            iface.name,
-            iface.kind,
-            iface.state,
+            "  {} {} {} {}{marker}",
+            pad(style::HEADING, &iface.name, 12),
+            pad(style::MUTED, &iface.kind, 9),
+            pad(style::link_state(&iface.state), &iface.state, 8),
             if addresses.is_empty() {
-                "-".to_string()
+                paint(style::MUTED, "-")
             } else {
                 addresses.join(" ")
             }
         );
     }
-    println!("\n  * carries the default route. `tessaro-ctl net interfaces` for details.");
+    println!(
+        "\n  {}",
+        paint(
+            style::MUTED,
+            "* carries the default route. `tessaro-ctl net interfaces` for details."
+        )
+    );
 }
 
 fn show_interface(iface: &NetInterface) {
     let marker = if iface.default_route {
-        "  (default route)"
+        paint(style::OK, "  (default route)")
     } else {
-        ""
+        String::new()
     };
-    println!("{}{marker}", iface.name);
-    println!("    kind      {}", iface.kind);
-    println!("    state     {}", iface.state);
+    let row = |label: &str, value: &str| println!("    {} {value}", pad(style::LABEL, label, 9));
+    println!("{}{marker}", paint(style::HEADING, &iface.name));
+    row("kind", &iface.kind);
+    row(
+        "state",
+        &paint(style::link_state(&iface.state), &iface.state),
+    );
     if let Some(carrier) = iface.carrier {
-        println!("    carrier   {}", if carrier { "yes" } else { "no" });
+        row("carrier", &style::yes_no(carrier));
     }
     if let Some(mac) = &iface.mac {
-        println!("    mac       {mac}");
+        row("mac", mac);
     }
     if let Some(mtu) = iface.mtu {
-        println!("    mtu       {mtu}");
+        row("mtu", &mtu.to_string());
     }
     if let Some(speed) = iface.speed_mbps {
-        println!("    speed     {speed} Mb/s");
+        row("speed", &format!("{speed} Mb/s"));
     }
     for address in &iface.addresses {
-        println!(
-            "    {:<9} {}/{}  ({})",
-            address.family, address.address, address.prefix, address.scope
+        row(
+            &address.family,
+            &format!(
+                "{}/{}  {}",
+                address.address,
+                address.prefix,
+                paint(style::MUTED, format!("({})", address.scope))
+            ),
         );
     }
 }
@@ -734,12 +830,19 @@ fn show_key(key: &KeyInfo) {
     let read_only = key.applies.is_empty();
     let current = match (&key.value, &key.default) {
         (Some(value), _) if read_only => {
-            let shown = if value.is_empty() { "(none)" } else { value };
-            format!("{shown}  (read-only, reported by the device)")
+            let shown = if value.is_empty() {
+                paint(style::MUTED, "(none)")
+            } else {
+                value.clone()
+            };
+            format!(
+                "{shown}  {}",
+                paint(style::MUTED, "(read-only, reported by the device)")
+            )
         }
-        (Some(value), _) => format!("{value}  (set)"),
-        (None, Some(default)) => format!("{default}  (default)"),
-        (None, None) => "(not set)".to_string(),
+        (Some(value), _) => format!("{}  {}", paint(style::OK, value), paint(style::OK, "(set)")),
+        (None, Some(default)) => format!("{default}  {}", paint(style::MUTED, "(default)")),
+        (None, None) => paint(style::MUTED, "(not set)"),
     };
     let restarts = key
         .applies
@@ -752,67 +855,89 @@ fn show_key(key: &KeyInfo) {
         .collect::<Vec<_>>()
         .join(", ");
 
-    println!("{}", key.name);
+    let row = |label: &str, value: &str| println!("    {} {value}", pad(style::LABEL, label, 9));
+    println!("{}", paint(style::HEADING, &key.name));
     println!("    {}", key.doc);
-    println!("    value     {current}");
+    row("value", &current);
     if key.value.is_some() {
         if let Some(default) = &key.default {
-            println!("    default   {default}");
+            row("default", default);
         }
     }
-    println!("    accepts   {}", key.values);
+    row("accepts", &key.values);
     if !read_only {
-        println!("    restarts  {restarts}");
+        row("restarts", &restarts);
     }
     if key.guarded {
-        println!(
-            "    note      applied on probation: `tessaro-ctl confirm` within 60s or it reverts"
+        row(
+            "note",
+            &paint(
+                style::WARN,
+                "applied on probation: `tessaro-ctl confirm` within 60s or it reverts",
+            ),
         );
     }
     if !key.env.is_empty() {
-        println!("    env       {}", key.env);
+        row("env", &paint(style::MUTED, &key.env));
     }
 }
 
+/// `label` padded to the column `show_node` and `show_status` share.
+fn node_row(label: &str, value: &str) {
+    println!("{} {value}", pad(style::LABEL, label, 12));
+}
+
 fn show_node(node: &NodeInfo) {
-    println!("name         {}", node.name);
-    println!("node id      {}", node.id);
-    println!("machine      {}", node.machine);
-    println!("agent        {}", node.version);
-    println!("fingerprint  {}", node.fingerprint);
-    println!("claimed      {}", if node.claimed { "yes" } else { "no" });
+    node_row("name", &paint(style::HEADING, &node.name));
+    node_row("node id", &node.id);
+    node_row("machine", &node.machine);
+    node_row("agent", &node.version);
+    node_row("fingerprint", &paint(style::MUTED, &node.fingerprint));
+    node_row("claimed", &style::yes_no(node.claimed));
 }
 
 fn show_status(status: &Status) {
     show_node(&status.node);
     if let Some(os) = &status.os {
         match &status.image_version {
-            Some(version) => println!("os           {os}, image {version}"),
-            None => println!("os           {os}"),
+            Some(version) => node_row(
+                "os",
+                &format!("{os}, {} {version}", paint(style::LABEL, "image")),
+            ),
+            None => node_row("os", os),
         }
     }
-    println!("revision     {}", status.revision);
-    println!("kiosk url    {}", status.kiosk_url);
-    println!(
-        "showing      {}",
-        status.current_url.as_deref().unwrap_or("(cannot tell)")
+    node_row("revision", &status.revision.to_string());
+    node_row("kiosk url", &status.kiosk_url);
+    node_row(
+        "showing",
+        &status
+            .current_url
+            .clone()
+            .unwrap_or_else(|| paint(style::WARN, "(cannot tell)")),
     );
-    println!(
-        "browser      {}",
-        if status.browser_answering {
-            "answering"
+    node_row(
+        "browser",
+        &if status.browser_answering {
+            paint(style::OK, "answering")
         } else {
-            "not answering"
-        }
+            paint(style::BAD, "not answering")
+        },
     );
     for (unit, state) in &status.units {
-        println!("  {unit:<24} {state}");
+        println!(
+            "  {} {}",
+            pad(style::LABEL, unit, 24),
+            paint(style::unit_state(state), state)
+        );
     }
     if let Some(pending) = &status.pending {
         println!(
-            "on probation {}={} - `tessaro-ctl confirm` within {}s or it goes back to {}",
+            "{} {}={} - {} within {}s or it goes back to {}",
+            paint(style::WARN, "on probation"),
             pending.key,
             pending.value,
+            paint(style::CMD, "`tessaro-ctl confirm`"),
             pending.seconds_left,
             pending.previous.as_deref().unwrap_or("the default")
         );
@@ -821,28 +946,43 @@ fn show_status(status: &Status) {
 
 fn show_applied(applied: &Applied, no_apply: bool) {
     if applied.changed.is_empty() {
-        println!("nothing changed (revision {})", applied.revision);
+        println!(
+            "{}",
+            paint(
+                style::MUTED,
+                format!("nothing changed (revision {})", applied.revision)
+            )
+        );
         return;
     }
     println!(
-        "revision {}: {}",
-        applied.revision,
-        applied.changed.join(", ")
+        "{} {}",
+        paint(style::MUTED, format!("revision {}:", applied.revision)),
+        paint(style::OK, applied.changed.join(", "))
     );
     if no_apply {
-        println!("saved; nothing restarted");
+        println!("{}", paint(style::MUTED, "saved; nothing restarted"));
     } else if applied.restarted.is_empty() {
-        println!("nothing to restart");
+        println!("{}", paint(style::MUTED, "nothing to restart"));
     } else {
-        println!("restarting {}", applied.restarted.join(", "));
+        println!(
+            "{}",
+            paint(
+                style::WARN,
+                format!("restarting {}", applied.restarted.join(", "))
+            )
+        );
     }
     if let Some(pending) = &applied.pending {
         println!();
         println!(
-            "{}={} is on probation. Check the screen, then run\n\n    tessaro-ctl confirm\n\n\
+            "{} Check the screen, then run\n\n    {}\n\n\
              within {}s, or it goes back to {} on its own.",
-            pending.key,
-            pending.value,
+            paint(
+                style::WARN,
+                format!("{}={} is on probation.", pending.key, pending.value)
+            ),
+            paint(style::CMD, "tessaro-ctl confirm"),
             pending.seconds_left,
             pending.previous.as_deref().unwrap_or("the default")
         );
@@ -868,7 +1008,7 @@ fn journal_line(event: &Value) -> String {
         Some(other) => other.to_string(),
         None => event.to_string(),
     };
-    format!("{source}: {message}")
+    format!("{} {message}", paint(style::SOURCE, format!("{source}:")))
 }
 
 fn default_client_name() -> String {
@@ -898,8 +1038,14 @@ fn refresh_address(nodes: &mut Nodes, session: &Session) -> Result<(), String> {
     }
 
     eprintln!(
-        "{}: now at {address} (was {}), remembered",
-        known.name, known.address
+        "{}",
+        paint(
+            style::WARN,
+            format!(
+                "{}: now at {address} (was {}), remembered",
+                known.name, known.address
+            )
+        )
     );
     let moved = Node {
         address,
@@ -957,8 +1103,15 @@ fn confirm_destructive(session: &Session, yes: bool, what: &str) -> Result<(), S
     if yes {
         return Ok(());
     }
-    eprintln!("This will {what} on {}.", session.node.name);
-    eprint!("Type the device name to go ahead: ");
+    eprintln!(
+        "{} {}.",
+        paint(style::WARN, format!("This will {what} on")),
+        paint(style::HEADING, &session.node.name)
+    );
+    eprint!(
+        "{}",
+        paint(style::LABEL, "Type the device name to go ahead: ")
+    );
     let mut typed = String::new();
     std::io::stdin()
         .read_line(&mut typed)
@@ -993,23 +1146,30 @@ fn list_nodes(nodes: &Nodes, wait: u64, json: bool) -> Result<(), String> {
     }
 
     if found.is_empty() {
-        println!("no Tessaro devices answered within {wait}s");
+        println!(
+            "{}",
+            paint(
+                style::MUTED,
+                format!("no Tessaro devices answered within {wait}s")
+            )
+        );
     }
     for found in &found {
         let known = found.id.as_deref().and_then(|id| nodes.by_id(id));
         let claimed = match found.claimed {
-            Some(true) => "claimed",
-            Some(false) => "UNCLAIMED",
-            None => "?",
+            Some(true) => pad(style::OK, "claimed", 10),
+            Some(false) => pad(style::WARN, "UNCLAIMED", 10),
+            None => pad(style::MUTED, "?", 10),
         };
         let pin = match (known, &found.fingerprint) {
-            (Some(node), Some(fp)) if &node.fingerprint != fp => "PIN MISMATCH",
-            (Some(_), _) => "known",
-            (None, _) => "",
+            (Some(node), Some(fp)) if &node.fingerprint != fp => paint(style::BAD, "PIN MISMATCH"),
+            (Some(_), _) => paint(style::OK, "known"),
+            (None, _) => String::new(),
         };
         println!(
-            "{:<28} {:<22} {:<10} {pin}",
-            found.name, found.address, claimed
+            "{} {} {claimed} {pin}",
+            pad(style::HEADING, &found.name, 28),
+            pad(style::MUTED, found.address, 22)
         );
     }
     Ok(())

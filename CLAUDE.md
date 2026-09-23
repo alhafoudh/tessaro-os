@@ -68,6 +68,20 @@ because that version is dictated by the Chromium pin
 fetches `agent/` with a `file://` SRC_URI, so a `target/` inside it would be
 copied into `WORKDIR` and hashed on every build.
 
+**Command-line output is colored, and any new CLI must be too.** `tessaro-ctl`,
+and every future human-facing tool in `agent/`, prints through anstream's
+`println!`/`eprintln!` (imported at the top of the file to shadow the std
+macros) with the semantic palette in `tessaro-ctl/src/style.rs`: `LABEL`,
+`HEADING`, `OK`, `WARN`, `BAD`, `MUTED`, `SECRET`, `CMD`, `SOURCE`. Reuse that
+palette rather than picking raw colors at a call site. anstream drops the
+codes by itself when the stream is not a terminal, under `NO_COLOR` or
+`TERM=dumb`, and with `--color never`, so no call site ever checks. Three
+rules: styles decorate text and never change it, so the plain output stays
+parseable; `--json` output is never styled; and aligned columns use
+`style::pad`, which pads *inside* the escape codes, because `{:<N}` around a
+painted string counts the escape bytes. Both crates were already in the lock
+through clap, so this cost no new crates.
+
 After changing any `Cargo.toml` in the workspace or `agent/Cargo.lock`,
 regenerate the crate list the recipe requires and commit it:
 

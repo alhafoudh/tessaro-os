@@ -17,12 +17,14 @@ use std::net::{IpAddr, SocketAddr, TcpStream, ToSocketAddrs};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use anstream::{eprint, eprintln};
 use mdns_sd::{ServiceDaemon, ServiceEvent};
 use protocol::{from_line, to_line, Command, Frame, Hello, NodeInfo, Request, PROTOCOL_VERSION};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::nodes::{Node, Nodes};
+use crate::style::{self, paint};
 
 const CONNECT: Duration = Duration::from_secs(5);
 /// A cached address gets less: on a LAN a live device answers in
@@ -318,7 +320,10 @@ fn open_remote(
             }
             Trust::Peek => {}
             Trust::Pin { assume_yes } => {
-                eprintln!("{label} ({address}) presents certificate\n  {fingerprint}");
+                eprintln!(
+                    "{label} ({address}) presents certificate\n  {}",
+                    paint(style::HEADING, &fingerprint)
+                );
                 if !assume_yes && !ask("Pin it and continue?").map_err(Failure::Refused)? {
                     return Err(Failure::Refused("not pinned".to_string()));
                 }
@@ -377,7 +382,8 @@ fn open_named(
         ) {
             Ok(session) => return Ok(session),
             Err(Failure::Mismatch(why)) => {
-                eprintln!("warning: {why}\nwarning: looking for {name} on the network instead");
+                let warning = paint(style::WARN, "warning:");
+                eprintln!("{warning} {why}\n{warning} looking for {name} on the network instead");
                 at_cached = "another device now at";
             }
             Err(Failure::Unreachable(_)) => {}
@@ -510,7 +516,7 @@ pub fn hex(bytes: &[u8]) -> String {
 }
 
 pub fn ask(question: &str) -> Result<bool, String> {
-    eprint!("{question} [y/N] ");
+    eprint!("{question} {} ", paint(style::LABEL, "[y/N]"));
     std::io::stderr().flush().ok();
     let mut answer = String::new();
     std::io::stdin()

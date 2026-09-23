@@ -1150,6 +1150,8 @@ dependencies = [
 name = "tessaro-ctl"
 version = "1.0.0"
 dependencies = [
+ "anstream",
+ "anstyle",
  "clap",
  "data-encoding",
  "mdns-sd",

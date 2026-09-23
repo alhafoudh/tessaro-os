@@ -15,6 +15,7 @@ use std::io::{IsTerminal, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use anstream::println;
 use protocol::{
     Command, Done, Status, UpdateBegun, UpdatePhase, UpdateReceived, UpdateResult, UpdateStatus,
 };
@@ -22,6 +23,7 @@ use sha2::{Digest, Sha256};
 
 use crate::connect::{self, Session, Target, Trust};
 use crate::nodes::Nodes;
+use crate::style::{self, pad, paint};
 
 /// How long to wait for a device to come back from applying an update:
 /// writing a root filesystem to a slow SD card, then a second boot.
@@ -111,7 +113,7 @@ pub fn send(
     if begun.phase == UpdatePhase::Receiving {
         upload(session, &options.image, size, begun.offset, &mut progress)?;
     } else {
-        progress.done(&format!("{node} already has {name}"));
+        progress.done(&paint(style::OK, format!("{node} already has {name}")));
     }
 
     prepare(session, &mut progress)?;
@@ -123,24 +125,33 @@ pub fn send(
             reboot,
         },
     )?;
-    progress.done(&done.message);
+    progress.done(&paint(style::OK, &done.message));
 
     if !reboot {
-        progress.done("`tessaro-ctl reboot` applies it; `tessaro-ctl update cancel` drops it");
+        progress.done(&format!(
+            "{} applies it; {} drops it",
+            paint(style::CMD, "`tessaro-ctl reboot`"),
+            paint(style::CMD, "`tessaro-ctl update cancel`")
+        ));
         return Ok(if options.wipe_data {
             Sent::Wiped
         } else {
             Sent::Kept
         });
     }
-    progress.done(&format!(
-        "{node} is rebooting to apply it - this takes a few minutes; do not power it off"
+    progress.done(&paint(
+        style::WARN,
+        format!("{node} is rebooting to apply it - this takes a few minutes; do not power it off"),
     ));
 
     if options.wipe_data {
         progress.done(&format!(
-            "{node} comes back unclaimed, with a new name and certificate: \
-             find it with `tessaro-ctl nodes` and claim it again"
+            "{} find it with {} and claim it again",
+            paint(
+                style::WARN,
+                format!("{node} comes back unclaimed, with a new name and certificate:")
+            ),
+            paint(style::CMD, "`tessaro-ctl nodes`")
         ));
         return Ok(Sent::Wiped);
     }
@@ -151,14 +162,17 @@ pub fn send(
     let (result, status) = wait_for(target, nodes, &node, &mut progress)?;
     match result {
         Some(result) if result.applied => {
-            progress.done(&result.message);
+            progress.done(&paint(style::OK, &result.message));
             if let Some(os) = status.os {
-                progress.done(&format!(
-                    "{node} now runs {os}{}",
-                    status
-                        .image_version
-                        .map(|version| format!(", image {version}"))
-                        .unwrap_or_default()
+                progress.done(&paint(
+                    style::OK,
+                    format!(
+                        "{node} now runs {os}{}",
+                        status
+                            .image_version
+                            .map(|version| format!(", image {version}"))
+                            .unwrap_or_default()
+                    ),
                 ));
             }
             Ok(Sent::Kept)
@@ -181,53 +195,69 @@ pub fn cancel(session: &mut Session, json: bool) -> Result<(), String> {
 }
 
 fn show(status: &UpdateStatus) {
-    let name = status.name.as_deref().unwrap_or("");
+    let name = paint(style::HEADING, status.name.as_deref().unwrap_or(""));
     match status.phase {
-        UpdatePhase::Idle => println!("no update under way"),
+        UpdatePhase::Idle => println!("{}", paint(style::MUTED, "no update under way")),
         UpdatePhase::Receiving => println!(
-            "receiving {name}: {} of {} ({}%) - run `update send` again to resume",
+            "{} {name}: {} of {} ({}%) - run {} again to resume",
+            paint(style::WARN, "receiving"),
             mb(status.received),
             mb(status.size),
-            percent(status.received, status.size)
+            percent(status.received, status.size),
+            paint(style::CMD, "`update send`")
         ),
         UpdatePhase::Verifying => println!(
-            "verifying {name}: {} of {} ({}%)",
+            "{} {name}: {} of {} ({}%)",
+            paint(style::WARN, "verifying"),
             mb(status.verified),
             mb(status.size),
             percent(status.verified, status.size)
         ),
         UpdatePhase::Preparing => println!(
-            "preparing {name}: {} of {} checked ({}%)",
+            "{} {name}: {} of {} checked ({}%)",
+            paint(style::WARN, "preparing"),
             mb(status.prepared),
             mb(status.to_prepare),
             percent(status.prepared, status.to_prepare)
         ),
-        UpdatePhase::Ready => println!("{name} is staged, not committed"),
+        UpdatePhase::Ready => println!("{name} {}", paint(style::OK, "is staged, not committed")),
         UpdatePhase::Pending => println!(
-            "{name} is applied at the next boot{}",
+            "{name} {}{}",
+            paint(style::OK, "is applied at the next boot"),
             if status.wipe_data {
-                ", and /data is wiped"
+                paint(style::WARN, ", and /data is wiped")
             } else {
-                ""
+                String::new()
             }
         ),
         UpdatePhase::Failed => println!(
-            "failed: {}",
+            "{} {}",
+            paint(style::BAD, "failed:"),
             status.error.as_deref().unwrap_or("no reason given")
         ),
     }
     if let Some(last) = &status.last {
         println!(
-            "last update  {} ({}{})",
+            "{} {} ({}{})",
+            pad(style::LABEL, "last update", 12),
             last.message,
             if last.applied {
-                "applied"
+                paint(style::OK, "applied")
             } else {
-                "not applied"
+                paint(style::BAD, "not applied")
             },
-            if last.wiped_data { ", /data wiped" } else { "" }
+            if last.wiped_data {
+                paint(style::WARN, ", /data wiped")
+            } else {
+                String::new()
+            }
         );
     }
+}
+
+/// A progress line: the step's verb in its own column, then the details.
+fn step_line(verb_style: anstyle::Style, verb: &str, rest: impl std::fmt::Display) -> String {
+    format!("{} {rest}", pad(verb_style, verb, 10))
 }
 
 /// `x.rootfs.wic.bz2` -> `x.rootfs.wic.bmap`, the same rule as `image:flash`.
@@ -251,9 +281,17 @@ fn hash(path: &Path, size: u64, progress: &mut Progress) -> Result<String, Strin
         }
         hasher.update(&buffer[..read]);
         done += read as u64;
-        progress.show(&format!("hashing    {}/{}", mb(done), mb(size)), done, size);
+        progress.show(
+            &step_line(
+                style::LABEL,
+                "hashing",
+                format!("{}/{}", mb(done), mb(size)),
+            ),
+            done,
+            size,
+        );
     }
-    progress.done(&format!("hashed     {}", mb(size)));
+    progress.done(&step_line(style::OK, "hashed", mb(size)));
     Ok(connect::hex(&hasher.finalize()))
 }
 
@@ -268,7 +306,7 @@ fn upload(
     file.seek(SeekFrom::Start(from))
         .map_err(|err| format!("{}: {err}", path.display()))?;
     let resumed = if from > 0 {
-        format!("  (resumed at {})", mb(from))
+        paint(style::MUTED, format!("  (resumed at {})", mb(from)))
     } else {
         String::new()
     };
@@ -291,22 +329,27 @@ fn upload(
         offset = received.received;
         let (speed, eta) = rate.update(offset, size);
         progress.show(
-            &format!(
-                "uploading  {}/{}  {:>3}%  {}/s  ETA {}{resumed}",
-                mb(offset),
-                mb(size),
-                percent(offset, size),
-                mb(speed as u64),
-                eta
+            &step_line(
+                style::LABEL,
+                "uploading",
+                format!(
+                    "{}/{}  {:>3}%  {}/s  {} {}{resumed}",
+                    mb(offset),
+                    mb(size),
+                    percent(offset, size),
+                    mb(speed as u64),
+                    paint(style::LABEL, "ETA"),
+                    eta
+                ),
             ),
             offset,
             size,
         );
     }
-    progress.done(&format!(
-        "uploaded   {} in {}",
-        mb(size - from),
-        clock(rate.started.elapsed())
+    progress.done(&step_line(
+        style::OK,
+        "uploaded",
+        format!("{} in {}", mb(size - from), clock(rate.started.elapsed())),
     ));
     Ok(())
 }
@@ -327,10 +370,10 @@ fn prepare(session: &mut Session, progress: &mut Progress) -> Result<(), String>
             UpdatePhase::Verifying | UpdatePhase::Preparing => {
                 if step.as_ref().map(|(phase, _)| *phase) != Some(status.phase) {
                     if let Some((UpdatePhase::Verifying, rate)) = &step {
-                        progress.done(&format!(
-                            "verified   {} in {}",
-                            mb(status.size),
-                            clock(rate.started.elapsed())
+                        progress.done(&step_line(
+                            style::OK,
+                            "verified",
+                            format!("{} in {}", mb(status.size), clock(rate.started.elapsed())),
                         ));
                     }
                     step = Some((status.phase, Rate::new(done)));
@@ -339,25 +382,31 @@ fn prepare(session: &mut Session, progress: &mut Progress) -> Result<(), String>
                 if total > 0 {
                     let (speed, eta) = rate.update(done, total);
                     progress.show(
-                        &format!(
-                            "{label:<10} {}/{}  {:>3}%  {}/s  ETA {eta}",
-                            mb(done),
-                            mb(total),
-                            percent(done, total),
-                            mb(speed as u64),
+                        &step_line(
+                            style::LABEL,
+                            label,
+                            format!(
+                                "{}/{}  {:>3}%  {}/s  {} {eta}",
+                                mb(done),
+                                mb(total),
+                                percent(done, total),
+                                mb(speed as u64),
+                                paint(style::LABEL, "ETA"),
+                            ),
                         ),
                         done,
                         total,
                     );
                 } else {
-                    progress.show(&format!("{label:<10} starting"), 0, 1);
+                    progress.show(&step_line(style::LABEL, label, "starting"), 0, 1);
                 }
                 std::thread::sleep(Duration::from_secs(1));
             }
             UpdatePhase::Ready | UpdatePhase::Pending => {
-                progress.done(&format!(
-                    "prepared   {} of the image checked and staged",
-                    mb(status.to_prepare)
+                progress.done(&step_line(
+                    style::OK,
+                    "prepared",
+                    format!("{} of the image checked and staged", mb(status.to_prepare)),
                 ));
                 return Ok(());
             }
@@ -386,9 +435,10 @@ fn wait_for(
     std::thread::sleep(Duration::from_secs(10));
     loop {
         progress.show(
-            &format!(
-                "waiting    for {node} to come back ({})",
-                clock(started.elapsed())
+            &step_line(
+                style::LABEL,
+                "waiting",
+                format!("for {node} to come back ({})", clock(started.elapsed())),
             ),
             0,
             1,
@@ -396,9 +446,9 @@ fn wait_for(
         if let Ok(mut session) = connect::open(target, nodes, Trust::KnownOnly, false) {
             let update: UpdateStatus = call(&mut session, Command::UpdateStatus)?;
             let status: Status = call(&mut session, Command::Status)?;
-            progress.done(&format!(
-                "{node} is back after {}",
-                clock(started.elapsed())
+            progress.done(&paint(
+                style::OK,
+                format!("{node} is back after {}", clock(started.elapsed())),
             ));
             return Ok((update.last, status));
         }
@@ -423,6 +473,10 @@ fn call<T: serde::de::DeserializeOwned>(
 
 /// Progress on stderr. On a terminal one line redraws itself; otherwise,
 /// and with `--json`, a line per tenth, so a log stays readable.
+///
+/// The text goes through anstream, which drops its colors when they are
+/// off; the `\r` and clear-to-end-of-line around it go straight to stderr,
+/// since the redraw needs them even under `--color never`.
 struct Progress {
     redraw: bool,
     shown: Option<u64>,
@@ -437,28 +491,34 @@ impl Progress {
     }
 
     fn show(&mut self, line: &str, done: u64, total: u64) {
-        let mut stderr = std::io::stderr();
         if self.redraw {
-            let _ = write!(stderr, "\r{line}\x1b[K");
-            let _ = stderr.flush();
+            Self::redraw(line, "");
             return;
         }
         let tenth = done * 10 / total.max(1);
         if self.shown != Some(tenth) {
             self.shown = Some(tenth);
-            let _ = writeln!(stderr, "{line}");
+            let _ = writeln!(anstream::stderr(), "{line}");
         }
     }
 
     /// A step is over: its last line stays.
     fn done(&mut self, line: &str) {
-        let mut stderr = std::io::stderr();
         if self.redraw {
-            let _ = writeln!(stderr, "\r{line}\x1b[K");
+            Self::redraw(line, "\n");
         } else {
-            let _ = writeln!(stderr, "{line}");
+            let _ = writeln!(anstream::stderr(), "{line}");
         }
         self.shown = None;
+    }
+
+    /// Overwrite the current terminal line with `line`, then `end`.
+    fn redraw(line: &str, end: &str) {
+        let mut raw = std::io::stderr();
+        let _ = write!(raw, "\r");
+        let _ = write!(anstream::stderr(), "{line}");
+        let _ = write!(raw, "\x1b[K{end}");
+        let _ = raw.flush();
     }
 }
 
