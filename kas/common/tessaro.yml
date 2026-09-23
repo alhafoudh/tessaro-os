@@ -47,6 +47,25 @@ local_conf_header:
     # A machine fragment can still override this with a plain path if a board
     # needs it.
     OVERLAYFS_ETC_DEVICE = "LABEL=data"
+    # In-place image updates (tessaro-ctl update), without A/B partitions:
+    # the device stages the new image on /data, and at the next boot an
+    # initramfs rewrites the root partition before anything mounts it.
+    #
+    # The root partition's size is part of the disk layout, so it is fixed
+    # here instead of following each build's rootfs: a later image has to fit
+    # into the partition already on the disk, and wic fails the build when one
+    # does not. The image is ~870M today. The ESP has room for two kernels,
+    # which is what the updater needs while it swaps them. Changing either is
+    # a new disk layout - devices need one full reflash to take updates again.
+    TESSARO_ROOTFS_SIZE = "2048M"
+    TESSARO_ESP_SIZE = "128M"
+    # The initramfs lives inside the kernel, so the kernel on the boot
+    # partition stays one file - the one the updater swaps - and bootimg-efi
+    # picks the bundled image up without any change to its config. The cost
+    # is that the kernel is re-bundled (not rebuilt) whenever the initramfs,
+    # tessaro-flash included, changes.
+    INITRAMFS_IMAGE = "tessaro-initramfs"
+    INITRAMFS_IMAGE_BUNDLE = "1"
 
 repos:
   # Upstream layer collection. Pinned here; kas clones and checks it out.

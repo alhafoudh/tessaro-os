@@ -210,6 +210,7 @@ mod tests {
             "src/cdp/targets.rs",
             "src/control.rs",
             "src/server.rs",
+            "src/updates.rs",
         ];
 
         // Helpers whose every wait is already under `within()` in their own
@@ -227,6 +228,10 @@ mod tests {
             "self.writes.lock()",
             // The probation timer's own expiry, which is all of the above.
             ".expire_probation(",
+            // updates::Updates - every method waits only through blocking(),
+            // which the scan of updates.rs checks. Preparing an image runs on
+            // a thread of its own and is never awaited.
+            "self.updates.",
         ];
 
         let mut offences = Vec::new();

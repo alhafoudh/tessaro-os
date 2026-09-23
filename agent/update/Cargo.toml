@@ -1,0 +1,39 @@
+[package]
+name = "update"
+description = "In-place image updates: prepared by tessaro-agent, applied by tessaro-flash from the initramfs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# tessaro-flash runs from the initramfs, where there is glibc and busybox and
+# nothing else. So no tokio, no openssl and no runtime: plain blocking file
+# I/O, which is all that program does. The recipe packages it on its own
+# (tessaro-kiosk-flash) so the initramfs does not drag the agent in.
+[[bin]]
+name = "tessaro-flash"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+
+# The .bmap is XML. A tree parser with no dependencies of its own.
+roxmltree = "0.21"
+
+# .wic.bz2, decompressed on the device. 0.6 defaults to libbz2-rs-sys, a pure
+# Rust port of libbzip2, so there is no C to cross-compile. MultiBzDecoder,
+# because oe-core compresses with pbzip2, which writes one stream per block.
+bzip2 = "0.6"
+
+# statvfs and posix_fadvise, which std does not wrap. Already in the lock.
+libc = "0.2"
+
+[features]
+# Synthetic disks and bmaps (src/testing.rs), for tessaro-agent's tests.
+testing = []
+
+[dev-dependencies]
+tempfile = "3"

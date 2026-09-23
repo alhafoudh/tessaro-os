@@ -43,6 +43,11 @@ pub const CONFIRM_SECONDS: u64 = 60;
 /// the wire; a 4K JPEG in base64 fits with room to spare.
 pub const MAX_LINE: usize = 32 * 1024 * 1024;
 
+/// Largest piece of an image upload, before base64. Small enough that one
+/// request answers well inside the client's timeout on a slow link, large
+/// enough that the round trips do not dominate on a fast one.
+pub const UPDATE_CHUNK: usize = 4 * 1024 * 1024;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Hello {
     pub protocol: u32,
@@ -146,6 +151,33 @@ pub enum Command {
     },
     Unclaim,
     FactoryReset,
+    /// Start, or resume, uploading an image: the `.wic.bz2` is described
+    /// here and sent in `UpdateChunk`s. The answer says where to resume.
+    UpdateBegin {
+        name: String,
+        size: u64,
+        /// SHA-256 of the whole file, lower-case hex.
+        sha256: String,
+        /// The `.wic.bmap`, verbatim.
+        bmap: String,
+    },
+    /// The next piece of the upload, starting at `offset`, base64. At most
+    /// `UPDATE_CHUNK` bytes before encoding.
+    UpdateChunk {
+        offset: u64,
+        data: String,
+    },
+    UpdateStatus,
+    /// Apply the prepared update at the next boot.
+    UpdateCommit {
+        /// Re-create `/data` too: settings, the claim, the browser profile.
+        #[serde(default)]
+        wipe_data: bool,
+        #[serde(default = "yes")]
+        reboot: bool,
+    },
+    /// Drop the upload or the prepared update, and the pending marker.
+    UpdateCancel,
 }
 
 impl Command {
@@ -183,6 +215,68 @@ pub struct Status {
     pub browser_answering: bool,
     pub units: BTreeMap<String, String>,
     pub pending: Option<Pending>,
+    /// `PRETTY_NAME` and `IMAGE_VERSION` from the image's os-release, so an
+    /// update can be seen to have landed. Defaulted for older devices.
+    #[serde(default)]
+    pub os: Option<String>,
+    #[serde(default)]
+    pub image_version: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum UpdatePhase {
+    /// Nothing under way.
+    Idle,
+    /// Part of the image has arrived.
+    Receiving,
+    /// All of it has; the device is checking it and staging it.
+    Preparing,
+    /// Staged and verified; waiting for `update-commit`.
+    Ready,
+    /// Committed; applied at the next boot.
+    Pending,
+    /// Preparing failed; `error` says why. Begin again to retry.
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpdateBegun {
+    /// Bytes the device already has. Send from here.
+    pub offset: u64,
+    pub phase: UpdatePhase,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpdateReceived {
+    pub received: u64,
+    pub size: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpdateStatus {
+    pub phase: UpdatePhase,
+    /// The file being uploaded or staged.
+    pub name: Option<String>,
+    pub size: u64,
+    pub received: u64,
+    /// Mapped bytes of the boot and root partitions checked and staged, of
+    /// `to_prepare`.
+    pub prepared: u64,
+    pub to_prepare: u64,
+    pub error: Option<String>,
+    pub wipe_data: bool,
+    /// What the last boot that applied an update did.
+    pub last: Option<UpdateResult>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpdateResult {
+    pub applied: bool,
+    pub message: String,
+    pub source: String,
+    pub wiped_data: bool,
+    pub attempts: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

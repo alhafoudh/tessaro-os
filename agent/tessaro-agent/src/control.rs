@@ -41,6 +41,7 @@ use crate::shadow;
 use crate::state::{self, PendingChange, State};
 use crate::store::Store;
 use crate::systemd::Bus;
+use crate::updates::Updates;
 use crate::watchdog::Heartbeat;
 
 /// Any one piece of file work: a store update, a render, a shadow rewrite.
@@ -149,6 +150,7 @@ pub struct Control {
     /// The kiosk URL, expanded, that this agent process started with and is
     /// driving the browser to. It never changes: a new one needs a restart.
     agent_url: String,
+    updates: Arc<Updates>,
 }
 
 impl Control {
@@ -166,6 +168,7 @@ impl Control {
     ) -> Arc<Self> {
         Arc::new(Self {
             agent_url,
+            updates: Updates::new(Arc::clone(&log), paths.clone()),
             state: Store::new(&paths.state_dir, state::FILE),
             auth_store: Store::new(&paths.state_dir, auth::FILE),
             log,
@@ -252,7 +255,41 @@ impl Control {
             Command::PasswordSet { password } => self.password_set(caller, password).await.into(),
             Command::Unclaim => self.unclaim(caller).await.into(),
             Command::FactoryReset => self.factory_reset(caller).await,
+            Command::UpdateBegin {
+                name,
+                size,
+                sha256,
+                bmap,
+            } => self
+                .update_begin(caller, name, size, sha256, bmap)
+                .await
+                .into(),
+            Command::UpdateChunk { offset, data } => self.updates.chunk(offset, data).await.into(),
+            Command::UpdateStatus => self.updates.status().await.into(),
+            Command::UpdateCommit { wipe_data, reboot } => {
+                let who = caller.describe();
+                let reply: Reply = self.updates.commit(&who, wipe_data).await.into();
+                reply.then(reboot.then_some(After::Reboot))
+            }
+            Command::UpdateCancel => self.updates.cancel(&caller.describe()).await.into(),
         }
+    }
+
+    /// Resume whatever update the staging directory holds.
+    pub async fn load_update(&self) {
+        self.updates.load().await;
+    }
+
+    async fn update_begin(
+        &self,
+        caller: &Caller,
+        name: String,
+        size: u64,
+        sha256: String,
+        bmap: String,
+    ) -> Result<protocol::UpdateBegun, String> {
+        let who = caller.describe();
+        self.updates.begin(&who, name, size, sha256, bmap).await
     }
 
     // --- reading -----------------------------------------------------------
@@ -294,7 +331,16 @@ impl Control {
             units.insert(unit.clone(), self.bus.active_state(unit).await);
         }
 
+        let os_release = self.paths.os_release.clone();
+        let (os, image_version) = blocking("reading os-release", move || {
+            Ok(os_release_fields(&os_release))
+        })
+        .await
+        .unwrap_or_default();
+
         Ok(Status {
+            os,
+            image_version,
             node: self.node(),
             revision: state.revision,
             kiosk_url,
@@ -1368,6 +1414,19 @@ fn changed_keys(
         .filter(|name| before.get(*name) != after.get(*name))
         .filter_map(|name| keys::find(name).map(|key| (name.clone(), key)))
         .collect()
+}
+
+/// `PRETTY_NAME` and `IMAGE_VERSION` from an os-release file.
+fn os_release_fields(path: &std::path::Path) -> (Option<String>, Option<String>) {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return (None, None);
+    };
+    let field = |name: &str| {
+        text.lines()
+            .find_map(|line| line.strip_prefix(name)?.strip_prefix('='))
+            .map(|value| value.trim().trim_matches('"').to_string())
+    };
+    (field("PRETTY_NAME"), field("IMAGE_VERSION"))
 }
 
 fn unknown(name: &str) -> String {

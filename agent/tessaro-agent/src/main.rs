@@ -43,6 +43,7 @@ mod shadow;
 mod state;
 mod store;
 mod systemd;
+mod updates;
 mod url;
 mod watchdog;
 
@@ -274,6 +275,7 @@ async fn start_control(
     }
 
     control.arm_if_pending().await; // naked: a disk read under blocking()'s within()
+    control.load_update().await; // naked: a disk read under blocking()'s within()
     control.watch_url();
     control.watch_public_ip();
 }

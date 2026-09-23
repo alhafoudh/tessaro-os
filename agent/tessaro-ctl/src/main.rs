@@ -11,6 +11,7 @@
 
 mod connect;
 mod nodes;
+mod update;
 
 use std::collections::BTreeMap;
 use std::process::ExitCode;
@@ -53,6 +54,7 @@ use nodes::{Node, Nodes};
         \x20 tessaro-ctl set browser.fps_counter=on\n\
         \x20 tessaro-ctl unset kiosk.url                    back to the image default\n\
         \x20 tessaro-ctl logs -f -u tessaro-agent.service\n\
+        \x20 tessaro-ctl update send tessaro-os-qemux86-64.rootfs.wic.bz2   a new image; settings are kept\n\
         \x20 tessaro-ctl token create phone                 a token for a second client\n\n\
         ENVIRONMENT:\n\
         \x20 TESSARO_NODE        default for --node\n\
@@ -192,6 +194,11 @@ enum Cmd {
         #[arg(long, short)]
         yes: bool,
     },
+    /// Put a new image on the device, keeping its settings and claim.
+    Update {
+        #[command(subcommand)]
+        command: UpdateCmd,
+    },
     /// Devices answering on the local network.
     Nodes {
         /// Seconds to listen.
@@ -217,6 +224,38 @@ enum TokenCmd {
     Revoke {
         id: String,
     },
+}
+
+#[derive(Subcommand)]
+enum UpdateCmd {
+    /// Upload IMAGE, a .wic.bz2 with its .wic.bmap next to it, and reboot
+    /// the device into it. Only the blocks the bmap lists are written, and
+    /// only to the boot and root partitions; /data is kept. Run it again
+    /// after a dropped connection and it resumes.
+    ///
+    ///   tessaro-ctl -n brave-otter-3fa2 update send tessaro-os-qemux86-64.rootfs.wic.bz2
+    Send {
+        image: std::path::PathBuf,
+        /// The block map, if it is not IMAGE without .bz2 plus .bmap.
+        #[arg(long)]
+        bmap: Option<std::path::PathBuf>,
+        /// Also re-create /data: every setting, the claim, the browser
+        /// profile and the device's identity go. It comes back unclaimed.
+        #[arg(long)]
+        wipe_data: bool,
+        /// Stage and commit it, but leave the reboot for later.
+        #[arg(long)]
+        no_reboot: bool,
+        /// Do not wait for the device to come back.
+        #[arg(long)]
+        no_wait: bool,
+        #[arg(long, short)]
+        yes: bool,
+    },
+    /// What is under way, and what the last update did.
+    Status,
+    /// Drop the upload, or the staged update before it is applied.
+    Cancel,
 }
 
 #[derive(Subcommand)]
@@ -543,6 +582,31 @@ fn run(cli: Cli) -> Result<(), String> {
             done(&mut session, Command::FactoryReset, json)?;
             forget_session(&mut nodes, &session)
         }
+        Cmd::Update { command } => match command {
+            UpdateCmd::Send {
+                image,
+                bmap,
+                wipe_data,
+                no_reboot,
+                no_wait,
+                yes,
+            } => {
+                let options = update::Send {
+                    image,
+                    bmap,
+                    wipe_data,
+                    no_reboot,
+                    no_wait,
+                    yes,
+                };
+                match update::send(&mut session, &target, &nodes, options, json)? {
+                    update::Sent::Kept => Ok(()),
+                    update::Sent::Wiped => forget_session(&mut nodes, &session),
+                }
+            }
+            UpdateCmd::Status => update::status(&mut session, json),
+            UpdateCmd::Cancel => update::cancel(&mut session, json),
+        },
     }
 }
 
@@ -713,6 +777,12 @@ fn show_node(node: &NodeInfo) {
 
 fn show_status(status: &Status) {
     show_node(&status.node);
+    if let Some(os) = &status.os {
+        match &status.image_version {
+            Some(version) => println!("os           {os}, image {version}"),
+            None => println!("os           {os}"),
+        }
+    }
     println!("revision     {}", status.revision);
     println!("kiosk url    {}", status.kiosk_url);
     println!(

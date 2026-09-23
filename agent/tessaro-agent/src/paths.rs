@@ -36,6 +36,15 @@ pub struct Paths {
     /// its 127.0.0.53 stub, which says nothing about the network.
     pub resolv: PathBuf,
     pub hostname: PathBuf,
+    /// `/sys/class/block` and `/dev/disk/by-partuuid`: which partition is
+    /// root, for checking that an update was built for this disk.
+    pub sys_block: PathBuf,
+    pub by_partuuid: PathBuf,
+    /// The image's os-release, for `status`.
+    pub os_release: PathBuf,
+    /// The kernel's file name on the boot partition: `bzImage` on x86,
+    /// `Image` on the Pi. An update replaces exactly that file.
+    pub kernel_file: String,
     /// The MACHINE the image was built for, for `id` and the mDNS TXT record.
     pub machine: String,
     /// The self-test page's origin, always granted the device APIs.
@@ -70,6 +79,10 @@ impl Paths {
             proc_route: path("KIOSK_PROC_ROUTE", "/proc/net/route"),
             resolv: path("KIOSK_RESOLV", "/run/systemd/resolve/resolv.conf"),
             hostname: path("KIOSK_HOSTNAME", "/proc/sys/kernel/hostname"),
+            sys_block: path("KIOSK_SYS_BLOCK", "/sys/class/block"),
+            by_partuuid: path("KIOSK_BY_PARTUUID", "/dev/disk/by-partuuid"),
+            os_release: path("KIOSK_OS_RELEASE", "/usr/lib/os-release"),
+            kernel_file: text("KIOSK_KERNEL_FILE", "bzImage"),
             machine: text("KIOSK_MACHINE", "unknown"),
             selftest_origin: text("KIOSK_SELFTEST_ORIGIN", "http://127.0.0.1"),
             kiosk_unit: text("KIOSK_UNIT", "tessaro-kiosk.service"),
@@ -93,5 +106,10 @@ impl Paths {
 
     pub fn factory_reset_marker(&self) -> PathBuf {
         self.state_dir.join("factory-reset")
+    }
+
+    /// Image updates: the upload, the staging, the marker, the last result.
+    pub fn update_dir(&self) -> PathBuf {
+        self.state_dir.join("update")
     }
 }

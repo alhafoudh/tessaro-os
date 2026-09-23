@@ -1,0 +1,25 @@
+# short-description: SD card image for the Raspberry Pi that can take in-place updates
+# long-description: Moonforge's moonforge-image-base-raspberrypi.wks.in (vfat
+# boot, rootfs, /data), with the root partition at a fixed size and a larger
+# boot partition.
+#
+# An in-place update (tessaro-ctl update) rewrites the root filesystem into
+# the partition that is already on the card, so a later image has to fit: the
+# size is TESSARO_ROOTFS_SIZE, not whatever this build's rootfs needed. The
+# boot partition goes from 100M to 256M because the kernel now carries the
+# initramfs that applies updates (~40M together, the arm64 Image is 26M
+# uncompressed) and an update writes the new one beside the old before the
+# rename, next to the firmware, u-boot and every overlay.
+#
+# Unlike the x86 layouts there are no PARTUUIDs to pin, and none are needed.
+# An MBR PARTUUID is the disk signature, which this wic derives from
+# SOURCE_DATE_EPOCH and has no option for, but nothing on this image names
+# one: cmdline.txt says root=/dev/mmcblk0p2 and the fstab wic writes uses
+# device nodes. The updater compares the partitions' geometry instead.
+#
+# Changing the partitions is a new disk layout: every card needs one full
+# reflash before it can take updates again, and the updater says so.
+
+part /boot --source bootimg-partition --ondisk mmcblk0 --fstype=vfat --label boot --active --align 4096 --size 256
+part / --source rootfs --ondisk mmcblk0 --fstype=ext4 --label root --align 4096 --fixed-size ${TESSARO_ROOTFS_SIZE}
+part /data --size "${IMAGE_DATA_MIN_SIZE}" --ondisk mmcblk0 --fstype=ext4 --label data --align 4096

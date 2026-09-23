@@ -88,6 +88,18 @@ def tessaro_device_origins(d):
 
 TESSARO_DEVICE_ORIGINS = "${@tessaro_device_origins(d)}"
 
+# The kernel file on the boot partition that an image update replaces. Set per
+# machine in the kas config; this default is bootimg-efi's name for a kernel
+# with a bundled initramfs (KERNEL_IMAGETYPE-INITRAMFS_LINK_NAME.bin).
+TESSARO_KERNEL_FILE ?= "${KERNEL_IMAGETYPE}-initramfs-${MACHINE}.bin"
+
+# tessaro-flash applies an image update from the initramfs, which must not
+# pull in the agent, Chromium and everything else ${PN} depends on. cargo
+# installs every binary in the workspace into ${bindir}; this takes that one
+# into a package of its own, with nothing but glibc behind it.
+PACKAGES =+ "${PN}-flash"
+FILES:${PN}-flash = "${bindir}/tessaro-flash"
+
 do_install:append() {
     install -Dm0644 ${WORKDIR}/tessaro-kiosk.service \
         ${D}${systemd_system_unitdir}/tessaro-kiosk.service
@@ -104,6 +116,7 @@ do_install:append() {
     sed -e "s|@kiosk-url@|${TESSARO_KIOSK_URL}|g" \
         -e "s|@selftest-origin@|${TESSARO_SELFTEST_ORIGIN}|g" \
         -e "s|@machine@|${MACHINE}|g" \
+        -e "s|@kernel-file@|${TESSARO_KERNEL_FILE}|g" \
         ${WORKDIR}/tessaro-kiosk.env.in > ${WORKDIR}/tessaro-kiosk.env
     install -Dm0644 ${WORKDIR}/tessaro-kiosk.env \
         ${D}${nonarch_libdir}/tessaro-kiosk/tessaro-kiosk.env
