@@ -36,13 +36,45 @@ in `build/<machine>/tmp/deploy/images/<machine>/`. The download and sstate
 caches in `cache/` are shared, so the second target reuses most of the first
 one's work.
 
-Writing an image to a card or a disk is left to you on purpose:
+## Flashing from a workstation
+
+The build host is a remote x86 machine; the card or disk is plugged into your
+workstation (macOS or Linux). Three tasks run on the workstation, from its own
+checkout of this repo. Put the settings in `mise.local.toml` (gitignored):
+
+```toml
+# Optional: default machine on this workstation (a [vars] override, because
+# WIC and KAS_CONFIG are derived from it). TESSARO_MACHINE=... still wins.
+[vars]
+machine = "{{ env.TESSARO_MACHINE | default(value='raspberrypi3-64') }}"
+
+[env]
+TESSARO_BUILD_HOST = "build-host.example.com"          # SSH host that builds
+TESSARO_BUILD_HOST_DIR = "Projects/tessaro/tessaro-os" # this repo there, relative to your home
+TESSARO_FLASH_DEVICE = "/dev/disk8"                    # default target for flash
+TESSARO_BUILD_HOST_CONTAINER_IP = "172.17.0.9"         # tunnel: container with VNC on 5901
+TESSARO_DEVICE_IP = "192.168.69.123"                   # tunnel: device on your network
+```
+
+Then `mise trust && mise install` (that installs `bmaptool`) and:
 
 ```sh
-TESSARO_MACHINE=raspberrypi3-64 mise run unpack
-sudo dd if=build/raspberrypi3-64/tmp/deploy/images/raspberrypi3-64/tessaro-os-raspberrypi3-64.rootfs.wic \
-    of=/dev/sdX bs=4M status=progress conv=fsync
+TESSARO_MACHINE=raspberrypi3-64 mise run image:pull    # .wic.bz2 + .wic.bmap into the repo root
+diskutil list                                          # or lsblk - check the device twice
+TESSARO_MACHINE=raspberrypi3-64 mise run image:flash   # or: mise run image:flash /dev/disk4
 ```
+
+`image:pull` rsyncs `build/<machine>/tmp/deploy/images/<machine>/tessaro-os-<machine>.rootfs.wic.*`
+from the build host and skips what is already up to date. Pass a remote path
+in single quotes to pull something else. `image:flash` unmounts the device, writes
+it with bmaptool (through `/dev/rdiskN` on macOS), syncs and ejects it. Every
+build produces a `.bmap`; for an older image without one the whole image is
+written.
+
+`mise run tunnel` keeps an autossh tunnel to the build host up (needs
+`autossh`): `localhost:5901` is the build host's QEMU VNC from `run-vnc`,
+`localhost:5902` is VNC on port 5901 of `$TESSARO_BUILD_HOST_CONTAINER_IP`,
+and on the build host `localhost:5022` reaches SSH on `$TESSARO_DEVICE_IP`.
 
 ## Status
 

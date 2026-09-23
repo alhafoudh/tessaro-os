@@ -5,6 +5,9 @@ python = "3.12.11"
 # toolchain to the same version so `cargo test` cannot pass on a language
 # feature the image's compiler does not have.
 rust = "1.95.0"
+# For `mise run image:flash`. Not on PyPI, so it comes straight from the upstream
+# repo; mise installs it into its own tool dir, no venv to manage.
+"pipx:yoctoproject/bmaptool" = "3.9.0"
 
 [vars]
 # The machine every task acts on. Override it per command:
@@ -266,4 +269,117 @@ for dir in build/*/tmp/deploy/images/*; do
     done
 done
 [ "$found" = 1 ] || echo "no .wic images found - run 'mise run build' first" >&2
+'''
+
+# image:pull and image:flash run on a workstation, not on the build host: the image is
+# built on a remote x86 machine and written to a card or disk plugged in here.
+# TESSARO_BUILD_HOST, TESSARO_BUILD_HOST_DIR and TESSARO_FLASH_DEVICE come from
+# mise.local.toml, see README.md.
+
+[tasks."image:pull"]
+description = "Pull the $TESSARO_MACHINE image and its bmap from the build host into the repo root"
+dir = "{{config_root}}"
+usage = '''
+arg "[path]" help="Remote path on $TESSARO_BUILD_HOST, wildcards allowed (defaults to the $TESSARO_MACHINE image in $TESSARO_BUILD_HOST_DIR)"
+'''
+run = '''
+set -eu
+: "${TESSARO_BUILD_HOST:?set it in mise.local.toml}"
+
+path={{ usage.path | default(value="") | quote }}
+if [ -z "$path" ]; then
+    : "${TESSARO_BUILD_HOST_DIR:?set it in mise.local.toml}"
+    path="$TESSARO_BUILD_HOST_DIR/build/$TESSARO_MACHINE/$WIC.*"
+fi
+
+# The wildcard stays quoted so it expands on the build host, not here. -L
+# copies what the stable .rootfs symlinks point at, under the symlink's name,
+# and -ii lists every matched file, including the ones already up to date.
+set -- rsync -Lav -ii --progress "$TESSARO_BUILD_HOST:$path" .
+echo "+ $*"
+"$@"
+'''
+
+[tasks."image:flash"]
+description = "Write the pulled $TESSARO_MACHINE image to a card or disk with bmaptool"
+dir = "{{config_root}}"
+raw = true
+usage = '''
+arg "[device]" help="Target device, e.g. /dev/disk4 (macOS) or /dev/sdb (Linux) (defaults to $TESSARO_FLASH_DEVICE)"
+'''
+run = '''
+set -eu
+
+device={{ usage.device | default(value="") | quote }}
+if [ -z "$device" ]; then
+    device="${TESSARO_FLASH_DEVICE:?pass a device or set it in mise.local.toml}"
+fi
+name=$(basename "$WIC")
+image="$name.bz2"
+bmap="$name.bmap"
+
+if [ ! -f "$image" ]; then
+    echo "missing $image - run 'mise run image:pull' first" >&2
+    exit 1
+fi
+# Every image builds a wic.bmap (moonforge-image-base.bbappend), but one built
+# before that has none. bmaptool still works without it, it just writes every
+# block instead of only the used ones.
+if [ -f "$bmap" ]; then
+    set -- --bmap "$bmap"
+else
+    echo "no $bmap - writing the whole image" >&2
+    set -- --nobmap
+fi
+
+target="$device"
+if [ "$(uname -s)" = "Darwin" ]; then
+    # bmaptool cannot write to a disk with mounted volumes
+    diskutil unmountDisk "$device"
+    # the raw device skips the buffer cache and is much faster
+    target=$(echo "$device" | sed 's|^/dev/disk|/dev/rdisk|')
+else
+    for part in "$device"?*; do
+        [ -b "$part" ] || continue
+        sudo umount "$part" 2>/dev/null || true
+    done
+fi
+
+echo "flashing $image -> $target"
+sudo "$(command -v bmaptool)" copy "$@" "$image" "$target"
+
+# flush pending writes, then release the disk so it can be pulled out
+sync
+if [ "$(uname -s)" = "Darwin" ]; then
+    diskutil eject "$device"
+elif command -v udisksctl >/dev/null; then
+    udisksctl power-off -b "$device"
+else
+    sudo eject "$device"
+fi
+echo "done - $device can be removed"
+'''
+
+[tasks.tunnel]
+description = "Keep an SSH tunnel to the build host up: its VNC ports here, the local device's SSH there"
+dir = "{{config_root}}"
+raw = true
+run = '''
+set -eu
+: "${TESSARO_BUILD_HOST:?set it in mise.local.toml}"
+: "${TESSARO_BUILD_HOST_CONTAINER_IP:?set it in mise.local.toml}"
+: "${TESSARO_DEVICE_IP:?set it in mise.local.toml}"
+
+# localhost:5901 - the build host's loopback VNC (mise run run-vnc)
+# localhost:5902 - VNC on 5901 of a docker container on the build host
+# build host's localhost:5022 - SSH on the device on this machine's network
+# -M 0 leaves dead-link detection to ServerAlive, which drops the connection
+# after 90s of silence so autossh can bring it back.
+set -- autossh -N -M 0 -o "ServerAliveInterval 30" -o "ServerAliveCountMax 3" \
+    "$TESSARO_BUILD_HOST" \
+    -L 5901:127.0.0.1:5900 \
+    -L "5902:$TESSARO_BUILD_HOST_CONTAINER_IP:5901" \
+    -R "5022:$TESSARO_DEVICE_IP:22"
+echo "+ $*"
+exec "$@"
 '''

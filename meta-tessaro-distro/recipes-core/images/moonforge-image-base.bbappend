@@ -20,6 +20,14 @@
 # a real value (our own for x86, rpi-base.inc's for the Pi).
 IMAGE_BASENAME = "tessaro-os"
 
+# A block map next to every .wic.bz2, so `mise run image:flash` writes only the
+# blocks in use. moonforge-image.bbclass appends "ext4 wic.bz2" and nothing
+# else; the Pi only ever had a bmap because rpi-base.inc lists wic.bmap in its
+# own ?= default. Appended the same way upstream appends, on the image recipe,
+# so only its do_image_wic re-runs. The duplicate on the Pi is harmless - the
+# Pi already carries wic.bz2 twice for the same reason.
+IMAGE_FSTYPES:append = " wic.bmap"
+
 # Chromium and the CA store arrive as RDEPENDS of tessaro-kiosk, which owns the
 # units, the runtime configuration, the tessaro-agent binary and the offline
 # page.

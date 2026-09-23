@@ -28,6 +28,9 @@ Use the mise tasks rather than calling `kas-container` directly:
 | `mise run agent-lint` | `cargo fmt --check` plus clippy for the agent |
 | `mise run agent-integration` | The agent against a real headless Chromium |
 | `mise run agent-e2e` | Boot the qemu image, provoke each agent behaviour, assert on its journal |
+| `mise run image:pull` | Workstation: fetch the image and bmap from the build host |
+| `mise run image:flash` | Workstation: write the pulled image to a card or disk |
+| `mise run tunnel` | Workstation: autossh VNC/SSH forwards to the build host |
 
 Exit the QEMU serial console with `Ctrl-a x`.
 
@@ -1065,5 +1068,9 @@ kiosk.
 hardware yet. Expect the first build of each to surface fetch or packaging
 issues that parsing cannot.
 
-Writing an image to a card or disk is deliberately not a mise task - decompress
-with `mise run unpack` and `dd` the `.wic` yourself.
+Images are written from a workstation, not from the build host: `mise run
+image:pull` rsyncs the `$TESSARO_MACHINE` image and bmap from
+`$TESSARO_BUILD_HOST` into the repo root (gitignored), `mise run image:flash`
+writes it with bmaptool, and
+`mise run tunnel` holds the VNC/SSH port forwards. Their settings live in the
+gitignored `mise.local.toml`; see README.md.

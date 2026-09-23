@@ -29,3 +29,10 @@
 # kas and bitbake scratch
 /.config.yaml
 /.kas_shell_history
+
+# Per-workstation settings: build host, flash device, tunnel addresses
+/mise.local.toml
+
+# Images pulled from the build host by `mise run pull`
+/*.wic
+/*.wic.*
