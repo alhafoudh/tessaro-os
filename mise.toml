@@ -64,7 +64,7 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 '''
 
-[tasks.ctl-build]
+[tasks.build-ctl]
 description = "Build tessaro-ctl for this host, to manage devices remotely"
 dir = "{{config_root}}/agent"
 # A release build of the client only - no zbus, no tokio - for the machine

@@ -27,7 +27,7 @@ Use the mise tasks rather than calling `kas-container` directly:
 | `mise run agent-test` | `cargo test` for the agent workspace (protocol, agent, ctl) |
 | `mise run agent-lint` | `cargo fmt --check` plus clippy for the workspace |
 | `mise run agent-integration` | The agent against a real headless Chromium, control plane in a sandbox |
-| `mise run ctl-build` | Release `tessaro-ctl` for this host, to manage devices remotely |
+| `mise run build-ctl` | Release `tessaro-ctl` for this host, to manage devices remotely |
 | `mise run agent-e2e` | Boot the qemu image, provoke each agent behaviour, assert on its journal |
 | `mise run image:pull` | Workstation: fetch the image and bmap from the build host |
 | `mise run image:flash` | Workstation: write the pulled image to a card or disk |
@@ -866,7 +866,7 @@ stops it), and `tessaro-ctl --node NAME` finds a device by name, falling back
 to the last address it was seen at. `tessaro-ctl nodes` lists what answers.
 Wiping `/data` or the `/etc` overlay re-identifies a device.
 
-`tessaro-ctl` on a laptop: `mise run ctl-build`, then
+`tessaro-ctl` on a laptop: `mise run build-ctl`, then
 `tessaro-ctl --node NAME claim` (or `login --token` with a token someone
 issued). Pins and tokens are kept in `~/.config/tessaro/nodes.json`, 0600.
 
