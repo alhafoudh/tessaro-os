@@ -31,6 +31,7 @@ mod http;
 mod identity;
 mod log;
 mod mdns;
+mod net;
 mod notify;
 mod offline;
 mod paths;
@@ -102,10 +103,10 @@ fn main() -> ExitCode {
     let paths = paths::Paths::load(&SystemEnv);
     let defaults = state::defaults(&SystemEnv);
     let settings: state::State = store::Store::new(&paths.state_dir, state::FILE).read(&bootstrap);
-    // The derived name too, so {node.name} in kiosk.url means here exactly
-    // what it meant when the boot oneshot rendered it for the browser.
+    // What the device reports too - derived name, node id, addresses - so a
+    // placeholder in kiosk.url means here exactly what the renderer made of it.
     let effective = state::Effective::new(&SystemEnv, &settings.settings, &bootstrap)
-        .with_derived_name(render::derived_name(&paths));
+        .with_live(render::live(&paths));
 
     let config = Config::load(&effective);
     let log = Arc::new(Log::new(config.debug));
@@ -273,6 +274,7 @@ async fn start_control(
     }
 
     control.arm_if_pending().await; // naked: a disk read under blocking()'s within()
+    control.watch_url();
 }
 
 async fn run(config: Config, log: Arc<Log>, device: Device) {

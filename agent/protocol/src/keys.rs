@@ -61,6 +61,10 @@ pub enum Kind {
     Listen,
     /// A free-form custom value, used in kiosk.url as `{data.<name>}`.
     Param,
+    /// Not a setting: something the device reports - its address, its id.
+    /// Listed with `keys`, readable with `get`, usable in kiosk.url, and
+    /// refused by `set`.
+    ReadOnly,
 }
 
 impl Kind {
@@ -84,6 +88,7 @@ impl Kind {
             Kind::Name => "letters, digits and dashes, up to 40; empty derives one".to_string(),
             Kind::Listen => "address:port, or off".to_string(),
             Kind::Param => "any text; percent-encoded where kiosk.url uses it".to_string(),
+            Kind::ReadOnly => "read-only: reported by the device, cannot be set".to_string(),
         }
     }
 }
@@ -102,6 +107,7 @@ pub struct Key {
 }
 
 const AGENT: &[Consumer] = &[Consumer::Agent];
+const NOBODY: &[Consumer] = &[];
 const BROWSER: &[Consumer] = &[Consumer::Browser];
 const WESTON: &[Consumer] = &[Consumer::Weston];
 
@@ -120,6 +126,11 @@ const fn key(
         guarded: false,
         doc,
     }
+}
+
+/// A read-only key: no env variable, nothing reads it, `set` refuses it.
+const fn live(name: &'static str, doc: &'static str) -> Key {
+    key(name, "", Kind::ReadOnly, NOBODY, doc)
 }
 
 const fn seconds(
@@ -206,6 +217,19 @@ pub static KEYS: &[Key] = &[
         "Where the TLS control API listens, address:port, or off."),
     key("api.mdns", "KIOSK_MDNS", Kind::Choice(&["on", "off"]), AGENT,
         "Advertise the device as NAME.local and _tessaro._tcp."),
+    // Read-only: what the device reports right now. `tessaro-ctl net` shows
+    // the same in full, per interface.
+    live("node.id", "The node id: systemd's app-specific machine id, never the machine id itself."),
+    live("net.hostname", "The kernel hostname."),
+    live("net.interface", "The interface carrying the IPv4 default route."),
+    live("net.mac", "MAC address of net.interface."),
+    live("net.ip", "The first IPv4 address of net.interface."),
+    live("net.netmask", "Netmask of net.ip, dotted (255.255.255.0)."),
+    live("net.cidr", "net.ip with its prefix length (192.168.1.20/24)."),
+    live("net.gateway", "The IPv4 default gateway."),
+    live("net.dns", "DNS servers in use, comma separated."),
+    live("net.ipv4", "Every IPv4 address on every interface but loopback, comma separated."),
+    live("net.ipv6", "Every IPv6 address on every interface but loopback, comma separated."),
 ];
 
 /// Custom values: `data.<name>`, named by whoever sets them. The kiosk gives
@@ -363,7 +387,8 @@ pub fn percent_encode(value: &str) -> String {
 }
 
 pub fn find_env(env: &str) -> Option<&'static Key> {
-    KEYS.iter().find(|key| key.env == env)
+    KEYS.iter()
+        .find(|key| !key.env.is_empty() && key.env == env)
 }
 
 /// The value as it will be stored, or why it cannot be.
@@ -392,6 +417,7 @@ pub fn validate(key: &Key, value: &str) -> Result<String, String> {
                 .or_else(|why| fail(&why))
         }
         Kind::Param => Ok(value.to_string()),
+        Kind::ReadOnly => fail("is read-only: the device reports it, it cannot be set"),
         Kind::OptionalUrl => {
             if value.is_empty() {
                 return Ok(String::new());
@@ -549,7 +575,10 @@ mod tests {
         for (at, key) in KEYS.iter().enumerate() {
             for other in &KEYS[at + 1..] {
                 assert_ne!(key.name, other.name);
-                assert_ne!(key.env, other.env);
+                // Read-only keys have no variable; every other env is unique.
+                if !key.env.is_empty() {
+                    assert_ne!(key.env, other.env);
+                }
             }
         }
     }
@@ -729,6 +758,17 @@ mod tests {
             "https://{data.shop}.test/?lang={data.lang}"
         );
         assert!(check("kiosk.url", "{data.scheme}://x.test/").is_err());
+    }
+
+    #[test]
+    fn read_only_keys_are_placeholders_but_not_settings() {
+        for name in ["node.id", "net.ip", "net.gateway", "net.ipv4"] {
+            let key = find(name).expect(name);
+            assert_eq!(key.kind, Kind::ReadOnly);
+            assert!(key.env.is_empty() && key.consumers.is_empty(), "{name}");
+            assert!(check(name, "1.2.3.4").unwrap_err().contains("read-only"));
+            assert_eq!(placeholder(name), Placeholder::Key(key));
+        }
     }
 
     #[test]

@@ -17,8 +17,8 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use protocol::{
-    Applied, Claimed, Command, Connector, Done, KeyInfo, NodeInfo, Password, Screenshot, Settings,
-    Source, Status, Target as RestartTarget, TokenCreated, TokenInfo,
+    Applied, Claimed, Command, Connector, Done, KeyInfo, Net, NetInterface, NodeInfo, Password,
+    Screenshot, Settings, Source, Status, Target as RestartTarget, TokenCreated, TokenInfo,
 };
 use serde_json::Value;
 
@@ -46,6 +46,10 @@ use nodes::{Node, Nodes};
         \x20 tessaro-ctl set 'kiosk.url=https://menu.test/?table={data.table}' data.table=12\n\
         \x20 tessaro-ctl set 'kiosk.url=https://{node.name}.menu.test/'  any setting is a placeholder too\n\
         \x20 tessaro-ctl modes && tessaro-ctl set display.resolution=1920x1080 && tessaro-ctl confirm\n\
+        \x20 tessaro-ctl net                                address, gateway, DNS, interfaces\n\
+        \x20 tessaro-ctl net interfaces                     every interface in detail\n\
+        \x20 tessaro-ctl get net.ip                         one read-only value\n\
+        \x20 tessaro-ctl set 'kiosk.url=https://menu.test/?ip={net.ip}'  read-only keys are placeholders too\n\
         \x20 tessaro-ctl set browser.fps_counter=on\n\
         \x20 tessaro-ctl unset kiosk.url                    back to the image default\n\
         \x20 tessaro-ctl logs -f -u tessaro-agent.service\n\
@@ -83,6 +87,12 @@ enum Cmd {
     },
     /// The resolutions the connected displays offer (for display.resolution).
     Modes,
+    /// The network as the device sees it: address, gateway, DNS, and every
+    /// interface. Read-only; the same values are the net.* keys.
+    Net {
+        #[command(subcommand)]
+        what: Option<NetCmd>,
+    },
     /// Current settings, or one of them.
     Get {
         key: Option<String>,
@@ -188,6 +198,12 @@ enum Cmd {
         #[arg(long, default_value_t = 3)]
         wait: u64,
     },
+}
+
+#[derive(Subcommand)]
+enum NetCmd {
+    /// Every network interface: kind, state, MAC, MTU, addresses.
+    Interfaces,
 }
 
 #[derive(Subcommand)]
@@ -303,6 +319,20 @@ fn run(cli: Cli) -> Result<(), String> {
                 }
             })
         }
+        Cmd::Net { what } => {
+            let net: Net = call(&mut session, Command::Net)?;
+            match what {
+                None => print(json, &net, || show_net(&net)),
+                Some(NetCmd::Interfaces) => print(json, &net.interfaces, || {
+                    for (at, interface) in net.interfaces.iter().enumerate() {
+                        if at > 0 {
+                            println!();
+                        }
+                        show_interface(interface);
+                    }
+                }),
+            }
+        }
         Cmd::Modes => {
             let connectors: Vec<Connector> = call(&mut session, Command::Modes)?;
             print(json, &connectors, || {
@@ -327,6 +357,7 @@ fn run(cli: Cli) -> Result<(), String> {
                     let source = match setting.source {
                         Source::Set => "",
                         Source::Default => "  (default)",
+                        Source::Live => "  (read-only)",
                     };
                     println!("{} = {value}{source}", setting.key);
                 }
@@ -540,8 +571,99 @@ fn print<T: serde::Serialize>(json: bool, value: &T, human: impl FnOnce()) -> Re
     Ok(())
 }
 
+fn show_net(net: &Net) {
+    let primary = net
+        .interface
+        .as_deref()
+        .and_then(|name| net.interfaces.iter().find(|iface| iface.name == name));
+    let address = primary.and_then(|iface| iface.addresses.iter().find(|a| a.family == "ipv4"));
+    let none = "(none)".to_string();
+
+    println!("hostname     {}", net.hostname);
+    println!(
+        "interface    {}",
+        net.interface.as_deref().unwrap_or("(no default route)")
+    );
+    println!(
+        "address      {}",
+        address
+            .map(|a| format!("{}/{}", a.address, a.prefix))
+            .unwrap_or_else(|| none.clone())
+    );
+    println!("gateway      {}", net.gateway.as_ref().unwrap_or(&none));
+    println!(
+        "dns          {}",
+        if net.dns.is_empty() {
+            none.clone()
+        } else {
+            net.dns.join(", ")
+        }
+    );
+    if let Some(mac) = primary.and_then(|iface| iface.mac.as_ref()) {
+        println!("mac          {mac}");
+    }
+    println!();
+    println!("interfaces:");
+    for iface in &net.interfaces {
+        let addresses: Vec<String> = iface
+            .addresses
+            .iter()
+            .map(|a| format!("{}/{}", a.address, a.prefix))
+            .collect();
+        let marker = if iface.default_route { " *" } else { "" };
+        println!(
+            "  {:<12} {:<9} {:<8} {}{marker}",
+            iface.name,
+            iface.kind,
+            iface.state,
+            if addresses.is_empty() {
+                "-".to_string()
+            } else {
+                addresses.join(" ")
+            }
+        );
+    }
+    println!("\n  * carries the default route. `tessaro-ctl net interfaces` for details.");
+}
+
+fn show_interface(iface: &NetInterface) {
+    let marker = if iface.default_route {
+        "  (default route)"
+    } else {
+        ""
+    };
+    println!("{}{marker}", iface.name);
+    println!("    kind      {}", iface.kind);
+    println!("    state     {}", iface.state);
+    if let Some(carrier) = iface.carrier {
+        println!("    carrier   {}", if carrier { "yes" } else { "no" });
+    }
+    if let Some(mac) = &iface.mac {
+        println!("    mac       {mac}");
+    }
+    if let Some(mtu) = iface.mtu {
+        println!("    mtu       {mtu}");
+    }
+    if let Some(speed) = iface.speed_mbps {
+        println!("    speed     {speed} Mb/s");
+    }
+    for address in &iface.addresses {
+        println!(
+            "    {:<9} {}/{}  ({})",
+            address.family, address.address, address.prefix, address.scope
+        );
+    }
+}
+
 fn show_key(key: &KeyInfo) {
+    // Nothing reads a read-only key, so it is the one kind that restarts
+    // nothing - and its value is reported, never set.
+    let read_only = key.applies.is_empty();
     let current = match (&key.value, &key.default) {
+        (Some(value), _) if read_only => {
+            let shown = if value.is_empty() { "(none)" } else { value };
+            format!("{shown}  (read-only, reported by the device)")
+        }
         (Some(value), _) => format!("{value}  (set)"),
         (None, Some(default)) => format!("{default}  (default)"),
         (None, None) => "(not set)".to_string(),
@@ -566,7 +688,9 @@ fn show_key(key: &KeyInfo) {
         }
     }
     println!("    accepts   {}", key.values);
-    println!("    restarts  {restarts}");
+    if !read_only {
+        println!("    restarts  {restarts}");
+    }
     if key.guarded {
         println!(
             "    note      applied on probation: `tessaro-ctl confirm` within 60s or it reverts"

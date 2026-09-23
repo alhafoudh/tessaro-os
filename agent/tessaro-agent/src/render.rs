@@ -34,7 +34,7 @@ const ORIGIN_POLICIES: [&str; 2] = ["SerialAllowAllPortsForUrls", "WebHidAllowAl
 pub fn env_file(
     settings: &BTreeMap<String, String>,
     defaults: &dyn Env,
-    derived_name: Option<&str>,
+    live: &state::Live,
     log: &Log,
 ) -> String {
     let mut out = String::from(
@@ -54,8 +54,7 @@ pub fn env_file(
     // The kiosk URL goes out expanded, never as a template: the browser unit
     // opens ${KIOSK_URL} as it stands. Written whenever it differs from the
     // image default - set here, or a default whose placeholders were filled.
-    let effective = state::Effective::new(defaults, settings, log)
-        .with_derived_name(derived_name.map(str::to_string));
+    let effective = state::Effective::new(defaults, settings, log).with_live(live.clone());
     if let Some(url) = effective.get("KIOSK_URL") {
         if defaults.get("KIOSK_URL").as_deref() != Some(url.as_str()) {
             out.push_str(&format!("KIOSK_URL={url}\n"));
@@ -207,17 +206,18 @@ pub fn all(
     settings: &BTreeMap<String, String>,
     log: &Log,
 ) -> Result<Rendered, String> {
-    // For {node.name} when no name is set: the one the device answers to.
-    let derived_name = derived_name(paths);
+    // What the device reports now: {node.name} when none is set, {node.id},
+    // {net.ip} and the other read-only keys.
+    let live = live(paths);
 
     let env_changed = store::replace_if_changed(
         &paths.generated_env(),
-        env_file(settings, defaults, derived_name.as_deref(), log).as_bytes(),
+        env_file(settings, defaults, &live, log).as_bytes(),
         0o644,
     )
     .map_err(|err| format!("{}: {err}", paths.generated_env().display()))?;
 
-    let effective = state::Effective::new(defaults, settings, log).with_derived_name(derived_name);
+    let effective = state::Effective::new(defaults, settings, log).with_live(live);
     let policy_changed = render_policy(paths, &effective)?;
 
     Ok(Rendered {
@@ -232,6 +232,19 @@ pub fn derived_name(paths: &Paths) -> Option<String> {
     crate::identity::read_node_id(&paths.machine_id)
         .ok()
         .map(|id| crate::identity::friendly_name(&id))
+}
+
+/// Everything the device reports rather than stores, as the read-only keys
+/// see it right now. Blocking: sysfs, /proc and one getifaddrs.
+pub fn live(paths: &Paths) -> state::Live {
+    let mut values = crate::net::values(&crate::net::snapshot(paths));
+    if let Ok(id) = crate::identity::read_node_id(&paths.machine_id) {
+        values.insert("node.id".to_string(), id);
+    }
+    state::Live {
+        derived_name: derived_name(paths),
+        values,
+    }
 }
 
 fn render_policy(paths: &Paths, effective: &dyn Env) -> Result<bool, String> {
@@ -275,14 +288,14 @@ mod tests {
         let text = env_file(
             &settings(&[("display.osk", "never"), ("kiosk.url", "https://a.test/")]),
             &factory(),
-            None,
+            &state::Live::default(),
             &log,
         );
 
         let lines: Vec<&str> = text.lines().filter(|line| !line.starts_with('#')).collect();
         assert_eq!(lines, ["KIOSK_OSK=never", "KIOSK_URL=https://a.test/"]);
 
-        let untouched = env_file(&BTreeMap::new(), &factory(), None, &log);
+        let untouched = env_file(&BTreeMap::new(), &factory(), &state::Live::default(), &log);
         assert!(
             untouched.lines().all(|line| line.starts_with('#')),
             "{untouched}"
@@ -299,7 +312,7 @@ mod tests {
                 ("data.table", "7 a"),
             ]),
             &factory(),
-            None,
+            &state::Live::default(),
             &log,
         );
 

@@ -28,6 +28,14 @@ pub struct Paths {
     pub legacy_override: PathBuf,
     pub drm: PathBuf,
     pub cmdline: PathBuf,
+    /// `/sys/class/net`: every interface, its MAC, state, MTU and kind.
+    pub sys_net: PathBuf,
+    /// `/proc/net/route`: the IPv4 routing table, for the default route.
+    pub proc_route: PathBuf,
+    /// The upstream DNS servers systemd-resolved uses. `/etc/resolv.conf` is
+    /// its 127.0.0.53 stub, which says nothing about the network.
+    pub resolv: PathBuf,
+    pub hostname: PathBuf,
     /// The MACHINE the image was built for, for `id` and the mDNS TXT record.
     pub machine: String,
     /// The self-test page's origin, always granted the device APIs.
@@ -58,6 +66,10 @@ impl Paths {
             legacy_override: path("KIOSK_LEGACY_OVERRIDE", "/etc/default/tessaro-kiosk"),
             drm: path("KIOSK_DRM", "/sys/class/drm"),
             cmdline: path("KIOSK_CMDLINE", "/proc/cmdline"),
+            sys_net: path("KIOSK_SYS_NET", "/sys/class/net"),
+            proc_route: path("KIOSK_PROC_ROUTE", "/proc/net/route"),
+            resolv: path("KIOSK_RESOLV", "/run/systemd/resolve/resolv.conf"),
+            hostname: path("KIOSK_HOSTNAME", "/proc/sys/kernel/hostname"),
             machine: text("KIOSK_MACHINE", "unknown"),
             selftest_origin: text("KIOSK_SELFTEST_ORIGIN", "http://127.0.0.1"),
             kiosk_unit: text("KIOSK_UNIT", "tessaro-kiosk.service"),

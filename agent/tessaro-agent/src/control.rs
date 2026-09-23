@@ -149,9 +149,6 @@ pub struct Control {
     /// The kiosk URL, expanded, that this agent process started with and is
     /// driving the browser to. It never changes: a new one needs a restart.
     agent_url: String,
-    /// For `{node.name}` when no name is set - the same derivation the
-    /// renderer and `main` use, so all three always agree.
-    derived_name: Option<String>,
 }
 
 impl Control {
@@ -168,7 +165,6 @@ impl Control {
         agent_url: String,
     ) -> Arc<Self> {
         Arc::new(Self {
-            derived_name: render::derived_name(&paths),
             agent_url,
             state: Store::new(&paths.state_dir, state::FILE),
             auth_store: Store::new(&paths.state_dir, auth::FILE),
@@ -218,6 +214,7 @@ impl Control {
             Command::Status => self.status().await.into(),
             Command::Keys => self.keys().await.into(),
             Command::Modes => self.modes().await.into(),
+            Command::Net => self.net().await.into(),
             Command::Get { key } => self.get(key).await.into(),
             Command::Set {
                 values,
@@ -266,9 +263,25 @@ impl Control {
         blocking("reading state.json", move || Ok(store.read::<State>(&log))).await
     }
 
+    /// What the device reports now: derived name, node id, addresses.
+    async fn live(&self) -> state::Live {
+        let paths = self.paths.clone();
+        blocking("reading the network", move || Ok(render::live(&paths)))
+            .await
+            .unwrap_or_default()
+    }
+
+    async fn net(&self) -> Result<protocol::Net, String> {
+        let paths = self.paths.clone();
+        blocking("reading the network", move || {
+            Ok(crate::net::snapshot(&paths))
+        })
+        .await
+    }
+
     async fn status(&self) -> Result<Status, String> {
         let state = self.read_state().await?;
-        let kiosk_url = self.expanded_url(&state.settings);
+        let kiosk_url = self.expanded_url(&state.settings).await;
 
         let mut units = BTreeMap::new();
         for unit in [
@@ -296,11 +309,17 @@ impl Control {
     /// custom value, saying whether kiosk.url uses it.
     async fn keys(&self) -> Result<Vec<KeyInfo>, String> {
         let state = self.read_state().await?;
+        let live = self.live().await;
         let mut out: Vec<KeyInfo> = keys::KEYS
             .iter()
             .map(|key| KeyInfo {
                 default: self.defaults.get(key.env).cloned(),
-                value: state.settings.get(key.name).cloned(),
+                // A read-only key's value is what the device reports now.
+                value: if key.kind == keys::Kind::ReadOnly {
+                    Some(live.values.get(key.name).cloned().unwrap_or_default())
+                } else {
+                    state.settings.get(key.name).cloned()
+                },
                 ..KeyInfo::from(key)
             })
             .collect();
@@ -391,9 +410,16 @@ impl Control {
                 .collect(),
         };
 
+        let live = self.live().await;
         let settings = wanted
             .into_iter()
             .map(|(name, key)| match state.settings.get(&name) {
+                _ if key.kind == keys::Kind::ReadOnly => Setting {
+                    value: Some(live.values.get(key.name).cloned().unwrap_or_default()),
+                    key: name,
+                    env: String::new(),
+                    source: Source::Live,
+                },
                 Some(value) => Setting {
                     key: name,
                     env: key.env.to_string(),
@@ -502,7 +528,14 @@ impl Control {
                 // in one command works, and unsetting a value still in use
                 // does not.
                 let template = state.settings.get("kiosk.url").unwrap_or(&default_url);
-                let (_, missing) = state::expand_url(template, &state.settings, &defaults, None);
+                // Read-only keys always have a value, so no live values are
+                // needed to know what is missing.
+                let (_, missing) = state::expand_url(
+                    template,
+                    &state.settings,
+                    &defaults,
+                    &state::Live::default(),
+                );
                 // A custom data.* nobody set yet just needs a value; anything
                 // else is not a setting at all.
                 let (unset, typos): (Vec<&String>, Vec<&String>) = missing
@@ -588,11 +621,68 @@ impl Control {
         self.converge(&changed, &after, apply).await
     }
 
-    /// kiosk.url as these settings expand it.
-    fn expanded_url(&self, settings: &BTreeMap<String, String>) -> String {
-        let effective = state::Effective::new(&self.defaults, settings, &self.log)
-            .with_derived_name(self.derived_name.clone());
+    /// kiosk.url as these settings, and the device as it is now, expand it.
+    async fn expanded_url(&self, settings: &BTreeMap<String, String>) -> String {
+        let live = self.live().await;
+        let effective = state::Effective::new(&self.defaults, settings, &self.log).with_live(live);
         crate::config::Env::get(&effective, "KIOSK_URL").unwrap_or_default()
+    }
+
+    /// A kiosk.url that uses a read-only key - `{net.ip}` - can move with no
+    /// `set` at all: DHCP renews, the link changes, and at boot the render
+    /// ran before there was any address. So while the template uses one,
+    /// this checks every 15s and, when the URL no longer matches the one the
+    /// agent is driving, re-renders and restarts the agent onto it (and the
+    /// browser, if the origin - and with it the policy - moved).
+    pub fn watch_url(self: &Arc<Self>) {
+        const EVERY: Duration = Duration::from_secs(15);
+
+        let control = Arc::clone(self);
+        let mut shutdown = self.shutdown.clone();
+        tokio::spawn(async move {
+            loop {
+                // naked: a timer and the shutdown signal, not the outside world
+                tokio::select! {
+                    _ = tokio::time::sleep(EVERY) => {}
+                    _ = shutdown.changed() => return,
+                }
+                // naked: check_url's every wait is blocking()/Bus, under within()
+                control.check_url().await;
+            }
+        });
+    }
+
+    async fn check_url(&self) {
+        let Ok(state) = self.read_state().await else {
+            return;
+        };
+        let template = state
+            .settings
+            .get("kiosk.url")
+            .or_else(|| self.defaults.get("KIOSK_URL"))
+            .cloned()
+            .unwrap_or_default();
+        if !state::Live::moves(&template) {
+            return;
+        }
+
+        let url = self.expanded_url(&state.settings).await;
+        if url == self.agent_url {
+            return;
+        }
+
+        let _writes = self.writes.lock().await;
+        self.log.info(format!(
+            "kiosk.url now expands to {url} (the agent is on {}); applying",
+            self.agent_url
+        ));
+        let reply = self.converge(&[], &state, true).await;
+        if let Err(err) = &reply.result {
+            self.log.info(format!("applying the new kiosk.url: {err}"));
+        }
+        if let Some(after) = reply.after {
+            self.run_after(after).await;
+        }
     }
 
     /// Render, then restart what reads the changed keys. The reply is built
@@ -616,7 +706,7 @@ impl Control {
         // kiosk.url can be built from any setting, so a change to one of
         // them can move the URL without touching a key the agent reads. The
         // test is whether the URL this agent started with is still the one.
-        let url_moved = self.expanded_url(&state.settings) != self.agent_url;
+        let url_moved = self.expanded_url(&state.settings).await != self.agent_url;
 
         let weston = reads(Consumer::Weston);
         let browser = !weston && (reads(Consumer::Browser) || rendered.policy_changed);

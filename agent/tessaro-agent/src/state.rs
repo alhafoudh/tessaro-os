@@ -75,19 +75,23 @@ pub fn overrides(settings: &BTreeMap<String, String>, log: &Log) -> Vec<(&'stati
 /// `{any.key}` is that setting's effective value - what is set, else the
 /// image default, else empty - and `{node.name}` falls back to
 /// `derived_name`, the name the device actually answers to when none was
-/// set. Only a `data.*` nobody set, or a name that is no setting at all
+/// set. A read-only key (`{net.ip}`, `{node.id}`) is whatever `live` says,
+/// or empty. Only a `data.*` nobody set, or a name that is no setting at all
 /// (a bare `{name}` included), counts as missing.
 pub fn expand_url(
     template: &str,
     settings: &BTreeMap<String, String>,
     defaults: &dyn Env,
-    derived_name: Option<&str>,
+    live: &Live,
 ) -> (String, Vec<String>) {
-    use protocol::keys::Placeholder;
+    use protocol::keys::{Kind, Placeholder};
 
     protocol::keys::expand(template, |name| match protocol::keys::placeholder(name) {
         // The placeholder is the key itself.
         Placeholder::Param(_) => settings.get(name).cloned(),
+        Placeholder::Key(key) if key.kind == Kind::ReadOnly => {
+            Some(live.values.get(key.name).cloned().unwrap_or_default())
+        }
         Placeholder::Key(key) => {
             let value = settings
                 .get(key.name)
@@ -95,12 +99,33 @@ pub fn expand_url(
                 .or_else(|| defaults.get(key.env))
                 .unwrap_or_default();
             if key.name == "node.name" && value.is_empty() {
-                return Some(derived_name.unwrap_or_default().to_string());
+                return Some(live.derived_name.clone().unwrap_or_default());
             }
             Some(value)
         }
         Placeholder::Unknown => None,
     })
+}
+
+/// What the device reports rather than stores: the name derived from its
+/// node id, and the read-only keys (`node.id`, `net.*`) as they are now.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Live {
+    pub derived_name: Option<String>,
+    pub values: BTreeMap<String, String>,
+}
+
+impl Live {
+    /// Does this template use anything that can change without a `set` -
+    /// an address, a gateway?
+    pub fn moves(template: &str) -> bool {
+        protocol::keys::placeholders(template).iter().any(|name| {
+            matches!(
+                protocol::keys::placeholder(name),
+                protocol::keys::Placeholder::Key(key) if key.kind == protocol::keys::Kind::ReadOnly
+            )
+        })
+    }
 }
 
 /// The image's defaults with this device's settings on top - what every
@@ -111,7 +136,7 @@ pub struct Effective<'a> {
     base: &'a dyn Env,
     overrides: HashMap<&'static str, String>,
     settings: BTreeMap<String, String>,
-    derived_name: Option<String>,
+    live: Live,
 }
 
 impl<'a> Effective<'a> {
@@ -120,13 +145,20 @@ impl<'a> Effective<'a> {
             base,
             overrides: overrides(settings, log).into_iter().collect(),
             settings: settings.clone(),
-            derived_name: None,
+            live: Live::default(),
         }
     }
 
     /// The name derived from the node id, for `{node.name}` when none is set.
+    #[cfg(test)]
     pub fn with_derived_name(mut self, name: Option<String>) -> Self {
-        self.derived_name = name;
+        self.live.derived_name = name;
+        self
+    }
+
+    /// What the device reports - derived name, read-only keys.
+    pub fn with_live(mut self, live: Live) -> Self {
+        self.live = live;
         self
     }
 
@@ -145,15 +177,7 @@ impl Env for Effective<'_> {
             // A placeholder with no value expands to nothing. `set` refuses
             // that; only an image default with a placeholder nobody set can
             // get here, and an empty segment beats a literal brace.
-            return Some(
-                expand_url(
-                    &value,
-                    &self.settings,
-                    self.base,
-                    self.derived_name.as_deref(),
-                )
-                .0,
-            );
+            return Some(expand_url(&value, &self.settings, self.base, &self.live).0);
         }
         Some(value)
     }
@@ -256,12 +280,41 @@ mod tests {
     fn only_unset_parameters_and_non_settings_are_missing() {
         let base: HashMap<String, String> = HashMap::new();
         let (_, missing) = expand_url(
-            "https://x.test/{data.store}/{store}/{no.such}/{kiosk.url}/{display.scale}",
+            "https://x.test/{data.store}/{store}/{no.such}/{kiosk.url}/{display.scale}/{net.ip}",
             &BTreeMap::new(),
             &base,
-            None,
+            &Live::default(),
         );
         assert_eq!(missing, ["data.store", "store", "no.such", "kiosk.url"]);
+    }
+
+    #[test]
+    fn read_only_keys_expand_to_what_the_device_reports() {
+        let log = Log::buffered(true);
+        let base: HashMap<String, String> =
+            [("KIOSK_URL".to_string(), "http://127.0.0.1/".to_string())].into();
+        let set = settings(&[(
+            "kiosk.url",
+            "https://menu.test/?ip={net.ip}&gw={net.gateway}&id={node.id}",
+        )]);
+        let live = Live {
+            derived_name: None,
+            values: [
+                ("net.ip".to_string(), "10.0.0.20".to_string()),
+                ("node.id".to_string(), "abc".to_string()),
+            ]
+            .into(),
+        };
+
+        let effective = Effective::new(&base, &set, &log).with_live(live);
+
+        // An unknown read-only value is empty, never missing.
+        assert_eq!(
+            effective.get("KIOSK_URL").unwrap(),
+            "https://menu.test/?ip=10.0.0.20&gw=&id=abc"
+        );
+        assert!(Live::moves("https://x.test/?ip={net.ip}"));
+        assert!(!Live::moves("https://x.test/?n={node.name}&t={data.t}"));
     }
 
     #[test]

@@ -804,6 +804,22 @@ kiosk origin, Weston restarts - taking the browser and agent with it - for a
   template with an unset `data.*` or a name that is no setting, and an `unset`
   of a `data.*` still in use; custom values and template can go in one command.
   Nothing is added implicitly - only what the template names.
+* **Read-only keys report the device.** `node.id` and `net.*` - `net.ip`,
+  `net.netmask`, `net.cidr`, `net.gateway`, `net.dns`, `net.interface`,
+  `net.mac`, `net.hostname`, and every address as `net.ipv4`/`net.ipv6`
+  (comma separated) - are listed by `keys`, read by `get`, usable as
+  placeholders, and refused by `set`. They come straight from the kernel
+  (`agent/tessaro-agent/src/net.rs`: `/sys/class/net`, `getifaddrs`,
+  `/proc/net/route`, and resolved's own `/run/systemd/resolve/resolv.conf`,
+  since `/etc/resolv.conf` is its 127.0.0.53 stub), not from NetworkManager,
+  so they answer even when NM is the broken thing. "Primary" means the
+  interface carrying the IPv4 default route. `tessaro-ctl net` shows the same
+  as an overview, `net interfaces` every interface with kind, state, carrier,
+  MAC, MTU, speed and addresses. Nothing here edits the network yet.
+  **A URL using one moves on its own**: the boot render runs before DHCP, and
+  leases change, so while `kiosk.url` uses a read-only key the agent checks
+  every 15s and, when the expanded URL is no longer the one it drives,
+  re-renders and restarts itself onto it (and the browser, if the origin moved).
 * **Values are validated once, at `set`**: enums, ranges, URLs, modes - and no
   control characters, quotes, backslashes or `$` anywhere, because the value
   ends up in an env file systemd parses. A newline would write a second

@@ -89,6 +89,9 @@ pub enum Command {
     Keys,
     /// Output modes every connected connector advertises.
     Modes,
+    /// The network as the device sees it: addresses, route, DNS,
+    /// interfaces. Read-only.
+    Net,
     Get {
         #[serde(default)]
         key: Option<String>,
@@ -189,6 +192,8 @@ pub enum Source {
     Default,
     /// Set on this device.
     Set,
+    /// Read-only: reported by the device as it is right now.
+    Live,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -251,6 +256,44 @@ impl From<&keys::Key> for KeyInfo {
 pub struct Connector {
     pub name: String,
     pub modes: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NetAddress {
+    pub address: String,
+    pub prefix: u8,
+    /// `ipv4` or `ipv6`.
+    pub family: String,
+    /// `global`, `link-local` or `loopback`.
+    pub scope: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NetInterface {
+    pub name: String,
+    /// `ethernet`, `wireless`, `loopback`, or `virtual` (bridges, tunnels...).
+    pub kind: String,
+    pub mac: Option<String>,
+    /// The kernel's operstate: `up`, `down`, `dormant`, `unknown`, ...
+    pub state: String,
+    /// A cable or an association, if the driver says.
+    pub carrier: Option<bool>,
+    pub mtu: Option<u32>,
+    pub speed_mbps: Option<u32>,
+    /// Carries the IPv4 default route.
+    pub default_route: bool,
+    pub addresses: Vec<NetAddress>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Net {
+    pub hostname: String,
+    /// The interface with the IPv4 default route.
+    pub interface: Option<String>,
+    pub gateway: Option<String>,
+    /// The upstream servers, not systemd-resolved's 127.0.0.53 stub.
+    pub dns: Vec<String>,
+    pub interfaces: Vec<NetInterface>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
