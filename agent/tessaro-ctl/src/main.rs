@@ -21,9 +21,11 @@ use std::process::ExitCode;
 use anstream::{eprint, eprintln, println};
 use clap::builder::styling::Styles;
 use clap::{ColorChoice, Parser, Subcommand, ValueEnum};
+use protocol::speedtest_size_label as size_label;
 use protocol::{
-    Applied, Claimed, Command, Connector, Done, KeyInfo, Net, NetInterface, NodeInfo, Password,
-    Screenshot, Settings, Source, Status, Target as RestartTarget, TokenCreated, TokenInfo,
+    Applied, Claimed, Command, Connector, Direction, Done, KeyInfo, Net, NetInterface, NodeInfo,
+    Password, Screenshot, Settings, Source, SpeedtestEvent, Status, Target as RestartTarget,
+    TokenCreated, TokenInfo,
 };
 use serde_json::Value;
 
@@ -196,6 +198,22 @@ enum Cmd {
         /// How many lines back to start (`-n` is --node).
         #[arg(long, default_value_t = 100)]
         lines: u32,
+    },
+    /// Measure the device's internet connection against speed.cloudflare.com:
+    /// latency, then download and upload at growing payload sizes.
+    ///
+    /// Runs on the device, so it measures the kiosk's link, not this one.
+    /// A full run moves a few hundred MB - mind a metered connection, and
+    /// use a smaller --max-size there.
+    ///
+    ///   tessaro-ctl speedtest --max-size 1m --tests 3
+    Speedtest {
+        /// Largest payload: 100k, 1m, 10m, 25m or 100m. Uploads stop at 25m.
+        #[arg(long, default_value = "25m", value_parser = parse_payload)]
+        max_size: u64,
+        /// Samples per payload size.
+        #[arg(long, default_value_t = protocol::SPEEDTEST_DEFAULT_TESTS)]
+        tests: u32,
     },
     /// Take an unclaimed device: get a token and its new root password.
     Claim {
@@ -381,7 +399,12 @@ fn run(cli: Cli) -> Result<(), String> {
         Cmd::Claim { yes, .. } | Cmd::Login { yes, .. } => Trust::Pin { assume_yes: *yes },
         _ => Trust::KnownOnly,
     };
-    let follow = matches!(cli.command, Cmd::Logs { follow: true, .. });
+    // No read timeout: a followed log is open-ended, and a speed test on a
+    // slow link can go quiet for longer than one. The device bounds that.
+    let follow = matches!(
+        cli.command,
+        Cmd::Logs { follow: true, .. } | Cmd::Speedtest { .. }
+    );
     let mut session = connect::open(&target, &nodes, trust, follow)?;
     refresh_address(&mut nodes, &session)?;
     let json = cli.json;
@@ -591,6 +614,37 @@ fn run(cli: Cli) -> Result<(), String> {
                 }
             },
         ),
+        Cmd::Speedtest { max_size, tests } => {
+            if !json {
+                eprintln!(
+                    "{}",
+                    paint(
+                        style::MUTED,
+                        format!(
+                            "{}: measuring against speed.cloudflare.com, up to {} per sample...",
+                            session.node.name,
+                            size_label(max_size)
+                        )
+                    )
+                );
+            }
+            session.stream(
+                Command::Speedtest {
+                    max_size: Some(max_size),
+                    tests: Some(tests),
+                },
+                |event| {
+                    if json {
+                        println!("{event}");
+                    } else {
+                        match serde_json::from_value::<SpeedtestEvent>(event.clone()) {
+                            Ok(step) => println!("{}", speedtest_line(&step)),
+                            Err(_) => println!("{event}"),
+                        }
+                    }
+                },
+            )
+        }
         Cmd::Claim { name, .. } => {
             let name = name.unwrap_or_else(default_client_name);
             // A token left over from before an unclaim means nothing now.
@@ -1136,6 +1190,100 @@ fn show_applied(applied: &Applied, no_apply: bool) {
     }
 }
 
+/// `--max-size`: one of the sizes the device offers, as `100k`, `1m`, ...
+fn parse_payload(text: &str) -> Result<u64, String> {
+    protocol::SPEEDTEST_SIZES
+        .into_iter()
+        .find(|size| size_label(*size) == text.to_ascii_lowercase())
+        .ok_or_else(|| {
+            let offered: Vec<String> = protocol::SPEEDTEST_SIZES.map(size_label).into();
+            format!("one of {}", offered.join(", "))
+        })
+}
+
+fn speedtest_line(step: &SpeedtestEvent) -> String {
+    // The headline number in `style`, a missing one muted; the spread and the
+    // sample counts are background.
+    let value = |style: anstyle::Style, v: Option<f64>, unit: &str| match v {
+        Some(v) => paint(style, format!("{v:.1} {unit}")),
+        None => paint(style::MUTED, "n/a"),
+    };
+    let mbit = |style, v| value(style, v, "Mbit/s");
+    let ms = |style, v| value(style, v, "ms");
+    let label = |text: &str| pad(style::LABEL, text, 9);
+    match step {
+        SpeedtestEvent::Server { ip, colo, country } => format!(
+            "{} Cloudflare {}, seen from {ip} ({country})",
+            label("server"),
+            paint(style::HEADING, colo)
+        ),
+        SpeedtestEvent::Latency {
+            samples,
+            avg_ms,
+            min_ms,
+            max_ms,
+        } => format!(
+            "{} {} {}",
+            label("latency"),
+            ms(style::HEADING, *avg_ms),
+            paint(
+                style::MUTED,
+                format!(
+                    "(min {}, max {}, {samples} samples)",
+                    ms(anstyle::Style::new(), *min_ms),
+                    ms(anstyle::Style::new(), *max_ms)
+                )
+            )
+        ),
+        SpeedtestEvent::Transfer {
+            direction,
+            size,
+            samples,
+            attempts,
+            median_mbit,
+            min_mbit,
+            max_mbit,
+        } => {
+            let direction = match direction {
+                Direction::Download => "download",
+                Direction::Upload => "upload",
+            };
+            // Samples short of the attempts means retries: worth noticing.
+            let counted = if samples < attempts {
+                style::WARN
+            } else {
+                style::MUTED
+            };
+            format!(
+                "{} {} {} {} {}",
+                label(direction),
+                pad(style::HEADING, size_label(*size), 5),
+                mbit(style::HEADING, *median_mbit),
+                paint(
+                    style::MUTED,
+                    format!(
+                        "(min {}, max {},",
+                        mbit(anstyle::Style::new(), *min_mbit),
+                        mbit(anstyle::Style::new(), *max_mbit)
+                    )
+                ),
+                paint(counted, format!("{samples}/{attempts} samples)"))
+            )
+        }
+        SpeedtestEvent::Result {
+            download_mbit,
+            upload_mbit,
+            latency_ms,
+        } => format!(
+            "{} download {}, upload {}, latency {}",
+            pad(style::HEADING, "result", 9),
+            mbit(style::OK, *download_mbit),
+            mbit(style::OK, *upload_mbit),
+            ms(style::OK, *latency_ms)
+        ),
+    }
+}
+
 /// `unit: message`, from one journal JSON object.
 fn journal_line(event: &Value) -> String {
     let field = |name: &str| event.get(name).and_then(Value::as_str);
@@ -1320,4 +1468,45 @@ fn list_nodes(nodes: &Nodes, wait: u64, json: bool) -> Result<(), String> {
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use anstream::adapter::strip_str;
+
+    fn plain(step: SpeedtestEvent) -> String {
+        strip_str(&speedtest_line(&step)).to_string()
+    }
+
+    #[test]
+    fn speedtest_lines_strip_to_aligned_plain_text() {
+        assert_eq!(
+            plain(SpeedtestEvent::Transfer {
+                direction: Direction::Upload,
+                size: 1_000_000,
+                samples: 3,
+                attempts: 4,
+                median_mbit: Some(42.5),
+                min_mbit: Some(40.0),
+                max_mbit: None,
+            }),
+            "upload    1m    42.5 Mbit/s (min 40.0 Mbit/s, max n/a, 3/4 samples)"
+        );
+        assert_eq!(
+            plain(SpeedtestEvent::Result {
+                download_mbit: Some(93.14),
+                upload_mbit: None,
+                latency_ms: Some(12.0),
+            }),
+            "result    download 93.1 Mbit/s, upload n/a, latency 12.0 ms"
+        );
+    }
+
+    #[test]
+    fn max_size_takes_the_offered_sizes_only() {
+        assert_eq!(parse_payload("25M"), Ok(25_000_000));
+        assert_eq!(parse_payload("100k"), Ok(100_000));
+        assert!(parse_payload("5m").is_err());
+    }
 }

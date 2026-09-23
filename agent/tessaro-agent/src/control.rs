@@ -38,6 +38,7 @@ use crate::mdns::Mdns;
 use crate::paths::Paths;
 use crate::render;
 use crate::shadow;
+use crate::speedtest;
 use crate::state::{self, PendingChange, State};
 use crate::store::Store;
 use crate::systemd::Bus;
@@ -152,6 +153,8 @@ pub struct Control {
     /// driving the browser to. It never changes: a new one needs a restart.
     agent_url: String,
     updates: Arc<Updates>,
+    /// Held by the thread running a speed test, for as long as it runs.
+    speedtest: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl Control {
@@ -183,7 +186,25 @@ impl Control {
             writes: tokio::sync::Mutex::new(()),
             probation: Mutex::new(None),
             shutdown,
+            speedtest: Arc::new(tokio::sync::Mutex::new(())),
         })
+    }
+
+    /// Start a speed test; the server streams what it sends. Refused while
+    /// another one - even an abandoned one - is still running.
+    pub fn speedtest(
+        &self,
+        caller: &Caller,
+        max_size: Option<u64>,
+        tests: Option<u32>,
+    ) -> Result<tokio::sync::mpsc::Receiver<speedtest::Step>, String> {
+        let plan = speedtest::Plan::new(max_size, tests)?;
+        let lock = Arc::clone(&self.speedtest)
+            .try_lock_owned()
+            .map_err(|_| "a speed test is already running on this device".to_string())?;
+        self.log
+            .info(format!("speed test requested by {}", caller.describe()));
+        Ok(speedtest::start(plan, lock, Arc::clone(&self.log)))
     }
 
     pub fn set_mdns(&self, mdns: Option<Mdns>) {
@@ -249,6 +270,7 @@ impl Control {
             }
             Command::Screenshot => self.screenshot().await.into(),
             Command::Logs { .. } => Reply::err("logs is a stream; the server handles it"),
+            Command::Speedtest { .. } => Reply::err("speedtest is a stream; the server handles it"),
             Command::Claim { name } => self.claim(caller, &name).await.into(),
             Command::TokenCreate { name } => self.token_create(caller, &name).await.into(),
             Command::TokenList => Reply::ok(self.token_list()),

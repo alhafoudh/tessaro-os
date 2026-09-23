@@ -374,7 +374,7 @@ Things to know:
   `agent/tessaro-agent/src/http.rs` has a test for each, and `readelf -d` on
   both built binaries should always show `libssl.so.3`. Not rustls: it would freeze the
   roots at build time, and `ring`/`aws-lc-rs` want a C toolchain and per-arch
-  asm under bitbake.
+  asm under bitbake. The one exception is the speed test - see **Speed test**.
 
 ### The agent's deadlines and watchdog
 
@@ -1008,6 +1008,38 @@ env name is `KIOSK_DEBUG_SCREEN` because `KIOSK_DEBUG` was taken.
   `watch_public_ip` treats the debug template as in use only while
   `debug.enable` is on, so the default template costs no request on a
   device that is not in debug mode.
+
+### Speed test
+
+**`tessaro-ctl speedtest` measures the device's link, not the client's.** The
+agent runs it against speed.cloudflare.com and streams one line per step:
+where Cloudflare sees the device from (`/cdn-cgi/trace`), latency (25 empty
+requests, less the server's own `Server-Timing`), then download and upload at
+100k, 1m, 10m, 25m, 100m up to `--max-size` (default 25m), `--tests` samples
+each (default 10), and a result - the median at the largest size that
+produced samples, because small payloads never leave slow start. No Ookla,
+on purpose: its only client is a closed binary.
+
+* **It is the `cfspeedtest` crate, and that is the one place reqwest and
+  rustls are allowed.** cfspeedtest is blocking reqwest on rustls/ring with
+  webpki-roots - about 100 more crates in the lock, and a root store compiled
+  in, so this test (only this test) ignores the device's `/etc/ssl/certs`.
+  Everything else stays on hyper + native-tls, as the TLS bullet above says.
+  Fenced into `agent/tessaro-agent/src/speedtest.rs`; do not reach for
+  reqwest elsewhere just because it is in the lock now.
+* **It runs on one `spawn_blocking` thread**, which sends a step per payload
+  size down a channel that `server.rs` forwards as events. The reqwest client
+  is built and dropped on that thread - a blocking client dropped on the
+  runtime thread panics. Every request has a 30s timeout, the thread stops at
+  the next step once nobody is listening, and the server gives the whole test
+  5 minutes, so the agent never waits on Cloudflare and the watchdog never
+  notices. A size that took over 5s is the last one tried (cfspeedtest's own
+  rule), which keeps a slow link from spending minutes on 25 MB samples.
+* **One at a time.** The lock is held by the thread, not the request, so a
+  second test is refused even while an abandoned one is still finishing.
+* **It moves a few hundred MB.** Uploads stop at 25m whatever `--max-size`
+  says, because cfspeedtest builds the body in memory. On a metered link use
+  `--max-size 1m`. The start and the result go to the journal at info.
 
 ### Device APIs: WebSerial, WebHID, WebUSB, Web Bluetooth
 

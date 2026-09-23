@@ -211,6 +211,7 @@ mod tests {
             "src/control.rs",
             "src/server.rs",
             "src/updates.rs",
+            "src/speedtest.rs",
         ];
 
         // Helpers whose every wait is already under `within()` in their own

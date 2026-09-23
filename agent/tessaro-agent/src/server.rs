@@ -277,6 +277,25 @@ async fn serve<S>(
             continue;
         }
 
+        if let Command::Speedtest { max_size, tests } = &request.command {
+            let steps = match control.speedtest(&caller, *max_size, *tests) {
+                Ok(steps) => steps,
+                Err(error) => {
+                    if send(&mut write, &Frame::Error { id, error }).await.is_err() {
+                        return;
+                    }
+                    continue;
+                }
+            };
+            if stream_speedtest(&mut write, id, steps, shutdown.clone())
+                .await // naked: stream_speedtest bounds the whole test with speedtest::TOTAL
+                .is_err()
+            {
+                return;
+            }
+            continue;
+        }
+
         let reply = control.handle(&caller, request.command).await; // naked: Control bounds every call it makes
         let frame = match reply.result {
             Ok(result) => Frame::Ok { id, result },
@@ -385,6 +404,41 @@ async fn stream_logs<W: AsyncWrite + Unpin>(
 
     let _ = child.start_kill();
     send(write, &Frame::End { id }).await
+}
+
+/// Every step of a speed test as an event, then `end`. Dropping `steps` on
+/// the way out is what tells the test's thread to stop.
+async fn stream_speedtest<W: AsyncWrite + Unpin>(
+    write: &mut W,
+    id: u64,
+    mut steps: tokio::sync::mpsc::Receiver<crate::speedtest::Step>,
+    mut shutdown: watch::Receiver<bool>,
+) -> io::Result<()> {
+    let started = Instant::now();
+
+    loop {
+        let left = crate::speedtest::TOTAL.saturating_sub(started.elapsed());
+        let next = tokio::select! {
+            next = within("the speed test", left, steps.recv()) => next,
+            _ = shutdown.changed() => {
+                let error = "the agent is stopping".to_string();
+                return send(write, &Frame::Error { id, error }).await;
+            }
+        };
+
+        match next {
+            Ok(Some(Ok(step))) => {
+                let event = serde_json::to_value(&step).map_err(io::Error::other)?;
+                send(write, &Frame::Event { id, event }).await?;
+            }
+            Ok(Some(Err(error))) => return send(write, &Frame::Error { id, error }).await,
+            Ok(None) => return send(write, &Frame::End { id }).await,
+            Err(expired) => {
+                let error = expired.to_string();
+                return send(write, &Frame::Error { id, error }).await;
+            }
+        }
+    }
 }
 
 /// One line, at most `limit` bytes. `None` at end of stream.
@@ -515,5 +569,72 @@ mod tests {
         assert_eq!(read_line(&mut reader, 10).await.unwrap().unwrap(), "one\n");
         assert_eq!(read_line(&mut reader, 10).await.unwrap().unwrap(), "two");
         assert_eq!(read_line(&mut reader, 10).await.unwrap(), None);
+    }
+
+    fn frames(written: &[u8]) -> Vec<Frame> {
+        String::from_utf8_lossy(written)
+            .lines()
+            .map(|line| from_line(line).unwrap())
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn a_speed_test_is_events_then_end_or_an_error() {
+        let (_stop, shutdown) = watch::channel(false);
+        let step = protocol::SpeedtestEvent::Latency {
+            samples: 1,
+            avg_ms: Some(9.0),
+            min_ms: Some(9.0),
+            max_ms: Some(9.0),
+        };
+
+        let (tx, rx) = tokio::sync::mpsc::channel(4);
+        tx.send(Ok(step.clone())).await.unwrap();
+        drop(tx);
+        let mut written = Vec::new();
+        stream_speedtest(&mut written, 3, rx, shutdown.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            frames(&written),
+            vec![
+                Frame::Event {
+                    id: 3,
+                    event: serde_json::to_value(&step).unwrap()
+                },
+                Frame::End { id: 3 },
+            ]
+        );
+
+        let (tx, rx) = tokio::sync::mpsc::channel(4);
+        tx.send(Err("offline".to_string())).await.unwrap();
+        let mut written = Vec::new();
+        stream_speedtest(&mut written, 4, rx, shutdown)
+            .await
+            .unwrap();
+        assert_eq!(
+            frames(&written),
+            vec![Frame::Error {
+                id: 4,
+                error: "offline".to_string()
+            }]
+        );
+    }
+
+    /// A thread that never sends anything must not hold the client forever.
+    #[tokio::test(start_paused = true)]
+    async fn a_speed_test_that_goes_silent_is_cut_off() {
+        let (_stop, shutdown) = watch::channel(false);
+        let (_tx, rx) = tokio::sync::mpsc::channel(4);
+        let mut written = Vec::new();
+
+        stream_speedtest(&mut written, 5, rx, shutdown)
+            .await
+            .unwrap();
+
+        match frames(&written).as_slice() {
+            [Frame::Error { id: 5, error }] => assert!(error.contains("300s"), "{error}"),
+            other => panic!("expected one error, got {other:?}"),
+        }
     }
 }

@@ -14,7 +14,7 @@
 //! ```
 //!
 //! Requests on one connection are answered in order. A streaming command
-//! (`logs --follow`) answers with `event` frames and ends with `end`.
+//! (`logs`, `speedtest`) answers with `event` frames and ends with `end`.
 //! `token` is only looked at over TCP; the local socket is root-only and
 //! needs none.
 
@@ -182,6 +182,16 @@ pub enum Command {
     },
     /// Drop the upload or the prepared update, and the pending marker.
     UpdateCancel,
+    /// Measure the device's own internet connection against
+    /// speed.cloudflare.com. A stream of `SpeedtestEvent`s.
+    Speedtest {
+        /// Largest payload, one of `SPEEDTEST_SIZES`.
+        #[serde(default)]
+        max_size: Option<u64>,
+        /// Samples per payload size.
+        #[serde(default)]
+        tests: Option<u32>,
+    },
 }
 
 impl Command {
@@ -449,6 +459,67 @@ pub struct Screenshot {
     pub data: String,
 }
 
+/// The payload sizes a speed test steps through, cfspeedtest's own.
+pub const SPEEDTEST_SIZES: [u64; 5] = [100_000, 1_000_000, 10_000_000, 25_000_000, 100_000_000];
+pub const SPEEDTEST_DEFAULT_SIZE: u64 = 25_000_000;
+pub const SPEEDTEST_DEFAULT_TESTS: u32 = 10;
+/// cfspeedtest builds an upload body in memory, so a larger one would be
+/// 100 MB of RAM on a device that may have 1 GB for Chromium as well.
+pub const SPEEDTEST_UPLOAD_MAX: u64 = 25_000_000;
+
+/// `100k`, `1m`, ... the way `tessaro-ctl speedtest --max-size` spells them.
+pub fn speedtest_size_label(size: u64) -> String {
+    if size >= 1_000_000 {
+        format!("{}m", size / 1_000_000)
+    } else {
+        format!("{}k", size / 1_000)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Direction {
+    Download,
+    Upload,
+}
+
+/// One step of `speedtest`, in the order they arrive.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "phase", rename_all = "kebab-case")]
+pub enum SpeedtestEvent {
+    /// Where Cloudflare sees the device from.
+    Server {
+        ip: String,
+        /// The Cloudflare data centre answering, as an airport code.
+        colo: String,
+        country: String,
+    },
+    /// Round trips of an empty request, less the server's own time.
+    Latency {
+        samples: u32,
+        avg_ms: Option<f64>,
+        min_ms: Option<f64>,
+        max_ms: Option<f64>,
+    },
+    /// Every sample of one payload size in one direction.
+    Transfer {
+        direction: Direction,
+        size: u64,
+        samples: u32,
+        attempts: u32,
+        median_mbit: Option<f64>,
+        min_mbit: Option<f64>,
+        max_mbit: Option<f64>,
+    },
+    /// The median at the largest size that produced samples: small payloads
+    /// never leave slow start and under-report a fast link.
+    Result {
+        download_mbit: Option<f64>,
+        upload_mbit: Option<f64>,
+        latency_ms: Option<f64>,
+    },
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Done {
     pub message: String,
@@ -538,6 +609,35 @@ mod tests {
         assert!(Command::Claim { name: "x".into() }.is_public());
         assert!(!Command::Status.is_public());
         assert!(!Command::TokenCreate { name: "x".into() }.is_public());
+    }
+
+    #[test]
+    fn speedtest_events_are_tagged_by_phase() {
+        let event = SpeedtestEvent::Transfer {
+            direction: Direction::Upload,
+            size: 1_000_000,
+            samples: 3,
+            attempts: 4,
+            median_mbit: Some(42.5),
+            min_mbit: Some(40.0),
+            max_mbit: Some(44.0),
+        };
+        let value = serde_json::to_value(&event).unwrap();
+        assert_eq!(value["phase"], "transfer");
+        assert_eq!(value["direction"], "upload");
+        assert_eq!(
+            serde_json::from_value::<SpeedtestEvent>(value).unwrap(),
+            event
+        );
+
+        let request: Request = from_line(r#"{"id":1,"command":{"cmd":"speedtest"}}"#).unwrap();
+        assert_eq!(
+            request.command,
+            Command::Speedtest {
+                max_size: None,
+                tests: None
+            }
+        );
     }
 
     #[test]

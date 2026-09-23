@@ -41,6 +41,7 @@ mod probe;
 mod render;
 mod server;
 mod shadow;
+mod speedtest;
 mod state;
 mod store;
 mod systemd;

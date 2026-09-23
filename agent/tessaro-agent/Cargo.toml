@@ -88,6 +88,17 @@ tokio-tungstenite = { version = "0.30", default-features = false, features = ["h
 # and polling from the lock, along with the blocking API we no longer use.
 zbus = { version = "5", default-features = false, features = ["tokio"] }
 
+# `tessaro-ctl speedtest`, against speed.cloudflare.com. The one exception to
+# "not reqwest, not rustls" above, and a deliberate one: cfspeedtest is
+# blocking reqwest on rustls/ring with webpki-roots, about 100 crates, and a
+# root store compiled in rather than the device's /etc/ssl/certs. It is fenced
+# into speedtest.rs, runs only on spawn_blocking, and nothing else may use
+# reqwest - the probe and CDP stay on hyper + native-tls. reqwest is named
+# only to build the blocking Client cfspeedtest's functions take; same
+# version and features as its own, so no second copy.
+cfspeedtest = "2.2.2"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+
 [dev-dependencies]
 tempfile = "3"
 update = { path = "../update", features = ["testing"] }
