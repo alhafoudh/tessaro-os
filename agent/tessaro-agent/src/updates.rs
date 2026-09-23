@@ -58,6 +58,7 @@ struct Job {
     phase: UpdatePhase,
     upload: Option<Upload>,
     received: u64,
+    verified: u64,
     prepared: u64,
     to_prepare: u64,
     error: Option<String>,
@@ -74,6 +75,7 @@ impl Default for Job {
             phase: UpdatePhase::Idle,
             upload: None,
             received: 0,
+            verified: 0,
             prepared: 0,
             to_prepare: 0,
             error: None,
@@ -113,7 +115,7 @@ impl Updates {
         if self.loaded.swap(true, Ordering::SeqCst) {
             return;
         }
-        let resume = found.phase == UpdatePhase::Preparing;
+        let resume = working(found.phase);
         let name = found.upload.as_ref().map(|upload| upload.name.clone());
         *lock(&self.job) = found;
         if resume {
@@ -128,26 +130,27 @@ impl Updates {
     pub async fn begin(
         self: &Arc<Self>,
         caller: &str,
-        name: String,
-        size: u64,
-        sha256: String,
-        bmap_text: String,
+        upload: Upload,
     ) -> Result<UpdateBegun, String> {
         self.load().await;
-        check_name(&name)?;
-        let sha256 = sha256.to_ascii_lowercase();
+        check_name(&upload.name)?;
+        let upload = Upload {
+            sha256: upload.sha256.to_ascii_lowercase(),
+            ..upload
+        };
+        let (name, size, sha256) = (upload.name.clone(), upload.size, upload.sha256.clone());
         if sha256.len() != 64 || !sha256.chars().all(|ch| ch.is_ascii_hexdigit()) {
             return Err("sha256 must be 64 hex digits".to_string());
         }
         if size == 0 {
             return Err("the file is empty".to_string());
         }
-        let bmap = bmap::parse(&bmap_text)?;
+        let bmap = bmap::parse(&upload.bmap)?;
 
         {
-            let job = lock(&self.job);
-            let same_upload = job.upload.as_ref().is_some_and(|upload| {
-                upload.sha256 == sha256 && upload.size == size && upload.bmap == bmap_text
+            let mut job = lock(&self.job);
+            let same_upload = job.upload.as_ref().is_some_and(|known| {
+                known.sha256 == sha256 && known.size == size && known.bmap == upload.bmap
             });
             let same_staged = job.staged.as_ref().is_some_and(|(_, sha)| *sha == sha256);
             match job.phase {
@@ -161,15 +164,15 @@ impl Updates {
                             .unwrap_or("an update")
                     ))
                 }
-                UpdatePhase::Preparing if same_upload => {
+                phase if working(phase) && same_upload => {
                     return Ok(UpdateBegun {
                         offset: size,
-                        phase: UpdatePhase::Preparing,
+                        phase,
                     })
                 }
-                UpdatePhase::Preparing => {
+                phase if working(phase) => {
                     return Err(format!(
-                        "the device is preparing {}; wait for it, or `tessaro-ctl update cancel`",
+                        "the device is checking {}; wait for it, or `tessaro-ctl update cancel`",
                         job.upload
                             .as_ref()
                             .map(|upload| upload.name.as_str())
@@ -187,6 +190,12 @@ impl Updates {
                         "update: {caller} resumes {name} at {}",
                         megabytes(job.received)
                     ));
+                    // The resuming client decides about the whole-file check.
+                    // Not persisted: an agent restart before the last chunk
+                    // falls back to what the upload began with.
+                    if let Some(known) = job.upload.as_mut() {
+                        known.verify = upload.verify;
+                    }
                     return Ok(UpdateBegun {
                         offset: job.received,
                         phase: UpdatePhase::Receiving,
@@ -198,12 +207,6 @@ impl Updates {
 
         let dir = self.paths.update_dir();
         let needed = size + bmap.mapped_within(0, bmap.image_size) + MARGIN;
-        let upload = Upload {
-            name: name.clone(),
-            size,
-            sha256,
-            bmap: bmap_text,
-        };
         let meta = upload.clone();
         blocking("starting the upload", move || {
             fs::create_dir_all(&dir).map_err(|err| format!("{}: {err}", dir.display()))?;
@@ -363,6 +366,7 @@ impl Updates {
                 .or_else(|| job.staged.as_ref().map(|(name, _)| name.clone())),
             size: job.upload.as_ref().map(|upload| upload.size).unwrap_or(0),
             received: job.received,
+            verified: job.verified,
             prepared: job.prepared,
             to_prepare: job.to_prepare,
             error: job.error.clone(),
@@ -383,6 +387,9 @@ impl Updates {
             let job = lock(&self.job);
             match (job.phase, &job.staged) {
                 (UpdatePhase::Ready | UpdatePhase::Pending, Some((name, _))) => name.clone(),
+                (UpdatePhase::Verifying, _) => {
+                    return Err("the upload is still being verified".to_string())
+                }
                 (UpdatePhase::Preparing, _) => {
                     return Err("the update is still being prepared".to_string())
                 }
@@ -436,7 +443,7 @@ impl Updates {
         self.load().await;
         let preparing = {
             let job = lock(&self.job);
-            if job.phase == UpdatePhase::Preparing {
+            if working(job.phase) {
                 job.cancel.store(true, Ordering::SeqCst);
                 true
             } else {
@@ -496,7 +503,12 @@ impl Updates {
             let Some(upload) = job.upload.clone() else {
                 return;
             };
-            job.phase = UpdatePhase::Preparing;
+            job.phase = if upload.verify {
+                UpdatePhase::Verifying
+            } else {
+                UpdatePhase::Preparing
+            };
+            job.verified = 0;
             job.prepared = 0;
             job.to_prepare = 0;
             job.cancel = Arc::new(AtomicBool::new(false));
@@ -517,17 +529,67 @@ impl Updates {
         }
     }
 
+    /// The SHA-256 of the whole upload, reporting how far it got as it goes
+    /// so `update-status` - and with it tessaro-ctl's ETA - can follow.
+    fn verify(
+        &self,
+        path: &Path,
+        upload: &Upload,
+        cancel: &AtomicBool,
+    ) -> Result<(u64, String), String> {
+        let mut file = File::open(path).map_err(|err| format!("reading the upload: {err}"))?;
+        let mut hasher = openssl::sha::Sha256::new();
+        let mut buffer = vec![0u8; 1 << 20];
+        let (mut done, mut shown) = (0u64, 0u64);
+        loop {
+            if cancel.load(Ordering::SeqCst) {
+                return Err("cancelled".to_string());
+            }
+            let read = file
+                .read(&mut buffer)
+                .map_err(|err| format!("reading the upload: {err}"))?;
+            if read == 0 {
+                break;
+            }
+            hasher.update(&buffer[..read]);
+            done += read as u64;
+            lock(&self.job).verified = done;
+            let percent = done * 100 / upload.size.max(1);
+            if percent >= shown + 10 && done < upload.size {
+                shown = percent - percent % 10;
+                self.log.info(format!(
+                    "update: verifying {} {shown}% ({} of {})",
+                    upload.name,
+                    megabytes(done),
+                    megabytes(upload.size)
+                ));
+            }
+        }
+        Ok((done, update::hex(&hasher.finish())))
+    }
+
     /// Runs on the preparation thread; blocking throughout.
     fn prepare(&self, upload: &Upload, cancel: &Arc<AtomicBool>) -> Result<Manifest, String> {
         let dir = self.paths.update_dir();
         let path = dir.join(update::UPLOAD);
 
-        // The whole file, before a byte of it is trusted.
-        let (size, sha256) =
-            update::sha256_file(&path).map_err(|err| format!("reading the upload: {err}"))?;
-        if size != upload.size || sha256 != upload.sha256 {
-            return Err(format!(
-                "{} arrived damaged: its SHA-256 does not match; upload it again",
+        // The whole file, before a byte of it is trusted - unless the client
+        // asked to skip it (`update send --no-verify`). Then the bmap's
+        // per-range checksums below are the guard, and they still cover
+        // every block that will be written; what goes unchecked is the rest
+        // of the file, which is never used.
+        if upload.verify {
+            let (size, sha256) = self.verify(&path, upload, cancel)?;
+            if size != upload.size || sha256 != upload.sha256 {
+                return Err(format!(
+                    "{} arrived damaged: its SHA-256 does not match; upload it again",
+                    upload.name
+                ));
+            }
+            lock(&self.job).phase = UpdatePhase::Preparing;
+        } else {
+            self.log.info(format!(
+                "update: not checking {} as a whole, as asked; the bmap's checksums still apply",
                 upload.name
             ));
         }
@@ -784,6 +846,11 @@ fn lower_priority() {
     }
 }
 
+/// The preparation thread is running: verifying the upload, then staging it.
+fn working(phase: UpdatePhase) -> bool {
+    matches!(phase, UpdatePhase::Verifying | UpdatePhase::Preparing)
+}
+
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex
         .lock()
@@ -839,16 +906,19 @@ mod tests {
         )
     }
 
+    fn upload(device: &Device, sha256: String, verify: bool) -> Upload {
+        Upload {
+            name: "tessaro.wic".to_string(),
+            size: device.image.len() as u64,
+            sha256,
+            bmap: device.bmap.clone(),
+            verify,
+        }
+    }
+
     async fn begin(updates: &Arc<Updates>, device: &Device) -> Result<UpdateBegun, String> {
-        updates
-            .begin(
-                "a test",
-                "tessaro.wic".to_string(),
-                device.image.len() as u64,
-                update::sha256(&device.image),
-                device.bmap.clone(),
-            )
-            .await
+        let upload = upload(device, update::sha256(&device.image), true);
+        updates.begin("a test", upload).await
     }
 
     async fn send(updates: &Arc<Updates>, device: &Device, from: u64) -> Result<(), String> {
@@ -865,7 +935,7 @@ mod tests {
     async fn settle(updates: &Arc<Updates>) -> UpdateStatus {
         for _ in 0..500 {
             let status = updates.status().await.unwrap();
-            if status.phase != UpdatePhase::Preparing {
+            if !working(status.phase) {
                 return status;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -957,20 +1027,38 @@ mod tests {
     async fn a_damaged_upload_is_caught_by_its_checksum() {
         let device = device();
         let updates = updates(&device);
-        updates
-            .begin(
-                "a test",
-                "tessaro.wic".to_string(),
-                device.image.len() as u64,
-                "0".repeat(64),
-                device.bmap.clone(),
-            )
-            .await
-            .unwrap();
+        let upload = upload(&device, "0".repeat(64), true);
+        updates.begin("a test", upload).await.unwrap();
         send(&updates, &device, 0).await.unwrap();
         let status = settle(&updates).await;
         assert_eq!(status.phase, UpdatePhase::Failed);
         assert!(status.error.unwrap().contains("damaged"));
+    }
+
+    #[tokio::test]
+    async fn no_verify_skips_the_whole_file_check_but_not_the_bmap() {
+        let device = device();
+        let updates = updates(&device);
+        // A wrong file checksum is not looked at...
+        let unchecked = upload(&device, "0".repeat(64), false);
+        updates.begin("a test", unchecked).await.unwrap();
+        send(&updates, &device, 0).await.unwrap();
+        assert_eq!(settle(&updates).await.phase, UpdatePhase::Ready);
+
+        // ...but a damaged block still fails against the bmap.
+        updates.cancel("a test").await.unwrap();
+        let mut damaged = device.image.clone();
+        damaged[(3 * testing::MIB) as usize] ^= 0xff;
+        let damaged_device = Device {
+            image: damaged,
+            ..device
+        };
+        let damaged_upload = upload(&damaged_device, "0".repeat(64), false);
+        updates.begin("a test", damaged_upload).await.unwrap();
+        send(&updates, &damaged_device, 0).await.unwrap();
+        let status = settle(&updates).await;
+        assert_eq!(status.phase, UpdatePhase::Failed);
+        assert!(status.error.unwrap().contains("bmap"), "bmap check");
     }
 
     #[tokio::test]

@@ -33,6 +33,7 @@ pub struct Send {
     pub wipe_data: bool,
     pub no_reboot: bool,
     pub no_wait: bool,
+    pub no_verify: bool,
     pub yes: bool,
 }
 
@@ -104,6 +105,7 @@ pub fn send(
             size,
             sha256,
             bmap,
+            verify: !options.no_verify,
         },
     )?;
     if begun.phase == UpdatePhase::Receiving {
@@ -187,6 +189,12 @@ fn show(status: &UpdateStatus) {
             mb(status.received),
             mb(status.size),
             percent(status.received, status.size)
+        ),
+        UpdatePhase::Verifying => println!(
+            "verifying {name}: {} of {} ({}%)",
+            mb(status.verified),
+            mb(status.size),
+            percent(status.verified, status.size)
         ),
         UpdatePhase::Preparing => println!(
             "preparing {name}: {} of {} checked ({}%)",
@@ -303,25 +311,46 @@ fn upload(
     Ok(())
 }
 
-/// Poll until the device has checked and staged the image.
+/// Poll until the device has verified and staged the image, with a rate and
+/// an ETA for each step worked out from the device's own progress.
 fn prepare(session: &mut Session, progress: &mut Progress) -> Result<(), String> {
+    // The step being shown, and its rate since it started.
+    let mut step: Option<(UpdatePhase, Rate)> = None;
     loop {
         let status: UpdateStatus = call(session, Command::UpdateStatus)?;
+        let (label, done, total) = match status.phase {
+            UpdatePhase::Verifying => ("verifying", status.verified, status.size),
+            UpdatePhase::Preparing => ("preparing", status.prepared, status.to_prepare),
+            _ => ("", 0, 0),
+        };
         match status.phase {
-            UpdatePhase::Preparing => {
-                if status.to_prepare > 0 {
+            UpdatePhase::Verifying | UpdatePhase::Preparing => {
+                if step.as_ref().map(|(phase, _)| *phase) != Some(status.phase) {
+                    if let Some((UpdatePhase::Verifying, rate)) = &step {
+                        progress.done(&format!(
+                            "verified   {} in {}",
+                            mb(status.size),
+                            clock(rate.started.elapsed())
+                        ));
+                    }
+                    step = Some((status.phase, Rate::new(done)));
+                }
+                let rate = &mut step.as_mut().expect("set just above").1;
+                if total > 0 {
+                    let (speed, eta) = rate.update(done, total);
                     progress.show(
                         &format!(
-                            "preparing  {}/{} checked  {:>3}%",
-                            mb(status.prepared),
-                            mb(status.to_prepare),
-                            percent(status.prepared, status.to_prepare)
+                            "{label:<10} {}/{}  {:>3}%  {}/s  ETA {eta}",
+                            mb(done),
+                            mb(total),
+                            percent(done, total),
+                            mb(speed as u64),
                         ),
-                        status.prepared,
-                        status.to_prepare,
+                        done,
+                        total,
                     );
                 } else {
-                    progress.show("preparing  checking the upload", 0, 1);
+                    progress.show(&format!("{label:<10} starting"), 0, 1);
                 }
                 std::thread::sleep(Duration::from_secs(1));
             }
@@ -463,7 +492,7 @@ impl Rate {
             return (0.0, "--:--".to_string());
         }
         let speed = (done - before) as f64 / seconds;
-        let left = Duration::from_secs_f64((total - done) as f64 / speed);
+        let left = Duration::from_secs_f64(total.saturating_sub(done) as f64 / speed);
         (speed, clock(left))
     }
 }

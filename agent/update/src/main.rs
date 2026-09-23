@@ -2,7 +2,10 @@
 //!
 //! Called by the initramfs hook (`/init.d/80-tessaro_update`) with the
 //! staging directory on the mounted `/data`, the root partition's device
-//! node and the mounted ESP. Everything it prints goes to the console.
+//! node and the mounted ESP. Everything it prints goes to the console, and
+//! to the screen as well where the console is only a serial port (the Pi's
+//! `console=serial0`): a technician looking at a kiosk that is rewriting its
+//! own disk has to see that it is, or the power gets pulled mid-write.
 //!
 //! ```text
 //! tessaro-flash apply --dir DIR --root DEV --esp DIR [--data-device DEV --data-mount DIR]
@@ -18,6 +21,8 @@
 //! which the kernel does not set for /init - the initramfs hook exports it.
 
 use std::collections::HashMap;
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, Stdout, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -33,7 +38,10 @@ fn main() -> ExitCode {
         return usage();
     };
     let path = |name: &str| options.get(name).map(PathBuf::from);
-    let mut console = std::io::stdout();
+    let mut console = Console {
+        out: io::stdout(),
+        screen: screen(),
+    };
 
     match command.as_str() {
         "apply" => {
@@ -73,6 +81,48 @@ fn main() -> ExitCode {
         }
         _ => usage(),
     }
+}
+
+/// stdout, which is `/dev/console`, plus the screen when that is not
+/// already one of the consoles.
+struct Console {
+    out: Stdout,
+    screen: Option<File>,
+}
+
+impl Write for Console {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if let Some(screen) = self.screen.as_mut() {
+            // Best effort: the screen is a courtesy, the console the record.
+            let _ = screen.write_all(buf);
+        }
+        self.out.write_all(buf)?;
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        if let Some(screen) = self.screen.as_mut() {
+            let _ = screen.flush();
+        }
+        self.out.flush()
+    }
+}
+
+/// The first virtual terminal, unless a virtual terminal is already a
+/// console (`console=tty0` on x86), where writing it again would print
+/// every line twice. `/sys/class/tty/console/active` names them: `ttyS0
+/// tty0` on qemu, `ttyS0` alone on the Pi.
+fn screen() -> Option<File> {
+    let active = fs::read_to_string("/sys/class/tty/console/active").unwrap_or_default();
+    let on_screen = active.split_whitespace().any(|console| {
+        console
+            .strip_prefix("tty")
+            .is_some_and(|number| number.parse::<u32>().is_ok())
+    });
+    if on_screen {
+        return None;
+    }
+    OpenOptions::new().write(true).open("/dev/tty1").ok()
 }
 
 /// `--name value` pairs, nothing else.

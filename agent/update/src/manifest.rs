@@ -106,4 +106,13 @@ pub struct Upload {
     pub size: u64,
     pub sha256: String,
     pub bmap: String,
+    /// Check the whole file against `sha256` once it is in, before
+    /// preparing. Off, only the bmap's per-range checksums guard it - which
+    /// still cover every block that will be written.
+    #[serde(default = "yes")]
+    pub verify: bool,
+}
+
+fn yes() -> bool {
+    true
 }

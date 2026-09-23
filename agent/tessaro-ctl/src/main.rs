@@ -249,6 +249,12 @@ enum UpdateCmd {
         /// Do not wait for the device to come back.
         #[arg(long)]
         no_wait: bool,
+        /// Skip the device's check of the whole upload against its SHA-256
+        /// before preparing it. The bmap's checksums still cover every block
+        /// that is written. Needs a device on an image that knows the flag;
+        /// an older one checks anyway.
+        #[arg(long)]
+        no_verify: bool,
         #[arg(long, short)]
         yes: bool,
     },
@@ -589,6 +595,7 @@ fn run(cli: Cli) -> Result<(), String> {
                 wipe_data,
                 no_reboot,
                 no_wait,
+                no_verify,
                 yes,
             } => {
                 let options = update::Send {
@@ -597,6 +604,7 @@ fn run(cli: Cli) -> Result<(), String> {
                     wipe_data,
                     no_reboot,
                     no_wait,
+                    no_verify,
                     yes,
                 };
                 match update::send(&mut session, &target, &nodes, options, json)? {

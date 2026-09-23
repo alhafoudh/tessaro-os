@@ -160,6 +160,10 @@ pub enum Command {
         sha256: String,
         /// The `.wic.bmap`, verbatim.
         bmap: String,
+        /// Check the whole upload against `sha256` before preparing it.
+        /// The bmap's per-range checksums are checked either way.
+        #[serde(default = "yes")]
+        verify: bool,
     },
     /// The next piece of the upload, starting at `offset`, base64. At most
     /// `UPDATE_CHUNK` bytes before encoding.
@@ -230,7 +234,11 @@ pub enum UpdatePhase {
     Idle,
     /// Part of the image has arrived.
     Receiving,
-    /// All of it has; the device is checking it and staging it.
+    /// All of it has; the device is checking the whole file against its
+    /// SHA-256 (`verified` of `size`). Skipped with `verify: false`.
+    Verifying,
+    /// Checked; the device is staging the boot and root partitions,
+    /// checking each bmap range as it goes (`prepared` of `to_prepare`).
     Preparing,
     /// Staged and verified; waiting for `update-commit`.
     Ready,
@@ -260,6 +268,11 @@ pub struct UpdateStatus {
     pub name: Option<String>,
     pub size: u64,
     pub received: u64,
+    /// Bytes of the upload checked against its SHA-256, of `size`: the first
+    /// step of preparing, skipped with `verify: false`. Defaulted for older
+    /// devices, which do not report it.
+    #[serde(default)]
+    pub verified: u64,
     /// Mapped bytes of the boot and root partitions checked and staged, of
     /// `to_prepare`.
     pub prepared: u64,

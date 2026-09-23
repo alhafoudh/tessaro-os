@@ -1056,9 +1056,11 @@ the boot and root partitions.
    it is acknowledged. The same command run again resumes from the last byte
    the device has. The partition table is checked against the device's own
    after the first chunk, so a wrong image fails in seconds, not after 270 MB.
-2. **Prepare**, in the agent, on a thread of its own at idle CPU and I/O
-   priority while the kiosk keeps running: the whole file against its
-   SHA-256, then one pass over the decompressed image that keeps the
+2. **Verify, then prepare**, in the agent, on a thread of its own at idle
+   CPU and I/O priority while the kiosk keeps running. `verifying` checks the
+   whole file against its SHA-256 (`update send --no-verify` skips it - the
+   bmap's checksums below still cover every block that gets written);
+   `preparing` is one pass over the decompressed image that keeps the
    bmap-mapped parts of p1 and p2 - each range checked against the bmap's
    own SHA-256 - in sparse `root.img`/`boot.img`, re-cut into 4 MiB chunks
    with checksums of their own (`manifest.json`). The kernel is copied out

@@ -43,6 +43,7 @@ use crate::store::Store;
 use crate::systemd::Bus;
 use crate::updates::Updates;
 use crate::watchdog::Heartbeat;
+use update::manifest::Upload;
 
 /// Any one piece of file work: a store update, a render, a shadow rewrite.
 /// Milliseconds normally; past this the disk is the problem.
@@ -260,8 +261,9 @@ impl Control {
                 size,
                 sha256,
                 bmap,
+                verify,
             } => self
-                .update_begin(caller, name, size, sha256, bmap)
+                .update_begin(caller, name, size, sha256, bmap, verify)
                 .await
                 .into(),
             Command::UpdateChunk { offset, data } => self.updates.chunk(offset, data).await.into(),
@@ -287,9 +289,17 @@ impl Control {
         size: u64,
         sha256: String,
         bmap: String,
+        verify: bool,
     ) -> Result<protocol::UpdateBegun, String> {
         let who = caller.describe();
-        self.updates.begin(&who, name, size, sha256, bmap).await
+        let upload = Upload {
+            name,
+            size,
+            sha256,
+            bmap,
+            verify,
+        };
+        self.updates.begin(&who, upload).await
     }
 
     // --- reading -----------------------------------------------------------
