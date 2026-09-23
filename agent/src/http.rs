@@ -1,20 +1,62 @@
 //! The one HTTP client, behind a trait.
 //!
 //! Two call sites use it: the reachability probe (which may be https, against
-//! the real internet) and CDP's `/json/list` (plaintext, loopback). They get
-//! separate instances because their timeouts differ - the probe distinguishes
-//! connect from read, CDP uses one number for everything.
+//! the real internet) and the CDP session's `/json/list` (plaintext,
+//! loopback). They get separate instances because their timeouts differ.
 //!
 //! The trait exists so `Probe`'s redirect walk and its error-to-message
 //! mapping can be tested without a network or a test server. Those messages
 //! are what a technician reads on the serial console, so they are worth
 //! testing.
+//!
+//! It is hyper's low-level client, not a batteries-included one, and four
+//! things follow from that which are easy to get wrong:
+//!
+//! 1. **hyper adds no `Host` header.** Without one most servers answer 400,
+//!    which the probe would faithfully report as "server answered HTTP 400" -
+//!    a plausible-looking wrong answer. `exchange` sets `Host` and
+//!    `User-Agent` itself.
+//! 2. **The connection future has to be driven and then reaped.** `handshake`
+//!    returns a request handle and a connection future; the future must be
+//!    spawned or the request never completes, and aborted afterwards or every
+//!    probe leaks a task. The no-naked-awaits rule does not catch this class,
+//!    so there is a test for it.
+//! 3. **No redirects, no pooling.** The probe walks redirects by hand so a 3xx
+//!    without a `Location` and a loop stay distinguishable in the journal, and
+//!    one connection per request means every probe proves a *fresh*
+//!    connection works.
+//! 4. **The body is capped.** hyper has no bound of its own. The probe only
+//!    needs the status, so the body is truncated at the cap, never an error.
+//!
+//! Every phase - DNS, connect, TLS, handshake, response, body - is its own
+//! `within()`, so each reaches the journal under its own name and each pledges
+//! its own budget to the watchdog.
+//!
+//! **TLS is openssl, through native-tls, and there are two ways to get it
+//! wrong quietly.** A missing provider used to be the silent one (ureq linked
+//! cleanly without libssl and panicked on the first https request); with
+//! native-tls used directly that is now a link error. The silent one now is
+//! an https URL that never takes the TLS path: a plaintext GET to port 443
+//! fails like a dead site, and the device sits on the offline page forever.
+//! Both have a test. `readelf -d` on the built binary should always show
+//! `libssl.so.3`.
 
 use std::io::ErrorKind;
+use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 
-use ureq::tls::{RootCerts, TlsConfig, TlsProvider};
-use ureq::Agent;
+use async_trait::async_trait;
+use bytes::Bytes;
+use http_body_util::{BodyExt, Empty};
+use hyper::body::Incoming;
+use hyper::header::{HOST, LOCATION, USER_AGENT as USER_AGENT_HEADER};
+use hyper::Request;
+use hyper_util::rt::TokioIo;
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::net::TcpStream;
+use tokio::task::JoinHandle;
+
+use crate::watchdog::Heartbeat;
 
 pub const USER_AGENT: &str = "tessaro-agent";
 
@@ -34,6 +76,11 @@ pub enum HttpError {
     InvalidUrl,
     #[error("DNS did not resolve the host")]
     Dns,
+    /// The resolver took longer than the connect budget. Its own variant
+    /// because "timed out" would point at the web server, and a nameserver
+    /// that swallows queries is the realistic way to stall this probe.
+    #[error("DNS did not answer")]
+    DnsTimeout,
     #[error("connection refused")]
     ConnectionRefused,
     #[error("network unreachable")]
@@ -50,60 +97,194 @@ pub enum HttpError {
     Other(String),
 }
 
+#[async_trait(?Send)]
 pub trait HttpGet {
-    fn get(&self, url: &str) -> Result<HttpResponse, HttpError>;
+    async fn get(&self, url: &str) -> Result<HttpResponse, HttpError>;
 }
 
-pub struct UreqHttp {
-    agent: Agent,
+/// Whatever carries the request: a plain socket or a TLS stream over one.
+trait Io: AsyncRead + AsyncWrite + Unpin + Send {}
+impl<T: AsyncRead + AsyncWrite + Unpin + Send> Io for T {}
+
+pub struct HyperHttp {
+    connect_timeout: Duration,
+    read_timeout: Duration,
+    max_body: usize,
+    heartbeat: Heartbeat,
+    tls: Result<tokio_native_tls::TlsConnector, String>,
 }
 
-impl UreqHttp {
-    /// `connect_timeout` and `read_timeout` are seconds.
-    pub fn new(connect_timeout: i64, read_timeout: i64) -> Self {
-        let config = Agent::config_builder()
-            .timeout_connect(Some(seconds(connect_timeout)))
-            .timeout_recv_response(Some(seconds(read_timeout)))
-            // Redirects are followed by hand in Probe, so that a 3xx without a
-            // Location and a redirect loop stay distinguishable in the log.
-            .max_redirects(0)
-            // A 404 is a result, not a transport failure: the probe reports
-            // the status and CDP has its own message for it.
-            .http_status_as_error(false)
-            .user_agent(USER_AGENT)
-            // NativeTls means openssl, and PlatformVerifier means openssl's
-            // own default store - the device's /etc/ssl/certs, via
-            // ca-certificates. Not RootCerts::WebPki, which would use the
-            // Mozilla roots compiled into this binary and freeze the trust
-            // store at build time.
-            .tls_config(
-                TlsConfig::builder()
-                    .provider(TlsProvider::NativeTls)
-                    .root_certs(RootCerts::PlatformVerifier)
-                    .build(),
-            )
-            .build();
+impl HyperHttp {
+    /// `connect_timeout` and `read_timeout` are seconds. The first covers
+    /// DNS, the TCP connect, the TLS handshake and the HTTP handshake; the
+    /// second the response headers and, separately, the body.
+    pub fn new(
+        connect_timeout: i64,
+        read_timeout: i64,
+        max_body: usize,
+        heartbeat: Heartbeat,
+    ) -> Self {
+        // native-tls means openssl here, with openssl's default verify paths:
+        // the device's /etc/ssl/certs from ca-certificates. That is the
+        // platform verifier by construction - there is no compiled-in root
+        // store to pick by mistake.
+        let tls = native_tls::TlsConnector::new()
+            .map(tokio_native_tls::TlsConnector::from)
+            .map_err(|err| err.to_string());
 
         Self {
-            agent: config.new_agent(),
+            connect_timeout: seconds(connect_timeout),
+            read_timeout: seconds(read_timeout),
+            max_body,
+            heartbeat,
+            tls,
         }
     }
-}
 
-impl HttpGet for UreqHttp {
-    fn get(&self, url: &str) -> Result<HttpResponse, HttpError> {
-        let mut response = self.agent.get(url).call().map_err(classify)?;
+    /// The whole request. An inherent method rather than only the trait's,
+    /// because the trait's futures are `!Send` and the CDP session driver
+    /// calls this from a spawned task.
+    pub async fn fetch(&self, url: &str) -> Result<HttpResponse, HttpError> {
+        let target = Target::parse(url).ok_or(HttpError::InvalidUrl)?;
+        let stream = self.connect(&target).await?;
+
+        let io: Box<dyn Io> = if target.https {
+            self.tls_handshake(&target, stream).await?
+        } else {
+            Box::new(stream)
+        };
+
+        self.exchange(&target, io).await
+    }
+
+    async fn connect(&self, target: &Target) -> Result<TcpStream, HttpError> {
+        let addresses: Vec<SocketAddr> = match target.host.parse::<IpAddr>() {
+            Ok(ip) => vec![SocketAddr::new(ip, target.port)],
+            Err(_) => {
+                // tokio's lookup_host is getaddrinfo on a blocking thread. The
+                // deadline frees *us*; the thread finishes on its own, bounded
+                // by glibc's resolver (timeout:5 attempts:2) - this image has
+                // no nss-resolve in nsswitch.conf, so there is no unbounded
+                // call behind it.
+                let lookup = tokio::net::lookup_host((target.host.as_str(), target.port));
+                match self
+                    .heartbeat
+                    .within("DNS lookup", self.connect_timeout, lookup)
+                    .await
+                {
+                    Err(_) => return Err(HttpError::DnsTimeout),
+                    Ok(Err(_)) => return Err(HttpError::Dns),
+                    Ok(Ok(found)) => found.collect(),
+                }
+            }
+        };
+        if addresses.is_empty() {
+            return Err(HttpError::Dns);
+        }
+
+        // Every address in turn, all inside one connect budget: "localhost"
+        // is ::1 first, and a refusal there is instant.
+        let attempt = async {
+            let mut last = std::io::Error::new(ErrorKind::NotFound, "no address to connect to");
+            for address in &addresses {
+                // naked: bounded by the connect within() below
+                match TcpStream::connect(address).await {
+                    Ok(stream) => return Ok(stream),
+                    Err(err) => last = err,
+                }
+            }
+            Err(last)
+        };
+
+        match self
+            .heartbeat
+            .within("TCP connect", self.connect_timeout, attempt)
+            .await
+        {
+            Err(_) => Err(HttpError::ConnectTimeout),
+            Ok(Err(err)) => Err(classify_io(&err)),
+            Ok(Ok(stream)) => Ok(stream),
+        }
+    }
+
+    async fn tls_handshake(
+        &self,
+        target: &Target,
+        stream: TcpStream,
+    ) -> Result<Box<dyn Io>, HttpError> {
+        let connector = self.tls.as_ref().map_err(|_| HttpError::Tls)?;
+        let handshake = connector.connect(&target.host, stream);
+
+        match self
+            .heartbeat
+            .within("TLS handshake", self.connect_timeout, handshake)
+            .await
+        {
+            Err(_) => Err(HttpError::ConnectTimeout),
+            // Anything that fails here is TLS, whatever the text says - a
+            // plaintext server answering on 443 included.
+            Ok(Err(err)) => Err(match classify_text(&err.to_string()) {
+                HttpError::CertificateVerification => HttpError::CertificateVerification,
+                _ => HttpError::Tls,
+            }),
+            Ok(Ok(stream)) => Ok(Box::new(stream)),
+        }
+    }
+
+    async fn exchange(&self, target: &Target, io: Box<dyn Io>) -> Result<HttpResponse, HttpError> {
+        let handshake = hyper::client::conn::http1::handshake(TokioIo::new(io));
+        let (mut sender, connection) = match self
+            .heartbeat
+            .within("HTTP handshake", self.connect_timeout, handshake)
+            .await
+        {
+            Err(_) => return Err(HttpError::ConnectTimeout),
+            Ok(Err(err)) => return Err(HttpError::Other(err.to_string())),
+            Ok(Ok(pair)) => pair,
+        };
+
+        // Driven by a task of its own - the request never completes without
+        // it - and aborted on the way out, whichever way that is, so no probe
+        // leaves a task behind.
+        let _driver = AbortOnDrop(tokio::spawn(connection));
+
+        let request = Request::get(target.path.as_str())
+            .header(HOST, target.authority.as_str())
+            .header(USER_AGENT_HEADER, USER_AGENT)
+            .body(Empty::<Bytes>::new())
+            .map_err(|_| HttpError::InvalidUrl)?;
+
+        let response = match self
+            .heartbeat
+            .within(
+                "HTTP response",
+                self.read_timeout,
+                sender.send_request(request),
+            )
+            .await
+        {
+            Err(_) => return Err(HttpError::ReadTimeout),
+            Ok(Err(err)) => return Err(classify_text(&err.to_string())),
+            Ok(Ok(response)) => response,
+        };
 
         let status = response.status().as_u16();
         let location = response
             .headers()
-            .get("location")
+            .get(LOCATION)
             .and_then(|value| value.to_str().ok())
             .map(str::to_string);
-        let body = response
-            .body_mut()
-            .read_to_string()
-            .map_err(|err| HttpError::Other(err.to_string()))?;
+
+        let body = read_body(response.into_body(), self.max_body);
+        let body = match self
+            .heartbeat
+            .within("HTTP body", self.read_timeout, body)
+            .await
+        {
+            Err(_) => return Err(HttpError::ReadTimeout),
+            Ok(Err(err)) => return Err(HttpError::Other(err)),
+            Ok(Ok(body)) => body,
+        };
 
         Ok(HttpResponse {
             status,
@@ -113,37 +294,128 @@ impl HttpGet for UreqHttp {
     }
 }
 
+#[async_trait(?Send)]
+impl HttpGet for HyperHttp {
+    async fn get(&self, url: &str) -> Result<HttpResponse, HttpError> {
+        self.fetch(url).await // naked: every phase inside fetch() has its own within()
+    }
+}
+
+struct AbortOnDrop(JoinHandle<Result<(), hyper::Error>>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+/// Up to `limit` bytes, then stop: the probe wants the status, and a large
+/// home page must not become a failure.
+async fn read_body(mut body: Incoming, limit: usize) -> Result<String, String> {
+    let mut bytes = Vec::new();
+
+    while bytes.len() < limit {
+        // naked: bounded by the body within() in exchange()
+        match body.frame().await {
+            None => break,
+            Some(Err(err)) => return Err(err.to_string()),
+            Some(Ok(frame)) => {
+                if let Ok(data) = frame.into_data() {
+                    bytes.extend_from_slice(&data);
+                }
+            }
+        }
+    }
+
+    bytes.truncate(limit);
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// Just enough URL for a GET, by hand like the rest of `url.rs`.
+#[derive(Debug, PartialEq, Eq)]
+struct Target {
+    https: bool,
+    /// Without brackets, for DNS, the socket address and TLS SNI.
+    host: String,
+    port: u16,
+    /// As written in the URL, for the `Host` header.
+    authority: String,
+    /// Origin-form: path and query, never empty.
+    path: String,
+}
+
+impl Target {
+    fn parse(url: &str) -> Option<Self> {
+        let (https, rest) = if let Some(rest) = url.strip_prefix("https://") {
+            (true, rest)
+        } else if let Some(rest) = url.strip_prefix("http://") {
+            (false, rest)
+        } else {
+            return None;
+        };
+
+        let rest = rest.split('#').next().unwrap_or("");
+        let split = rest.find(['/', '?']).unwrap_or(rest.len());
+        let (authority, tail) = rest.split_at(split);
+        let authority = authority.rsplit('@').next().unwrap_or("");
+
+        let path = if tail.is_empty() {
+            "/".to_string()
+        } else if tail.starts_with('?') {
+            format!("/{tail}")
+        } else {
+            tail.to_string()
+        };
+
+        let default_port = if https { 443 } else { 80 };
+        let (host, port) = match authority.strip_prefix('[') {
+            Some(bracketed) => {
+                let (host, after) = bracketed.split_once(']')?;
+                let port = match after.strip_prefix(':') {
+                    Some(port) => port.parse().ok()?,
+                    None if after.is_empty() => default_port,
+                    None => return None,
+                };
+                (host.to_string(), port)
+            }
+            None => match authority.rsplit_once(':') {
+                Some((host, port)) => (host.to_string(), port.parse().ok()?),
+                None => (authority.to_string(), default_port),
+            },
+        };
+
+        if host.is_empty() {
+            return None;
+        }
+
+        Some(Self {
+            https,
+            host,
+            port,
+            authority: authority.to_string(),
+            path,
+        })
+    }
+}
+
 fn seconds(value: i64) -> Duration {
     Duration::from_secs(value.max(0) as u64)
 }
 
-/// Map a ureq failure onto the classes the probe reports on.
-///
 /// The io::ErrorKind cases are matched structurally because they are the ones
-/// that matter operationally - refused, unreachable, DNS. TLS is matched on
-/// the message: OpenSSL's verification failures are only distinguishable by
-/// their text, and telling "the clock is wrong / the CA store is empty" apart
-/// from "the handshake broke" is worth the string match.
-fn classify(err: ureq::Error) -> HttpError {
-    match err {
-        ureq::Error::Io(inner) => match inner.kind() {
-            ErrorKind::ConnectionRefused => HttpError::ConnectionRefused,
-            ErrorKind::HostUnreachable | ErrorKind::NetworkUnreachable => {
-                HttpError::NetworkUnreachable
-            }
-            ErrorKind::TimedOut => HttpError::ReadTimeout,
-            _ => classify_text(&inner.to_string()),
-        },
-        ureq::Error::Timeout(timeout) => match timeout {
-            ureq::Timeout::Connect => HttpError::ConnectTimeout,
-            _ => HttpError::ReadTimeout,
-        },
-        ureq::Error::HostNotFound => HttpError::Dns,
-        ureq::Error::BadUri(_) => HttpError::InvalidUrl,
-        other => classify_text(&other.to_string()),
+/// that matter operationally - refused, unreachable.
+fn classify_io(err: &std::io::Error) -> HttpError {
+    match err.kind() {
+        ErrorKind::ConnectionRefused => HttpError::ConnectionRefused,
+        ErrorKind::HostUnreachable | ErrorKind::NetworkUnreachable => HttpError::NetworkUnreachable,
+        ErrorKind::TimedOut => HttpError::ConnectTimeout,
+        _ => classify_text(&err.to_string()),
     }
 }
 
+/// TLS is matched on the message: OpenSSL's verification failures are only
+/// distinguishable by their text, and telling "the clock is wrong / the CA
+/// store is empty" apart from "the handshake broke" is worth the string match.
 fn classify_text(text: &str) -> HttpError {
     let lowered = text.to_ascii_lowercase();
 
@@ -170,20 +442,50 @@ fn classify_text(text: &str) -> HttpError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
 
-    /// ureq gates its native-tls connector on `cfg(feature = "native-tls")`
-    /// and, when the configured provider is missing, *panics* the first time
-    /// it is handed an https URL - it does not fail to build and it does not
-    /// return an error. Picking the wrong ureq feature therefore produces a
-    /// binary that passes every other test here, ships without libssl, and
-    /// then logs a panic on every probe of the real (https) kiosk site.
-    ///
-    /// Port 1 on the loopback refuses instantly, so this costs nothing and
-    /// needs no network: reaching a transport error at all means the TLS
-    /// provider was compiled in.
-    #[test]
-    fn https_reaches_the_transport_instead_of_panicking() {
-        let result = UreqHttp::new(1, 1).get("https://127.0.0.1:1/");
+    fn client() -> HyperHttp {
+        HyperHttp::new(2, 2, 1024, Heartbeat::detached())
+    }
+
+    /// A server that answers every connection with `response`, hands back the
+    /// requests it saw, and keeps each socket open afterwards - so a client
+    /// that forgot to reap its connection task would visibly leak it.
+    async fn serve(
+        response: impl Into<String>,
+    ) -> (u16, tokio::sync::mpsc::UnboundedReceiver<String>) {
+        let response: String = response.into();
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let (seen, requests) = tokio::sync::mpsc::unbounded_channel();
+
+        tokio::spawn(async move {
+            let mut open = Vec::new();
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let mut request = Vec::new();
+                let mut buffer = [0u8; 1024];
+                while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                    match socket.read(&mut buffer).await {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => request.extend_from_slice(&buffer[..n]),
+                    }
+                }
+                let _ = seen.send(String::from_utf8_lossy(&request).into_owned());
+                let _ = socket.write_all(response.as_bytes()).await;
+                open.push(socket);
+            }
+        });
+
+        (port, requests)
+    }
+
+    /// Reaching a transport error at all proves the TLS provider is compiled
+    /// in and wired. Port 1 on the loopback refuses instantly, so this costs
+    /// nothing and needs no network.
+    #[tokio::test]
+    async fn https_reaches_the_transport() {
+        let result = client().fetch("https://127.0.0.1:1/").await;
 
         assert!(
             matches!(
@@ -192,5 +494,148 @@ mod tests {
             ),
             "expected a transport failure, got {result:?}"
         );
+    }
+
+    /// The silent failure this client can have: an https URL that is sent in
+    /// the clear. A server that answers plaintext must fail the handshake, not
+    /// come back as a 200 - and not as a vague transport error either.
+    #[tokio::test]
+    async fn an_https_url_is_handshaken_not_sent_in_the_clear() {
+        // A plaintext web server on the https port: it reads whatever arrives
+        // - a ClientHello, which is no HTTP request - and answers it in the
+        // clear at once, as a real one does.
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            let mut buffer = [0u8; 1024];
+            let _ = socket.read(&mut buffer).await;
+            let _ = socket
+                .write_all(b"HTTP/1.1 400 Bad Request\r\ncontent-length: 0\r\n\r\n")
+                .await;
+            let _ = socket.read(&mut buffer).await;
+        });
+
+        let result = client().fetch(&format!("https://127.0.0.1:{port}/")).await;
+
+        assert_eq!(result, Err(HttpError::Tls));
+    }
+
+    #[tokio::test]
+    async fn a_request_carries_host_and_user_agent() {
+        let (port, mut requests) =
+            serve("HTTP/1.1 302 Found\r\nlocation: /next\r\ncontent-length: 2\r\n\r\nhi").await;
+
+        let response = client()
+            .fetch(&format!("http://127.0.0.1:{port}/health?x=1"))
+            .await
+            .expect("response");
+
+        assert_eq!(
+            response,
+            HttpResponse {
+                status: 302,
+                location: Some("/next".to_string()),
+                body: "hi".to_string(),
+            }
+        );
+
+        let request = requests.recv().await.expect("request").to_ascii_lowercase();
+        assert!(
+            request.starts_with("get /health?x=1 http/1.1\r\n"),
+            "{request}"
+        );
+        assert!(
+            request.contains(&format!("host: 127.0.0.1:{port}\r\n")),
+            "{request}"
+        );
+        assert!(
+            request.contains("user-agent: tessaro-agent\r\n"),
+            "{request}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_large_body_is_truncated_not_failed() {
+        let (port, _requests) = serve(format!(
+            "HTTP/1.1 200 OK\r\ncontent-length: 2000\r\n\r\n{}",
+            "x".repeat(2000)
+        ))
+        .await;
+
+        let response = client()
+            .fetch(&format!("http://127.0.0.1:{port}/"))
+            .await
+            .expect("response");
+
+        assert_eq!(response.status, 200);
+        assert_eq!(response.body.len(), 1024);
+    }
+
+    #[tokio::test]
+    async fn no_probe_leaves_a_task_behind() {
+        let (port, _requests) = serve("HTTP/1.1 200 OK\r\ncontent-length: 0\r\n\r\n").await;
+        let http = client();
+        let url = format!("http://127.0.0.1:{port}/");
+
+        http.fetch(&url).await.expect("warm up");
+        let settle = || async {
+            for _ in 0..20 {
+                tokio::task::yield_now().await;
+            }
+        };
+        settle().await;
+        let before = tokio::runtime::Handle::current()
+            .metrics()
+            .num_alive_tasks();
+
+        for _ in 0..100 {
+            http.fetch(&url).await.expect("response");
+        }
+        settle().await;
+
+        assert_eq!(
+            tokio::runtime::Handle::current()
+                .metrics()
+                .num_alive_tasks(),
+            before
+        );
+    }
+
+    #[test]
+    fn targets_parse_the_way_a_get_needs_them() {
+        let parsed = |url: &str| Target::parse(url);
+
+        assert_eq!(
+            parsed("https://kiosk.test"),
+            Some(Target {
+                https: true,
+                host: "kiosk.test".into(),
+                port: 443,
+                authority: "kiosk.test".into(),
+                path: "/".into(),
+            })
+        );
+        assert_eq!(
+            parsed("http://127.0.0.1:9222/json/list#x"),
+            Some(Target {
+                https: false,
+                host: "127.0.0.1".into(),
+                port: 9222,
+                authority: "127.0.0.1:9222".into(),
+                path: "/json/list".into(),
+            })
+        );
+        assert_eq!(
+            parsed("http://[::1]:8080?q").map(|t| (t.host, t.port, t.path)),
+            Some(("::1".into(), 8080, "/?q".into()))
+        );
+        assert_eq!(
+            parsed("http://user@host/p").map(|t| t.authority),
+            Some("host".into())
+        );
+        assert_eq!(parsed("ftp://kiosk.test/"), None);
+        assert_eq!(parsed("http://"), None);
+        assert_eq!(parsed("http://host:notaport/"), None);
     }
 }

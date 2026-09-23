@@ -1,0 +1,22 @@
+# Enforced by `mise run agent-lint` (clippy --all-targets -D warnings).
+#
+# Two halves of one rule: every wait on the outside world has a deadline, and
+# nothing blocks the one runtime thread.
+#
+# The first half is this list plus the source-grep test in deadline.rs. The
+# list makes `deadline::within` the only timeout in the program, so every
+# deadline names its call in the journal and, from the state machine, pledges
+# it to the watchdog. The grep test covers what clippy cannot see at all - the
+# zbus calls, which `#[zbus::proxy]` generates.
+#
+# The second half matters because the runtime is current-thread: one blocking
+# call stalls the watchdog keepalive with everything else, and systemd
+# restarts the agent. Better to be told here.
+disallowed-methods = [
+    { path = "tokio::time::timeout", reason = "use deadline::within (or Heartbeat::within from the state machine): it names the call in the journal and pledges it to the watchdog" },
+    { path = "tokio::time::timeout_at", reason = "use deadline::within: it names the call in the journal" },
+    { path = "std::thread::sleep", reason = "blocks the only runtime thread; use tokio::time::sleep" },
+    { path = "std::net::ToSocketAddrs::to_socket_addrs", reason = "blocking DNS on the runtime thread, with no deadline; use tokio::net::lookup_host under within()" },
+    { path = "std::net::TcpStream::connect", reason = "blocking connect on the runtime thread; use tokio::net::TcpStream under within()" },
+    { path = "std::net::TcpStream::connect_timeout", reason = "blocking connect on the runtime thread; use tokio::net::TcpStream under within()" },
+]

@@ -24,6 +24,28 @@ StartLimitIntervalSec=0
 [Service]
 Type=simple
 
+# A wedged agent keeps this unit "active" while the kiosk quietly stops being
+# supervised, so systemd watches it. WatchdogSec= alone is enough: systemd 255
+# (src/core/service.c, service_add_extras) sets NotifyAccess=main whenever a
+# watchdog is configured, and passes NOTIFY_SOCKET and WATCHDOG_USEC. Not
+# Type=notify - nothing is ordered after this unit, so it would buy no
+# ordering, and a start job that never saw READY=1 would hang instead.
+#
+# 60s is not a cycle budget. Before every external call the agent pledges when
+# that call will be over, and pings only while the pledge holds
+# (agent/src/watchdog.rs), so the probe timeouts in /etc/default/tessaro-kiosk
+# can be raised without touching this. It is only how long systemd waits after
+# the last ping: the agent pings every 15s, and a real wedge is caught in
+# about 75s - the longest single pledge at the shipped timeouts (the probe's
+# 10s read, plus 5s grace) plus this.
+#
+# A false alarm costs one page reload: killing the agent does not touch the
+# browser (Wants=, not a binding), and the restarted agent re-navigates once.
+# To switch it off on one device: `systemctl edit tessaro-agent`,
+# `WatchdogSec=0`. KIOSK_WATCHDOG=0 keeps it armed but stops the agent judging
+# its own pledges.
+WatchdogSec=60
+
 # Root: it speaks org.freedesktop.systemd1 on the system bus, and it writes the
 # offline page into root-owned /run/tessaro-kiosk. Nothing else needs it.
 User=root

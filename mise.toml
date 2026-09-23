@@ -98,6 +98,23 @@ KIOSK_DEBUG=1 \
     cargo run
 '''
 
+[tasks.agent-e2e]
+description = "Boot the qemux86-64 image and run the agent end-to-end checks against it"
+dir = "{{config_root}}"
+depends = ["unpack"]
+raw = true
+# Boots its own VM (snapshot, host networking so SSH on 127.0.0.1:2222 is
+# reachable), runs every case in test/e2e/agent_e2e.rb, powers off. Pass
+# `-- --keep` to leave the VM up, `-- --only drift,dns` to run a subset;
+# `ruby test/e2e/agent_e2e.rb --list` names the cases.
+run = '''
+[ "$TESSARO_MACHINE" = "qemux86-64" ] || {
+    echo "agent-e2e only works for qemux86-64, not $TESSARO_MACHINE" >&2
+    exit 1
+}
+ruby test/e2e/agent_e2e.rb --boot "$@"
+'''
+
 [tasks.build]
 description = "Build the image for $TESSARO_MACHINE (default qemux86-64)"
 dir = "{{config_root}}"

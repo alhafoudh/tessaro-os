@@ -2,6 +2,8 @@
 //! reachable from this device? The answer is always a `ProbeResult`, never an
 //! error - "the site is down" is the case this program exists for.
 
+use async_trait::async_trait;
+
 use crate::http::{HttpError, HttpGet};
 use crate::log::Log;
 use crate::ports::{ProbeResult, Prober};
@@ -30,6 +32,12 @@ impl<'a, H: HttpGet> Probe<'a, H> {
         match error {
             HttpError::InvalidUrl => "the URL is not valid".to_string(),
             HttpError::Dns => "DNS did not resolve the host".to_string(),
+            // Its own line, not "timed out": a nameserver that swallows the
+            // query is the realistic way to stall this probe, and "timed out
+            // after 10s" would send a technician to the web server instead.
+            HttpError::DnsTimeout => {
+                format!("DNS did not answer within {}s", self.connect_timeout)
+            }
             HttpError::ConnectionRefused => "connection refused".to_string(),
             HttpError::NetworkUnreachable => "network unreachable".to_string(),
             HttpError::ConnectTimeout => {
@@ -46,8 +54,9 @@ impl<'a, H: HttpGet> Probe<'a, H> {
     }
 }
 
+#[async_trait(?Send)]
 impl<H: HttpGet> Prober for Probe<'_, H> {
-    fn call(&self, url: &str) -> ProbeResult {
+    async fn call(&self, url: &str) -> ProbeResult {
         if !is_http(url) {
             return ProbeResult::failed(self.reason_for(HttpError::InvalidUrl));
         }
@@ -59,7 +68,7 @@ impl<H: HttpGet> Prober for Probe<'_, H> {
                 return ProbeResult::failed("redirect loop");
             }
 
-            let response = match self.http.get(&target) {
+            let response = match self.http.get(&target).await {
                 Ok(response) => response,
                 Err(error) => return ProbeResult::failed(self.reason_for(error)),
             };
@@ -130,8 +139,9 @@ mod tests {
         }
     }
 
+    #[async_trait(?Send)]
     impl HttpGet for &FakeHttp {
-        fn get(&self, url: &str) -> Result<HttpResponse, HttpError> {
+        async fn get(&self, url: &str) -> Result<HttpResponse, HttpError> {
             self.requested.borrow_mut().push(url.to_string());
             self.replies
                 .borrow_mut()
@@ -148,7 +158,12 @@ mod tests {
         let log = Log::buffered(true);
         // Replies are popped from the back, so script them in reverse.
         let http = FakeHttp::new(replies.into_iter().rev().collect());
-        let result = probe_with(&log, &http).call(url);
+        // Driven here rather than with #[tokio::test] on every case: the
+        // cases stay about wording and redirects, not about the runtime.
+        let result = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime")
+            .block_on(probe_with(&log, &http).call(url));
         let requested = http.requested.borrow().clone();
         (result, requested)
     }
@@ -231,6 +246,13 @@ mod tests {
         let (result, _) = run(vec![Err(HttpError::Dns)], "http://kiosk.test/health");
 
         assert_eq!(result.reason, "DNS did not resolve the host");
+    }
+
+    #[test]
+    fn a_silent_nameserver_is_named_as_dns_not_as_the_site() {
+        let (result, _) = run(vec![Err(HttpError::DnsTimeout)], "http://kiosk.test/health");
+
+        assert_eq!(result.reason, "DNS did not answer within 5s");
     }
 
     #[test]

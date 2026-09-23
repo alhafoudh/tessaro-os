@@ -27,6 +27,7 @@ Use the mise tasks rather than calling `kas-container` directly:
 | `mise run agent-test` | `cargo test` for the kiosk agent |
 | `mise run agent-lint` | `cargo fmt --check` plus clippy for the agent |
 | `mise run agent-integration` | The agent against a real headless Chromium |
+| `mise run agent-e2e` | Boot the qemu image, provoke each agent behaviour, assert on its journal |
 
 Exit the QEMU serial console with `Ctrl-a x`.
 
@@ -166,8 +167,9 @@ Everything else is `meta-tessaro-distro/recipes-browser/tessaro-kiosk/`:
 * `tessaro-kiosk.service` runs Chromium as the `weston` user, with CDP on
   `127.0.0.1:9222` and the profile on `/data/kiosk/chromium`.
 * `tessaro-agent.service` runs `/usr/bin/tessaro-agent`, the native binary
-  built from `agent/` by this same recipe. Plain `Type=simple`, `User=root`,
-  `Restart=always`. Nothing between it and the system.
+  built from `agent/` by this same recipe. `Type=simple`, `User=root`,
+  `Restart=always`, and `WatchdogSec=60` - see **The agent's deadlines and
+  watchdog** below.
 * `/usr/lib/tessaro-kiosk/tessaro-kiosk.env` carries the build-time defaults
   (`TESSARO_KIOSK_URL` from `tessaro.conf`), `/etc/default/tessaro-kiosk`
   overrides them and ships entirely **commented out**. **Both units read them
@@ -186,9 +188,10 @@ The agent used to be a Ruby program in a podman container. It is now a Rust
 binary, and podman is gone from the image with it - see **Removing the
 container runtime** below for what that cost. The behaviour did not change: it
 is the same state machine, the same environment variables and the same log
-lines. It watches the browser over **CDP** (`http://127.0.0.1:9222`):
-`/json/list` plus a `Runtime.evaluate` round trip proves the *renderer* is
-alive, `Page.navigate` replaces the old D-Bus `open` action, and the offline
+lines. It watches the browser over **CDP** (`http://127.0.0.1:9222`), on one
+persistent session found through `/json/list`: a `Runtime.evaluate` round
+trip proves the *renderer* is alive, `Page.navigate` replaces the old D-Bus
+`open` action, and the offline
 page is served as `file:///run/tessaro-kiosk/index.html` (the `tessaro://`
 dir-handler died with cog). The restart path is `org.freedesktop.systemd1`
 `RestartUnit` over the system bus - no `systemctl` shell-outs. Same state
@@ -289,8 +292,8 @@ Things to know:
   `--user-data-dir` writable. `d` lines re-apply owner and mode every boot, so
   a device built before this heals itself.
 * **The agent enforces the kiosk *origin*, not the kiosk URL.** Every healthy
-  cycle reads the page's current URL out of `/json/list` - one cheap HTTP
-  round trip, no websocket - and navigates back if the scheme/host/port
+  cycle reads the page's current URL - free, since the CDP session keeps it
+  current from `Page.frameNavigated` - and navigates back if the scheme/host/port
   differs from `KIOSK_URL`'s, logging where it had gone. Same-origin
   sub-pages, query strings and in-page routing are deliberately left alone:
   matching the whole URL would fight the site and loop on any redirect.
@@ -322,18 +325,118 @@ Things to know:
 * **The agent degrades gracefully without a system bus**: every `Units` method
   answers as if the unit were stopped and `restart` returns an error, so the
   same binary runs against `mise run agent-integration` (no bus) and on a
-  device.
-* **TLS is openssl, and getting that wrong is quiet.** `ureq` gates its
-  native-tls connector on `cfg(feature = "native-tls")`; the `native-tls-no-default`
-  variant compiles the crate in, never references it, links without `libssl`
-  and then **panics on the first https request**. The build stays green
-  throughout. `agent/src/http.rs` has a test that makes an https request to
-  `127.0.0.1:1` purely to prove the provider is wired, and
-  `readelf -d` on the built binary should always show `libssl.so.3`.
-* **`RootCerts::PlatformVerifier`, not `WebPki`.** The former uses openssl's
-  default store, which is the image's `/etc/ssl/certs` from `ca-certificates`.
-  The latter would use the Mozilla roots that ureq's `native-tls` feature
-  compiles in, freezing the trust store at build time.
+  device. A browser restart is still noticed there: the CDP session bumps a
+  generation counter when it comes up on a new page target (or the same one
+  after a crash), which the state machine treats exactly like a changed
+  `MainPID`. Before the session existed, with no bus, it was invisible. A
+  reconnect to the *same* live page deliberately does not bump it - that once
+  turned an agent stall into a pointless reload of a public screen.
+* **TLS is openssl, through native-tls used directly, and getting it wrong is
+  quiet.** The HTTP client is hyper's low-level one, not reqwest (which would
+  add ~48 crates, mostly the ICU tables behind `url`'s IDNA, to redo the
+  redirect walk and origin parsing the agent already has). `native_tls` uses
+  openssl's default verify paths - the image's `/etc/ssl/certs` from
+  `ca-certificates` - so there is no compiled-in root store to pick by
+  mistake. A missing provider is a link error now; the *silent* failure left
+  is an https URL that never takes the TLS path and fails like a dead site.
+  `agent/src/http.rs` has a test for each, and `readelf -d` on the built
+  binary should always show `libssl.so.3`. Not rustls: it would freeze the
+  roots at build time, and `ring`/`aws-lc-rs` want a C toolchain and per-arch
+  asm under bitbake.
+
+### The agent's deadlines and watchdog
+
+**Every wait on the outside world has a deadline, and systemd watches the
+agent itself.** Before this, no D-Bus call had a timeout at all (and
+`main_pid()` runs every cycle), and DNS ignored the agent's own connect
+timeout, so a wedged agent could keep its unit `active` while the kiosk went
+unsupervised.
+
+* **`deadline::within` is the only timeout in the program.** `agent/clippy.toml`
+  refuses `tokio::time::timeout` everywhere else, so every deadline names its
+  call in the journal (`the system bus did not answer within 5s`). A
+  source-grep test in `deadline.rs` requires every `.await` in the adapters to
+  be under a `within(..)`, a method of the same adapter, or a
+  `// naked: <reason>` comment - the only check that reaches the zbus calls,
+  which `#[zbus::proxy]` generates and clippy cannot name. Put a `// naked:`
+  comment on its own line above the statement: rustfmt moves one that trails
+  a `{` into the block, where it no longer annotates anything.
+* **The runtime is current-thread on purpose.** A stray blocking call stalls
+  the watchdog keepalive along with everything else, systemd restarts the
+  agent, and the journal says why - so the watchdog is a standing test of the
+  no-blocking-calls rule. `clippy.toml` also refuses `std::thread::sleep` and
+  the blocking `std::net` connect and DNS calls. zbus runs fine on it; its
+  `rt-multi-thread` tokio feature is only compiled in.
+* **The watchdog is fed by pledges, not by a timer.** Before every external
+  call, `Heartbeat::within` publishes when that call will be over; the
+  keepalive task pings only while the pledge holds, and logs
+  `watchdog: <call> is Ns overdue` once before it stops. A timer would keep
+  pinging through a wedge; pinging once per cycle would tie `WatchdogSec` to
+  the probe timeouts in `/etc/default/tessaro-kiosk`. So `WatchdogSec=60` is
+  independent of them, a wedge is caught in about 75s, and waiting between
+  cycles - including the `KIOSK_AGENT_ENABLE=0` park - pledges too, so idle
+  is alive. A pledge is capped at 120s; a configured timeout above that is
+  called out at startup.
+* **`WatchdogSec=` alone is enough on `Type=simple`**: systemd 255 sets
+  `NotifyAccess=main` whenever a watchdog is configured. `sd_notify` is
+  hand-rolled in `notify.rs` (one datagram; no libsystemd). A false alarm
+  costs one page reload - killing the agent does not touch the browser.
+  `KIOSK_WATCHDOG=0` keeps pinging without judging the pledges; `WatchdogSec=0`
+  in a drop-in turns it off. Check it with
+  `systemctl show tessaro-agent -p NotifyAccess,WatchdogUSec,WatchdogTimestamp`.
+* **DNS is bounded by glibc, not only by us.** `lookup_host` is `getaddrinfo`
+  on a blocking thread; the deadline frees the agent, and the thread finishes
+  within glibc's `timeout:5 attempts:2`. That holds because `nsswitch.conf`
+  has no `resolve` module - adding nss-resolve would put an unbounded call
+  behind it. A resolver that swallows queries is reported as
+  `DNS did not answer within 5s`, not as a slow site.
+* **The CDP session reconnects on its own and logs only at debug.** Every
+  command is under `KIOSK_CDP_TIMEOUT`, and a websocket ping every
+  `KIOSK_CDP_PING` seconds tears down a half-open socket after two go
+  unanswered - counted, not timed, so the agent's own stalls are not blamed on
+  the browser. The old
+  one-connection-per-command client could not hang on one, and this must not
+  either. **A crashed renderer does not end the session**, and that is
+  measured, not a preference: a sad tab answers every command with `Target
+  crashed` - `Page.enable` included, so priming a new session against it fails
+  every time - except `Page.navigate`, which brings it back. So the session
+  stays up, bumps the generation, the agent re-navigates, and the tab reloads in
+  seconds instead of the browser being restarted. None of it works without
+  `Inspector.enable`, which is what delivers `Inspector.targetCrashed` at all.
+  A detached target does end the session. The agent waits for the
+  session's first attempt before its first cycle, so an agent restart does
+  not report a healthy browser as silent.
+
+### The agent's end-to-end checks
+
+`mise run agent-e2e` boots the qemux86-64 image and runs
+`test/e2e/agent_e2e.rb` against it: each case provokes one thing the agent
+exists to handle and asserts on the lines it writes to its journal - the site
+going down, the page wandering off the origin, a crashed renderer, a killed
+browser, a wedged browser, an operator-stopped unit, a DNS server that
+swallows queries, the agent itself wedging, a short agent stall, a parked
+agent, SIGTERM. About eight minutes; exits non-zero on any failure and prints
+the journal lines the failing case saw. `ruby test/e2e/agent_e2e.rb --list`
+names the cases, `--only a,b` runs some, `--boot --keep` leaves the VM up, and
+without `--boot` it reuses a VM left up that way.
+
+* **It boots its own VM, not through `mise run run`.** The guest is driven over
+  SSH, and runqemu's slirp forwards `127.0.0.1:2222` - but inside the kas
+  container's network namespace, where `-p` publishing cannot reach it. The
+  harness passes `--network=host` so that loopback is the host's. dropbear's
+  empty root password means no credential is involved.
+* **It retunes the agent for the run** through `/etc/default/tessaro-kiosk`
+  (5s probes, a 15s restart backoff, no periodic refresh) and puts the file
+  back. The VM runs with `snapshot`, so a power-off discards everything anyway.
+* **DevTools is driven from the host** through an SSH tunnel to the guest's
+  `127.0.0.1:9222`, with a small websocket client in the script - the image has
+  no curl or Python. Chromium's DevTools HTTP server answers HTTP/1.0 with
+  nothing at all and holds 1.1 connections open, so the client reads by
+  `Content-Length`.
+* **The guest's BusyBox has `pgrep` but no `pkill`**, and `pgrep -f` also
+  matches the remote shell running the kill, whose command line contains the
+  pattern. The harness brackets one character (`--type=rendere[r]`); unbracketed,
+  `SIGKILL` ended its own SSH session and `SIGSTOP` froze it.
 
 ### Self-test page
 

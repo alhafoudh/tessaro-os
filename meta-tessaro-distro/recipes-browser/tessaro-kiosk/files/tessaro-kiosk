@@ -242,6 +242,9 @@
 #KIOSK_PROBE_INTERVAL_FAIL="10"
 
 # Timeouts for one probe. Keep the total well under KIOSK_PROBE_INTERVAL.
+# Raising them for a slow link is safe: the systemd watchdog follows whatever
+# is set here. The one limit is 120s each - past that the watchdog would call
+# a slow but working probe a hang, and the agent says so at startup.
 #KIOSK_PROBE_CONNECT_TIMEOUT="5"
 #KIOSK_PROBE_TIMEOUT="10"
 
@@ -290,6 +293,33 @@
 # back. It is also inert when KIOSK_URL is not http(s), since a data: or file:
 # URL has no origin to compare against.
 #KIOSK_ENFORCE_ORIGIN="1"
+
+# --- the DevTools session --------------------------------------------------
+#
+# The agent holds one long-lived connection to Chromium. Seconds allowed for a
+# single command to answer - DevTools is on the loopback, so an answer is
+# either immediate or not coming:
+#KIOSK_CDP_TIMEOUT="5"
+
+# How often the connection is pinged; two unanswered pings and it is dropped
+# and rebuilt. And the longest wait between rebuild attempts.
+#KIOSK_CDP_PING="10"
+#KIOSK_CDP_RECONNECT_MAX="15"
+
+# Set to 1 to enable Chromium's DeviceAccess domain on the session, the hook
+# for answering Web Bluetooth choosers without a person present. Nothing acts
+# on it yet.
+#KIOSK_DEVICE_ACCESS="0"
+
+# --- the watchdog ----------------------------------------------------------
+#
+# systemd restarts the agent if it stops making progress (WatchdogSec= in
+# tessaro-agent.service). The agent only answers the watchdog while it is
+# keeping its own deadlines. Set to 0 to have it answer regardless - for a
+# device where the watchdog fires by mistake, while you find out why. To
+# switch the watchdog off entirely use `systemctl edit tessaro-agent` and set
+# WatchdogSec=0 there instead; this file cannot do that.
+#KIOSK_WATCHDOG="1"
 
 # Set to 0 to park the agent without masking the unit - useful while debugging
 # a page, where the periodic refresh would keep stealing the view.

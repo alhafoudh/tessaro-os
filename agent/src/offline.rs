@@ -15,6 +15,8 @@ use std::path::{Path, PathBuf};
 use std::process;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use async_trait::async_trait;
+
 use crate::config::Config;
 use crate::log::Log;
 use crate::ports::OfflinePage;
@@ -52,7 +54,19 @@ impl<'a> Offline<'a> {
     }
 }
 
+/// Staging is a few hundred bytes of local file I/O, done synchronously on
+/// purpose: `tokio::fs` would only wrap the same calls in `spawn_blocking`.
+/// If the disk ever wedges here the runtime stalls with it, the watchdog
+/// keepalive goes quiet, and systemd restarts us - which is the right outcome
+/// for a dying `/data`.
+#[async_trait(?Send)]
 impl OfflinePage for Offline<'_> {
+    async fn stage(&self) -> Option<String> {
+        Offline::stage(self)
+    }
+}
+
+impl Offline<'_> {
     fn stage(&self) -> Option<String> {
         let source = self.source();
         let contents = match fs::read(source) {

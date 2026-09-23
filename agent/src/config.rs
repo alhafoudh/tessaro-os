@@ -59,6 +59,22 @@ pub struct Config {
     pub debug: bool,
 
     pub cdp_url: String,
+    /// The whole budget for one DevTools command. Used to be
+    /// `probe_connect_timeout` doing double duty, so one knob silently moved
+    /// two unrelated budgets.
+    pub cdp_timeout: i64,
+    /// Websocket keepalive on the CDP session; two unanswered pings tear the
+    /// session down, which is what turns a half-open socket into a reconnect.
+    pub cdp_ping: i64,
+    /// Ceiling on the session's reconnect backoff. Under the probe interval on
+    /// purpose, so the session is normally back before a cycle needs it.
+    pub cdp_reconnect_max: i64,
+    /// Send `DeviceAccess.enable` when the session is primed - the hook the
+    /// Web Bluetooth chooser work in TODO item 5 attaches to.
+    pub device_access: bool,
+    /// Judge the loop's pledges before pinging the systemd watchdog. Off still
+    /// pings - see `watchdog::spawn` for why going quiet is not an option.
+    pub watchdog: bool,
 }
 
 impl Config {
@@ -100,7 +116,29 @@ impl Config {
             debug: flag(env, "KIOSK_DEBUG", false),
 
             cdp_url: string(env, "KIOSK_CDP_URL", "http://127.0.0.1:9222"),
+            cdp_timeout: int(env, "KIOSK_CDP_TIMEOUT", 5),
+            cdp_ping: int(env, "KIOSK_CDP_PING", 10),
+            cdp_reconnect_max: int(env, "KIOSK_CDP_RECONNECT_MAX", 15),
+            device_access: flag(env, "KIOSK_DEVICE_ACCESS", false),
+            watchdog: flag(env, "KIOSK_WATCHDOG", true),
         }
+    }
+
+    /// Every configured deadline longer than the watchdog's pledge ceiling.
+    /// Such a call is clamped: if it legitimately runs past the ceiling, the
+    /// watchdog calls it overdue and systemd restarts a working agent. Worth
+    /// one loud line at startup, never a refusal to start.
+    pub fn oversized_budgets(&self) -> Vec<(&'static str, i64)> {
+        let ceiling = crate::watchdog::MAX_PLEDGE.as_secs() as i64;
+
+        [
+            ("KIOSK_PROBE_CONNECT_TIMEOUT", self.probe_connect_timeout),
+            ("KIOSK_PROBE_TIMEOUT", self.probe_timeout),
+            ("KIOSK_CDP_TIMEOUT", self.cdp_timeout),
+        ]
+        .into_iter()
+        .filter(|(_, seconds)| *seconds > ceiling)
+        .collect()
     }
 
     /// The URL the probe checks: an explicit health endpoint when the kiosk
@@ -237,6 +275,33 @@ mod tests {
         let config = config_with(&[("KIOSK_DEBUG", "true")]);
 
         assert!(!config.debug);
+    }
+
+    #[test]
+    fn the_cdp_and_watchdog_keys_default_to_todays_behaviour() {
+        let config = config_with(&[]);
+
+        // 5 is what KIOSK_PROBE_CONNECT_TIMEOUT used to give CDP.
+        assert_eq!(config.cdp_timeout, 5);
+        assert_eq!(config.cdp_ping, 10);
+        assert_eq!(config.cdp_reconnect_max, 15);
+        assert!(!config.device_access);
+        assert!(config.watchdog);
+    }
+
+    #[test]
+    fn the_shipped_budgets_fit_under_the_pledge_ceiling() {
+        assert!(config_with(&[]).oversized_budgets().is_empty());
+    }
+
+    #[test]
+    fn an_enormous_probe_timeout_is_called_out() {
+        let config = config_with(&[("KIOSK_PROBE_TIMEOUT", "300")]);
+
+        assert_eq!(
+            config.oversized_budgets(),
+            vec![("KIOSK_PROBE_TIMEOUT", 300)]
+        );
     }
 
     #[test]

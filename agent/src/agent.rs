@@ -10,13 +10,15 @@
 //! after a browser restart, because a fresh Chromium may be showing anything.
 
 use std::panic::AssertUnwindSafe;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use futures_util::FutureExt;
+use tokio::sync::watch;
 
 use crate::config::Config;
 use crate::log::Log;
 use crate::ports::{Cdp, OfflinePage, ProbeResult, Prober, Units};
+use crate::watchdog::{Heartbeat, GRACE, MAX_PLEDGE};
 
 /// What we believe is on screen. "Unknown" is not ignorance for its own sake -
 /// it is the only honest answer after the browser restarted under us, and it
@@ -28,11 +30,6 @@ pub enum NavState {
     Offline,
 }
 
-/// Sleep in slices this long, so a SIGTERM is noticed well inside systemd's
-/// stop timeout instead of sitting through a ten-minute refresh interval and
-/// then taking a SIGKILL.
-const NAP_SLICE: i64 = 2;
-
 pub struct Agent<'a> {
     config: &'a Config,
     log: &'a Log,
@@ -41,7 +38,12 @@ pub struct Agent<'a> {
     units: &'a dyn Units,
     offline: &'a dyn OfflinePage,
 
-    stop: Arc<AtomicBool>,
+    /// Level-triggered, so a signal that arrived while a cycle was running is
+    /// still seen by the nap that follows it.
+    shutdown: watch::Receiver<bool>,
+    /// The watchdog pledge. Only the waiting between cycles is pledged here;
+    /// every external call pledges itself through its adapter.
+    heartbeat: Heartbeat,
 
     fails: i64,
     ping_fails: i64,
@@ -50,6 +52,8 @@ pub struct Agent<'a> {
     last_nav: i64,
     last_restart: i64,
     last_main_pid: u32,
+    /// The CDP session generation seen last cycle; 0 before the first.
+    last_generation: u64,
     /// Has the browser answered even once since this process started?
     seen_alive: bool,
     /// The origin the browser is allowed to be on. Starts unset, meaning
@@ -61,6 +65,9 @@ pub struct Agent<'a> {
 }
 
 impl<'a> Agent<'a> {
+    // Every argument is one seam of the state machine; bundling them into a
+    // struct would only move the list somewhere else.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         config: &'a Config,
         log: &'a Log,
@@ -68,7 +75,8 @@ impl<'a> Agent<'a> {
         cdp: &'a dyn Cdp,
         units: &'a dyn Units,
         offline: &'a dyn OfflinePage,
-        stop: Arc<AtomicBool>,
+        shutdown: watch::Receiver<bool>,
+        heartbeat: Heartbeat,
     ) -> Self {
         Self {
             config,
@@ -77,7 +85,8 @@ impl<'a> Agent<'a> {
             cdp,
             units,
             offline,
-            stop,
+            shutdown,
+            heartbeat,
             fails: 0,
             ping_fails: 0,
             restart_done: false,
@@ -85,25 +94,27 @@ impl<'a> Agent<'a> {
             last_nav: 0,
             last_restart: 0,
             last_main_pid: 0,
+            last_generation: 0,
             seen_alive: false,
             accepted_origin: None,
             awaiting_landing: false,
         }
     }
 
-    pub fn run(&mut self) {
+    pub async fn run(&mut self) {
         if !self.config.agent_enable {
             // Parked rather than exiting: the unit still shows as running and
             // the reason is in the journal. Useful while debugging a page.
+            // The nap pledges, so a parked agent is not a stalled one.
             self.log.info("KIOSK_AGENT_ENABLE is off; idling");
             while self.running() {
-                self.nap(60);
+                self.nap(60).await;
             }
             return;
         }
 
         if self.config.probe_enabled() {
-            self.offline.stage();
+            self.offline.stage().await;
             self.log.info(format!(
                 "watching {} (probe every {}s, refresh every {}s)",
                 self.config.kiosk_url, self.config.probe_interval, self.config.refresh_interval
@@ -116,14 +127,14 @@ impl<'a> Agent<'a> {
         }
 
         while self.running() {
-            self.cycle(now());
+            self.cycle(now()).await;
 
             let interval = if self.fails > 0 {
                 self.config.probe_interval_fail
             } else {
                 self.config.probe_interval
             };
-            self.nap(interval);
+            self.nap(interval).await;
         }
 
         self.log.info("stopping");
@@ -131,12 +142,12 @@ impl<'a> Agent<'a> {
 
     /// One pass of the loop. Public, and taking an explicit clock, so tests
     /// can drive the whole state machine without sleeping.
-    pub fn cycle(&mut self, now: i64) {
+    pub async fn cycle(&mut self, now: i64) {
         // A bug in one pass must not take the service down with it: systemd
         // would restart us, but the backoff and "one restart per outage"
         // bookkeeping lives in memory and would be lost, which is how a
         // crash-loop turns into the browser being restarted every ten seconds.
-        let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| self.cycle_inner(now)));
+        let outcome = AssertUnwindSafe(self.cycle_inner(now)).catch_unwind().await;
 
         if let Err(payload) = outcome {
             self.log
@@ -144,12 +155,12 @@ impl<'a> Agent<'a> {
         }
     }
 
-    fn cycle_inner(&mut self, now: i64) {
+    async fn cycle_inner(&mut self, now: i64) {
         let config = self.config;
 
         // Liveness first, so navigation failures below are attributed
         // correctly.
-        if self.cdp.alive() {
+        if self.cdp.alive().await {
             // Worth a line: "not answering" is logged below, so without this
             // the journal shows a browser going silent and never coming back.
             if self.ping_fails > 0 && self.seen_alive {
@@ -169,19 +180,41 @@ impl<'a> Agent<'a> {
 
         // A browser that restarted under us is showing whatever its ExecStart
         // URL produced, which we cannot be sure of, so stop claiming to know.
-        let main_pid = self.units.main_pid();
-        if main_pid > 0 && self.last_main_pid > 0 && main_pid != self.last_main_pid {
-            self.log.info(format!(
-                "chromium restarted (pid {main_pid}); will re-navigate"
-            ));
-            self.nav_state = NavState::Unknown;
+        //
+        // Two independent witnesses. A new page generation from the DevTools
+        // session means a new browser, a new page target, or a crashed tab -
+        // never merely a reconnect to the same live page. The
+        // MainPID check catches a restart over the bus - but only when
+        // there IS a bus: in `mise run agent-integration`, or on a device
+        // whose systemd1 is unreachable, main_pid() is 0 and a browser that
+        // died and came back used to be invisible. One `if`, so both firing
+        // in the same cycle log once.
+        let generation = self.cdp.generation();
+        let session_is_new =
+            generation > 0 && self.last_generation > 0 && generation != self.last_generation;
+        if generation > 0 {
+            self.last_generation = generation;
         }
+
+        let main_pid = self.units.main_pid().await;
+        let pid_is_new = main_pid > 0 && self.last_main_pid > 0 && main_pid != self.last_main_pid;
         if main_pid > 0 {
             self.last_main_pid = main_pid;
         }
 
+        if pid_is_new {
+            self.log.info(format!(
+                "chromium restarted (pid {main_pid}); will re-navigate"
+            ));
+            self.nav_state = NavState::Unknown;
+        } else if session_is_new {
+            self.log
+                .info("chromium is showing a new page (restarted or crashed); will re-navigate");
+            self.nav_state = NavState::Unknown;
+        }
+
         let result = if config.probe_enabled() {
-            self.probe.call(config.probe_target())
+            self.probe.call(config.probe_target()).await
         } else {
             // Refresh-only: there is nothing meaningful to probe, so the site
             // counts as up and only the refresh timer drives navigation.
@@ -203,7 +236,7 @@ impl<'a> Agent<'a> {
             // site, or when the refresh timer expires - never on every probe.
             // Unknown counts as a reason to navigate: after a browser restart
             // it may be sitting on its own error page.
-            let drifted = self.drifted_origin();
+            let drifted = self.drifted_origin().await;
             if let Some(url) = &drifted {
                 self.log.info(format!(
                     "chromium is showing {url}; returning to the kiosk URL"
@@ -214,7 +247,7 @@ impl<'a> Agent<'a> {
                 || drifted.is_some()
                 || (config.refresh_interval > 0 && now - self.last_nav >= config.refresh_interval)
             {
-                self.go_live(now);
+                self.go_live(now).await;
             }
         } else {
             self.fails += 1;
@@ -231,7 +264,7 @@ impl<'a> Agent<'a> {
                     || (config.offline_refresh > 0
                         && now - self.last_nav >= config.offline_refresh))
             {
-                self.go_offline(now);
+                self.go_offline(now).await;
             }
 
             // Escalation: down long enough that a wedged web process is worth
@@ -241,10 +274,12 @@ impl<'a> Agent<'a> {
             if !self.restart_done
                 && config.restart_after > 0
                 && self.fails >= config.restart_after
-                && self.restart(
-                    &format!("no successful probe in {} attempts", self.fails),
-                    now,
-                )
+                && self
+                    .restart(
+                        &format!("no successful probe in {} attempts", self.fails),
+                        now,
+                    )
+                    .await
             {
                 self.restart_done = true;
             }
@@ -257,7 +292,8 @@ impl<'a> Agent<'a> {
             self.restart(
                 &format!("no CDP reply after {} attempts", self.ping_fails),
                 now,
-            );
+            )
+            .await;
         }
     }
 
@@ -287,7 +323,7 @@ impl<'a> Agent<'a> {
     /// origin to compare against (`data:`, `file:`), a browser that will not
     /// say, or a page we are not currently claiming to own. "Cannot tell" must
     /// never become a navigation.
-    fn drifted_origin(&mut self) -> Option<String> {
+    async fn drifted_origin(&mut self) -> Option<String> {
         if !self.config.enforce_origin || self.nav_state != NavState::Live {
             return None;
         }
@@ -297,7 +333,7 @@ impl<'a> Agent<'a> {
             None => crate::url::origin(&self.config.kiosk_url)?.to_string(),
         };
 
-        let current = self.cdp.current_url()?;
+        let current = self.cdp.current_url().await?;
         let current_origin = crate::url::origin(&current).map(str::to_string);
 
         // The cycle after we navigated: whatever is on screen is where that
@@ -346,8 +382,8 @@ impl<'a> Agent<'a> {
         }
     }
 
-    fn go_live(&mut self, now: i64) {
-        match self.cdp.navigate(&self.config.kiosk_url) {
+    async fn go_live(&mut self, now: i64) {
+        match self.cdp.navigate(&self.config.kiosk_url).await {
             Ok(()) => {
                 self.nav_state = NavState::Live;
                 self.last_nav = now;
@@ -371,7 +407,7 @@ impl<'a> Agent<'a> {
         }
     }
 
-    fn go_offline(&mut self, now: i64) {
+    async fn go_offline(&mut self, now: i64) {
         if self.config.offline_url == "none" {
             return;
         }
@@ -379,7 +415,7 @@ impl<'a> Agent<'a> {
         // Staged on every use, so dropping a new file into /data/kiosk takes
         // effect without restarting anything.
         let uri = if self.config.offline_url.is_empty() {
-            match self.offline.stage() {
+            match self.offline.stage().await {
                 Some(uri) => uri,
                 None => return,
             }
@@ -387,7 +423,7 @@ impl<'a> Agent<'a> {
             self.config.offline_url.clone()
         };
 
-        match self.cdp.navigate(&uri) {
+        match self.cdp.navigate(&uri).await {
             Ok(()) => {
                 self.nav_state = NavState::Offline;
                 self.last_nav = now;
@@ -403,7 +439,7 @@ impl<'a> Agent<'a> {
         }
     }
 
-    fn restart(&mut self, reason: &str, now: i64) -> bool {
+    async fn restart(&mut self, reason: &str, now: i64) -> bool {
         let unit = &self.config.unit;
 
         if now - self.last_restart < self.config.restart_backoff {
@@ -415,7 +451,7 @@ impl<'a> Agent<'a> {
         // If an operator stopped the unit by hand to look at something, do not
         // fight them. "failed" is still ours to fix - that is systemd giving
         // up, not a person deciding.
-        let state = self.units.active_state();
+        let state = self.units.active_state().await;
         if !matches!(state.as_str(), "active" | "activating" | "failed") {
             self.log
                 .info(format!("{unit} is '{state}'; leaving it alone"));
@@ -427,7 +463,7 @@ impl<'a> Agent<'a> {
         self.last_restart = now;
         self.log.info(format!("restarting {unit}: {reason}"));
 
-        match self.units.restart() {
+        match self.units.restart().await {
             Ok(()) => {
                 self.ping_fails = 0;
                 // Whatever is on screen now, we no longer know what it is.
@@ -442,15 +478,36 @@ impl<'a> Agent<'a> {
     }
 
     fn running(&self) -> bool {
-        !self.stop.load(Ordering::Relaxed)
+        !*self.shutdown.borrow()
     }
 
-    fn nap(&self, seconds: i64) {
-        let mut left = seconds;
-        while left > 0 && self.running() {
-            let slice = left.min(NAP_SLICE);
-            std::thread::sleep(Duration::from_secs(slice as u64));
-            left -= slice;
+    /// Sleep until the interval is up or a signal arrives, whichever is first.
+    /// The wake-up is exact, so a SIGTERM during a ten-minute refresh wait is
+    /// honoured immediately rather than after a nap slice.
+    ///
+    /// The wait is pledged to the watchdog in chunks no longer than the pledge
+    /// ceiling, which is what makes idle count as alive: neither
+    /// `KIOSK_PROBE_INTERVAL` nor the `KIOSK_AGENT_ENABLE=0` park needs any
+    /// headroom in `WatchdogSec=`.
+    async fn nap(&mut self, seconds: i64) {
+        let mut left = Duration::from_secs(seconds.max(0) as u64);
+
+        while !left.is_zero() && self.running() {
+            let slice = left.min(MAX_PLEDGE);
+            self.heartbeat
+                .pledge("waiting for the next cycle", slice + GRACE);
+
+            tokio::select! {
+                _ = tokio::time::sleep(slice) => left -= slice,
+                changed = self.shutdown.changed() => {
+                    // A dropped sender resolves changed() immediately, every
+                    // time. Sleep the slice out instead of spinning on it.
+                    if changed.is_err() {
+                        tokio::time::sleep(slice).await;
+                        left -= slice;
+                    }
+                }
+            }
         }
     }
 }
@@ -477,6 +534,7 @@ mod tests {
     use super::*;
     use crate::config::test_support::config_with;
     use crate::error::{Error, Result};
+    use async_trait::async_trait;
     use std::cell::{Cell, RefCell};
 
     const OFFLINE_URI: &str = "file:///run/tessaro-kiosk/index.html";
@@ -492,6 +550,8 @@ mod tests {
         /// Where the site sends every navigation, as a real one does when it
         /// redirects apex to www.
         redirect_to: RefCell<Option<String>>,
+        /// The DevTools session generation; bumped by `reconnected`.
+        generation: Cell<u64>,
     }
 
     impl Default for FakeCdp {
@@ -503,21 +563,34 @@ mod tests {
                 navigate_fails: Cell::new(false),
                 current_url: RefCell::new(Some("http://kiosk.test/".to_string())),
                 redirect_to: RefCell::new(None),
+                generation: Cell::new(1),
             }
         }
     }
 
+    impl FakeCdp {
+        /// The browser went away and came back on a new page.
+        fn reconnected(&self) {
+            self.generation.set(self.generation.get() + 1);
+        }
+    }
+
+    #[async_trait(?Send)]
     impl Cdp for FakeCdp {
-        fn alive(&self) -> bool {
+        async fn alive(&self) -> bool {
             assert!(!self.panics.get(), "the browser exploded");
             self.alive.get()
         }
 
-        fn current_url(&self) -> Option<String> {
+        async fn current_url(&self) -> Option<String> {
             self.current_url.borrow().clone()
         }
 
-        fn navigate(&self, url: &str) -> Result<()> {
+        fn generation(&self) -> u64 {
+            self.generation.get()
+        }
+
+        async fn navigate(&self, url: &str) -> Result<()> {
             if self.navigate_fails.get() {
                 return Err(Error::Cdp("navigate refused".to_string()));
             }
@@ -550,16 +623,17 @@ mod tests {
         }
     }
 
+    #[async_trait(?Send)]
     impl Units for FakeUnits {
-        fn active_state(&self) -> String {
+        async fn active_state(&self) -> String {
             self.active_state.borrow().clone()
         }
 
-        fn main_pid(&self) -> u32 {
+        async fn main_pid(&self) -> u32 {
             self.main_pid.get()
         }
 
-        fn restart(&self) -> Result<()> {
+        async fn restart(&self) -> Result<()> {
             self.restarts.set(self.restarts.get() + 1);
             Ok(())
         }
@@ -587,8 +661,9 @@ mod tests {
         }
     }
 
+    #[async_trait(?Send)]
     impl Prober for FakeProbe {
-        fn call(&self, _url: &str) -> ProbeResult {
+        async fn call(&self, _url: &str) -> ProbeResult {
             self.result.borrow().clone()
         }
     }
@@ -598,8 +673,9 @@ mod tests {
         staged: Cell<usize>,
     }
 
+    #[async_trait(?Send)]
     impl OfflinePage for FakeOffline {
-        fn stage(&self) -> Option<String> {
+        async fn stage(&self) -> Option<String> {
             self.staged.set(self.staged.get() + 1);
             Some(OFFLINE_URI.to_string())
         }
@@ -614,6 +690,10 @@ mod tests {
         units: FakeUnits,
         probe: FakeProbe,
         offline: FakeOffline,
+        /// Kept alive deliberately: a dropped sender makes every
+        /// `Receiver::changed()` resolve at once. Nothing cycle-driven naps
+        /// today, but the day a test does, this is why it still works.
+        stop: watch::Sender<bool>,
     }
 
     impl World {
@@ -627,6 +707,7 @@ mod tests {
                 units: FakeUnits::default(),
                 probe: FakeProbe::default(),
                 offline: FakeOffline::default(),
+                stop: watch::channel(false).0,
             }
         }
 
@@ -638,7 +719,8 @@ mod tests {
                 &self.cdp,
                 &self.units,
                 &self.offline,
-                Arc::new(AtomicBool::new(false)),
+                self.stop.subscribe(),
+                Heartbeat::detached(),
             )
         }
 
@@ -647,155 +729,155 @@ mod tests {
         }
     }
 
-    #[test]
-    fn the_first_cycle_navigates_to_the_kiosk_url() {
+    #[tokio::test]
+    async fn the_first_cycle_navigates_to_the_kiosk_url() {
         let world = World::new(&[]);
         let mut agent = world.agent();
 
-        agent.cycle(1000);
+        agent.cycle(1000).await;
 
         assert_eq!(world.navigations(), vec!["http://kiosk.test/"]);
     }
 
-    #[test]
-    fn a_healthy_kiosk_is_not_re_navigated_every_probe() {
+    #[tokio::test]
+    async fn a_healthy_kiosk_is_not_re_navigated_every_probe() {
         let world = World::new(&[]);
         let mut agent = world.agent();
 
-        agent.cycle(1000);
-        agent.cycle(1030);
+        agent.cycle(1000).await;
+        agent.cycle(1030).await;
 
         assert_eq!(world.navigations().len(), 1);
     }
 
-    #[test]
-    fn the_refresh_interval_re_navigates() {
+    #[tokio::test]
+    async fn the_refresh_interval_re_navigates() {
         let world = World::new(&[]);
         let mut agent = world.agent();
 
-        agent.cycle(1000);
-        agent.cycle(1600);
+        agent.cycle(1000).await;
+        agent.cycle(1600).await;
 
         assert_eq!(world.navigations().len(), 2);
     }
 
-    #[test]
-    fn the_offline_page_waits_for_the_fail_threshold() {
+    #[tokio::test]
+    async fn the_offline_page_waits_for_the_fail_threshold() {
         let world = World::new(&[]);
         let mut agent = world.agent();
         world.probe.fail();
 
-        agent.cycle(1000);
+        agent.cycle(1000).await;
         assert!(world.navigations().is_empty());
 
-        agent.cycle(1010);
+        agent.cycle(1010).await;
         assert_eq!(world.navigations(), vec![OFFLINE_URI]);
     }
 
-    #[test]
-    fn the_offline_page_is_not_re_navigated_before_its_own_interval() {
+    #[tokio::test]
+    async fn the_offline_page_is_not_re_navigated_before_its_own_interval() {
         let world = World::new(&[]);
         let mut agent = world.agent();
         world.probe.fail();
 
-        agent.cycle(1000);
-        agent.cycle(1010);
-        agent.cycle(1020);
+        agent.cycle(1000).await;
+        agent.cycle(1010).await;
+        agent.cycle(1020).await;
 
         assert_eq!(world.navigations().len(), 1);
     }
 
-    #[test]
-    fn recovery_navigates_back_to_the_kiosk_url() {
+    #[tokio::test]
+    async fn recovery_navigates_back_to_the_kiosk_url() {
         let world = World::new(&[]);
         let mut agent = world.agent();
         world.probe.fail();
 
-        agent.cycle(1000);
-        agent.cycle(1010);
+        agent.cycle(1000).await;
+        agent.cycle(1010).await;
         world.probe.succeed();
-        agent.cycle(1020);
+        agent.cycle(1020).await;
 
         assert_eq!(world.navigations(), vec![OFFLINE_URI, "http://kiosk.test/"]);
     }
 
-    #[test]
-    fn a_silent_browser_is_restarted_and_then_re_navigated() {
+    #[tokio::test]
+    async fn a_silent_browser_is_restarted_and_then_re_navigated() {
         let world = World::new(&[]);
         let mut agent = world.agent();
         world.cdp.alive.set(false);
 
-        agent.cycle(1000);
-        agent.cycle(1010);
-        agent.cycle(1020);
+        agent.cycle(1000).await;
+        agent.cycle(1010).await;
+        agent.cycle(1020).await;
 
         assert_eq!(world.units.restarts.get(), 1);
 
         // The restart left nav_state unknown, so the next healthy cycle has to
         // navigate again rather than assume the page survived.
-        agent.cycle(1030);
+        agent.cycle(1030).await;
         assert_eq!(world.navigations().len(), 2);
     }
 
-    #[test]
-    fn restarts_respect_the_backoff() {
+    #[tokio::test]
+    async fn restarts_respect_the_backoff() {
         let world = World::new(&[]);
         let mut agent = world.agent();
         world.cdp.alive.set(false);
 
         for now in [1000, 1010, 1020] {
-            agent.cycle(now);
+            agent.cycle(now).await;
         }
         assert_eq!(world.units.restarts.get(), 1);
 
         for now in (1030..=1080).step_by(10) {
-            agent.cycle(now);
+            agent.cycle(now).await;
         }
         assert_eq!(world.units.restarts.get(), 1);
 
-        agent.cycle(1020 + 301);
+        agent.cycle(1020 + 301).await;
         assert_eq!(world.units.restarts.get(), 2);
     }
 
-    #[test]
-    fn the_network_escalation_fires_once_per_outage() {
+    #[tokio::test]
+    async fn the_network_escalation_fires_once_per_outage() {
         let world = World::new(&[]);
         let mut agent = world.agent();
         world.probe.fail();
 
         let mut clock = 1000;
         for _ in 0..40 {
-            agent.cycle(clock);
+            agent.cycle(clock).await;
             clock += 10;
         }
         assert_eq!(world.units.restarts.get(), 1);
 
         for _ in 0..10 {
-            agent.cycle(clock);
+            agent.cycle(clock).await;
             clock += 10;
         }
         assert_eq!(world.units.restarts.get(), 1);
 
         world.probe.succeed();
-        agent.cycle(clock);
+        agent.cycle(clock).await;
         clock += 10;
         world.probe.fail();
         for _ in 0..40 {
-            agent.cycle(clock);
+            agent.cycle(clock).await;
             clock += 10;
         }
         assert_eq!(world.units.restarts.get(), 2);
     }
 
-    #[test]
-    fn an_operator_stopped_unit_is_left_alone() {
+    #[tokio::test]
+    async fn an_operator_stopped_unit_is_left_alone() {
         let world = World::new(&[]);
         let mut agent = world.agent();
         world.cdp.alive.set(false);
         *world.units.active_state.borrow_mut() = "inactive".to_string();
 
         for now in [1000, 1010, 1020, 1030] {
-            agent.cycle(now);
+            agent.cycle(now).await;
         }
 
         assert_eq!(world.units.restarts.get(), 0);
@@ -806,41 +888,82 @@ mod tests {
             .any(|line| line.contains("leaving it alone")));
     }
 
-    #[test]
-    fn a_new_main_pid_forces_a_re_navigation() {
+    #[tokio::test]
+    async fn a_new_main_pid_forces_a_re_navigation() {
         let world = World::new(&[]);
         let mut agent = world.agent();
 
-        agent.cycle(1000);
+        agent.cycle(1000).await;
         world.units.main_pid.set(77);
-        agent.cycle(1010);
+        agent.cycle(1010).await;
 
         assert_eq!(world.navigations().len(), 2);
     }
 
-    #[test]
-    fn a_non_http_target_runs_refresh_only() {
+    #[tokio::test]
+    async fn a_new_cdp_session_forces_a_re_navigation_even_without_a_bus() {
+        // No bus, as in agent-integration: main_pid() is 0 throughout, so the
+        // session generation is the only thing that can see this restart.
+        let world = World::new(&[]);
+        world.units.main_pid.set(0);
+        let mut agent = world.agent();
+
+        agent.cycle(1000).await;
+        world.cdp.reconnected();
+        agent.cycle(1010).await;
+
+        assert_eq!(world.navigations().len(), 2);
+        assert!(world.log.lines().contains(
+            &"chromium is showing a new page (restarted or crashed); will re-navigate".to_string()
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_new_session_and_a_new_pid_in_one_cycle_log_once() {
+        let world = World::new(&[]);
+        let mut agent = world.agent();
+
+        agent.cycle(1000).await;
+        world.units.main_pid.set(77);
+        world.cdp.reconnected();
+        agent.cycle(1010).await;
+
+        let restarted: Vec<_> = world
+            .log
+            .lines()
+            .into_iter()
+            .filter(|line| line.ends_with("will re-navigate"))
+            .collect();
+        assert_eq!(
+            restarted,
+            vec!["chromium restarted (pid 77); will re-navigate"]
+        );
+        assert_eq!(world.navigations().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_non_http_target_runs_refresh_only() {
         let world = World::new(&[
             ("KIOSK_PROBE_URL", ""),
             ("KIOSK_URL", "data:text/html,<h1>hi</h1>"),
         ]);
         let mut agent = world.agent();
 
-        agent.cycle(1000);
+        agent.cycle(1000).await;
 
         assert_eq!(world.navigations(), vec!["data:text/html,<h1>hi</h1>"]);
         assert_eq!(world.offline.staged.get(), 0);
     }
 
-    #[test]
-    fn a_failed_navigation_counts_towards_the_cdp_escalation() {
+    #[tokio::test]
+    async fn a_failed_navigation_counts_towards_the_cdp_escalation() {
         let world = World::new(&[]);
         let mut agent = world.agent();
         world.cdp.alive.set(false);
         world.cdp.navigate_fails.set(true);
 
-        agent.cycle(1000);
-        agent.cycle(1010);
+        agent.cycle(1000).await;
+        agent.cycle(1010).await;
 
         // Two cycles, not the three a silent browser alone would need: each
         // cycle contributes both an unanswered probe and a refused
@@ -850,19 +973,19 @@ mod tests {
         assert_eq!(world.units.restarts.get(), 1);
     }
 
-    #[test]
-    fn wandering_off_the_site_snaps_back_and_says_so() {
+    #[tokio::test]
+    async fn wandering_off_the_site_snaps_back_and_says_so() {
         let world = World::new(&[]);
         let mut agent = world.agent();
 
-        agent.cycle(1000);
+        agent.cycle(1000).await;
         // Second cycle settles where that navigation landed. Only after that
         // is a change attributable to somebody else - see drifted_origin for
         // the one window this leaves.
-        agent.cycle(1005);
+        agent.cycle(1005).await;
 
         *world.cdp.current_url.borrow_mut() = Some("https://youtube.com/watch?v=x".to_string());
-        agent.cycle(1010);
+        agent.cycle(1010).await;
 
         assert_eq!(
             world.navigations(),
@@ -875,8 +998,8 @@ mod tests {
             .any(|line| line.contains("chromium is showing https://youtube.com/watch?v=x")));
     }
 
-    #[test]
-    fn a_cross_origin_redirect_does_not_loop() {
+    #[tokio::test]
+    async fn a_cross_origin_redirect_does_not_loop() {
         // Regression, found on a device: https://freevision.sk redirects to
         // https://www.freevision.sk, a different origin, and comparing against
         // the configured URL made the agent reload the page every cycle
@@ -888,7 +1011,7 @@ mod tests {
         *world.cdp.redirect_to.borrow_mut() = Some("https://www.kiosk.test/".to_string());
 
         for now in [1000, 1005, 1010, 1015, 1020, 1025] {
-            agent.cycle(now);
+            agent.cycle(now).await;
         }
 
         assert_eq!(
@@ -904,19 +1027,19 @@ mod tests {
             .any(|line| line.contains("redirected to https://www.kiosk.test")));
     }
 
-    #[test]
-    fn drift_is_still_caught_after_a_redirect_was_accepted() {
+    #[tokio::test]
+    async fn drift_is_still_caught_after_a_redirect_was_accepted() {
         let world = World::new(&[("KIOSK_URL", "https://kiosk.test/")]);
         let mut agent = world.agent();
         *world.cdp.redirect_to.borrow_mut() = Some("https://www.kiosk.test/".to_string());
 
-        agent.cycle(1000);
-        agent.cycle(1005);
+        agent.cycle(1000).await;
+        agent.cycle(1005).await;
         assert_eq!(world.navigations().len(), 1);
 
         // Someone follows a link off the site.
         *world.cdp.current_url.borrow_mut() = Some("https://elsewhere.test/".to_string());
-        agent.cycle(1010);
+        agent.cycle(1010).await;
 
         assert_eq!(world.navigations().len(), 2);
         assert!(world
@@ -926,12 +1049,12 @@ mod tests {
             .any(|line| line.contains("chromium is showing https://elsewhere.test/")));
     }
 
-    #[test]
-    fn the_sites_own_pages_are_left_alone() {
+    #[tokio::test]
+    async fn the_sites_own_pages_are_left_alone() {
         let world = World::new(&[]);
         let mut agent = world.agent();
 
-        agent.cycle(1000);
+        agent.cycle(1000).await;
         // Same origin: a sub-page, a query string, a fragment. All legitimate.
         for url in [
             "http://kiosk.test/about",
@@ -939,64 +1062,64 @@ mod tests {
             "http://kiosk.test/a/b#c",
         ] {
             *world.cdp.current_url.borrow_mut() = Some(url.to_string());
-            agent.cycle(1005);
+            agent.cycle(1005).await;
         }
 
         assert_eq!(world.navigations().len(), 1, "should not have re-navigated");
     }
 
-    #[test]
-    fn a_browser_that_will_not_say_where_it_is_is_left_alone() {
+    #[tokio::test]
+    async fn a_browser_that_will_not_say_where_it_is_is_left_alone() {
         // "Cannot tell" must never be mistaken for "has drifted", or a browser
         // mid-navigation would be yanked back on every cycle.
         let world = World::new(&[]);
         let mut agent = world.agent();
 
-        agent.cycle(1000);
+        agent.cycle(1000).await;
         *world.cdp.current_url.borrow_mut() = None;
-        agent.cycle(1005);
+        agent.cycle(1005).await;
 
         assert_eq!(world.navigations().len(), 1);
     }
 
-    #[test]
-    fn enforcement_can_be_turned_off() {
+    #[tokio::test]
+    async fn enforcement_can_be_turned_off() {
         let world = World::new(&[("KIOSK_ENFORCE_ORIGIN", "0")]);
         let mut agent = world.agent();
 
-        agent.cycle(1000);
+        agent.cycle(1000).await;
         *world.cdp.current_url.borrow_mut() = Some("https://elsewhere.test/".to_string());
-        agent.cycle(1005);
+        agent.cycle(1005).await;
 
         assert_eq!(world.navigations().len(), 1);
     }
 
-    #[test]
-    fn drift_is_not_chased_while_the_offline_page_is_up() {
+    #[tokio::test]
+    async fn drift_is_not_chased_while_the_offline_page_is_up() {
         // The offline page is a file:// URL, which has no origin at all. It is
         // there on purpose and must not be treated as the browser wandering.
         let world = World::new(&[]);
         let mut agent = world.agent();
         world.probe.fail();
 
-        agent.cycle(1000);
-        agent.cycle(1010);
+        agent.cycle(1000).await;
+        agent.cycle(1010).await;
         assert_eq!(world.navigations(), vec![OFFLINE_URI]);
 
-        agent.cycle(1020);
+        agent.cycle(1020).await;
         assert_eq!(world.navigations().len(), 1);
     }
 
-    #[test]
-    fn a_recovered_browser_is_reported() {
+    #[tokio::test]
+    async fn a_recovered_browser_is_reported() {
         let world = World::new(&[]);
         let mut agent = world.agent();
 
-        agent.cycle(1000);
+        agent.cycle(1000).await;
         world.cdp.alive.set(false);
-        agent.cycle(1005);
+        agent.cycle(1005).await;
         world.cdp.alive.set(true);
-        agent.cycle(1010);
+        agent.cycle(1010).await;
 
         assert!(world
             .log
@@ -1005,8 +1128,8 @@ mod tests {
             .any(|line| line.contains("chromium is answering again after 1 failed checks")));
     }
 
-    #[test]
-    fn the_startup_race_is_not_reported_as_a_fault() {
+    #[tokio::test]
+    async fn the_startup_race_is_not_reported_as_a_fault() {
         // Every boot starts here: systemd has exec'd Chromium, so the unit
         // counts as started, but the DevTools port is not open yet.
         let world = World::new(&[]);
@@ -1014,8 +1137,8 @@ mod tests {
         world.cdp.alive.set(false);
         world.cdp.navigate_fails.set(true);
 
-        agent.cycle(1000);
-        agent.cycle(1005);
+        agent.cycle(1000).await;
+        agent.cycle(1005).await;
 
         // The escalation may well fire - that part is deliberate and tested
         // below. What must not appear is the pair of lines that read like
@@ -1036,8 +1159,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_browser_that_never_comes_up_still_reports_the_restart() {
+    #[tokio::test]
+    async fn a_browser_that_never_comes_up_still_reports_the_restart() {
         // The quiet start must not swallow a browser that is genuinely dead:
         // the escalation is the line worth reading, and it stays at info.
         let world = World::new(&[]);
@@ -1045,7 +1168,7 @@ mod tests {
         world.cdp.alive.set(false);
 
         for now in [1000, 1005, 1010] {
-            agent.cycle(now);
+            agent.cycle(now).await;
         }
 
         assert_eq!(world.units.restarts.get(), 1);
@@ -1056,13 +1179,13 @@ mod tests {
             .any(|line| line.starts_with("restarting tessaro-kiosk.service:")));
     }
 
-    #[test]
-    fn a_browser_that_dies_after_working_is_reported() {
+    #[tokio::test]
+    async fn a_browser_that_dies_after_working_is_reported() {
         let world = World::new(&[]);
         let mut agent = world.agent();
 
         // One healthy cycle proves the browser can answer...
-        agent.cycle(1000);
+        agent.cycle(1000).await;
         assert!(!world
             .log
             .lines()
@@ -1071,7 +1194,7 @@ mod tests {
 
         // ...so from here on, silence would be hiding a real fault.
         world.cdp.alive.set(false);
-        agent.cycle(1005);
+        agent.cycle(1005).await;
 
         assert!(world
             .log
@@ -1080,13 +1203,13 @@ mod tests {
             .any(|line| line.contains("chromium is not answering")));
     }
 
-    #[test]
-    fn a_cycle_survives_a_dependency_blowing_up() {
+    #[tokio::test]
+    async fn a_cycle_survives_a_dependency_blowing_up() {
         let world = World::new(&[]);
         let mut agent = world.agent();
         world.cdp.panics.set(true);
 
-        agent.cycle(1000);
+        agent.cycle(1000).await;
 
         assert!(world
             .log
