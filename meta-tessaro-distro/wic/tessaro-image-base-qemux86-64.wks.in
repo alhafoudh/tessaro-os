@@ -1,0 +1,28 @@
+# short-description: EFI disk image for qemux86-64 that can take in-place updates
+# long-description: Moonforge's moonforge-image-base-qemux86-64.wks.in (ESP,
+# rootfs, /data, swap), with the two things an in-place update needs and that
+# upstream leaves to chance. See tessaro-image-base-genericx86-64.wks.in for
+# the full reasoning; this is the same layout for the development target.
+#
+# * Every identifier the root filesystem names is fixed. wic writes
+#   root=PARTUUID=... into grub.cfg (--uuid) and UUID=... lines for /boot and
+#   swap into the rootfs's /etc/fstab (--fsuuid: the vfat serial and the swap
+#   UUID), and without the options it makes new ones on every build. An
+#   update replaces the root filesystem but never the partition table or the
+#   ESP's filesystem, so a new rootfs naming another build's UUIDs would fail
+#   to mount /boot. They are distinct per machine, which also makes the
+#   updater's layout check a machine check.
+# * The root partition has a fixed size, TESSARO_ROOTFS_SIZE, rather than
+#   whatever this build's rootfs needed: a later image has to fit into the
+#   partition that is already on the disk. The ESP gets room for a second
+#   kernel, which the updater writes next to the old one before swapping.
+#
+# Changing any of these is a new disk layout: every device needs one full
+# reflash before it can take updates again, and the updater says so.
+
+part /boot --source bootimg-efi --sourceparams="loader=grub-efi" --ondisk sda --label msdos --active --align 1024 --use-uuid --uuid d2321c4c-89d9-45de-a006-bee6ecdc133d --fsuuid 0x6D2DE7A5 --fixed-size ${TESSARO_ESP_SIZE}
+part / --source rootfs --ondisk sda --fstype=ext4 --label platform --align 1024 --use-uuid --uuid d5e9b2b6-482f-4cc5-b5f9-bd0a5d9894c9 --fixed-size ${TESSARO_ROOTFS_SIZE}
+part /data --ondisk sda --fstype=ext4 --size "${IMAGE_DATA_MIN_SIZE}" --label data --align 1024 --uuid c3792c55-4be3-49ab-916e-3ed9e1bf2ce7
+part swap --ondisk sda --size 44 --label swap1 --fstype=swap --use-uuid --uuid b9bc11ea-a98b-485d-ae88-b2c54fda8d14 --fsuuid 1430e076-6492-4998-b6ba-086a68325822
+
+bootloader --ptable gpt --timeout=5 --append="rootwait rootfstype=ext4 console=ttyS0,115200 console=tty0"

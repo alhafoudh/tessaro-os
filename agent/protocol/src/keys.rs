@@ -162,6 +162,10 @@ pub static KEYS: &[Key] = &[
         "Page shown while the site is down; empty stages /data/kiosk/offline.html or the shipped page; none stays on the site."),
     key("kiosk.enforce_origin", "KIOSK_ENFORCE_ORIGIN", Kind::Flag, AGENT,
         "Bring the browser back when it leaves the kiosk origin. 0 for a site that hands visitors to another host."),
+    key("maintenance.enable", "KIOSK_MAINTENANCE", Kind::Flag, AGENT,
+        "Maintenance mode: show maintenance.url instead of kiosk.url, which is kept as it is. `tessaro-ctl maintenance on|off`."),
+    key("maintenance.url", "KIOSK_MAINTENANCE_URL", Kind::Url, AGENT,
+        "The page shown in maintenance mode (default: http://127.0.0.1/maintenance.html, which takes ?title= and ?message=)."),
     key("browser.args_extra", "KIOSK_CHROMIUM_ARGS_EXTRA", Kind::Args, BROWSER,
         "Extra Chromium flags after the fixed set, e.g. --disable-pinch. Features go in browser.*_features."),
     key("browser.touch", "KIOSK_TOUCH", Kind::Choice(&["auto", "enabled", "disabled"]), BROWSER,
@@ -291,9 +295,9 @@ pub enum Placeholder<'a> {
     Param(&'a str),
     /// `{node.name}`: the effective value of a registry key.
     Key(&'static Key),
-    /// Neither - including `{kiosk.url}` and `{debug.template}`, which
-    /// cannot contain themselves. The debug template resolves `{kiosk.url}`
-    /// on its own.
+    /// Neither - including `{kiosk.url}`, `{maintenance.url}` and
+    /// `{debug.template}`: a template cannot contain itself or another one.
+    /// The debug template resolves `{kiosk.url}` on its own.
     Unknown,
 }
 
@@ -309,6 +313,9 @@ impl PartialEq for Placeholder<'_> {
     }
 }
 
+/// The keys whose values are URL templates, expanded before anyone sees them.
+pub const TEMPLATES: [&str; 2] = ["kiosk.url", "maintenance.url"];
+
 /// A placeholder is always a setting's full key: `{data.table}` for the
 /// custom `data.table`, `{node.name}` for `node.name`. One rule, no short
 /// forms, so a template reads exactly like the `set` that fills it.
@@ -317,7 +324,9 @@ pub fn placeholder(name: &str) -> Placeholder<'_> {
         return Placeholder::Param(custom);
     }
     match KEYS.iter().find(|key| key.name == name) {
-        Some(key) if key.kind != Kind::Url && key.kind != Kind::Template => Placeholder::Key(key),
+        Some(key) if !TEMPLATES.contains(&key.name) && key.kind != Kind::Template => {
+            Placeholder::Key(key)
+        }
         _ => Placeholder::Unknown,
     }
 }
@@ -767,6 +776,11 @@ mod tests {
             Placeholder::Key(find("display.scale").unwrap())
         );
         assert_eq!(placeholder("kiosk.url"), Placeholder::Unknown);
+        assert_eq!(placeholder("maintenance.url"), Placeholder::Unknown);
+        assert_eq!(
+            placeholder("maintenance.enable"),
+            Placeholder::Key(find("maintenance.enable").unwrap())
+        );
         assert_eq!(placeholder("no.such"), Placeholder::Unknown);
     }
 

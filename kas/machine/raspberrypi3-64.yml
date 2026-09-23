@@ -33,7 +33,18 @@ local_conf_header:
     # generate a host key (ssh connects, then closes before the version
     # exchange) and Chromium cannot create its --user-data-dir, so the screen
     # stays on the Weston background.
-    WKS_FILE = "moonforge-image-base-raspberrypi.wks.in"
+    WKS_FILE = "tessaro-image-base-raspberrypi.wks.in"
+    # That file is Moonforge's with a fixed-size root and a larger boot
+    # partition, for in-place updates - see its header.
+    #
+    # The kernel with its bundled initramfs is deployed as
+    # Image-initramfs-<machine>.bin, but boot.scr loads `Image` from the boot
+    # partition (fatload ... @@KERNEL_IMAGETYPE@@), so the bundle is installed
+    # under that name in place of the plain kernel. The rest of the line is
+    # rpi-base.inc's own u-boot entry. TESSARO_KERNEL_FILE is the name an
+    # update swaps.
+    RPI_EXTRA_IMAGE_BOOT_FILES = "${KERNEL_IMAGETYPE}-initramfs-${MACHINE}.bin;${KERNEL_IMAGETYPE} u-boot.bin;${SDIMG_KERNELIMAGE} boot.scr"
+    TESSARO_KERNEL_FILE = "${KERNEL_IMAGETYPE}"
     # The 3B+ has 1GB of RAM shared with the GPU, and Chromium is the heaviest
     # thing in the image. Two knobs to reach for if the kiosk gets OOM-killed
     # or renders slowly, both defaulted by meta-raspberrypi and left alone here

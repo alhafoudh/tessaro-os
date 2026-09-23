@@ -5,12 +5,14 @@
 #                   dependencies: tessaro-ctl builds for a technician's laptop.
 #   tessaro-agent/  the supervisor on the device (zbus, CDP, systemd).
 #   tessaro-ctl/    the client, on the device and on a laptop.
+#   update/         in-place image updates: prepared by the agent, applied
+#                   by tessaro-flash from the initramfs.
 #
 # The recipe builds the whole workspace from this directory (S is agent/), and
-# cargo.bbclass installs every binary it finds, so both land in /usr/bin.
+# cargo.bbclass installs every binary it finds, so all three land in /usr/bin.
 [workspace]
 resolver = "2"
-members = ["protocol", "tessaro-agent", "tessaro-ctl"]
+members = ["protocol", "tessaro-agent", "tessaro-ctl", "update"]
 
 [workspace.package]
 version = "1.0.0"

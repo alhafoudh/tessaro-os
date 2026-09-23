@@ -36,11 +36,12 @@ in `build/<machine>/tmp/deploy/images/<machine>/`. The download and sstate
 caches in `cache/` are shared, so the second target reuses most of the first
 one's work.
 
-## Flashing from a workstation
+## Updating and flashing from a workstation
 
-The build host is a remote x86 machine; the card or disk is plugged into your
-workstation (macOS or Linux). Three tasks run on the workstation, from its own
-checkout of this repo. Put the settings in `mise.local.toml` (gitignored):
+The build host is a remote x86 machine; the device is on your network, or its
+card or disk is plugged into your workstation (macOS or Linux). These tasks run
+on the workstation, from its own checkout of this repo. Put the settings in
+`mise.local.toml` (gitignored):
 
 ```toml
 # Optional: default machine on this workstation (a [vars] override, because
@@ -51,12 +52,32 @@ machine = "{{ env.TESSARO_MACHINE | default(value='raspberrypi3-64') }}"
 [env]
 TESSARO_BUILD_HOST = "build-host.example.com"          # SSH host that builds
 TESSARO_BUILD_HOST_DIR = "Projects/tessaro/tessaro-os" # this repo there, relative to your home
+TESSARO_NODE = "brave-otter-3fa2"                      # default device for update (tessaro-ctl --node)
 TESSARO_FLASH_DEVICE = "/dev/disk8"                    # default target for flash
 TESSARO_BUILD_HOST_CONTAINER_IP = "172.17.0.9"         # tunnel: container with VNC on 5901
 TESSARO_DEVICE_IP = "192.168.69.123"                   # tunnel: device on your network
 ```
 
-Then `mise trust && mise install` (that installs `bmaptool`) and:
+Then `mise trust && mise install` (that installs `bmaptool`).
+
+**Updating a running device** is the normal way, over the network, keeping its
+settings and claim:
+
+```sh
+mise run image:update                    # the device in $TESSARO_NODE
+mise run image:update brave-otter-3fa2   # or name it
+mise run image:update --wipe-data NAME   # also start /data over; it comes back unclaimed
+```
+
+It pulls the image first, builds `tessaro-ctl` from this checkout, and runs
+`tessaro-ctl --node NAME update send` with it, which shows the upload, the
+device preparing it and the reboot. A dropped connection is resumed by running
+it again. The device has to be claimed from this workstation
+(`tessaro-ctl --node NAME claim`), and running an image with the update layout -
+see "Updating a device" in CLAUDE.md.
+
+**Flashing** is the manual path: a first install, a device that no longer
+boots, or one flashed before the update layout:
 
 ```sh
 TESSARO_MACHINE=raspberrypi3-64 mise run image:pull    # .wic.bz2 + .wic.bmap into the repo root

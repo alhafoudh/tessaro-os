@@ -2,7 +2,8 @@ SUMMARY = "Tessaro self-test page: one static page that exercises the kiosk stac
 DESCRIPTION = "A single self-contained HTML page plus its media, installed at \
 /usr/share/tessaro-selftest. A technician points KIOSK_URL at it to check rendering, \
 fonts, emoji, form inputs, scrolling and multi-touch, WebSerial and WebHID, audio and \
-video playback, and WebAudio synthesis - on one screen, with the network down."
+video playback, and WebAudio synthesis - on one screen, with the network down. \
+Beside it, maintenance.html: the page maintenance mode shows by default."
 LICENSE = "MIT"
 LIC_FILES_CHKSUM = "file://${COMMON_LICENSE_DIR}/MIT;md5=0835ade698e0bcf8506ecda2f7b4f302"
 
@@ -12,6 +13,7 @@ LIC_FILES_CHKSUM = "file://${COMMON_LICENSE_DIR}/MIT;md5=0835ade698e0bcf8506ecda
 # edit to this page. Here a change costs one do_install.
 SRC_URI = " \
     file://index.html \
+    file://maintenance.html \
     file://10-tessaro-selftest.conf \
     file://media/sample-video-3s-fullhd.mp4 \
     file://media/sample-video-3s-4k.mp4 \
@@ -27,6 +29,11 @@ S = "${WORKDIR}"
 
 do_install() {
     install -Dm0644 ${WORKDIR}/index.html ${D}${datadir}/tessaro-selftest/index.html
+
+    # Maintenance mode's default page, TESSARO_MAINTENANCE_URL. Here because
+    # this directory is already nginx's root on the loopback, so it is
+    # http://127.0.0.1/maintenance.html with no server config of its own.
+    install -m0644 ${WORKDIR}/maintenance.html ${D}${datadir}/tessaro-selftest/maintenance.html
 
     # The page refers to these by relative path, so the layout under
     # ${datadir}/tessaro-selftest has to match what index.html asks for.

@@ -30,7 +30,8 @@ Use the mise tasks rather than calling `kas-container` directly:
 | `mise run build-ctl` | Release `tessaro-ctl` for this host, to manage devices remotely |
 | `mise run agent-e2e` | Boot the qemu image, provoke each agent behaviour, assert on its journal |
 | `mise run image:pull` | Workstation: fetch the image and bmap from the build host |
-| `mise run image:flash` | Workstation: write the pulled image to a card or disk |
+| `mise run image:update` | Workstation: pull the image and update a running device over the network (the normal path) |
+| `mise run image:flash` | Workstation, manual: write the pulled image to a card or disk (first install, recovery) |
 | `mise run tunnel` | Workstation: autossh VNC/SSH forwards to the build host |
 
 Exit the QEMU serial console with `Ctrl-a x`.
@@ -52,9 +53,12 @@ to run on anything else. `build` has no prerequisites beyond kas.
 
 The agent is an ordinary Rust workspace under `agent/`, built into the image by
 the `tessaro-kiosk` recipe: `protocol/` (the wire types and the settings
-registry, no Linux-only dependencies), `tessaro-agent/` (the device side) and
-`tessaro-ctl/` (the client, on the device and on a laptop). cargo.bbclass
-installs every binary in the workspace, so both land in `/usr/bin`. The no-
+registry, no Linux-only dependencies), `tessaro-agent/` (the device side),
+`tessaro-ctl/` (the client, on the device and on a laptop) and `update/`
+(image updates: a library the agent stages with, and `tessaro-flash`, which
+applies them from the initramfs). cargo.bbclass installs every binary in the
+workspace into `/usr/bin`; `tessaro-flash` is split into its own
+`tessaro-kiosk-flash` package so the initramfs does not pull the agent in. The no-
 blocking `clippy.toml` lives in `tessaro-agent/` only: `tessaro-ctl` is a plain
 blocking client on purpose. Its tests run on the host (`mise run agent-test`);
 mise pins the host toolchain to **rust 1.95.0**, the same version bitbake uses,
@@ -63,6 +67,20 @@ because that version is dictated by the Chromium pin
 `mise.toml` also points `CARGO_TARGET_DIR` at `build/cargo-target`: the recipe
 fetches `agent/` with a `file://` SRC_URI, so a `target/` inside it would be
 copied into `WORKDIR` and hashed on every build.
+
+**Command-line output is colored, and any new CLI must be too.** `tessaro-ctl`,
+and every future human-facing tool in `agent/`, prints through anstream's
+`println!`/`eprintln!` (imported at the top of the file to shadow the std
+macros) with the semantic palette in `tessaro-ctl/src/style.rs`: `LABEL`,
+`HEADING`, `OK`, `WARN`, `BAD`, `MUTED`, `SECRET`, `CMD`, `SOURCE`. Reuse that
+palette rather than picking raw colors at a call site. anstream drops the
+codes by itself when the stream is not a terminal, under `NO_COLOR` or
+`TERM=dumb`, and with `--color never`, so no call site ever checks. Three
+rules: styles decorate text and never change it, so the plain output stays
+parseable; `--json` output is never styled; and aligned columns use
+`style::pad`, which pads *inside* the escape codes, because `{:<N}` around a
+painted string counts the escape bytes. Both crates were already in the lock
+through clap, so this cost no new crates.
 
 After changing any `Cargo.toml` in the workspace or `agent/Cargo.lock`,
 regenerate the crate list the recipe requires and commit it:
@@ -430,10 +448,12 @@ going down, the page wandering off the origin, a crashed renderer, a killed
 browser, a wedged browser, an operator-stopped unit, a DNS server that
 swallows queries, the agent itself wedging, a short agent stall, a parked
 agent, SIGTERM - and the control plane: a `tessaro-ctl set` that restarts the
-agent onto the new value, the debug screen going up with its template filled
-in and coming down again, a claim and unclaim round trip, and a resolution
-change that refuses an unoffered mode and reverts unconfirmed. About ten
-minutes; exits non-zero on any failure and prints
+agent onto the new value, the debug screen and maintenance mode each on and
+off with the browser left running, a claim and unclaim round trip, and a resolution
+change that refuses an unoffered mode and reverts unconfirmed. Last, because
+each reboots the VM, three image updates of the image it booted from:
+damaged staging refused at boot with nothing written, an update that keeps
+the settings, and one with `--wipe-data`. About twenty minutes; exits non-zero on any failure and prints
 the journal lines the failing case saw. `ruby test/e2e/agent_e2e.rb --list`
 names the cases, `--only a,b` runs some, `--boot --keep` leaves the VM up, and
 without `--boot` it reuses a VM left up that way.
@@ -798,8 +818,11 @@ kiosk origin, Weston restarts - taking the browser and agent with it - for a
   in the host moves the grants too. Built-in settings expand to their
   effective value, set or image default - `{display.osk}`,
   `{browser.fps_counter}` - and `{node.name}` is the name the device actually
-  answers to even when none was set. Only `{kiosk.url}` is refused, as it
-  cannot contain itself. Because any setting can move the URL, whether
+  answers to even when none was set. Only `{kiosk.url}`,
+  `{maintenance.url}` and `{debug.template}` are refused, as no template may
+  contain a template (the debug template alone takes `{kiosk.url}`).
+  `maintenance.url` and `debug.template` are templates by the same rules, and
+  `set` checks all three whichever one is on screen. Because any setting can move the URL, whether
   the agent restarts is decided by comparing the expanded URL with the one the
   running agent started with, not by which key changed. `set` refuses a
   template with an unset `data.*` or a name that is no setting, and an `unset`
@@ -907,15 +930,51 @@ Wiping `/data` or the `/etc` overlay re-identifies a device.
 `tessaro-ctl --node NAME claim` (or `login --token` with a token someone
 issued). Pins and tokens are kept in `~/.config/tessaro/nodes.json`, 0600.
 
+### Maintenance mode
+
+**`tessaro-ctl maintenance on|off`** - the same as `set maintenance.enable=1|0`
+- puts `maintenance.url` on screen and leaves `kiosk.url` as it is, so `off`
+goes straight back to the site. The default page is
+`http://127.0.0.1/maintenance.html` (`TESSARO_MAINTENANCE_URL` in
+`tessaro.conf`), shipped by `tessaro-selftest` next to the self-test page,
+self-contained so it renders with the network down. It takes `?title=` and
+`?message=` as plain text, which is how a device customises it without an
+image: `maintenance on --url 'http://127.0.0.1/maintenance.html?message={data.msg}'`
+plus `data.msg=...`.
+
+* **The swap is one place, `state::Effective`.** With `KIOSK_MAINTENANCE=1`,
+  `KIOSK_URL` *is* the expanded maintenance URL, so every consumer follows it
+  without knowing the mode exists: `generated.env` (a reboot in maintenance
+  never flashes the site), the agent's navigation and origin enforcement, the
+  periodic refresh, `status`, the `url_moved` restart check and the read-only
+  key watcher.
+* **`KIOSK_PROBE_URL` reads as empty meanwhile**, so the agent probes the
+  maintenance page. Probing the site's health endpoint instead would put the
+  offline page over the maintenance page the moment the site went down - and
+  maintenance is often exactly when it is down.
+* **The device-API grants do not move.** `render::device_origins` uses
+  `Effective::kiosk_url()`, kiosk.url's origin whatever the mode. Following the
+  maintenance page would rewrite the policy on every toggle, restart the
+  browser on a public screen and take the site's grants away. So a toggle
+  restarts the agent only, which re-navigates; the browser keeps running.
+
 ### Debug screen
 
-**`tessaro-ctl set debug.enable=1` swaps the page for a full-screen text
-screen**: `debug.template` filled in, in large DejaVu Sans Mono, white on
-black, shrunk until the longest line fits. `unset debug.enable` brings the
-site back. Both keys are agent keys, so either change restarts only the
-agent, which is invisible on screen. `debug.enable` is not `agent.debug`,
-which is journal verbosity; its env name is `KIOSK_DEBUG_SCREEN` because
-`KIOSK_DEBUG` was taken.
+**`tessaro-ctl debug on|off`** - the same as `set debug.enable=1|0` - swaps the
+page for a full-screen text screen: `debug.template` filled in, in large
+DejaVu Sans Mono, white on black, shrunk until the longest line fits.
+`debug on --template '...'` sets the template in the same change, and
+`status` shows a `debug screen` row while it is up. Both keys are agent keys,
+so a toggle restarts only the agent, like maintenance mode; the browser keeps
+running. `debug.enable` is not `agent.debug`, which is journal verbosity; its
+env name is `KIOSK_DEBUG_SCREEN` because `KIOSK_DEBUG` was taken.
+
+* **It wins over maintenance mode, and it is the agent's, not
+  `Effective`'s.** Maintenance swaps `KIOSK_URL`, a URL every consumer can
+  follow. The debug screen is a page the agent generates, so the agent shows it
+  instead of whatever `KIOSK_URL` is (`state::debug_screen`), and nothing else
+  changes: not `generated.env`, not the policy. After a reboot the browser comes
+  up on `KIOSK_URL` for the few seconds until the agent's first cycle.
 
 * **The template is kiosk.url's templating with raw values.** It accepts the
   same `{key}` placeholders (any setting, read-only or `data.*`), plus
@@ -1078,6 +1137,91 @@ tmpfiles line. There was never an fstab entry, mount unit or wic partition for
 `/data/containers` - it was a plain directory inside the `/data` filesystem.
 `IMAGE_DATA_MIN_SIZE` stays at 4096M: the Chromium profile is what dominates
 it, not the container storage.
+
+## Updating a device
+
+**In place, without A/B partitions and without signing, from the same
+`.wic.bz2` and `.wic.bmap` that `image:flash` writes.** `tessaro-ctl --node
+NAME update send IMAGE.wic.bz2` (or `mise run image:update NAME`) and the
+device reboots into it; settings, the claim and the browser profile stay.
+`--wipe-data` re-creates `/data` as well, and the device comes back unclaimed
+with a new identity. Only the blocks the bmap lists are written, and only to
+the boot and root partitions.
+
+1. **Upload.** 4 MiB base64 chunks over the control protocol (`update-begin`,
+   `update-chunk`), each fsynced to `/data/tessaro/update/upload.part` before
+   it is acknowledged. The same command run again resumes from the last byte
+   the device has. The partition table is checked against the device's own
+   after the first chunk, so a wrong image fails in seconds, not after 270 MB.
+2. **Verify, then prepare**, in the agent, on a thread of its own at idle
+   CPU and I/O priority while the kiosk keeps running. `verifying` checks the
+   whole file against its SHA-256 (`update send --no-verify` skips it - the
+   bmap's checksums below still cover every block that gets written);
+   `preparing` is one pass over the decompressed image that keeps the
+   bmap-mapped parts of p1 and p2 - each range checked against the bmap's
+   own SHA-256 - in sparse `root.img`/`boot.img`, re-cut into 4 MiB chunks
+   with checksums of their own (`manifest.json`). The kernel is copied out
+   of a loop mount of `boot.img`. `/data` and swap in the image are never
+   read past. ~734 MB of a 1.19 GB root is mapped on qemu today.
+3. **Commit** writes `pending` and reboots.
+4. **Apply**, in the initramfs (`/init.d/80-tessaro_update`, before
+   `90-rootfs`, so nothing has the root partition mounted): `tessaro-flash`
+   verifies every staged chunk and the kernel *before the first write*,
+   writes, drops the device's page cache and reads everything back, then
+   installs the kernel as `<name>.new` and renames it over the old one, and
+   reboots into it. The logic is `agent/update/src/{apply,flash,wipe}.rs`.
+5. **Report**: the boot oneshot puts the result in `journalctl -t
+   tessaro-config` once; `tessaro-ctl update status` shows it until the next
+   update. `tessaro-ctl status` shows `PRETTY_NAME`/`IMAGE_VERSION`.
+
+Things to know:
+
+* **A power cut is survivable at every step but one.** Before the first
+  write the old system is intact. From the first write on, the marker and
+  the staging are still on `/data`, so the next boot writes everything again
+  - the half-written root is never mounted. `pending.started` is set just
+  before the first write, so staging that stops verifying after that is not
+  taken as a reason to boot the (gone) old root. Five attempts, then it stops
+  on the console asking for a reflash. The one unprotected path is the ESP -
+  a kernel that does not boot - and the bootloader is never touched.
+* **Every identifier the rootfs names is pinned in the x86 wks files, and
+  that is load-bearing.** wic makes new ones on every build otherwise: the
+  PARTUUIDs (`--uuid`) go into grub.cfg's `root=`, and the `/boot` vfat
+  serial and the swap UUID (`--fsuuid`) into the rootfs's `/etc/fstab` as
+  `UUID=` lines. The partition table and the ESP's filesystem are never
+  rewritten, so an unpinned new rootfs would name another build's `/boot` and
+  fail `local-fs.target`. The pins differ per machine, which makes the layout
+  check a machine check too. qemux86-64 now uses our own copy of Moonforge's
+  wks for this.
+* **The Pi cannot pin its disk signature** - this wic has no `--diskid`, and
+  derives it from `SOURCE_DATE_EPOCH` - but nothing there names a PARTUUID
+  (`root=/dev/mmcblk0p2`, device nodes in fstab), so for MBR images the
+  layout check compares partition geometry instead.
+* **The root partition is a fixed `TESSARO_ROOTFS_SIZE` (2048M), the ESP a
+  fixed `TESSARO_ESP_SIZE` (128M), the Pi's boot partition 256M.** A later
+  image has to fit the partition already on the disk, and the ESP holds two
+  kernels during the swap. wic fails the build if the rootfs outgrows it.
+  Changing any partition is a new disk layout: every device needs one full
+  reflash, which the updater says in so many words when it refuses.
+* **The initramfs is bundled into the kernel** (`INITRAMFS_IMAGE_BUNDLE`), so
+  the boot partition still has one kernel file to swap and bootimg-efi picks
+  it up by itself - as `bzImage-initramfs-<machine>.bin`, which is the
+  `KIOSK_KERNEL_FILE` the agent extracts. On the Pi the bundle is installed
+  as `Image`, the name `boot.scr` loads. The price: any change to
+  `tessaro-flash`, and so to the agent workspace, re-bundles the kernel, and
+  every update then swaps it.
+* **The initramfs is `core-image-initramfs-boot` plus one module**
+  (`recipes-core/images/tessaro-initramfs.bb`): udev for `/dev/disk/by-*`,
+  90-rootfs, finish. finish `switch_root`s to `/sbin/init`, which is still
+  the overlayfs-etc preinit. It finds the ESP and `/data` as partitions 1 and
+  3 of root's disk, which every Tessaro wks has. On an ordinary boot the cost
+  is two read-only mounts and an `ls`.
+* **The `/etc` overlay keeps shadowing the image.** A file edited on the
+  device stays edited across updates, exactly as it does today - an update
+  replaces the lower layer only. `--wipe-data` is the way out.
+* **Devices flashed before this cannot take updates** - their PARTUUIDs are
+  random and their root partition is sized to its old build. One
+  `image:flash` gets them onto the layout.
 
 ## Networking
 
@@ -1322,4 +1466,7 @@ image:pull` rsyncs the `$TESSARO_MACHINE` image and bmap from
 `$TESSARO_BUILD_HOST` into the repo root (gitignored), `mise run image:flash`
 writes it with bmaptool, and
 `mise run tunnel` holds the VNC/SSH port forwards. Their settings live in the
-gitignored `mise.local.toml`; see README.md.
+gitignored `mise.local.toml`; see README.md. That is the manual path now: a
+device already running an image with the update layout is updated over the
+network with `mise run image:update NAME` (it pulls first, and uses a
+`tessaro-ctl` built from the checkout) - see **Updating a device**.

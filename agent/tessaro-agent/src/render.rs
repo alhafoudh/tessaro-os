@@ -46,6 +46,9 @@ pub fn env_file(
         if key.env == "KIOSK_URL" {
             continue; // below, expanded
         }
+        if key.env == "KIOSK_MAINTENANCE_URL" {
+            continue; // a template; in maintenance mode it *is* KIOSK_URL below
+        }
         if key.kind == protocol::keys::Kind::Template {
             // The debug template's `\n` is the one backslash a value may hold,
             // and systemd would eat it unquoted. Only the agent reads it, and
@@ -59,7 +62,8 @@ pub fn env_file(
 
     // The kiosk URL goes out expanded, never as a template: the browser unit
     // opens ${KIOSK_URL} as it stands. Written whenever it differs from the
-    // image default - set here, or a default whose placeholders were filled.
+    // image default - set here, a default whose placeholders were filled, or
+    // the maintenance page, so a reboot in maintenance never shows the site.
     let effective = state::Effective::new(defaults, settings, log).with_live(live.clone());
     if let Some(url) = effective.get("KIOSK_URL") {
         if defaults.get("KIOSK_URL").as_deref() != Some(url.as_str()) {
@@ -85,10 +89,11 @@ pub fn env_file(
 }
 
 /// The device-API origins: the kiosk's, the self-test page's, and any extra
-/// ones set, deduplicated and in that order.
-pub fn device_origins(effective: &dyn Env, selftest_origin: &str) -> Vec<String> {
+/// ones set, deduplicated and in that order. The kiosk's is kiosk.url's even
+/// in maintenance mode, so toggling it never changes the policy.
+pub fn device_origins(effective: &state::Effective, selftest_origin: &str) -> Vec<String> {
     let mut origins: Vec<String> = Vec::new();
-    let kiosk_url = effective.get("KIOSK_URL").unwrap_or_default();
+    let kiosk_url = effective.kiosk_url().unwrap_or_default();
     let mut add = |origin: &str| {
         if !origin.is_empty() && !origins.iter().any(|known| known == origin) {
             origins.push(origin.to_string());
@@ -253,7 +258,7 @@ pub fn live(paths: &Paths) -> state::Live {
     }
 }
 
-fn render_policy(paths: &Paths, effective: &dyn Env) -> Result<bool, String> {
+fn render_policy(paths: &Paths, effective: &state::Effective) -> Result<bool, String> {
     let base = match std::fs::read_to_string(&paths.policy_base) {
         Ok(base) => base,
         // No base (a development host): leave the policy alone rather than
@@ -486,6 +491,27 @@ mod tests {
                 env_changed: true,
                 policy_changed: false
             }
+        );
+
+        // Maintenance mode moves what the browser opens, never the grants:
+        // a policy change would restart the browser on a public screen.
+        let mut maintenance = same_origin.clone();
+        maintenance.insert("maintenance.enable".into(), "1".into());
+        maintenance.insert(
+            "maintenance.url".into(),
+            "http://127.0.0.1/maintenance.html".into(),
+        );
+        assert_eq!(
+            all(&paths, &defaults, &maintenance, &log).unwrap(),
+            Rendered {
+                env_changed: true,
+                policy_changed: false
+            }
+        );
+        let env = std::fs::read_to_string(paths.generated_env()).unwrap();
+        assert!(
+            env.contains("KIOSK_URL=http://127.0.0.1/maintenance.html\n"),
+            "{env}"
         );
     }
 }

@@ -62,7 +62,7 @@ module AgentE2E
   }.freeze
 
   # Keys a case may add on top, unset again before the next case configures.
-  CASE_SETTINGS = %w[kiosk.probe_url agent.enable debug.enable debug.template].freeze
+  CASE_SETTINGS = %w[kiosk.probe_url agent.enable maintenance.enable debug.enable debug.template].freeze
 
   class Failure < StandardError; end
 
@@ -458,14 +458,15 @@ module AgentE2E
   end
 
   # The template's \n is typed as a backslash and an n, which the single
-  # quotes `configure` puts around every pair carry through the guest shell.
-  check "debug-screen", "debug.enable swaps the site for the filled-in debug text, and back" do |guest, journal, cdp|
+  # quotes carry through the guest shell.
+  check "debug-screen", "debug on swaps the site for the filled-in debug text without restarting the browser; off returns" do |guest, journal, cdp|
     hostname = guest.run("cat /proc/sys/kernel/hostname").strip
-    guest.configure("debug.enable" => "1", "debug.template" => "e2e {net.hostname}\\nurl {kiosk.url}")
-    guest.run("systemctl restart tessaro-agent")
+    browser = guest.kiosk_pid
+    out = guest.run("tessaro-ctl debug on --template 'e2e {net.hostname}\\nurl {kiosk.url}'")
+    raise Failure, "debug on did not restart the agent:\n#{out}" unless out.include?("restarting tessaro-agent.service")
+
     journal.wait_for(/^debug screen on: showing debug\.template instead of /, timeout: 15)
     journal.wait_for(%r{^navigated to the debug screen \(file:///run/tessaro-kiosk/debug\.html\)$}, timeout: 30)
-
     want = "e2e #{hostname}\nurl #{KIOSK_URL}"
     deadline = Time.now + 10
     text = ""
@@ -475,6 +476,39 @@ module AgentE2E
                 .dig("result", "value").to_s
     end
     raise Failure, "the debug screen reads #{text.inspect}" unless text.include?(want)
+    status = guest.run("tessaro-ctl status")
+    raise Failure, "status does not say so:\n#{status}" unless status.include?("debug screen on")
+
+    guest.run("tessaro-ctl debug off")
+    journal.wait_for(/^navigated to #{Regexp.escape(KIOSK_URL)}$/, timeout: 30)
+    raise Failure, "the browser was restarted (#{browser} -> #{guest.kiosk_pid})" unless guest.kiosk_pid == browser
+  ensure
+    guest.configure
+    guest.restart_agent
+  end
+
+  # The probe URL points at something that does not answer, so the case also
+  # proves maintenance mode probes the maintenance page, not kiosk.probe_url:
+  # otherwise the offline page would replace the maintenance page.
+  check "maintenance", "maintenance on shows the maintenance page without restarting the browser; off returns" do |guest, journal, cdp|
+    maintenance = "http://127.0.0.1/maintenance.html"
+    browser = guest.kiosk_pid
+    guest.run("tessaro-ctl set kiosk.probe_url=http://127.0.0.1:1/ --no-apply")
+
+    out = guest.run("tessaro-ctl maintenance on")
+    raise Failure, "maintenance on did not restart the agent:\n#{out}" unless out.include?("restarting tessaro-agent.service")
+
+    journal.wait_for(/^navigated to #{Regexp.escape(maintenance)}$/, timeout: 30)
+    raise Failure, "the browser is on #{cdp.current_url}" unless cdp.current_url == maintenance
+    status = guest.run("tessaro-ctl status")
+    raise Failure, "status does not say so:\n#{status}" unless status.include?("maintenance  on")
+    # Three probe intervals: a probe of kiosk.probe_url would have failed by now.
+    sleep 16
+    raise Failure, "the offline page replaced it: #{cdp.current_url}" unless cdp.current_url == maintenance
+
+    guest.run("tessaro-ctl maintenance off")
+    journal.wait_for(/^navigated to #{Regexp.escape(KIOSK_URL)}$/, timeout: 30)
+    raise Failure, "the browser was restarted (#{browser} -> #{guest.kiosk_pid})" unless guest.kiosk_pid == browser
   ensure
     guest.configure
     guest.restart_agent
@@ -530,6 +564,105 @@ module AgentE2E
 
   # CONFIRM_SECONDS in the protocol crate.
   def self.protocol_confirm_seconds = 60
+
+  # The image updates, last because each one reboots the VM. The VM runs
+  # with `snapshot`, which lasts across a guest reboot, so what an update
+  # writes is really there for the next boot - and gone at power-off.
+  #
+  # The image pushed is the one the VM booted from: an update to the same
+  # build still stages, verifies, writes and reads back every mapped block
+  # and swaps the kernel, which is all of the machinery. It goes to the guest
+  # over SSH and is sent from there through the local socket, as a technician
+  # on the device would.
+  IMAGE = File.join(ROOT, "build", "qemux86-64", "tmp", "deploy", "images", "qemux86-64",
+                    "tessaro-os-qemux86-64.rootfs.wic")
+
+  def self.push_image(guest)
+    return if guest.run("test -f /data/e2e.wic.bz2 && echo yes", allow_failure: true).include?("yes")
+
+    %w[.bz2 .bmap].each do |suffix|
+      guest.run("cat > /data/e2e.wic#{suffix}", input: File.binread(IMAGE + suffix), timeout: 600)
+    end
+  end
+
+  # `update send`, which returns once the device has committed and is about
+  # to reboot. The SSH session can die with the reboot, so the exit status
+  # proves nothing; the marker being taken does.
+  def self.send_update(guest, *flags)
+    push_image(guest)
+    output = guest.run("tessaro-ctl update send /data/e2e.wic.bz2 --yes #{flags.join(" ")} 2>&1",
+                       allow_failure: true, timeout: 900)
+    raise Failure, "the update was not committed:\n#{output}" unless output.include?("applied at the next boot")
+  end
+
+  def self.wait_for_reboot(guest)
+    deadline = Time.now + 120
+    sleep 2 while guest.reachable? && Time.now < deadline
+    deadline = Time.now + 900
+    until guest.reachable?
+      raise Failure, "the VM did not come back within 15 minutes of an update" if Time.now > deadline
+
+      sleep 5
+    end
+    deadline = Time.now + 180
+    until guest.run("journalctl -u tessaro-agent -b --no-pager -o cat").include?("navigated to #{KIOSK_URL}")
+      raise Failure, "the agent never navigated after the update" if Time.now > deadline
+
+      sleep 2
+    end
+  end
+
+  def self.boot_log(guest) = guest.run("journalctl -b -u tessaro-config --no-pager -o cat")
+
+  check "update-refused", "damaged staging is refused at boot with nothing written" do |guest, _journal|
+    send_update(guest, "--no-reboot")
+    # The staged kernel, after the agent verified it. A damaged root chunk is
+    # refused the same way, before the first write; the unit tests cover it.
+    guest.run("echo damaged > /data/tessaro/update/kernel && sync")
+    guest.run("systemctl reboot", allow_failure: true)
+    wait_for_reboot(guest)
+
+    log = boot_log(guest)
+    raise Failure, "no refusal in the boot log:\n#{log}" unless log.match?(/was not applied: .*damaged/)
+    status = guest.run("tessaro-ctl update status")
+    raise Failure, "update status: #{status}" unless status.include?("not applied")
+    raise Failure, "the staging was left behind" if guest.run("ls /data/tessaro/update").include?("root.img")
+  ensure
+    guest.run("tessaro-ctl update cancel", allow_failure: true)
+  end
+
+  check "update", "an update is written at boot and keeps the settings" do |guest, _journal|
+    guest.run("tessaro-ctl set data.e2e=kept --no-apply")
+    send_update(guest)
+    wait_for_reboot(guest)
+
+    log = boot_log(guest)
+    raise Failure, "no applied update in the boot log:\n#{log}" unless log.include?("update applied: e2e.wic.bz2")
+    kept = guest.run("tessaro-ctl get data.e2e")
+    raise Failure, "a setting did not survive the update: #{kept}" unless kept.include?("kept")
+    raise Failure, "the staging was left behind" if guest.run("ls /data/tessaro/update").include?("root.img")
+  ensure
+    guest.run("tessaro-ctl update cancel", allow_failure: true)
+    guest.run("tessaro-ctl unset data.e2e --no-apply", allow_failure: true)
+  end
+
+  check "update-wipe", "--wipe-data comes back with fresh settings and a new identity" do |guest, _journal|
+    before = guest.run("tessaro-ctl --json id")
+    guest.run("tessaro-ctl set data.e2e=gone --no-apply")
+    send_update(guest, "--wipe-data")
+    wait_for_reboot(guest)
+
+    log = boot_log(guest)
+    raise Failure, "no wiped update in the boot log:\n#{log}" unless log.include?("/data re-created")
+    after = guest.run("tessaro-ctl --json id")
+    raise Failure, "the node id survived a wipe" if JSON.parse(after)["id"] == JSON.parse(before)["id"]
+    raise Failure, "a setting survived a wipe" if guest.run("tessaro-ctl get data.e2e", allow_failure: true).include?("gone")
+  ensure
+    guest.run("tessaro-ctl update cancel", allow_failure: true)
+    # The wipe took the test settings too.
+    guest.configure
+    guest.restart_agent
+  end
 
   # Boots the image with runqemu inside the kas container, sharing the host's
   # network namespace so runqemu's 127.0.0.1:2222 forward is the host's too.

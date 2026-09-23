@@ -41,7 +41,9 @@ use crate::shadow;
 use crate::state::{self, PendingChange, State};
 use crate::store::Store;
 use crate::systemd::Bus;
+use crate::updates::Updates;
 use crate::watchdog::Heartbeat;
+use update::manifest::Upload;
 
 /// Any one piece of file work: a store update, a render, a shadow rewrite.
 /// Milliseconds normally; past this the disk is the problem.
@@ -149,6 +151,7 @@ pub struct Control {
     /// The kiosk URL, expanded, that this agent process started with and is
     /// driving the browser to. It never changes: a new one needs a restart.
     agent_url: String,
+    updates: Arc<Updates>,
 }
 
 impl Control {
@@ -166,6 +169,7 @@ impl Control {
     ) -> Arc<Self> {
         Arc::new(Self {
             agent_url,
+            updates: Updates::new(Arc::clone(&log), paths.clone()),
             state: Store::new(&paths.state_dir, state::FILE),
             auth_store: Store::new(&paths.state_dir, auth::FILE),
             log,
@@ -252,7 +256,50 @@ impl Control {
             Command::PasswordSet { password } => self.password_set(caller, password).await.into(),
             Command::Unclaim => self.unclaim(caller).await.into(),
             Command::FactoryReset => self.factory_reset(caller).await,
+            Command::UpdateBegin {
+                name,
+                size,
+                sha256,
+                bmap,
+                verify,
+            } => self
+                .update_begin(caller, name, size, sha256, bmap, verify)
+                .await
+                .into(),
+            Command::UpdateChunk { offset, data } => self.updates.chunk(offset, data).await.into(),
+            Command::UpdateStatus => self.updates.status().await.into(),
+            Command::UpdateCommit { wipe_data, reboot } => {
+                let who = caller.describe();
+                let reply: Reply = self.updates.commit(&who, wipe_data).await.into();
+                reply.then(reboot.then_some(After::Reboot))
+            }
+            Command::UpdateCancel => self.updates.cancel(&caller.describe()).await.into(),
         }
+    }
+
+    /// Resume whatever update the staging directory holds.
+    pub async fn load_update(&self) {
+        self.updates.load().await;
+    }
+
+    async fn update_begin(
+        &self,
+        caller: &Caller,
+        name: String,
+        size: u64,
+        sha256: String,
+        bmap: String,
+        verify: bool,
+    ) -> Result<protocol::UpdateBegun, String> {
+        let who = caller.describe();
+        let upload = Upload {
+            name,
+            size,
+            sha256,
+            bmap,
+            verify,
+        };
+        self.updates.begin(&who, upload).await
     }
 
     // --- reading -----------------------------------------------------------
@@ -294,7 +341,16 @@ impl Control {
             units.insert(unit.clone(), self.bus.active_state(unit).await);
         }
 
+        let os_release = self.paths.os_release.clone();
+        let (os, image_version) = blocking("reading os-release", move || {
+            Ok(os_release_fields(&os_release))
+        })
+        .await
+        .unwrap_or_default();
+
         Ok(Status {
+            os,
+            image_version,
             node: self.node(),
             revision: state.revision,
             kiosk_url,
@@ -302,7 +358,22 @@ impl Control {
             browser_answering: self.session.is_up(),
             units,
             pending: self.pending(&state),
+            maintenance: state::maintenance(&state.settings, &self.defaults),
+            debug_screen: state::debug_screen(&state.settings, &self.defaults),
         })
+    }
+
+    /// A template (`keys::TEMPLATES`, or debug.template) as set, else the
+    /// image default.
+    fn template(&self, settings: &BTreeMap<String, String>, name: &str) -> String {
+        settings
+            .get(name)
+            .cloned()
+            .or_else(|| {
+                let key = keys::find(name)?;
+                self.defaults.get(key.env).cloned()
+            })
+            .unwrap_or_default()
     }
 
     /// The registry, documented: what each key accepts, the image default,
@@ -326,10 +397,11 @@ impl Control {
             })
             .collect();
 
-        let url_template = self.template(&state.settings, "kiosk.url");
-        let debug_template = self.template(&state.settings, "debug.template");
-        let in_url = keys::placeholders(&url_template);
-        let in_debug = keys::placeholders(&debug_template);
+        let templates: Vec<(&str, String)> = keys::TEMPLATES
+            .iter()
+            .chain([&"debug.template"])
+            .map(|name| (*name, self.template(&state.settings, name)))
+            .collect();
         let custom: Vec<(&String, &String)> = state
             .settings
             .iter()
@@ -355,13 +427,13 @@ impl Control {
 
         for (name, value) in custom {
             // The placeholder is the key itself.
-            let users: Vec<&str> = [("kiosk.url", &in_url), ("debug.template", &in_debug)]
-                .into_iter()
-                .filter(|(_, used)| used.contains(&name.as_str()))
-                .map(|(template, _)| template)
+            let users: Vec<&str> = templates
+                .iter()
+                .filter(|(_, template)| keys::placeholders(template).contains(&name.as_str()))
+                .map(|(key, _)| *key)
                 .collect();
             let usage = if users.is_empty() {
-                format!("Neither kiosk.url nor debug.template uses it; add {{{name}}} to use it.")
+                format!("No template uses it; add {{{name}}} to kiosk.url or another template to use it.")
             } else {
                 format!("{} uses it as {{{name}}}.", users.join(" and "))
             };
@@ -373,16 +445,6 @@ impl Control {
             });
         }
         Ok(out)
-    }
-
-    /// A template setting as set on this device, else the image default.
-    fn template(&self, settings: &BTreeMap<String, String>, name: &str) -> String {
-        let env = keys::find(name).map(|key| key.env).unwrap_or_default();
-        settings
-            .get(name)
-            .or_else(|| self.defaults.get(env))
-            .cloned()
-            .unwrap_or_default()
     }
 
     fn pending(&self, state: &State) -> Option<Pending> {
@@ -509,12 +571,11 @@ impl Control {
         let store = self.state.clone();
         let log = Arc::clone(&self.log);
         let guarded_names: Vec<&'static str> = guarded.iter().map(|key| key.name).collect();
-        let default_url = self.defaults.get("KIOSK_URL").cloned().unwrap_or_default();
-        let default_debug = self
-            .defaults
-            .get("KIOSK_DEBUG_TEMPLATE")
-            .cloned()
-            .unwrap_or_default();
+        let default_templates: Vec<(&'static str, String)> = keys::TEMPLATES
+            .iter()
+            .map(|name| (*name, self.template(&BTreeMap::new(), name)))
+            .collect();
+        let default_debug = self.template(&BTreeMap::new(), "debug.template");
         let defaults = self.defaults.clone();
         let committed = blocking("updating state.json", move || {
             store.update(&log, |state: &mut State| {
@@ -546,19 +607,24 @@ impl Control {
                     return Ok((before, state.clone()));
                 }
 
-                // Every {placeholder} either template uses must have a value -
+                // Every {placeholder} a template uses must have a value -
                 // checked on the result, so setting a template and its values
                 // in one command works, and unsetting a value still in use
-                // does not. Read-only keys always have a value, so no live
-                // values are needed to know what is missing.
-                let template = state.settings.get("kiosk.url").unwrap_or(&default_url);
-                let (_, missing) = state::expand_url(
-                    template,
-                    &state.settings,
-                    &defaults,
-                    &state::Live::default(),
-                );
-                check_template("kiosk.url", template, &missing)?;
+                // does not. Every template, whichever mode the device is in:
+                // a maintenance page or a debug screen that cannot expand is
+                // found at `set`, not when someone needs it. Read-only keys
+                // always have a value, so no live values are needed to know
+                // what is missing.
+                for (key, default) in &default_templates {
+                    let template = state.settings.get(*key).unwrap_or(default);
+                    let (_, missing) = state::expand_url(
+                        template,
+                        &state.settings,
+                        &defaults,
+                        &state::Live::default(),
+                    );
+                    check_template(key, template, &missing)?;
+                }
 
                 let template = state
                     .settings
@@ -699,21 +765,18 @@ impl Control {
         });
     }
 
-    /// Does what is on screen name this key as a placeholder - the kiosk.url
-    /// template, or the debug template while the debug screen is on, each as
-    /// set, else the image default?
+    /// Does the template on screen - kiosk.url, or maintenance.url in
+    /// maintenance mode, as set, else the image default - name this key as a
+    /// placeholder? While the debug screen is up, its template counts too.
     async fn url_uses(&self, key: &str) -> bool {
         let Ok(state) = self.read_state().await else {
             return false;
         };
-        let uses =
-            |name: &str| keys::placeholders(&self.template(&state.settings, name)).contains(&key);
-        let debug_screen = state
-            .settings
-            .get("debug.enable")
-            .or_else(|| self.defaults.get("KIOSK_DEBUG_SCREEN"))
-            .is_some_and(|value| value == "1");
-        uses("kiosk.url") || (debug_screen && uses("debug.template"))
+        let (_, template) = state::shown_template(&state.settings, &self.defaults);
+        keys::placeholders(&template).contains(&key)
+            || (state::debug_screen(&state.settings, &self.defaults)
+                && keys::placeholders(&self.template(&state.settings, "debug.template"))
+                    .contains(&key))
     }
 
     /// One lookup, saved on success. A failure is logged at debug and leaves
@@ -763,12 +826,7 @@ impl Control {
         let Ok(state) = self.read_state().await else {
             return;
         };
-        let template = state
-            .settings
-            .get("kiosk.url")
-            .or_else(|| self.defaults.get("KIOSK_URL"))
-            .cloned()
-            .unwrap_or_default();
+        let (name, template) = state::shown_template(&state.settings, &self.defaults);
         if !state::Live::moves(&template) {
             return;
         }
@@ -780,12 +838,12 @@ impl Control {
 
         let _writes = self.writes.lock().await;
         self.log.info(format!(
-            "kiosk.url now expands to {url} (the agent is on {}); applying",
+            "{name} now expands to {url} (the agent is on {}); applying",
             self.agent_url
         ));
         let reply = self.converge(&[], &state, true).await;
         if let Err(err) = &reply.result {
-            self.log.info(format!("applying the new kiosk.url: {err}"));
+            self.log.info(format!("applying the new {name}: {err}"));
         }
         if let Some(after) = reply.after {
             self.run_after(after).await;
@@ -1370,7 +1428,7 @@ fn changed_keys(
         .collect()
 }
 
-/// Why a template (`kiosk.url`, `debug.template`) cannot be saved with these
+/// Why a template (`keys::TEMPLATES`, debug.template) cannot be saved with these
 /// placeholders missing, if it cannot.
 fn check_template(key: &str, template: &str, missing: &[String]) -> Result<(), String> {
     // A custom data.* nobody set yet just needs a value; anything else is not
@@ -1390,7 +1448,7 @@ fn check_template(key: &str, template: &str, missing: &[String]) -> Result<(), S
         };
         return Err(format!(
             "{key} {template} uses {{{typo}}}, which is not a setting \
-             (and {key} cannot contain itself){hint}; `tessaro-ctl keys` lists them"
+             (and no template can contain a template){hint}; `tessaro-ctl keys` lists them"
         ));
     }
     if !unset.is_empty() {
@@ -1409,6 +1467,19 @@ fn check_template(key: &str, template: &str, missing: &[String]) -> Result<(), S
         ));
     }
     Ok(())
+}
+
+/// `PRETTY_NAME` and `IMAGE_VERSION` from an os-release file.
+fn os_release_fields(path: &std::path::Path) -> (Option<String>, Option<String>) {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return (None, None);
+    };
+    let field = |name: &str| {
+        text.lines()
+            .find_map(|line| line.strip_prefix(name)?.strip_prefix('='))
+            .map(|value| value.trim().trim_matches('"').to_string())
+    };
+    (field("PRETTY_NAME"), field("IMAGE_VERSION"))
 }
 
 fn unknown(name: &str) -> String {
@@ -1479,8 +1550,14 @@ mod tests {
         fs::write(connector.join("modes"), "1920x1080\n1280x720\n").unwrap();
 
         let paths = Paths::load(&env);
-        let defaults: HashMap<String, String> =
-            [("KIOSK_URL".to_string(), "http://127.0.0.1/".to_string())].into();
+        let defaults: HashMap<String, String> = [
+            ("KIOSK_URL".to_string(), "http://127.0.0.1/".to_string()),
+            (
+                "KIOSK_MAINTENANCE_URL".to_string(),
+                "http://127.0.0.1/maintenance.html".to_string(),
+            ),
+        ]
+        .into();
         let (stop, shutdown) = watch::channel(false);
         let log = Arc::new(Log::buffered(true));
         // What the boot oneshot has always done by the time the agent runs.
@@ -1781,6 +1858,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn maintenance_mode_restarts_only_the_agent_onto_the_maintenance_page() {
+        let fx = fixture();
+        // A deployed device: the site's origin in the policy.
+        let _: Applied = ok(
+            &fx.control,
+            &Caller::Local,
+            Command::Set {
+                values: [("kiosk.url".to_string(), "https://shop.test/".to_string())].into(),
+                if_revision: None,
+                apply: false,
+            },
+        )
+        .await;
+
+        let reply = fx
+            .control
+            .handle(&Caller::Local, set(&[("maintenance.enable", "on")]))
+            .await;
+        let applied: Applied = serde_json::from_value(reply.result.unwrap()).unwrap();
+
+        // The agent, not the browser: the grants did not move.
+        assert_eq!(applied.restarted, ["tessaro-agent.service"]);
+        let env = fs::read_to_string(fx.paths.generated_env()).unwrap();
+        assert!(
+            env.contains("KIOSK_URL=http://127.0.0.1/maintenance.html\n"),
+            "{env}"
+        );
+        let status: Status = ok(&fx.control, &Caller::Local, Command::Status).await;
+        assert!(status.maintenance);
+        assert_eq!(status.kiosk_url, "http://127.0.0.1/maintenance.html");
+
+        // A maintenance page that cannot expand is refused at `set`, even
+        // while it is not the one on screen.
+        let refused = err(
+            &fx.control,
+            &Caller::Local,
+            set(&[
+                ("maintenance.enable", "0"),
+                (
+                    "maintenance.url",
+                    "http://127.0.0.1/maintenance.html?m={data.msg}",
+                ),
+            ]),
+        )
+        .await;
+        assert!(refused.contains("maintenance.url"), "{refused}");
+        assert!(refused.contains("data.msg"), "{refused}");
+    }
+
+    #[tokio::test]
     async fn an_agent_setting_restarts_the_agent_after_the_reply() {
         let fx = fixture();
         let reply = fx
@@ -2040,13 +2167,7 @@ mod tests {
             table.doc
         );
         let spare = keys.iter().find(|k| k.name == "data.spare").unwrap();
-        assert!(
-            spare
-                .doc
-                .contains("Neither kiosk.url nor debug.template uses it"),
-            "{}",
-            spare.doc
-        );
+        assert!(spare.doc.contains("No template uses it"), "{}", spare.doc);
 
         let _: Applied = ok(
             &fx.control,

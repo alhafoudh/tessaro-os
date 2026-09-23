@@ -1,0 +1,123 @@
+#!/bin/sh
+# initramfs-framework module: apply a pending Tessaro image update.
+#
+# Runs as /init.d/80-tessaro_update, after udev (01) and before the root
+# filesystem is mounted (90-rootfs) - which is the whole point: nothing has
+# the blocks of the root partition open while tessaro-flash rewrites them.
+# The staging and the marker are on /data, which tessaro-agent filled in while
+# the kiosk ran (`tessaro-ctl update send`); see agent/update/src/lib.rs.
+#
+# On an ordinary boot this mounts the ESP and /data read-only, finds no
+# marker, unmounts both and returns. With one, tessaro-flash decides, and its
+# exit status says what happens next:
+#
+#   0  written              reboot, into the new kernel
+#   1  failed mid-write     reboot and try again (the attempts are counted)
+#   2  refused, untouched   boot the current system
+#   3  nothing pending      boot the current system
+#   4  gave up              stay here, with the reason on the console
+#
+# The partitions are found from root= the way 90-rootfs does, then by number
+# on the same disk: 1 is the ESP (or the Pi's vfat boot partition), 3 is
+# /data. Every Tessaro wks has that layout, and the updater only ever writes
+# an image whose partition table matched this disk's.
+
+TESSARO_UPDATE_DATA=/run/tessaro-update/data
+TESSARO_UPDATE_ESP=/run/tessaro-update/esp
+
+# To the console, and to the screen when no virtual terminal is a console
+# (the Pi boots with console=serial0 only), so whoever is in front of the
+# kiosk sees that it is updating - tessaro-flash does the same for its own
+# lines.
+tessaro_update_say() {
+	msg "tessaro-update: $*"
+	if ! grep -qE '(^| )tty[0-9]+( |$)' /sys/class/tty/console/active 2>/dev/null; then
+		echo "tessaro-update: $*" > /dev/tty1 2>/dev/null
+	fi
+}
+
+# /dev/<name> of partition $2 on disk $1, from sysfs.
+tessaro_update_partition() {
+	for number in /sys/class/block/$1/*/partition; do
+		[ -e "$number" ] || continue
+		if [ "$(cat "$number")" = "$2" ]; then
+			dir=${number%/partition}
+			echo "/dev/${dir##*/}"
+			return 0
+		fi
+	done
+	return 1
+}
+
+tessaro_update_enabled() {
+	case "$bootparam_root" in
+		PARTUUID=*) TESSARO_UPDATE_ROOT=/dev/disk/by-partuuid/${bootparam_root#PARTUUID=} ;;
+		UUID=*) TESSARO_UPDATE_ROOT=/dev/disk/by-uuid/${bootparam_root#UUID=} ;;
+		/dev/*) TESSARO_UPDATE_ROOT=$bootparam_root ;;
+		*) return 1 ;;
+	esac
+	TESSARO_UPDATE_ROOT=$(readlink -f "$TESSARO_UPDATE_ROOT")
+	[ -b "$TESSARO_UPDATE_ROOT" ] || return 1
+
+	disk=$(readlink -f "/sys/class/block/${TESSARO_UPDATE_ROOT##*/}/..")
+	disk=${disk##*/}
+	TESSARO_UPDATE_BOOT=$(tessaro_update_partition "$disk" 1) || return 1
+	TESSARO_UPDATE_DATA_DEV=$(tessaro_update_partition "$disk" 3) || return 1
+
+	mkdir -p $TESSARO_UPDATE_DATA $TESSARO_UPDATE_ESP
+	mount -t vfat -o ro "$TESSARO_UPDATE_BOOT" $TESSARO_UPDATE_ESP || return 1
+	# A wipe of /data that was cut short: /data may not even mount.
+	[ -e $TESSARO_UPDATE_ESP/tessaro-wipe ] && return 0
+
+	if mount -t ext4 -o ro "$TESSARO_UPDATE_DATA_DEV" $TESSARO_UPDATE_DATA 2>/dev/null; then
+		[ -e $TESSARO_UPDATE_DATA/tessaro/update/pending ] && return 0
+		umount $TESSARO_UPDATE_DATA
+	fi
+	umount $TESSARO_UPDATE_ESP
+	return 1
+}
+
+tessaro_update_run() {
+	# The kernel starts /init with no PATH and initramfs-framework sets none,
+	# so a program tessaro-flash runs falls back to glibc's /bin:/usr/bin -
+	# and mke2fs is in /usr/sbin. Without this, every --wipe-data failed
+	# with "No such file or directory" and was retried at every boot.
+	export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+	tessaro_update_say "an image update is pending - do not power off"
+	mount -o remount,rw $TESSARO_UPDATE_ESP
+	if [ -e $TESSARO_UPDATE_ESP/tessaro-wipe ]; then
+		umount $TESSARO_UPDATE_DATA 2>/dev/null
+		tessaro-flash finish-wipe \
+			--esp $TESSARO_UPDATE_ESP \
+			--data-device "$TESSARO_UPDATE_DATA_DEV" \
+			--data-mount $TESSARO_UPDATE_DATA
+	else
+		mount -o remount,rw $TESSARO_UPDATE_DATA
+		tessaro-flash apply \
+			--dir $TESSARO_UPDATE_DATA/tessaro/update \
+			--root "$TESSARO_UPDATE_ROOT" \
+			--esp $TESSARO_UPDATE_ESP \
+			--data-device "$TESSARO_UPDATE_DATA_DEV" \
+			--data-mount $TESSARO_UPDATE_DATA
+	fi
+	status=$?
+
+	umount $TESSARO_UPDATE_DATA 2>/dev/null
+	umount $TESSARO_UPDATE_ESP 2>/dev/null
+	sync
+
+	case $status in
+		0|1)
+			tessaro_update_say "rebooting"
+			reboot -f
+			;;
+		2|3)
+			;;
+		*)
+			tessaro_update_say "stopped; this device needs a full reflash"
+			while true; do
+				sleep 3600
+			done
+			;;
+	esac
+}

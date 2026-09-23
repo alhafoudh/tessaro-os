@@ -306,10 +306,15 @@ done
 [ "$found" = 1 ] || echo "no .wic images found - run 'mise run build' first" >&2
 '''
 
-# image:pull and image:flash run on a workstation, not on the build host: the image is
-# built on a remote x86 machine and written to a card or disk plugged in here.
-# TESSARO_BUILD_HOST, TESSARO_BUILD_HOST_DIR and TESSARO_FLASH_DEVICE come from
-# mise.local.toml, see README.md.
+# The image:* tasks run on a workstation, not on the build host: the image is
+# built on a remote x86 machine and pulled here. The normal way onto a device
+# is image:update, which pulls the image and sends it to the running device
+# over the network with tessaro-ctl, keeping its settings and claim.
+# image:flash writes a card or disk plugged in here and is the manual path:
+# a first install, a device that no longer boots, or one flashed before the
+# update layout (see "Updating a device" in CLAUDE.md).
+# TESSARO_BUILD_HOST, TESSARO_BUILD_HOST_DIR, TESSARO_NODE and
+# TESSARO_FLASH_DEVICE come from mise.local.toml, see README.md.
 
 [tasks."image:pull"]
 description = "Pull the $TESSARO_MACHINE image and its bmap from the build host into the repo root"
@@ -336,7 +341,7 @@ echo "+ $*"
 '''
 
 [tasks."image:flash"]
-description = "Write the pulled $TESSARO_MACHINE image to a card or disk with bmaptool"
+description = "Manual: write the pulled $TESSARO_MACHINE image to a card or disk with bmaptool (first install, recovery)"
 dir = "{{config_root}}"
 raw = true
 usage = '''
@@ -393,6 +398,50 @@ else
     sudo eject "$device"
 fi
 echo "done - $device can be removed"
+'''
+
+[tasks."image:update"]
+description = "Pull the $TESSARO_MACHINE image and update a running device with it over the network, keeping its settings"
+dir = "{{config_root}}"
+# The freshest image, and a tessaro-ctl built from this checkout: the client
+# speaks the protocol of the tree it was built from, so one left on PATH from
+# an older checkout may not know `update` at all. Both are no-ops when
+# nothing changed.
+depends = ["image:pull", "build-ctl"]
+raw = true
+usage = '''
+arg "[node]" help="The device, as tessaro-ctl --node takes it (defaults to $TESSARO_NODE)"
+flag "--wipe-data" help="Also re-create /data: settings, the claim and the device's identity go"
+flag "--no-reboot" help="Stage and commit it, but leave the reboot for later"
+flag "-y --yes" help="Do not ask before writing the device"
+'''
+run = '''
+set -eu
+
+node={{ usage.node | default(value="") | quote }}
+if [ -z "$node" ]; then
+    node="${TESSARO_NODE:?pass a node or set TESSARO_NODE in mise.local.toml}"
+fi
+name=$(basename "$WIC")
+image="$name.bz2"
+
+if [ ! -f "$image" ]; then
+    echo "missing $image - image:pull found nothing to pull" >&2
+    exit 1
+fi
+if [ ! -f "$name.bmap" ]; then
+    echo "missing $name.bmap - an update writes only the blocks the bmap lists" >&2
+    exit 1
+fi
+
+set --
+[ "{{ usage.wipe_data | default(value='false') }}" = "true" ] && set -- "$@" --wipe-data
+[ "{{ usage.no_reboot | default(value='false') }}" = "true" ] && set -- "$@" --no-reboot
+[ "{{ usage.yes | default(value='false') }}" = "true" ] && set -- "$@" --yes
+
+# Resumes on its own: run it again after a dropped connection and the upload
+# carries on from the last byte the device has.
+exec "$CARGO_TARGET_DIR/release/tessaro-ctl" --node "$node" update send "$@" "$image"
 '''
 
 [tasks.tunnel]

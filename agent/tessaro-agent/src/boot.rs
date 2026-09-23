@@ -8,6 +8,8 @@
 //!
 //! In order:
 //!
+//! 0. **The last update**: what the initramfs did with a pending image, put
+//!    in the journal once (`updates::report`).
 //! 1. **Factory reset**, if `/data/tessaro/factory-reset` exists or the
 //!    kernel command line says `tessaro.factory_reset`: settings, tokens and
 //!    root password cleared - the fresh-install state. The marker is removed
@@ -36,12 +38,15 @@ use crate::render;
 use crate::shadow;
 use crate::state::{self, State};
 use crate::store::Store;
+use crate::updates;
 
 pub fn run(env: &dyn Env, log: &Log) {
     let paths = Paths::load(env);
     let defaults = state::defaults(env);
     let state_store = Store::new(&paths.state_dir, state::FILE);
     let auth_store = Store::new(&paths.state_dir, auth::FILE);
+
+    updates::report(&paths, log);
 
     if factory_reset_requested(&paths) {
         factory_reset(&paths, &state_store, &auth_store, log);

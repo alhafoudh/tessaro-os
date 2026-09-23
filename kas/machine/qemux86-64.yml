@@ -9,9 +9,10 @@ header:
 
 local_conf_header:
   25_tessaro-machine: |
-    # Partition layout: ESP, rootfs, /data, swap. /data is found by label, set
-    # in kas/common/tessaro.yml; here it would be /dev/sda3.
-    WKS_FILE = "moonforge-image-base-qemux86-64.wks.in"
+    # Partition layout: ESP, rootfs, /data, swap - Moonforge's, with the
+    # PARTUUIDs and sizes pinned for in-place updates (see the wks). /data is
+    # found by label, set in kas/common/tessaro.yml; here it would be /dev/sda3.
+    WKS_FILE = "tessaro-image-base-qemux86-64.wks.in"
   30_tessaro-qemu-kiosk: |
     # runqemu defaults to 256M, which Chromium plus Weston will not survive.
     # 4G rather than the 2G cog needed: Chromium's process model is the whole
