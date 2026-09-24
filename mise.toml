@@ -184,19 +184,6 @@ run = '''
 exec bundle exec rspec "$@"
 '''
 
-[tasks."agent-e2e:legacy"]
-description = "The old one-VM agent e2e script, kept until the rspec suite has passed twice"
-dir = "{{config_root}}"
-depends = ["unpack"]
-raw = true
-run = '''
-[ "$TESSARO_MACHINE" = "qemux86-64" ] || {
-    echo "agent-e2e only works for qemux86-64, not $TESSARO_MACHINE" >&2
-    exit 1
-}
-ruby test/e2e/agent_e2e.rb --boot "$@"
-'''
-
 [tasks.build]
 description = "Build the image for $TESSARO_MACHINE (default qemux86-64)"
 dir = "{{config_root}}"

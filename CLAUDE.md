@@ -590,8 +590,7 @@ lane, `E2E_REUSE=1` runs against one already up on worker 0's ports, and
 prefixed with its worker, and after every case one `== progress 12/30, 1
 failed, 6:03 elapsed, ~9 min left` line covers the whole run: the workers
 meet in `build/e2e/progress/` (`spec/support/progress.rb`), which
-`mise run agent-e2e` empties before they start. The old one-VM script is
-still `mise run agent-e2e:legacy` until the suite has passed twice.
+`mise run agent-e2e` empties before they start.
 
 * **The suite never builds the image.** `mise run build` does, in its own
   pane; the suite refuses to start without a `.wic` and warns when the image
