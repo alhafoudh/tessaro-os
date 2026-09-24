@@ -458,9 +458,10 @@ rolled back by the device alone, one whose agent is killed half way and is
 rolled back at its restart, the hotspot password following a claim and an
 unclaim, the hotspot's NAT table, and `ping` and `net ping` with and without
 ping sockets. Last, because
-each reboots the VM, three image updates of the image it booted from:
+each reboots the VM, four image updates of the image it booted from:
 damaged staging refused at boot with nothing written, an update that keeps
-the settings, and one with `--wipe-data`. About twenty minutes; exits non-zero on any failure and prints
+the settings, one with `--wipe-data`, and one with `--repartition` that
+rewrites the whole disk from RAM. About twenty minutes; exits non-zero on any failure and prints
 the journal lines the failing case saw. `ruby test/e2e/agent_e2e.rb --list`
 names the cases, `--only a,b` runs some, `--boot --keep` leaves the VM up, and
 without `--boot` it reuses a VM left up that way.
@@ -1237,7 +1238,9 @@ NAME update send IMAGE.wic.bz2` (or `mise run image:update NAME`) and the
 device reboots into it; settings, the claim and the browser profile stay.
 `--wipe-data` re-creates `/data` as well, and the device comes back unclaimed
 with a new identity. Only the blocks the bmap lists are written, and only to
-the boot and root partitions.
+the root partition, plus the kernel file on the boot partition.
+`--repartition` writes the whole disk instead - see **Rewriting the whole
+disk** below.
 
 1. **Upload.** 4 MiB base64 chunks over the control protocol (`update-begin`,
    `update-chunk`), each fsynced to `/data/tessaro/update/upload.part` before
@@ -1248,19 +1251,26 @@ the boot and root partitions.
    CPU and I/O priority while the kiosk keeps running. `verifying` checks the
    whole file against its SHA-256 (`update send --no-verify` skips it - the
    bmap's checksums below still cover every block that gets written);
-   `preparing` is one pass over the decompressed image that keeps the
-   bmap-mapped parts of p1 and p2 - each range checked against the bmap's
-   own SHA-256 - in sparse `root.img`/`boot.img`, re-cut into 4 MiB chunks
-   with checksums of their own (`manifest.json`). The kernel is copied out
-   of a loop mount of `boot.img`. `/data` and swap in the image are never
-   read past. ~734 MB of a 1.19 GB root is mapped on qemu today.
+   `preparing` is a dry run: one pass over the decompressed image, each bmap
+   range up to the end of root checked against the bmap's own SHA-256, and
+   the mapped parts of root re-cut into 4 MiB chunks with checksums of their
+   own (`manifest.json`, with the upload's own SHA-256). Nothing of the image
+   is kept but the kernel, copied out of a loop mount of the image's boot
+   partition, staged sparse in `boot.img` for as long as that takes. The
+   upload itself stays: it is what gets written. `/data` and swap in the
+   image are never decompressed. ~734 MB of a 1.19 GB root is mapped on qemu
+   today.
 3. **Commit** writes `pending` and reboots.
 4. **Apply**, in the initramfs (`/init.d/80-tessaro_update`, before
    `90-rootfs`, so nothing has the root partition mounted): `tessaro-flash`
-   verifies every staged chunk and the kernel *before the first write*,
-   writes, drops the device's page cache and reads everything back, then
-   installs the kernel as `<name>.new` and renames it over the old one, and
-   reboots into it. The logic is `agent/update/src/{apply,flash,wipe}.rs`.
+   checks the upload against the manifest's SHA-256 and the staged kernel
+   *before the first write*, then decompresses the upload again, checks each
+   chunk against its hash as it writes it, drops the device's page cache and
+   reads everything back, then installs the kernel as `<name>.new` and
+   renames it over the old one, and reboots into it. Decompressing is the
+   slow part: seconds on x86, likely a few minutes on the Pi, with the screen
+   showing the console's progress. The logic is
+   `agent/update/src/{image,apply,flash,wipe}.rs`.
 5. **Report**: the boot oneshot puts the result in `journalctl -t
    tessaro-config` once; `tessaro-ctl update status` shows it until the next
    update. `tessaro-ctl status` shows `PRETTY_NAME`/`IMAGE_VERSION`.
@@ -1269,12 +1279,18 @@ Things to know:
 
 * **A power cut is survivable at every step but one.** Before the first
   write the old system is intact. From the first write on, the marker and
-  the staging are still on `/data`, so the next boot writes everything again
+  the upload are still on `/data`, so the next boot writes everything again
   - the half-written root is never mounted. `pending.started` is set just
   before the first write, so staging that stops verifying after that is not
   taken as a reason to boot the (gone) old root. Five attempts, then it stops
   on the console asking for a reflash. The one unprotected path is the ESP -
   a kernel that does not boot - and the bootloader is never touched.
+* **The upload is checked whole before the initramfs writes a byte**, and
+  that is what makes decompressing it twice safe. The dry run proved the
+  file decompresses to what the bmap says; the SHA-256 check in the
+  initramfs proves it is still that file. Without it, a file damaged on
+  `/data` between the two would only show up at the chunk it hits, after
+  root was half written, and every retry would hit it again.
 * **Every identifier the rootfs names is pinned in the x86 wks files, and
   that is load-bearing.** wic makes new ones on every build otherwise: the
   PARTUUIDs (`--uuid`) go into grub.cfg's `root=`, and the `/boot` vfat
@@ -1294,7 +1310,8 @@ Things to know:
   kernels during the swap. All three are sized well past today's ~900M
   rootfs and 21M/51M kernels on purpose, since growing one costs a reflash. wic fails the build if the rootfs outgrows it.
   Changing any partition is a new disk layout: every device needs one full
-  reflash, which the updater says in so many words when it refuses.
+  reflash or one `--repartition`, which the updater says in so many words
+  when it refuses.
 * **The initramfs is bundled into the kernel** (`INITRAMFS_IMAGE_BUNDLE`), so
   the boot partition still has one kernel file to swap and bootimg-efi picks
   it up by itself - as `bzImage-initramfs-<machine>.bin`, which is the
@@ -1314,6 +1331,57 @@ Things to know:
 * **Devices flashed before this cannot take updates** - their PARTUUIDs are
   random and their root partition is sized to its old build. One
   `image:flash` gets them onto the layout.
+
+### Rewriting the whole disk
+
+**`update send --repartition` (`mise run image:update --repartition NAME`) is
+`image:flash` over the network**, for a device whose disk layout is not the
+image's - the partition sizes changed, or the pins did. The whole image is
+written from the partition table on: boot, root, an empty `/data` and swap,
+the bmap's mapped blocks only, like bmaptool. It implies `--wipe-data`, so the
+device comes back unclaimed with a new identity, and `tessaro-ctl` forgets
+it. The upload, the dry run (over the whole image this time, `/data`
+included, and with no kernel to copy out) and the commit are the same as a
+root update's; what differs is the initramfs (`apply_disk` in
+`agent/update/src/flash.rs`).
+
+* **The upload goes into RAM, because the disk update overwrites the `/data`
+  it sits on.** tessaro-flash mounts a tmpfs of the upload's size on
+  `/run/tessaro-update/ram`, copies it in and checks the copy's SHA-256 while
+  `/data` is still there, so a refusal up to that point boots the old system
+  like any other. The agent refuses at `update-begin` if MemTotal is short of
+  the upload plus 192 MiB, and tessaro-flash again if MemAvailable is short
+  of it plus 64 MiB. About 270 MB of bz2 on qemu today: the Pi's 1 GB should
+  hold it, which is why the compressed file is what is kept, not the
+  decompressed image (~750 MB would not fit).
+* **A power cut from the first write on needs a physical reflash.** There is
+  nothing left to write again from, and the partition table may already
+  describe partitions that hold nothing yet. That is the price, and the
+  confirmation says so; a write failing half way stops on the console (exit
+  4), for the same reason.
+* **Nothing may have the disk's filesystems mounted.** tessaro-flash unmounts
+  the ESP and `/data` itself after the RAM copy is checked, ESP first so that
+  a failure there can still be recorded on `/data`. Then it writes the whole
+  disk device (`--disk`, `/dev/sda` or `/dev/mmcblk0`, from the hook).
+* **The result lands on the new `/data`.** After the write, `BLKRRPART` makes
+  the kernel read the new table (retried: udev in the initramfs can hold a
+  partition open for a moment), the new partition 3 is mounted and
+  `result.json` goes into it with `wiped_data`, so the boot oneshot reports
+  `disk rewritten: NAME ..., /data re-created`. If that part fails, the disk
+  is still complete and boots; only the report is lost.
+* **The check is that it fits, not that it matches.** `layout::check_disk`
+  wants partitions 1 to 3 in the image (the hook finds the ESP and `/data`
+  by number), the same kind of table as the device's (GPT or MBR, which is
+  also the only machine check left), and an image no larger than the disk.
+  Writing the wrong machine's image is possible here and bricks the device
+  until a reflash, like `image:flash` of the wrong file.
+* **The backup GPT header ends up where the image ended, not at the end of
+  the disk**, and `/data` stays at `IMAGE_DATA_MIN_SIZE` - both exactly as
+  after `image:flash` with bmaptool, which does not relocate or grow anything
+  either. The kernel logs a GPT warning about the backup header and boots.
+* **It needs the new code on the device first.** The initramfs doing the
+  work is the running image's. A device on an image older than this refuses
+  `--repartition` as a layout mismatch, and needs one physical reflash.
 
 ## Networking
 

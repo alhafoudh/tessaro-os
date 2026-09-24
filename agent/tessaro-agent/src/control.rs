@@ -331,10 +331,19 @@ impl Control {
                 sha256,
                 bmap,
                 verify,
-            } => self
-                .update_begin(caller, name, size, sha256, bmap, verify)
-                .await
-                .into(),
+                repartition,
+            } => {
+                let upload = Upload {
+                    name,
+                    size,
+                    sha256,
+                    bmap,
+                    verify,
+                    repartition,
+                };
+                let who = caller.describe();
+                self.updates.begin(&who, upload).await.into()
+            }
             Command::UpdateChunk { offset, data } => self.updates.chunk(offset, data).await.into(),
             Command::UpdateStatus => self.updates.status().await.into(),
             Command::UpdateCommit { .. } if self.network.busy() => {
@@ -537,26 +546,6 @@ impl Control {
     /// Resume whatever update the staging directory holds.
     pub async fn load_update(&self) {
         self.updates.load().await;
-    }
-
-    async fn update_begin(
-        &self,
-        caller: &Caller,
-        name: String,
-        size: u64,
-        sha256: String,
-        bmap: String,
-        verify: bool,
-    ) -> Result<protocol::UpdateBegun, String> {
-        let who = caller.describe();
-        let upload = Upload {
-            name,
-            size,
-            sha256,
-            bmap,
-            verify,
-        };
-        self.updates.begin(&who, upload).await
     }
 
     // --- reading -----------------------------------------------------------

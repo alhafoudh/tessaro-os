@@ -3,36 +3,64 @@
 
 use serde::{Deserialize, Serialize};
 
-pub const FORMAT: u32 = 1;
+/// 2: the upload itself is what gets applied, no longer a staged root image.
+pub const FORMAT: u32 = 2;
 
 /// A prepared update: everything the initramfs needs, and nothing it has to
-/// work out. Its presence means the staging is complete.
+/// work out. Its presence means the dry run passed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Manifest {
     /// Bumped on any change an older tessaro-flash would misread. The one
     /// applying an update is the *old* image's, inside the running kernel.
     pub format: u32,
     pub source: Source,
-    pub root: Root,
-    pub boot: Boot,
+    /// The upload as the agent read it, which the initramfs checks again
+    /// before it writes anything. The same as `source.sha256` unless the
+    /// upload was sent with `--no-verify`.
+    pub upload: Digest,
+    pub mode: Mode,
+    pub target: Target,
+    /// The kernel to install on the ESP. A root update only: a disk update
+    /// writes the whole ESP.
+    pub kernel: Option<File>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Mode {
+    /// The root partition, then the kernel file. `/data` is kept, unless
+    /// the commit asks for it to be wiped.
+    Root,
+    /// The whole disk: partition table, every partition, `/data` included.
+    /// For a device on another disk layout; a power cut while it writes
+    /// needs a physical reflash.
+    Disk,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Source {
     /// The file name the technician uploaded.
     pub name: String,
-    /// SHA-256 of the compressed file.
+    /// SHA-256 of the compressed file, as the client sent it.
     pub sha256: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Root {
-    pub partuuid: String,
-    /// Bytes from the start of the disk.
+pub struct Digest {
+    pub size: u64,
+    pub sha256: String,
+}
+
+/// What is written where: the root partition, or the whole disk.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Target {
+    /// Bytes from the start of the image: the root partition's offset, or 0.
     pub start: u64,
     pub size: u64,
-    /// The mapped parts of the partition, at partition-relative offsets, in
-    /// order. `root.img` holds them at the same offsets.
+    /// The image's root PARTUUID, for the log.
+    pub partuuid: String,
+    /// The mapped parts of the target, at target-relative offsets, in order:
+    /// where they go on the device written to, and what they must hash to.
     pub chunks: Vec<Chunk>,
 }
 
@@ -44,12 +72,6 @@ pub struct Chunk {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Boot {
-    pub partuuid: String,
-    pub kernel: File,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct File {
     /// Its name on the ESP, and in the staging directory as `kernel`.
     pub name: String,
@@ -57,7 +79,7 @@ pub struct File {
     pub sha256: String,
 }
 
-impl Root {
+impl Target {
     pub fn mapped(&self) -> u64 {
         self.chunks.iter().map(|chunk| chunk.len).sum()
     }
@@ -111,6 +133,19 @@ pub struct Upload {
     /// still cover every block that will be written.
     #[serde(default = "yes")]
     pub verify: bool,
+    /// Write the whole disk, partition table included (`Mode::Disk`).
+    #[serde(default)]
+    pub repartition: bool,
+}
+
+impl Upload {
+    pub fn mode(&self) -> Mode {
+        if self.repartition {
+            Mode::Disk
+        } else {
+            Mode::Root
+        }
+    }
 }
 
 fn yes() -> bool {

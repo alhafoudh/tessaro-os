@@ -869,10 +869,11 @@ module AgentE2E
   # writes is really there for the next boot - and gone at power-off.
   #
   # The image pushed is the one the VM booted from: an update to the same
-  # build still stages, verifies, writes and reads back every mapped block
-  # and swaps the kernel, which is all of the machinery. It goes to the guest
-  # over SSH and is sent from there through the local socket, as a technician
-  # on the device would.
+  # build still checks, decompresses, writes and reads back every mapped
+  # block and swaps the kernel, which is all of the machinery - and with
+  # --repartition, the whole disk from RAM. It goes to the guest over SSH and
+  # is sent from there through the local socket, as a technician on the
+  # device would.
   IMAGE = File.join(ROOT, "build", "qemux86-64", "tmp", "deploy", "images", "qemux86-64",
                     "tessaro-os-qemux86-64.rootfs.wic")
 
@@ -919,7 +920,7 @@ module AgentE2E
 
   check "update-refused", "damaged staging is refused at boot with nothing written" do |guest, _journal|
     send_update(guest, "--no-reboot")
-    # The staged kernel, after the agent verified it. A damaged root chunk is
+    # The staged kernel, after the agent verified it. A damaged upload is
     # refused the same way, before the first write; the unit tests cover it.
     guest.run("echo damaged > /data/tessaro/update/kernel && sync")
     guest.run("systemctl reboot", allow_failure: true)
@@ -929,7 +930,7 @@ module AgentE2E
     raise Failure, "no refusal in the boot log:\n#{log}" unless log.match?(/was not applied: .*damaged/)
     status = guest.run("tessaro-ctl update status")
     raise Failure, "update status: #{status}" unless status.include?("not applied")
-    raise Failure, "the staging was left behind" if guest.run("ls /data/tessaro/update").include?("root.img")
+    raise Failure, "the staging was left behind" if guest.run("ls /data/tessaro/update").include?("upload.part")
   ensure
     guest.run("tessaro-ctl update cancel", allow_failure: true)
   end
@@ -943,7 +944,7 @@ module AgentE2E
     raise Failure, "no applied update in the boot log:\n#{log}" unless log.include?("update applied: e2e.wic.bz2")
     kept = guest.run("tessaro-ctl get data.e2e")
     raise Failure, "a setting did not survive the update: #{kept}" unless kept.include?("kept")
-    raise Failure, "the staging was left behind" if guest.run("ls /data/tessaro/update").include?("root.img")
+    raise Failure, "the staging was left behind" if guest.run("ls /data/tessaro/update").include?("upload.part")
   ensure
     guest.run("tessaro-ctl update cancel", allow_failure: true)
     guest.run("tessaro-ctl unset data.e2e --no-apply", allow_failure: true)
@@ -963,6 +964,30 @@ module AgentE2E
   ensure
     guest.run("tessaro-ctl update cancel", allow_failure: true)
     # The wipe took the test settings too.
+    guest.configure
+    guest.restart_agent
+  end
+
+  # The same image over the whole disk: partition table, ESP, root and an
+  # empty /data, from a copy of the upload in RAM. The layout does not change
+  # here, which the updater neither needs nor checks; what is exercised is
+  # the RAM copy, letting go of /data and the ESP, the write, the re-read
+  # partition table and the result landing on the new /data.
+  check "update-repartition", "--repartition rewrites the whole disk and comes back as new" do |guest, _journal|
+    before = guest.run("tessaro-ctl --json id")
+    guest.run("tessaro-ctl set data.e2e=gone --no-apply")
+    send_update(guest, "--repartition")
+    wait_for_reboot(guest)
+
+    log = boot_log(guest)
+    raise Failure, "no rewritten disk in the boot log:\n#{log}" unless log.include?("disk rewritten: e2e.wic.bz2")
+    raise Failure, "the boot log does not say /data is new:\n#{log}" unless log.include?("/data re-created")
+    after = guest.run("tessaro-ctl --json id")
+    raise Failure, "the node id survived a rewritten disk" if JSON.parse(after)["id"] == JSON.parse(before)["id"]
+    raise Failure, "a setting survived a rewritten disk" if guest.run("tessaro-ctl get data.e2e", allow_failure: true).include?("gone")
+    raise Failure, "the pushed image survived a rewritten disk" if guest.run("ls /data").include?("e2e.wic")
+  ensure
+    guest.run("tessaro-ctl update cancel", allow_failure: true)
     guest.configure
     guest.restart_agent
   end

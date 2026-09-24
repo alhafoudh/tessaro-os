@@ -420,6 +420,7 @@ raw = true
 usage = '''
 arg "[node]" help="The device, as tessaro-ctl --node takes it (defaults to $TESSARO_NODE)"
 flag "--wipe-data" help="Also re-create /data: settings, the claim and the device's identity go"
+flag "--repartition" help="Rewrite the whole disk, partition table and /data included, for a device on another layout"
 flag "--no-reboot" help="Stage and commit it, but leave the reboot for later"
 flag "-y --yes" help="Do not ask before writing the device"
 '''
@@ -444,6 +445,7 @@ fi
 
 set --
 [ "{{ usage.wipe_data | default(value='false') }}" = "true" ] && set -- "$@" --wipe-data
+[ "{{ usage.repartition | default(value='false') }}" = "true" ] && set -- "$@" --repartition
 [ "{{ usage.no_reboot | default(value='false') }}" = "true" ] && set -- "$@" --no-reboot
 [ "{{ usage.yes | default(value='false') }}" = "true" ] && set -- "$@" --yes
 

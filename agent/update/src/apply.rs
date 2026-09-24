@@ -3,27 +3,34 @@
 //!
 //! The order is what makes a power cut survivable:
 //!
-//! 1. Verify every staged chunk and the staged kernel. A failure here is
-//!    `Untouched`: nothing was written, the old system boots.
-//! 2. Write the chunks, sync, drop the device's page cache, read them back.
-//! 3. Swap the kernel on the ESP: a `.new` file, fsync, rename.
+//! 1. `check`: the upload against the SHA-256 the agent's dry run recorded,
+//!    and for a root update the staged kernel and room for it on the ESP. A
+//!    failure here is `Untouched`: nothing was written, the old system boots.
+//! 2. `write`: decompress the upload again, check each chunk against its
+//!    hash and write it, sync, drop the device's page cache, read it all
+//!    back. The upload decompresses to the same bytes the dry run checked,
+//!    since it is the same file, so a chunk failing here means the disk or
+//!    the RAM is failing.
+//! 3. `install_kernel`, for a root update: a `.new` file, fsync, rename.
 //!
-//! Anything that goes wrong in 2 or 3 is `Partial`, and the caller keeps the
-//! marker so the next boot does all of it again. Every step is idempotent.
+//! Anything that goes wrong in 2 or 3 is `Partial`. For a root update the
+//! caller keeps the marker so the next boot does all of it again; every step
+//! is idempotent. A disk update has nothing to go back to.
 
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Seek, SeekFrom, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::os::unix::fs::FileExt;
 use std::path::Path;
 
-use crate::manifest::{self, Chunk, Manifest};
-use crate::{fsutil, megabytes, KERNEL, MANIFEST, ROOT_IMAGE};
+use crate::image::{short, skip, Image};
+use crate::manifest::{self, Chunk, Manifest, Mode};
+use crate::{fsutil, megabytes, KERNEL, MANIFEST, UPLOAD};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Failure {
     /// Refused before the first write; the old system is intact.
     Untouched(String),
-    /// Refused after writing began; the old root is gone. Retry.
+    /// Refused after writing began; the old system is gone. Retry.
     Partial(String),
 }
 
@@ -35,9 +42,24 @@ impl Failure {
     }
 }
 
-/// `dir` is the staging directory, `root` the root partition's device node,
-/// `esp` where the boot partition is mounted. `starting` runs once, just
-/// before the first write, and must make that fact durable.
+/// The staged manifest, if this tessaro-flash can apply it.
+pub fn read_manifest(dir: &Path) -> Result<Manifest, String> {
+    let manifest: Manifest = fsutil::read_json(&dir.join(MANIFEST))
+        .map_err(|err| format!("the staged manifest is unreadable: {err}"))?;
+    if manifest.format != manifest::FORMAT {
+        return Err(format!(
+            "the update was prepared in format {}, this initramfs applies {}",
+            manifest.format,
+            manifest::FORMAT
+        ));
+    }
+    Ok(manifest)
+}
+
+/// A root update from the staging directory `dir`: `root` is the root
+/// partition's device node, `esp` where the boot partition is mounted.
+/// `starting` runs once, just before the first write, and must make that
+/// fact durable.
 pub fn apply(
     dir: &Path,
     root: &Path,
@@ -47,134 +69,178 @@ pub fn apply(
 ) -> Result<Manifest, Failure> {
     use Failure::{Partial, Untouched};
 
-    let manifest: Manifest = fsutil::read_json(&dir.join(MANIFEST))
-        .map_err(|err| Untouched(format!("the staged manifest is unreadable: {err}")))?;
-    if manifest.format != manifest::FORMAT {
-        return Err(Untouched(format!(
-            "the update was prepared in format {}, this initramfs applies {}",
-            manifest.format,
-            manifest::FORMAT
-        )));
+    let manifest = read_manifest(dir).map_err(Untouched)?;
+    if manifest.mode != Mode::Root {
+        return Err(Untouched(
+            "the update rewrites the whole disk, not the root partition".to_string(),
+        ));
     }
+    let upload = dir.join(UPLOAD);
+    check(&manifest, &upload, dir, root, Some(esp), console).map_err(Untouched)?;
+    write(&manifest, &upload, root, console, starting)?;
+    install_kernel(&manifest, dir, esp, console).map_err(Partial)?;
+    say(console, "update written");
+    Ok(manifest)
+}
 
-    // 1. Nothing touches the disk until everything staged is known good.
-    say(console, "checking the staged update");
-    let staged = File::open(dir.join(ROOT_IMAGE))
-        .map_err(|err| Untouched(format!("the staged root image is missing: {err}")))?;
-    let mut buffer = Vec::new();
-    for chunk in &manifest.root.chunks {
-        read_chunk(&staged, chunk, &mut buffer)
-            .map_err(|err| Untouched(format!("reading the staged root image: {err}")))?;
-        if crate::sha256(&buffer) != chunk.sha256 {
-            return Err(Untouched(format!(
-                "the staged root image is damaged at offset {}; nothing was written",
-                chunk.offset
-            )));
-        }
-    }
-    let kernel = &manifest.boot.kernel;
-    let staged_kernel = dir.join(KERNEL);
-    match crate::sha256_file(&staged_kernel) {
-        Ok((size, sha256)) if size == kernel.size && sha256 == kernel.sha256 => {}
-        Ok(_) => {
-            return Err(Untouched(
-                "the staged kernel is damaged; nothing was written".to_string(),
-            ))
-        }
-        Err(err) => return Err(Untouched(format!("the staged kernel is unreadable: {err}"))),
+/// Everything that can be known before the first write. `dir` holds the
+/// staged kernel and `esp` is where it goes, both for a root update only.
+pub fn check(
+    manifest: &Manifest,
+    upload: &Path,
+    dir: &Path,
+    device: &Path,
+    esp: Option<&Path>,
+    console: &mut dyn Write,
+) -> Result<(), String> {
+    say(console, "checking the upload");
+    match crate::sha256_file(upload) {
+        Ok((size, sha256)) if size == manifest.upload.size && sha256 == manifest.upload.sha256 => {}
+        Ok(_) => return Err("the upload is damaged; nothing was written".to_string()),
+        Err(err) => return Err(format!("the upload is unreadable: {err}")),
     }
 
     let mut target = OpenOptions::new()
         .read(true)
         .write(true)
-        .open(root)
-        .map_err(|err| Untouched(format!("{}: {err}", root.display())))?;
+        .open(device)
+        .map_err(|err| format!("{}: {err}", device.display()))?;
     let capacity = target
         .seek(SeekFrom::End(0))
-        .map_err(|err| Untouched(format!("{}: {err}", root.display())))?;
-    if capacity < manifest.root.size {
-        return Err(Untouched(format!(
-            "{} holds {}, the new root filesystem needs {}",
-            root.display(),
+        .map_err(|err| format!("{}: {err}", device.display()))?;
+    if capacity < manifest.target.size {
+        return Err(format!(
+            "{} holds {}, the update needs {}",
+            device.display(),
             megabytes(capacity),
-            megabytes(manifest.root.size)
-        )));
+            megabytes(manifest.target.size)
+        ));
     }
 
-    let esp_kernel = esp.join(&kernel.name);
-    let kernel_current = crate::sha256_file(&esp_kernel)
-        .is_ok_and(|(size, sha256)| size == kernel.size && sha256 == kernel.sha256);
-    if !kernel_current {
+    let Some(kernel) = &manifest.kernel else {
+        return Ok(());
+    };
+    match crate::sha256_file(&dir.join(KERNEL)) {
+        Ok((size, sha256)) if size == kernel.size && sha256 == kernel.sha256 => {}
+        Ok(_) => return Err("the staged kernel is damaged; nothing was written".to_string()),
+        Err(err) => return Err(format!("the staged kernel is unreadable: {err}")),
+    }
+    let esp = esp.ok_or("the update installs a kernel, but no boot partition was given")?;
+    if !kernel_current(esp, kernel) {
         // The .new copy sits next to the old kernel until the rename.
         let free = fsutil::available(esp).unwrap_or(0);
         if free < kernel.size {
-            return Err(Untouched(format!(
+            return Err(format!(
                 "the boot partition has {} free, the new kernel needs {}",
                 megabytes(free),
                 megabytes(kernel.size)
-            )));
+            ));
         }
     }
+    Ok(())
+}
 
-    // 2. The root partition.
+/// Decompress `upload` and write the manifest's chunks to `device`: the
+/// root partition, or the whole disk.
+pub fn write(
+    manifest: &Manifest,
+    upload: &Path,
+    device: &Path,
+    console: &mut dyn Write,
+    starting: &mut dyn FnMut() -> Result<(), String>,
+) -> Result<(), Failure> {
+    use Failure::{Partial, Untouched};
+
+    let mut image = Image::open(upload).map_err(|err| Untouched(format!("the upload: {err}")))?;
+    let target_file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(device)
+        .map_err(|err| Untouched(format!("{}: {err}", device.display())))?;
     starting().map_err(Untouched)?;
-    let total = manifest.root.mapped();
-    let mut written = 0u64;
-    let mut shown = 0u64;
+
+    let what = match manifest.mode {
+        Mode::Root => "the root filesystem",
+        Mode::Disk => "the whole disk",
+    };
+    let total = manifest.target.mapped();
     say(
         console,
-        &format!(
-            "writing the root filesystem, {} - do not power off",
-            megabytes(total)
-        ),
+        &format!("writing {what}, {} - do not power off", megabytes(total)),
     );
-    for chunk in &manifest.root.chunks {
-        read_chunk(&staged, chunk, &mut buffer)
-            .map_err(|err| Partial(format!("reading the staged root image: {err}")))?;
-        target
+    let (mut position, mut written, mut shown) = (0u64, 0u64, 0u64);
+    let mut buffer = Vec::new();
+    for chunk in &manifest.target.chunks {
+        let at = manifest.target.start + chunk.offset;
+        skip(&mut image, at - position).map_err(Partial)?;
+        buffer.resize(chunk.len as usize, 0);
+        image
+            .read_exact(&mut buffer)
+            .map_err(|err| Partial(short(err)))?;
+        position = at + chunk.len;
+        if crate::sha256(&buffer) != chunk.sha256 {
+            return Err(Partial(format!(
+                "the upload decompressed differently at offset {at} than when it was checked"
+            )));
+        }
+        target_file
             .write_all_at(&buffer, chunk.offset)
-            .map_err(|err| Partial(format!("writing {}: {err}", root.display())))?;
+            .map_err(|err| Partial(format!("writing {}: {err}", device.display())))?;
         written += chunk.len;
         let percent = written * 100 / total.max(1);
         if percent >= shown + 10 {
             shown = percent - percent % 10;
-            say(console, &format!("writing root {shown}%"));
+            say(console, &format!("writing {shown}%"));
         }
     }
-    target
+    target_file
         .sync_all()
-        .map_err(|err| Partial(format!("syncing {}: {err}", root.display())))?;
-    fsutil::drop_cache(&target);
-    drop(target);
+        .map_err(|err| Partial(format!("syncing {}: {err}", device.display())))?;
+    fsutil::drop_cache(&target_file);
+    drop(target_file);
 
-    say(console, "reading the root filesystem back");
-    let target = File::open(root).map_err(|err| Partial(format!("{}: {err}", root.display())))?;
-    for chunk in &manifest.root.chunks {
-        read_chunk(&target, chunk, &mut buffer)
-            .map_err(|err| Partial(format!("reading {} back: {err}", root.display())))?;
+    say(console, &format!("reading {what} back"));
+    let target_file =
+        File::open(device).map_err(|err| Partial(format!("{}: {err}", device.display())))?;
+    for chunk in &manifest.target.chunks {
+        read_chunk(&target_file, chunk, &mut buffer)
+            .map_err(|err| Partial(format!("reading {} back: {err}", device.display())))?;
         if crate::sha256(&buffer) != chunk.sha256 {
             return Err(Partial(format!(
                 "{} reads back differently at offset {}",
-                root.display(),
+                device.display(),
                 chunk.offset
             )));
         }
     }
+    Ok(())
+}
 
-    // 3. The kernel, last: the new root's modules are already in place when
-    //    the new kernel first boots.
-    if kernel_current {
+/// The kernel, last: the new root's modules are already in place when the
+/// new kernel first boots.
+pub fn install_kernel(
+    manifest: &Manifest,
+    dir: &Path,
+    esp: &Path,
+    console: &mut dyn Write,
+) -> Result<(), String> {
+    let Some(kernel) = &manifest.kernel else {
+        return Ok(());
+    };
+    if kernel_current(esp, kernel) {
         say(console, "the kernel is unchanged");
-    } else {
-        say(
-            console,
-            &format!("installing the new kernel as {}", kernel.name),
-        );
-        install(&staged_kernel, esp, &kernel.name, &kernel.sha256).map_err(Partial)?;
+        return Ok(());
     }
+    say(
+        console,
+        &format!("installing the new kernel as {}", kernel.name),
+    );
+    install(&dir.join(KERNEL), esp, &kernel.name, &kernel.sha256)
+}
 
-    say(console, "update written");
-    Ok(manifest)
+fn kernel_current(esp: &Path, kernel: &manifest::File) -> bool {
+    crate::sha256_file(&esp.join(&kernel.name))
+        .is_ok_and(|(size, sha256)| size == kernel.size && sha256 == kernel.sha256)
 }
 
 fn read_chunk(file: &File, chunk: &Chunk, buffer: &mut Vec<u8>) -> io::Result<()> {
@@ -208,19 +274,21 @@ fn say(console: &mut dyn Write, line: &str) {
     let _ = console.flush();
 }
 
-/// Only for tests: hash of what `apply` would leave at `chunk` in `file`.
+/// Only for tests: whether `file` holds every chunk of `manifest`.
 #[cfg(test)]
-fn digest_at(file: &Path, chunk: &Chunk) -> String {
+fn holds(file: &Path, manifest: &Manifest) -> bool {
     let file = File::open(file).unwrap();
     let mut buffer = Vec::new();
-    read_chunk(&file, chunk, &mut buffer).unwrap();
-    crate::sha256(&buffer)
+    manifest.target.chunks.iter().all(|chunk| {
+        read_chunk(&file, chunk, &mut buffer).unwrap();
+        crate::sha256(&buffer) == chunk.sha256
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{staged, MIB};
+    use crate::testing::{staged, staged_as, DISK_SECTORS, MIB};
 
     struct Device {
         _dir: tempfile::TempDir,
@@ -260,21 +328,12 @@ mod tests {
         )
     }
 
-    fn matches(device: &Device) -> bool {
-        device
-            .manifest
-            .root
-            .chunks
-            .iter()
-            .all(|chunk| digest_at(&device.root, chunk) == chunk.sha256)
-    }
-
     #[test]
     fn the_mapped_blocks_and_the_kernel_are_written() {
         let device = device();
         run(&device).unwrap();
 
-        assert!(matches(&device));
+        assert!(holds(&device.root, &device.manifest));
         assert_eq!(fs::read(device.esp.join("bzImage")).unwrap(), b"a kernel");
         assert!(!device.esp.join("bzImage.new").exists());
         // Unmapped blocks are left alone: free space in the new filesystem.
@@ -294,27 +353,29 @@ mod tests {
     #[test]
     fn a_write_cut_short_is_finished_by_the_next_attempt() {
         let device = device();
-        // As if the power went halfway through the first chunk.
-        let chunk = &device.manifest.root.chunks[0];
-        let staged = fs::read(device.staging.join(ROOT_IMAGE)).unwrap();
-        let half = (chunk.len / 2) as usize;
+        // As if the power went halfway through: the first chunk only.
+        let (image, _) = crate::testing::disk();
+        let chunk = &device.manifest.target.chunks[0];
+        let start = (device.manifest.target.start + chunk.offset) as usize;
         let target = OpenOptions::new().write(true).open(&device.root).unwrap();
-        target.write_all_at(&staged[..half], 0).unwrap();
+        target
+            .write_all_at(&image[start..start + chunk.len as usize], chunk.offset)
+            .unwrap();
         drop(target);
-        assert!(!matches(&device));
+        assert!(!holds(&device.root, &device.manifest));
 
         run(&device).unwrap();
-        assert!(matches(&device));
+        assert!(holds(&device.root, &device.manifest));
     }
 
     #[test]
-    fn damaged_staging_is_refused_with_nothing_written() {
+    fn a_damaged_upload_is_refused_with_nothing_written() {
         let device = device();
-        let path = device.staging.join(ROOT_IMAGE);
-        let mut staged = fs::read(&path).unwrap();
-        let last = device.manifest.root.chunks.last().unwrap();
-        staged[(last.offset + 10) as usize] ^= 0xff;
-        fs::write(&path, staged).unwrap();
+        let path = device.staging.join(UPLOAD);
+        let mut upload = fs::read(&path).unwrap();
+        let middle = upload.len() / 2;
+        upload[middle] ^= 0xff;
+        fs::write(&path, upload).unwrap();
         let before = fs::read(&device.root).unwrap();
 
         let failure = run(&device).unwrap_err();
@@ -363,7 +424,7 @@ mod tests {
     }
 
     #[test]
-    fn starting_is_called_only_once_staging_verified() {
+    fn starting_is_called_only_once_the_checks_passed() {
         let device = device();
         let mut calls = 0;
         apply(
@@ -392,5 +453,39 @@ mod tests {
             },
         );
         assert!(!called);
+    }
+
+    #[test]
+    fn a_disk_update_writes_the_whole_image_to_the_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let (image, manifest) = staged_as(dir.path(), Mode::Disk);
+        let disk = dir.path().join("sda");
+        fs::write(&disk, vec![0x5au8; (DISK_SECTORS * 512) as usize]).unwrap();
+        let upload = dir.path().join(UPLOAD);
+
+        check(&manifest, &upload, dir.path(), &disk, None, &mut io::sink()).unwrap();
+        write(&manifest, &upload, &disk, &mut io::sink(), &mut || Ok(())).unwrap();
+
+        assert!(holds(&disk, &manifest));
+        let written = fs::read(&disk).unwrap();
+        // The partition table, the boot partition's mapped blocks, data's.
+        assert_eq!(&written[..512 * 34], &image[..512 * 34]);
+        assert_eq!(written[MIB as usize], image[MIB as usize]);
+        assert_eq!(written[(10 * MIB) as usize], image[(10 * MIB) as usize]);
+        // Past the image, the disk is as it was.
+        assert_eq!(written[(13 * MIB) as usize], 0x5a);
+    }
+
+    #[test]
+    fn a_disk_update_is_not_applied_as_a_root_update() {
+        let dir = tempfile::tempdir().unwrap();
+        staged_as(dir.path(), Mode::Disk);
+        let root = dir.path().join("sda2");
+        fs::write(&root, vec![0u8; (6 * MIB) as usize]).unwrap();
+        let failure = apply(dir.path(), &root, dir.path(), &mut io::sink(), &mut || {
+            Ok(())
+        })
+        .unwrap_err();
+        assert!(matches!(failure, Failure::Untouched(_)), "{failure:?}");
     }
 }

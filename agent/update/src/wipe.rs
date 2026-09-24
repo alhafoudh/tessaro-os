@@ -44,6 +44,18 @@ pub enum Wiped {
 /// the tests.
 pub trait Run {
     fn run(&mut self, program: &str, args: &[&str]) -> Result<(), String>;
+
+    /// Make the kernel read `disk`'s partition table again, after a disk
+    /// update rewrote it. An ioctl rather than a program: the initramfs's
+    /// BusyBox may not have `blockdev`.
+    fn reread_partitions(&mut self, disk: &Path) -> Result<(), String> {
+        crate::fsutil::reread_partitions(disk).map_err(|err| {
+            format!(
+                "re-reading the partition table of {}: {err}",
+                disk.display()
+            )
+        })
+    }
 }
 
 pub struct System;

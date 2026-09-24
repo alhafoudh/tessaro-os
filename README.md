@@ -67,7 +67,13 @@ settings and claim:
 mise run image:update                    # the device in $TESSARO_NODE
 mise run image:update brave-otter-3fa2   # or name it
 mise run image:update --wipe-data NAME   # also start /data over; it comes back unclaimed
+mise run image:update --repartition NAME # the whole disk, for a device on an older layout
 ```
+
+`--repartition` is `image:flash` over the network: partition table, boot,
+root and an empty `/data`, written from a copy of the upload in the device's
+RAM. It comes back unclaimed, and a power cut while it writes needs a
+physical reflash. It needs the device to run an image that knows the flag.
 
 It pulls the image first, builds `tessaro-ctl` from this checkout, and runs
 `tessaro-ctl --node NAME update send` with it, which shows the upload, the
