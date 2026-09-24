@@ -7,7 +7,7 @@
 # It is the only variable involved: IMAGE_NAME (moonforge-image.bbclass) and
 # IMAGE_LINK_NAME (image-artifact-names.bbclass) are both built from it, so the
 # versioned file and the stable symlink move together -
-# tessaro-os-<machine>-0.wic.bz2 and tessaro-os-<machine>.rootfs.wic.bz2.
+# tessaro-os-<machine>-<IMAGE_VERSION>.wic.bz2 and tessaro-os-<machine>.rootfs.wic.bz2.
 #
 # Deliberately here and not in tessaro.conf: a bare global would put it in
 # every recipe's datastore. Set on the image recipe it changes nothing outside

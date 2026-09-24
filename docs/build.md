@@ -178,11 +178,16 @@ is how Chromium's `PACKAGECONFIG` and `CHROMIUM_EXTRA_ARGS` are set.
   in an upstream layer silently stops applying, with no warning. Re-check
   (`git grep ':moonforge'` over the layers) after a Moonforge bump or when
   enabling a new layer. Fix if needed: `DISTROOVERRIDES =. "moonforge:"` in `tessaro.conf`.
-* **Artifacts are named `tessaro-os-qemux86-64-0.*`**: the `tessaro-os` prefix
+* **Artifacts are named `tessaro-os-qemux86-64-<version>.*`**, e.g.
+  `tessaro-os-qemux86-64-0.1.0-1a2b3c4.wic.bz2`: the `tessaro-os` prefix
   is `IMAGE_BASENAME` in `moonforge-image-base.bbappend` (it defaults to `${PN}`,
-  which would name the product after the upstream recipe), and the `-0` is
-  `IMAGE_VERSION: "0"` under `env:` in Moonforge's `meta-moonforge-distro.yml`
-  kas fragment. The stable symlink is
+  which would name the product after the upstream recipe), and the version is
+  `IMAGE_VERSION` in `tessaro.conf`: `DISTRO_VERSION` (the semver marketing
+  version, bumped by hand) plus the short sha of this repo's `HEAD`, computed
+  at parse, with `-dirty` appended when `git status` reports any change. It overrides the `IMAGE_VERSION: "0"` that Moonforge's
+  `meta-moonforge-distro.yml` kas fragment sets under `env:`, and it is also
+  `IMAGE_VERSION` in os-release. The separator is `-`, not semver's `+`,
+  because os-release allows only `[0-9a-z._-]` there. The stable symlink is
   `tessaro-os-qemux86-64.rootfs.*`, and the mise tasks depend on that `.rootfs`
   spelling. The bitbake target is still `moonforge-image-base` - only the
   output is renamed.
