@@ -14,7 +14,8 @@
 //! ```
 //!
 //! Requests on one connection are answered in order. A streaming command
-//! (`logs`, `speedtest`) answers with `event` frames and ends with `end`.
+//! (`logs`, `speedtest`, `net-ping`) answers with `event` frames and ends
+//! with `end`.
 //! `token` is only looked at over TCP; the local socket is root-only and
 //! needs none.
 
@@ -87,6 +88,101 @@ fn yes() -> bool {
     true
 }
 
+/// A secret on its way to the device: a WiFi password. It serializes as the
+/// plain string, but prints as `***`, so a `{:?}` of a command - in a log
+/// line, a panic, a test failure - never shows it.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Secret(pub String);
+
+impl Secret {
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for Secret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("***")
+    }
+}
+
+/// What the device checks, on its own, before it keeps a network change.
+/// Whatever it is, the change must also leave the device with a default
+/// route if it had one, and a connection it activated must come up.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "check", rename_all = "kebab-case")]
+pub enum Verify {
+    /// The default gateway answers a ping.
+    #[default]
+    Gateway,
+    /// This host answers a ping.
+    Host { host: String },
+    /// A TCP connection to this host and port opens.
+    Tcp { host: String, port: u16 },
+    /// Only the route and the activation.
+    None,
+}
+
+impl Verify {
+    /// `gateway`, `none`, `HOST` or `HOST:PORT`, the way `--verify` takes it.
+    pub fn parse(text: &str) -> Result<Verify, String> {
+        match text {
+            "" => Err("--verify needs gateway, none, HOST or HOST:PORT".to_string()),
+            "gateway" => Ok(Verify::Gateway),
+            "none" => Ok(Verify::None),
+            _ => {
+                // A bare IPv6 address has colons of its own; `[ADDR]:PORT`
+                // is how it takes a port.
+                if let Ok(address) = text.parse::<std::net::SocketAddr>() {
+                    return Ok(Verify::Tcp {
+                        host: address.ip().to_string(),
+                        port: address.port(),
+                    });
+                }
+                if text.parse::<std::net::IpAddr>().is_ok() {
+                    return Ok(Verify::Host {
+                        host: text.to_string(),
+                    });
+                }
+                match text.rsplit_once(':') {
+                    Some((host, port)) if !host.is_empty() => {
+                        let port = port
+                            .parse::<u16>()
+                            .map_err(|_| format!("{text}: bad port"))?;
+                        Ok(Verify::Tcp {
+                            host: host.to_string(),
+                            port,
+                        })
+                    }
+                    _ => Ok(Verify::Host {
+                        host: text.to_string(),
+                    }),
+                }
+            }
+        }
+    }
+
+    pub fn describe(&self) -> String {
+        match self {
+            Verify::Gateway => "the gateway answers".to_string(),
+            Verify::Host { host } => format!("{host} answers"),
+            Verify::Tcp { host, port } => format!("{host}:{port} accepts a connection"),
+            Verify::None => "no reachability check".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum WifiSecurity {
+    Open,
+    /// WPA2 personal.
+    Psk,
+    /// WPA3 personal.
+    Sae,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "cmd", rename_all = "kebab-case")]
 pub enum Command {
@@ -108,6 +204,9 @@ pub enum Command {
         if_revision: Option<u64>,
         #[serde(default = "yes")]
         apply: bool,
+        /// What the device checks before it keeps a change to network keys.
+        #[serde(default)]
+        verify: Verify,
     },
     Unset {
         keys: Vec<String>,
@@ -115,6 +214,8 @@ pub enum Command {
         if_revision: Option<u64>,
         #[serde(default = "yes")]
         apply: bool,
+        #[serde(default)]
+        verify: Verify,
     },
     /// Keep a guarded change that is on probation.
     Confirm,
@@ -205,12 +306,64 @@ pub enum Command {
         #[serde(default)]
         tests: Option<u32>,
     },
+    /// One round trip and nothing else, for `tessaro-ctl ping`. Public, like
+    /// `id`: it says no more than that the agent is answering.
+    Ping,
+    /// NetworkManager's profiles: the four the device manages, and any made
+    /// by hand.
+    NetProfiles,
+    /// One profile's addressing, DNS and WiFi settings, never its secrets.
+    NetShow {
+        profile: String,
+    },
+    /// What the last network change did, for a client whose connection went
+    /// with the change.
+    NetLast,
+    /// The WiFi radio and what each WiFi device is connected to.
+    Wifi,
+    WifiScan {
+        #[serde(default)]
+        interface: Option<String>,
+        /// Ask the device to scan first. Without it, what it last saw.
+        #[serde(default = "yes")]
+        rescan: bool,
+    },
+    /// Join a network in client mode: `wifi.mode=client`, `wifi.ssid`,
+    /// `wifi.security` and `wifi.hidden` in one change, with the password
+    /// stored where `get` never shows it. The hotspot goes down.
+    WifiJoin {
+        ssid: String,
+        /// `None` keeps the stored one: rejoining the same network.
+        #[serde(default)]
+        psk: Option<Secret>,
+        /// Found by scanning when not given; a hidden network needs it.
+        #[serde(default)]
+        security: Option<WifiSecurity>,
+        #[serde(default)]
+        hidden: bool,
+        #[serde(default)]
+        verify: Verify,
+    },
+    /// A new random hotspot password, shown once. Claimed devices only.
+    HotspotPassword,
+    /// Ping a host from the device. A stream of `PingEvent`s.
+    NetPing {
+        host: String,
+        #[serde(default)]
+        count: Option<u32>,
+        #[serde(default)]
+        interval_ms: Option<u64>,
+        #[serde(default)]
+        timeout_ms: Option<u64>,
+        #[serde(default)]
+        interface: Option<String>,
+    },
 }
 
 impl Command {
     /// Allowed over TCP without a token.
     pub fn is_public(&self) -> bool {
-        matches!(self, Command::Id | Command::Claim { .. })
+        matches!(self, Command::Id | Command::Claim { .. } | Command::Ping)
     }
 }
 
@@ -355,6 +508,11 @@ pub struct Applied {
     /// Units restarted, or to be restarted once this reply is out.
     pub restarted: Vec<String>,
     pub pending: Option<Pending>,
+    /// What the network change did, when network keys changed: its checks.
+    /// A rolled-back change is an error, not an `Applied`. Defaulted for
+    /// older devices.
+    #[serde(default)]
+    pub network: Option<NetChange>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -438,11 +596,167 @@ pub struct Net {
     pub public_ip: Option<String>,
 }
 
+/// A NetworkManager profile, as `net profiles` lists it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NetProfile {
+    /// `connection.id`.
+    pub name: String,
+    pub uuid: String,
+    /// `ethernet`, `wifi`, or NetworkManager's own type name for anything
+    /// else.
+    pub kind: String,
+    /// The device it is active on, or bound to.
+    pub device: Option<String>,
+    pub active: bool,
+    pub autoconnect: bool,
+    pub priority: i32,
+    /// Written to disk. NetworkManager's own `Wired connection 1` is not
+    /// until someone changes it.
+    pub saved: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NetIpSettings {
+    pub method: String,
+    /// `ADDRESS/PREFIX`.
+    pub addresses: Vec<String>,
+    pub gateway: Option<String>,
+    pub dns: Vec<String>,
+    pub ignore_auto_dns: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NetWifiSettings {
+    pub ssid: String,
+    /// `open`, `wpa-psk`, `sae`, `wpa-eap`, or NetworkManager's key-mgmt.
+    pub security: String,
+    pub hidden: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NetProfileDetail {
+    pub profile: NetProfile,
+    pub ipv4: NetIpSettings,
+    pub ipv6: NetIpSettings,
+    pub wifi: Option<NetWifiSettings>,
+    /// What its device has right now, from the kernel. Empty when inactive.
+    pub addresses: Vec<NetAddress>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WifiDeviceInfo {
+    pub interface: String,
+    /// NetworkManager's device state: `activated`, `disconnected`, ...
+    pub state: String,
+    pub ssid: Option<String>,
+    /// Percent.
+    pub signal: Option<u8>,
+    pub frequency_mhz: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WifiStatus {
+    /// The radio, as software (`net wifi on|off`) left it.
+    pub enabled: bool,
+    /// A hardware kill switch, if the device has one.
+    pub hardware_enabled: bool,
+    pub devices: Vec<WifiDeviceInfo>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WifiNetwork {
+    /// Empty for a hidden network.
+    pub ssid: String,
+    pub bssid: String,
+    /// Percent.
+    pub signal: u8,
+    pub frequency_mhz: u32,
+    /// `open`, `wpa-psk`, `sae`, `wpa-eap`, `wep`, or several joined by `/`.
+    pub security: String,
+    pub interface: String,
+    /// A saved profile has this SSID.
+    pub known: bool,
+    pub active: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ChangeOutcome {
+    Committed,
+    RolledBack,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NetCheck {
+    pub name: String,
+    pub passed: bool,
+    pub detail: String,
+}
+
+/// What a network change did. Kept on the device as the last one, so a
+/// client whose connection went with the change can still ask.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NetChange {
+    pub outcome: ChangeOutcome,
+    /// What was asked: `set`, `up`, `down`, `forget`, `join`, `wifi on` ...
+    pub action: String,
+    pub profile: Option<String>,
+    pub uuid: Option<String>,
+    /// Why it was rolled back.
+    pub reason: Option<String>,
+    pub checks: Vec<NetCheck>,
+    /// Anything the operator should know about a kept change.
+    pub note: Option<String>,
+}
+
+/// One step of `net-ping`, in the order they arrive.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "event", rename_all = "kebab-case")]
+pub enum PingEvent {
+    /// The address the host resolved to.
+    Start {
+        host: String,
+        address: String,
+    },
+    Reply {
+        seq: u16,
+        bytes: usize,
+        rtt_ms: f64,
+    },
+    Timeout {
+        seq: u16,
+    },
+    Summary {
+        sent: u32,
+        received: u32,
+        min_ms: Option<f64>,
+        avg_ms: Option<f64>,
+        max_ms: Option<f64>,
+    },
+}
+
+pub const PING_DEFAULT_COUNT: u32 = 4;
+pub const PING_MAX_COUNT: u32 = 100;
+pub const PING_DEFAULT_INTERVAL_MS: u64 = 1_000;
+pub const PING_MIN_INTERVAL_MS: u64 = 200;
+pub const PING_DEFAULT_TIMEOUT_MS: u64 = 2_000;
+pub const PING_MAX_TIMEOUT_MS: u64 = 10_000;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Claimed {
     pub token_id: String,
     pub token: String,
     pub root_password: String,
+    /// The hotspot's new password, shown once like the root password. `None`
+    /// on a device without its WiFi interface, or an older one.
+    #[serde(default)]
+    pub hotspot: Option<HotspotCredentials>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HotspotCredentials {
+    pub ssid: String,
+    pub password: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -597,6 +911,7 @@ mod tests {
                 values: [("kiosk.url".to_string(), "https://a.test/".to_string())].into(),
                 if_revision: Some(3),
                 apply: false,
+                verify: Verify::None,
             },
         };
 
@@ -637,13 +952,102 @@ mod tests {
     }
 
     #[test]
-    fn only_id_and_claim_are_public() {
+    fn only_id_claim_and_ping_are_public() {
         assert!(Command::Id.is_public());
         assert!(Command::Claim { name: "x".into() }.is_public());
+        assert!(Command::Ping.is_public());
         assert!(!Command::Status.is_public());
         assert!(!Command::TokenCreate { name: "x".into() }.is_public());
         assert!(!Command::SshAuthorize { key: "x".into() }.is_public());
         assert!(!Command::SshKeyList.is_public());
+        assert!(!Command::NetProfiles.is_public());
+        assert!(!Command::WifiScan {
+            interface: None,
+            rescan: true
+        }
+        .is_public());
+    }
+
+    #[test]
+    fn a_secret_travels_but_never_prints() {
+        let command = Command::WifiJoin {
+            ssid: "Office".into(),
+            psk: Some(Secret("hunter2hunter2".into())),
+            security: None,
+            hidden: false,
+            verify: Verify::Gateway,
+        };
+        assert!(to_line(&command).contains("hunter2hunter2"));
+        assert!(!format!("{command:?}").contains("hunter2"));
+    }
+
+    #[test]
+    fn a_network_change_verifies_the_gateway_unless_told() {
+        let request: Request =
+            from_line(r#"{"id":1,"command":{"cmd":"set","values":{"ethernet.mode":"dhcp"}}}"#)
+                .unwrap();
+        assert!(matches!(
+            request.command,
+            Command::Set {
+                verify: Verify::Gateway,
+                ..
+            }
+        ));
+        // An older device's claim answer has no hotspot.
+        let claimed: Claimed =
+            serde_json::from_str(r#"{"token_id":"a","token":"b","root_password":"c"}"#).unwrap();
+        assert_eq!(claimed.hotspot, None);
+        let tcp = serde_json::to_value(Verify::Tcp {
+            host: "a.test".into(),
+            port: 443,
+        })
+        .unwrap();
+        assert_eq!(tcp["check"], "tcp");
+    }
+
+    #[test]
+    fn verify_parses_like_the_flag() {
+        assert_eq!(Verify::parse("gateway").unwrap(), Verify::Gateway);
+        assert_eq!(Verify::parse("none").unwrap(), Verify::None);
+        assert_eq!(
+            Verify::parse("10.0.0.1").unwrap(),
+            Verify::Host {
+                host: "10.0.0.1".into()
+            }
+        );
+        assert_eq!(
+            Verify::parse("2001:db8::1").unwrap(),
+            Verify::Host {
+                host: "2001:db8::1".into()
+            }
+        );
+        assert_eq!(
+            Verify::parse("[2001:db8::1]:443").unwrap(),
+            Verify::Tcp {
+                host: "2001:db8::1".into(),
+                port: 443
+            }
+        );
+        assert_eq!(
+            Verify::parse("api.test:7400").unwrap(),
+            Verify::Tcp {
+                host: "api.test".into(),
+                port: 7400
+            }
+        );
+        assert!(Verify::parse("api.test:http").is_err());
+    }
+
+    #[test]
+    fn ping_events_are_tagged() {
+        let event = PingEvent::Reply {
+            seq: 3,
+            bytes: 64,
+            rtt_ms: 1.25,
+        };
+        let value = serde_json::to_value(&event).unwrap();
+        assert_eq!(value["event"], "reply");
+        assert_eq!(serde_json::from_value::<PingEvent>(value).unwrap(), event);
     }
 
     #[test]

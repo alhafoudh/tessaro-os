@@ -381,6 +381,11 @@ impl Updates {
         })
     }
 
+    /// Committed, and applied at the next boot.
+    pub fn is_pending(&self) -> bool {
+        lock(&self.job).phase == UpdatePhase::Pending
+    }
+
     pub async fn commit(self: &Arc<Self>, caller: &str, wipe_data: bool) -> Result<Done, String> {
         self.load().await;
         let name = {

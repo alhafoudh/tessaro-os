@@ -212,6 +212,11 @@ mod tests {
             "src/server.rs",
             "src/updates.rs",
             "src/speedtest.rs",
+            "src/net.rs",
+            "src/ping.rs",
+            "src/nm/mod.rs",
+            "src/nm/txn.rs",
+            "src/nm/nat.rs",
         ];
 
         // Helpers whose every wait is already under `within()` in their own
@@ -233,6 +238,16 @@ mod tests {
             // which the scan of updates.rs checks. Preparing an image runs on
             // a thread of its own and is never awaited.
             "self.updates.",
+            // nm::Network - every NetworkManager call goes through nm_call,
+            // which is within(); the scan of nm/mod.rs checks that.
+            "self.network.",
+            "nm_call(",
+            // txn::Ops and txn::Files - Live implements Ops with nm_call and
+            // blocking() only (nm/mod.rs, scanned), Files is blocking().
+            "ops.",
+            "files.",
+            // nm::Live - the same methods called directly.
+            "live.",
         ];
 
         let mut offences = Vec::new();

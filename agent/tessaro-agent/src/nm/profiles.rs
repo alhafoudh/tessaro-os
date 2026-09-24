@@ -1,0 +1,590 @@
+//! The four NetworkManager profiles the device manages, rendered as
+//! keyfiles from its settings.
+//!
+//! * `tessaro-ethernet-dhcp` and `tessaro-ethernet-static`: the managed
+//!   Ethernet port (`ethernet.interface`, or the first one up for `auto`).
+//! * `tessaro-wifi-hotspot` (`tessaro-NAME`, open until claimed) and
+//!   `tessaro-wifi-client` (`wifi.ssid`): the managed WiFi device.
+//!
+//! Only the selected mode of each pair autoconnects, at priority 100, so it
+//! wins over anything made by hand. The files go to
+//! `/run/NetworkManager/system-connections`, which NetworkManager reads with
+//! the highest precedence and which is gone at every boot - so they are
+//! never saved anywhere, and the boot oneshot renders them afresh from
+//! `state.json` and `secrets.json` before NetworkManager starts. A change
+//! that did not commit can therefore never outlive a reboot.
+//!
+//! Everything here is pure: settings in, file names and text out.
+
+use protocol::keys;
+
+/// Fixed, so the agent finds them by uuid on every device and every boot.
+pub const ETHERNET_DHCP: Profile = Profile {
+    id: "tessaro-ethernet-dhcp",
+    uuid: "3c9a1e52-7b1d-4f6e-9a2e-5d0c4b8f1a01",
+};
+pub const ETHERNET_STATIC: Profile = Profile {
+    id: "tessaro-ethernet-static",
+    uuid: "3c9a1e52-7b1d-4f6e-9a2e-5d0c4b8f1a02",
+};
+pub const WIFI_HOTSPOT: Profile = Profile {
+    id: "tessaro-wifi-hotspot",
+    uuid: "3c9a1e52-7b1d-4f6e-9a2e-5d0c4b8f1a03",
+};
+pub const WIFI_CLIENT: Profile = Profile {
+    id: "tessaro-wifi-client",
+    uuid: "3c9a1e52-7b1d-4f6e-9a2e-5d0c4b8f1a04",
+};
+pub const ALL: [Profile; 4] = [ETHERNET_DHCP, ETHERNET_STATIC, WIFI_HOTSPOT, WIFI_CLIENT];
+
+/// Wins over a hand-made profile on the same device.
+const PRIORITY: i32 = 100;
+
+/// What the hotspot's name starts with.
+pub const HOTSPOT_PREFIX: &str = "tessaro-";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Profile {
+    pub id: &'static str,
+    pub uuid: &'static str,
+}
+
+impl Profile {
+    pub fn file_name(&self) -> String {
+        format!("{}.nmconnection", self.id)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Keyfile {
+    pub name: String,
+    pub body: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StaticIp {
+    /// `ADDRESS/PREFIX`.
+    pub address: String,
+    pub gateway: Option<String>,
+    pub dns: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WifiMode {
+    Hotspot,
+    Client,
+    Off,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ethernet {
+    /// `None` for `auto`: the first Ethernet device NetworkManager brings up.
+    pub interface: Option<String>,
+    /// `None` is DHCP.
+    pub fixed: Option<StaticIp>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Client {
+    pub ssid: String,
+    /// `wpa-psk`, `sae`, or `open`.
+    pub key_mgmt: String,
+    pub hidden: bool,
+    pub psk: Option<String>,
+    pub fixed: Option<StaticIp>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Wifi {
+    pub interface: String,
+    pub mode: WifiMode,
+    pub hotspot_ssid: String,
+    pub hotspot_psk: Option<String>,
+    /// Hotspot clients may reach the internet and the LAN through us.
+    pub nat: bool,
+    /// Only once there is a network to join.
+    pub client: Option<Client>,
+}
+
+/// Everything the four profiles are rendered from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetConfig {
+    pub ethernet: Ethernet,
+    pub wifi: Wifi,
+}
+
+/// A key's effective value when neither `state.json` nor the image's env
+/// file says: what an image without these keys in its defaults behaves as.
+fn fallback(name: &str) -> &'static str {
+    match name {
+        "ethernet.interface" | "wifi.interface" => "auto",
+        "ethernet.mode" | "wifi.ipv4" => "dhcp",
+        "wifi.mode" => "hotspot",
+        "wifi.nat" => "1",
+        "wifi.security" => "psk",
+        "wifi.hidden" => "0",
+        _ => "",
+    }
+}
+
+/// The value of a network key for `value` (set or image default), or its
+/// fallback when that is empty.
+pub fn effective(value: &dyn Fn(&str) -> String, name: &str) -> String {
+    let set = value(name);
+    if set.is_empty() {
+        fallback(name).to_string()
+    } else {
+        set
+    }
+}
+
+/// The hotspot's SSID for a node name, within 802.11's 32 bytes.
+pub fn hotspot_ssid(node_name: &str) -> String {
+    let mut ssid = format!("{HOTSPOT_PREFIX}{node_name}");
+    while ssid.len() > 32 {
+        ssid.pop();
+    }
+    ssid
+}
+
+impl NetConfig {
+    /// `value` returns a key's effective value (set, or the image default)
+    /// and may return empty; the fallbacks above fill that in.
+    pub fn from_settings(
+        value: &dyn Fn(&str) -> String,
+        hotspot_psk: Option<String>,
+        wifi_psk: Option<String>,
+        node_name: &str,
+    ) -> Self {
+        let get = |name: &str| effective(value, name);
+        let fixed = |prefix: &str| StaticIp {
+            address: get(&format!("{prefix}.address")),
+            gateway: Some(get(&format!("{prefix}.gateway"))).filter(|g| !g.is_empty()),
+            dns: keys::parse_addresses(&get(&format!("{prefix}.dns")))
+                .unwrap_or_default()
+                .iter()
+                .map(|address| address.to_string())
+                .collect(),
+        };
+
+        let interface = get("ethernet.interface");
+        let ethernet = Ethernet {
+            interface: (interface != "auto").then_some(interface),
+            fixed: (get("ethernet.mode") == "static").then(|| fixed("ethernet")),
+        };
+
+        let ssid = get("wifi.ssid");
+        let client = (!ssid.is_empty()).then(|| Client {
+            key_mgmt: match get("wifi.security").as_str() {
+                "sae" => "sae",
+                "open" => "open",
+                _ => "wpa-psk",
+            }
+            .to_string(),
+            hidden: get("wifi.hidden") == "1",
+            psk: wifi_psk.filter(|psk| !psk.is_empty()),
+            fixed: (get("wifi.ipv4") == "static").then(|| fixed("wifi")),
+            ssid,
+        });
+
+        let interface = get("wifi.interface");
+        let wifi = Wifi {
+            interface: if interface == "auto" {
+                "wlan0".to_string()
+            } else {
+                interface
+            },
+            mode: match get("wifi.mode").as_str() {
+                "client" => WifiMode::Client,
+                "off" => WifiMode::Off,
+                _ => WifiMode::Hotspot,
+            },
+            hotspot_ssid: hotspot_ssid(node_name),
+            hotspot_psk: hotspot_psk.filter(|psk| !psk.is_empty()),
+            nat: get("wifi.nat") != "0",
+            client,
+        };
+        NetConfig { ethernet, wifi }
+    }
+
+    /// The Ethernet profile that should be up.
+    pub fn ethernet_profile(&self) -> Profile {
+        match self.ethernet.fixed {
+            Some(_) => ETHERNET_STATIC,
+            None => ETHERNET_DHCP,
+        }
+    }
+
+    /// The WiFi profile that should be up, if any.
+    pub fn wifi_profile(&self) -> Option<Profile> {
+        match self.wifi.mode {
+            WifiMode::Hotspot => Some(WIFI_HOTSPOT),
+            WifiMode::Client if self.wifi.client.is_some() => Some(WIFI_CLIENT),
+            _ => None,
+        }
+    }
+}
+
+/// A key's value as `settings` has it, else the image default for its env
+/// name, else empty - what `NetConfig::from_settings` and
+/// `keys::check_network` take.
+pub fn value_of<'a>(
+    settings: &'a std::collections::BTreeMap<String, String>,
+    defaults: &'a std::collections::HashMap<String, String>,
+) -> impl Fn(&str) -> String + 'a {
+    move |name: &str| {
+        settings
+            .get(name)
+            .cloned()
+            .or_else(|| {
+                let key = keys::find(name)?;
+                defaults.get(key.env).cloned()
+            })
+            .unwrap_or_default()
+    }
+}
+
+/// The node name these settings give: `node.name` as set or defaulted, else
+/// the name derived from the node id.
+pub fn node_name(value: &dyn Fn(&str) -> String, derived: &str) -> String {
+    let name = value("node.name");
+    if name.is_empty() {
+        derived.to_string()
+    } else {
+        name
+    }
+}
+
+/// Make `dir` hold exactly the managed profiles in `files`: each written if
+/// it differs, 0600 root as NetworkManager requires, and any managed file
+/// not in the list removed. Hand-made profiles in the same directory are
+/// never touched. Blocking; whether anything changed.
+pub fn write(dir: &std::path::Path, files: &[Keyfile]) -> std::io::Result<bool> {
+    std::fs::create_dir_all(dir)?;
+    let mut changed = false;
+    for profile in ALL {
+        let path = dir.join(profile.file_name());
+        match files.iter().find(|file| file.name == profile.file_name()) {
+            Some(file) => {
+                changed |= crate::store::replace_if_changed(&path, file.body.as_bytes(), 0o600)?;
+            }
+            None => match std::fs::remove_file(&path) {
+                Ok(()) => changed = true,
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => return Err(err),
+            },
+        }
+    }
+    Ok(changed)
+}
+
+/// Every managed profile's keyfile. The client is left out until there is a
+/// network to join.
+pub fn render(config: &NetConfig) -> Vec<Keyfile> {
+    let up = config.ethernet_profile();
+    let mut files = vec![
+        ethernet(
+            ETHERNET_DHCP,
+            up == ETHERNET_DHCP,
+            config.ethernet.interface.as_deref(),
+            None,
+        ),
+        ethernet(
+            ETHERNET_STATIC,
+            up == ETHERNET_STATIC,
+            config.ethernet.interface.as_deref(),
+            // A static profile with no address yet is still written, with
+            // DHCP, so it exists to be switched to and shows in `profiles`.
+            config.ethernet.fixed.as_ref(),
+        ),
+        hotspot(&config.wifi),
+    ];
+    if let Some(client) = &config.wifi.client {
+        files.push(wifi_client(&config.wifi, client));
+    }
+    files
+}
+
+/// A GKeyFile value: backslash, a leading space and control characters are
+/// escaped; everything else is taken literally.
+fn escape(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for (at, ch) in value.chars().enumerate() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            ' ' if at == 0 => out.push_str("\\s"),
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            '\r' => out.push_str("\\r"),
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+/// An SSID as text where that reads back unchanged, and as NetworkManager's
+/// byte list otherwise (`;` would split it, and edges would be trimmed).
+fn ssid_value(ssid: &str) -> String {
+    let plain = ssid
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | ' '))
+        && !ssid.starts_with(' ')
+        && !ssid.ends_with(' ');
+    if plain {
+        ssid.to_string()
+    } else {
+        ssid.bytes().map(|byte| format!("{byte};")).collect()
+    }
+}
+
+fn connection(profile: Profile, kind: &str, autoconnect: bool, interface: Option<&str>) -> String {
+    let mut text = format!(
+        "[connection]\nid={}\nuuid={}\ntype={kind}\nautoconnect={autoconnect}\nautoconnect-priority={PRIORITY}\n",
+        profile.id, profile.uuid
+    );
+    if let Some(interface) = interface {
+        text.push_str(&format!("interface-name={}\n", escape(interface)));
+    }
+    text
+}
+
+fn ipv4(fixed: Option<&StaticIp>) -> String {
+    match fixed {
+        None => "\n[ipv4]\nmethod=auto\n".to_string(),
+        Some(ip) => {
+            let mut text = format!("\n[ipv4]\nmethod=manual\naddress1={}\n", ip.address);
+            if let Some(gateway) = &ip.gateway {
+                text.push_str(&format!("gateway={gateway}\n"));
+            }
+            if !ip.dns.is_empty() {
+                text.push_str(&format!(
+                    "dns={};\nignore-auto-dns=true\n",
+                    ip.dns.join(";")
+                ));
+            }
+            text
+        }
+    }
+}
+
+fn ethernet(
+    profile: Profile,
+    autoconnect: bool,
+    interface: Option<&str>,
+    fixed: Option<&StaticIp>,
+) -> Keyfile {
+    let mut body = connection(profile, "ethernet", autoconnect, interface);
+    body.push_str("\n[ethernet]\n");
+    body.push_str(&ipv4(fixed.filter(|ip| !ip.address.is_empty())));
+    body.push_str("\n[ipv6]\nmethod=auto\n");
+    Keyfile {
+        name: profile.file_name(),
+        body,
+    }
+}
+
+fn hotspot(wifi: &Wifi) -> Keyfile {
+    let autoconnect = wifi.mode == WifiMode::Hotspot;
+    let mut body = connection(WIFI_HOTSPOT, "wifi", autoconnect, Some(&wifi.interface));
+    body.push_str(&format!(
+        "\n[wifi]\nmode=ap\nband=bg\nssid={}\n",
+        ssid_value(&wifi.hotspot_ssid)
+    ));
+    // WPA2 with CCMP and no PMF: brcmfmac, the Pi's own WiFi, refuses a
+    // client while PMF is on in AP mode, and its WPA3 AP support is broken.
+    if let Some(psk) = &wifi.hotspot_psk {
+        body.push_str(&format!(
+            "\n[wifi-security]\nkey-mgmt=wpa-psk\nproto=rsn\npairwise=ccmp\ngroup=ccmp\npmf=1\npsk={}\n",
+            escape(psk)
+        ));
+    }
+    // `shared`: NetworkManager's dnsmasq hands out 10.42.0.x and forwards
+    // DNS; the NAT, when wifi.nat allows it, is its nftables table.
+    body.push_str("\n[ipv4]\nmethod=shared\n\n[ipv6]\nmethod=disabled\n");
+    Keyfile {
+        name: WIFI_HOTSPOT.file_name(),
+        body,
+    }
+}
+
+fn wifi_client(wifi: &Wifi, client: &Client) -> Keyfile {
+    let autoconnect = wifi.mode == WifiMode::Client;
+    let mut body = connection(WIFI_CLIENT, "wifi", autoconnect, Some(&wifi.interface));
+    body.push_str(&format!(
+        "\n[wifi]\nmode=infrastructure\nssid={}\n",
+        ssid_value(&client.ssid)
+    ));
+    if client.hidden {
+        body.push_str("hidden=true\n");
+    }
+    if client.key_mgmt != "open" {
+        body.push_str(&format!(
+            "\n[wifi-security]\nkey-mgmt={}\n",
+            client.key_mgmt
+        ));
+        if let Some(psk) = &client.psk {
+            body.push_str(&format!("psk={}\n", escape(psk)));
+        }
+    }
+    body.push_str(&ipv4(
+        client.fixed.as_ref().filter(|ip| !ip.address.is_empty()),
+    ));
+    body.push_str("\n[ipv6]\nmethod=auto\n");
+    Keyfile {
+        name: WIFI_CLIENT.file_name(),
+        body,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn config(pairs: &[(&str, &str)], hotspot: Option<&str>, wifi: Option<&str>) -> NetConfig {
+        let pairs: HashMap<String, String> = pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        let value = move |name: &str| pairs.get(name).cloned().unwrap_or_default();
+        NetConfig::from_settings(
+            &value,
+            hotspot.map(str::to_string),
+            wifi.map(str::to_string),
+            "brave-otter-3fa2",
+        )
+    }
+
+    fn file(files: &[Keyfile], profile: Profile) -> &str {
+        &files
+            .iter()
+            .find(|file| file.name == profile.file_name())
+            .unwrap_or_else(|| panic!("no {}", profile.id))
+            .body
+    }
+
+    #[test]
+    fn the_defaults_are_dhcp_and_an_open_hotspot() {
+        let config = config(&[], None, None);
+        let files = render(&config);
+        assert_eq!(files.len(), 3, "no client until there is a network to join");
+
+        let dhcp = file(&files, ETHERNET_DHCP);
+        assert!(dhcp.contains("autoconnect=true\n"));
+        assert!(dhcp.contains("autoconnect-priority=100\n"));
+        assert!(!dhcp.contains("interface-name"), "auto binds no interface");
+        assert!(dhcp.contains("[ipv4]\nmethod=auto\n"));
+        assert!(file(&files, ETHERNET_STATIC).contains("autoconnect=false\n"));
+
+        let hotspot = file(&files, WIFI_HOTSPOT);
+        assert!(hotspot.contains("autoconnect=true\n"));
+        assert!(hotspot.contains("interface-name=wlan0\n"));
+        assert!(hotspot.contains("mode=ap\n"));
+        assert!(hotspot.contains("ssid=tessaro-brave-otter-3fa2\n"));
+        assert!(!hotspot.contains("[wifi-security]"), "open while unclaimed");
+        assert!(hotspot.contains("method=shared"));
+        assert_eq!(config.wifi_profile(), Some(WIFI_HOTSPOT));
+        assert_eq!(config.ethernet_profile(), ETHERNET_DHCP);
+    }
+
+    #[test]
+    fn a_claimed_hotspot_is_wpa2_without_pmf() {
+        let files = render(&config(&[], Some("abcdefgh23456789"), None));
+        let hotspot = file(&files, WIFI_HOTSPOT);
+        assert!(hotspot.contains("key-mgmt=wpa-psk\n"));
+        assert!(hotspot.contains("pmf=1\n"));
+        assert!(hotspot.contains("psk=abcdefgh23456789\n"));
+    }
+
+    #[test]
+    fn static_ethernet_on_a_named_port() {
+        let config = config(
+            &[
+                ("ethernet.interface", "enp2s0"),
+                ("ethernet.mode", "static"),
+                ("ethernet.address", "192.168.1.50/24"),
+                ("ethernet.gateway", "192.168.1.1"),
+                ("ethernet.dns", "192.168.1.1,1.1.1.1"),
+            ],
+            None,
+            None,
+        );
+        let files = render(&config);
+        let fixed = file(&files, ETHERNET_STATIC);
+        assert!(fixed.contains("autoconnect=true\n"));
+        assert!(fixed.contains("interface-name=enp2s0\n"));
+        assert!(fixed.contains("method=manual\naddress1=192.168.1.50/24\ngateway=192.168.1.1\n"));
+        assert!(fixed.contains("dns=192.168.1.1;1.1.1.1;\nignore-auto-dns=true\n"));
+        assert!(file(&files, ETHERNET_DHCP).contains("autoconnect=false\n"));
+        assert_eq!(config.ethernet_profile(), ETHERNET_STATIC);
+    }
+
+    #[test]
+    fn a_client_takes_over_from_the_hotspot() {
+        let config = config(
+            &[
+                ("wifi.mode", "client"),
+                ("wifi.ssid", "Office; 2"),
+                ("wifi.security", "sae"),
+                ("wifi.hidden", "1"),
+            ],
+            Some("abcdefgh23456789"),
+            Some("pa\\ss word!"),
+        );
+        let files = render(&config);
+        assert!(file(&files, WIFI_HOTSPOT).contains("autoconnect=false\n"));
+        let client = file(&files, WIFI_CLIENT);
+        assert!(client.contains("autoconnect=true\n"));
+        assert!(client.contains("mode=infrastructure\n"));
+        assert!(
+            client.contains("ssid=79;102;102;105;99;101;59;32;50;\n"),
+            "{client}"
+        );
+        assert!(client.contains("hidden=true\n"));
+        assert!(client.contains("key-mgmt=sae\n"));
+        assert!(client.contains("psk=pa\\\\ss word!\n"), "{client}");
+        assert!(client.contains("[ipv4]\nmethod=auto\n"));
+        assert_eq!(config.wifi_profile(), Some(WIFI_CLIENT));
+    }
+
+    #[test]
+    fn an_open_client_and_a_static_client() {
+        let files = render(&config(
+            &[
+                ("wifi.mode", "client"),
+                ("wifi.ssid", "Cafe"),
+                ("wifi.security", "open"),
+                ("wifi.ipv4", "static"),
+                ("wifi.address", "10.1.0.9/24"),
+            ],
+            None,
+            None,
+        ));
+        let client = file(&files, WIFI_CLIENT);
+        assert!(!client.contains("[wifi-security]"));
+        assert!(client.contains("method=manual\naddress1=10.1.0.9/24\n"));
+    }
+
+    #[test]
+    fn off_brings_up_neither() {
+        let config = config(&[("wifi.mode", "off")], None, None);
+        assert_eq!(config.wifi_profile(), None);
+        assert!(file(&render(&config), WIFI_HOTSPOT).contains("autoconnect=false\n"));
+    }
+
+    #[test]
+    fn a_long_name_is_cut_to_32_bytes() {
+        let ssid = hotspot_ssid(&"x".repeat(40));
+        assert_eq!(ssid.len(), 32);
+        assert!(ssid.starts_with("tessaro-"));
+    }
+
+    #[test]
+    fn escaping() {
+        assert_eq!(escape(" lead"), "\\slead");
+        assert_eq!(escape("a\\b"), "a\\\\b");
+        assert_eq!(escape("plain; text"), "plain; text");
+        assert_eq!(ssid_value("Office-2"), "Office-2");
+        assert_eq!(ssid_value("a;b"), "97;59;98;");
+    }
+}

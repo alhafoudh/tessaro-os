@@ -99,6 +99,22 @@ zbus = { version = "5", default-features = false, features = ["tokio"] }
 cfspeedtest = "2.2.2"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 
+# NetworkManager, for `tessaro-ctl net profiles|show|wifi`: the typed reads
+# (devices, access points, saved profiles) and the WiFi settings builder.
+# Its writes are not used - they persist at once and know no checkpoints, so
+# nm/proxy.rs does those. The cost is that nmrs asks for zbus's default
+# features, which brings async-io, async-executor, blocking and polling back
+# into the lock (19 crates) that zbus's line above leaves out. They are
+# compiled, not run: with `tokio` also on, zbus drives its sockets on tokio and
+# starts no executor thread of its own (`needs_internal_driver`), and the only
+# nmrs calls that start futures-timer's thread are its connect and wait
+# helpers, which nothing here calls.
+nmrs = "3.5"
+
+# ICMP echo for `tessaro-ctl net ping` and the gateway check after a network
+# change, over unprivileged datagram sockets. Already in the lock.
+socket2 = { version = "0.6", features = ["all"] }
+
 [dev-dependencies]
 tempfile = "3"
 update = { path = "../update", features = ["testing"] }

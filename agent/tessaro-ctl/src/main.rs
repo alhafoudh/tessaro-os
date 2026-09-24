@@ -10,6 +10,7 @@
 //! new root password - once.
 
 mod connect;
+mod net;
 mod nodes;
 mod ssh;
 mod style;
@@ -67,6 +68,16 @@ const HELP_STYLES: Styles = Styles::styled()
         \x20 tessaro-ctl modes && tessaro-ctl set display.resolution=1920x1080 && tessaro-ctl confirm\n\
         \x20 tessaro-ctl net                                address, gateway, DNS, interfaces\n\
         \x20 tessaro-ctl net interfaces                     every interface in detail\n\
+        \x20 tessaro-ctl net profiles                       NetworkManager's profiles\n\
+        \x20 tessaro-ctl set ethernet.mode=static ethernet.address=192.168.1.50/24 ethernet.gateway=192.168.1.1\n\
+        \x20                                                kept only if the gateway still answers\n\
+        \x20 tessaro-ctl set ethernet.mode=dhcp\n\
+        \x20 tessaro-ctl net wifi scan && tessaro-ctl net wifi join Office   the hotspot goes down\n\
+        \x20 tessaro-ctl set wifi.mode=hotspot              back to the hotspot, tessaro-NAME\n\
+        \x20 tessaro-ctl set wifi.nat=0                     hotspot clients reach the device only\n\
+        \x20 tessaro-ctl net last                           what the last change did, if the answer never came\n\
+        \x20 tessaro-ctl net ping 192.168.1.1               from the device\n\
+        \x20 tessaro-ctl -n brave-otter-3fa2 ping           from here to the device\n\
         \x20 tessaro-ctl get net.ip                         one read-only value\n\
         \x20 tessaro-ctl set 'kiosk.url=https://menu.test/?ip={net.ip}'  read-only keys are placeholders too\n\
         \x20 tessaro-ctl set browser.fps_counter=on\n\
@@ -119,10 +130,22 @@ enum Cmd {
     /// The resolutions the connected displays offer (for display.resolution).
     Modes,
     /// The network as the device sees it: address, gateway, DNS, and every
-    /// interface. Read-only; the same values are the net.* keys.
+    /// interface - the same values as the net.* keys. The subcommands read
+    /// and change NetworkManager's profiles and WiFi; the device keeps a
+    /// change only if it still reaches the network afterwards.
     Net {
         #[command(subcommand)]
-        what: Option<NetCmd>,
+        what: Option<net::NetCmd>,
+    },
+    /// How fast the device answers this client: the TCP connect, the TLS
+    /// handshake, then round trips over the control connection. Needs no
+    /// token, like `id`.
+    Ping {
+        #[arg(long, short = 'c', default_value_t = 4)]
+        count: u32,
+        /// Seconds between round trips.
+        #[arg(long, short = 'i', default_value_t = 1.0)]
+        interval: f64,
     },
     /// Current settings, or one of them.
     Get {
@@ -137,15 +160,27 @@ enum Cmd {
     /// `{node.name}`, `{display.osk}`, ...
     ///
     ///   tessaro-ctl set 'kiosk.url=https://menu.test/?table={data.table}&screen={data.screen}' data.table=12 data.screen=entrance
+    ///
+    /// The ethernet.* and wifi.* keys switch the device's own network
+    /// profiles. That change is applied and checked by the device before it
+    /// is saved at all - see --verify - and rolled back by the device alone
+    /// if it cuts it off:
+    ///
+    ///   tessaro-ctl set ethernet.mode=static ethernet.address=192.168.1.50/24 ethernet.gateway=192.168.1.1 ethernet.dns=192.168.1.1
+    ///   tessaro-ctl set ethernet.mode=dhcp
+    ///   tessaro-ctl set wifi.mode=hotspot
     Set {
         #[arg(required = true, value_name = "KEY=VALUE")]
         pairs: Vec<String>,
         /// Refuse unless the settings are still at this revision.
         #[arg(long)]
         if_revision: Option<u64>,
-        /// Save and render, but restart nothing yet.
+        /// Save and render, but restart nothing yet. Not for network keys,
+        /// which are always applied and checked at once.
         #[arg(long)]
         no_apply: bool,
+        #[command(flatten)]
+        verify: net::VerifyArg,
     },
     /// Go back to the image default for KEY ...
     Unset {
@@ -155,6 +190,8 @@ enum Cmd {
         if_revision: Option<u64>,
         #[arg(long)]
         no_apply: bool,
+        #[command(flatten)]
+        verify: net::VerifyArg,
     },
     /// Keep a change that is on probation (display.resolution).
     Confirm,
@@ -300,12 +337,6 @@ enum Cmd {
 }
 
 #[derive(Subcommand)]
-enum NetCmd {
-    /// Every network interface: kind, state, MAC, MTU, addresses.
-    Interfaces,
-}
-
-#[derive(Subcommand)]
 enum TokenCmd {
     /// Issue a token for another client. Shown once.
     Create {
@@ -435,16 +466,17 @@ fn run(cli: Cli) -> Result<(), String> {
     let target = connect::resolve(cli.node.as_deref(), &nodes)?;
     let local = matches!(target, Target::Local(_));
     let trust = match &cli.command {
-        Cmd::Id => Trust::Peek,
+        Cmd::Id | Cmd::Ping { .. } => Trust::Peek,
         Cmd::Claim { yes, .. } | Cmd::Login { yes, .. } => Trust::Pin { assume_yes: *yes },
         _ => Trust::KnownOnly,
     };
     // No read timeout: a followed log is open-ended, and a speed test on a
     // slow link can go quiet for longer than one. The device bounds that.
-    let follow = matches!(
-        cli.command,
-        Cmd::Logs { follow: true, .. } | Cmd::Speedtest { .. }
-    );
+    let follow = match &cli.command {
+        Cmd::Logs { follow: true, .. } | Cmd::Speedtest { .. } => true,
+        Cmd::Net { what: Some(what) } => net::streams(what),
+        _ => false,
+    };
     let mut session = connect::open(&target, &nodes, trust, follow)?;
     refresh_address(&mut nodes, &session)?;
     let json = cli.json;
@@ -481,11 +513,13 @@ fn run(cli: Cli) -> Result<(), String> {
                 }
             })
         }
-        Cmd::Net { what } => {
+        Cmd::Net {
+            what: what @ (None | Some(net::NetCmd::Interfaces)),
+        } => {
             let net: Net = call(&mut session, Command::Net)?;
             match what {
                 None => print(json, &net, || show_net(&net)),
-                Some(NetCmd::Interfaces) => print(json, &net.interfaces, || {
+                _ => print(json, &net.interfaces, || {
                     for (at, interface) in net.interfaces.iter().enumerate() {
                         if at > 0 {
                             println!();
@@ -495,6 +529,8 @@ fn run(cli: Cli) -> Result<(), String> {
                 }),
             }
         }
+        Cmd::Net { what: Some(what) } => net::run(&mut session, what, json),
+        Cmd::Ping { count, interval } => net::ping(&mut session, json, count, interval),
         Cmd::Modes => {
             let connectors: Vec<Connector> = call(&mut session, Command::Modes)?;
             print(json, &connectors, || {
@@ -550,6 +586,7 @@ fn run(cli: Cli) -> Result<(), String> {
             pairs,
             if_revision,
             no_apply,
+            verify,
         } => {
             let mut values = BTreeMap::new();
             for pair in pairs {
@@ -558,29 +595,48 @@ fn run(cli: Cli) -> Result<(), String> {
                     .ok_or_else(|| format!("{pair}: expected KEY=VALUE"))?;
                 values.insert(key.to_string(), value.to_string());
             }
-            let applied: Applied = call(
-                &mut session,
-                Command::Set {
-                    values,
-                    if_revision,
-                    apply: !no_apply,
-                },
-            )?;
+            let network = values.keys().any(|key| net::is_network_key(key));
+            let command = Command::Set {
+                values,
+                if_revision,
+                apply: !no_apply,
+                verify: verify.verify.clone(),
+            };
+            if network && !no_apply {
+                return net::apply(
+                    &mut session,
+                    json,
+                    "changing the network",
+                    &verify.verify,
+                    command,
+                );
+            }
+            let applied: Applied = call(&mut session, command)?;
             print(json, &applied, || show_applied(&applied, no_apply))
         }
         Cmd::Unset {
             keys,
             if_revision,
             no_apply,
+            verify,
         } => {
-            let applied: Applied = call(
-                &mut session,
-                Command::Unset {
-                    keys,
-                    if_revision,
-                    apply: !no_apply,
-                },
-            )?;
+            let network = keys.iter().any(|key| net::is_network_key(key));
+            let command = Command::Unset {
+                keys,
+                if_revision,
+                apply: !no_apply,
+                verify: verify.verify.clone(),
+            };
+            if network && !no_apply {
+                return net::apply(
+                    &mut session,
+                    json,
+                    "changing the network",
+                    &verify.verify,
+                    command,
+                );
+            }
+            let applied: Applied = call(&mut session, command)?;
             print(json, &applied, || show_applied(&applied, no_apply))
         }
         Cmd::Confirm => done(&mut session, Command::Confirm, json),
@@ -710,6 +766,15 @@ fn run(cli: Cli) -> Result<(), String> {
                 "root password - shown this once, store it now:",
                 &claimed.root_password,
             );
+            if let Some(hotspot) = &claimed.hotspot {
+                show_once(
+                    &format!(
+                        "hotspot {} password - shown this once; anyone on the hotspot now is dropped:",
+                        hotspot.ssid
+                    ),
+                    &hotspot.password,
+                );
+            }
             Ok(())
         }
         Cmd::Login { token, .. } => {
@@ -931,6 +996,7 @@ fn toggle(
             values,
             if_revision: None,
             apply: true,
+            verify: Default::default(),
         },
     )?;
     print(json, &applied, || {
@@ -1118,6 +1184,9 @@ fn show_key(key: &KeyInfo) {
             protocol::keys::Consumer::Agent => "the agent (invisible on screen)",
             protocol::keys::Consumer::Browser => "the browser",
             protocol::keys::Consumer::Weston => "the display (Weston, browser and agent)",
+            protocol::keys::Consumer::Network => {
+                "nothing: the network profiles are switched, and checked before it is saved"
+            }
         })
         .collect::<Vec<_>>()
         .join(", ");

@@ -23,8 +23,9 @@ use std::time::Duration;
 use protocol::keys::{self, Consumer, Key};
 use protocol::sshkey::PublicKey;
 use protocol::{
-    Applied, Claimed, Command, Done, KeyInfo, NodeInfo, Password, Pending, Screenshot, Setting,
-    Settings, Source, SshAccess, SshKeyInfo, Status, Target, TokenCreated, TokenInfo,
+    Applied, Claimed, Command, Done, HotspotCredentials, KeyInfo, NodeInfo, Password, Pending,
+    Screenshot, Setting, Settings, Source, SshAccess, SshKeyInfo, Status, Target, TokenCreated,
+    TokenInfo,
 };
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -36,8 +37,11 @@ use crate::cdp::session::SessionHandle;
 use crate::display;
 use crate::log::Log;
 use crate::mdns::Mdns;
+use crate::nm::profiles::{self, NetConfig};
+use crate::nm::Network;
 use crate::paths::Paths;
 use crate::render;
+use crate::secrets::{self, Secrets};
 use crate::shadow;
 use crate::speedtest;
 use crate::ssh;
@@ -84,6 +88,9 @@ impl Caller {
 pub enum After {
     Restart(String),
     Reboot,
+    /// Re-render the network profiles from the saved settings: the hotspot
+    /// after a claim, an unclaim or a new password.
+    Network,
 }
 
 pub struct Reply {
@@ -138,6 +145,8 @@ pub struct Control {
     defaults: HashMap<String, String>,
     state: Store,
     auth_store: Store,
+    /// The hotspot's and the WiFi client's passwords, never in `state.json`.
+    secrets: Store,
     /// What `auth.json` holds, kept in memory so verifying a token is not a
     /// disk read. Only ever replaced after a successful write.
     auth: Mutex<Auth>,
@@ -157,6 +166,7 @@ pub struct Control {
     updates: Arc<Updates>,
     /// Held by the thread running a speed test, for as long as it runs.
     speedtest: Arc<tokio::sync::Mutex<()>>,
+    network: Arc<Network>,
 }
 
 impl Control {
@@ -175,8 +185,10 @@ impl Control {
         Arc::new(Self {
             agent_url,
             updates: Updates::new(Arc::clone(&log), paths.clone()),
+            network: Network::new(Arc::clone(&log), paths.clone()),
             state: Store::new(&paths.state_dir, state::FILE),
             auth_store: Store::new(&paths.state_dir, auth::FILE),
+            secrets: Store::new(&paths.state_dir, secrets::FILE),
             log,
             paths,
             defaults,
@@ -207,6 +219,20 @@ impl Control {
         self.log
             .info(format!("speed test requested by {}", caller.describe()));
         Ok(speedtest::start(plan, lock, Arc::clone(&self.log)))
+    }
+
+    /// Ping a host from the device; the server streams what comes back.
+    pub fn net_ping(
+        &self,
+        caller: &Caller,
+        plan: crate::ping::Plan,
+    ) -> tokio::sync::mpsc::Receiver<crate::ping::Step> {
+        self.log.debug(format!(
+            "net ping {} requested by {}",
+            plan.host,
+            caller.describe()
+        ));
+        crate::ping::start(plan, Arc::clone(&self.log))
     }
 
     pub fn set_mdns(&self, mdns: Option<Mdns>) {
@@ -247,17 +273,21 @@ impl Control {
                 values,
                 if_revision,
                 apply,
+                verify,
             } => {
                 let changes = values.into_iter().map(|(k, v)| (k, Some(v))).collect();
-                self.change(caller, changes, if_revision, apply).await
+                self.change(caller, changes, if_revision, apply, verify, None)
+                    .await
             }
             Command::Unset {
                 keys,
                 if_revision,
                 apply,
+                verify,
             } => {
                 let changes = keys.into_iter().map(|k| (k, None)).collect();
-                self.change(caller, changes, if_revision, apply).await
+                self.change(caller, changes, if_revision, apply, verify, None)
+                    .await
             }
             Command::Confirm => self.confirm().await.into(),
             Command::Navigate { url } => self.navigate(&url).await.into(),
@@ -273,12 +303,24 @@ impl Control {
             Command::Screenshot => self.screenshot().await.into(),
             Command::Logs { .. } => Reply::err("logs is a stream; the server handles it"),
             Command::Speedtest { .. } => Reply::err("speedtest is a stream; the server handles it"),
-            Command::Claim { name } => self.claim(caller, &name).await.into(),
+            // The hotspot's security follows the claim, re-applied once the
+            // answer is out: whoever claims through the hotspot gets its new
+            // password before the hotspot drops them.
+            Command::Claim { name } => {
+                let reply: Reply = self.claim(caller, &name).await.into();
+                reply.then(Some(After::Network))
+            }
             Command::TokenCreate { name } => self.token_create(caller, &name).await.into(),
             Command::TokenList => Reply::ok(self.token_list()),
-            Command::TokenRevoke { id } => self.token_revoke(caller, &id).await.into(),
+            Command::TokenRevoke { id } => {
+                let reply: Reply = self.token_revoke(caller, &id).await.into();
+                reply.then(Some(After::Network))
+            }
             Command::PasswordSet { password } => self.password_set(caller, password).await.into(),
-            Command::Unclaim => self.unclaim(caller).await.into(),
+            Command::Unclaim => {
+                let reply: Reply = self.unclaim(caller).await.into();
+                reply.then(Some(After::Network))
+            }
             Command::FactoryReset => self.factory_reset(caller).await,
             Command::SshAuthorize { key } => self.ssh_authorize(caller, &key).await.into(),
             Command::SshKeyList => self.ssh_key_list().await.into(),
@@ -295,12 +337,200 @@ impl Control {
                 .into(),
             Command::UpdateChunk { offset, data } => self.updates.chunk(offset, data).await.into(),
             Command::UpdateStatus => self.updates.status().await.into(),
+            Command::UpdateCommit { .. } if self.network.busy() => {
+                Reply::err("a network change is in progress; commit the update once it is done")
+            }
             Command::UpdateCommit { wipe_data, reboot } => {
                 let who = caller.describe();
                 let reply: Reply = self.updates.commit(&who, wipe_data).await.into();
                 reply.then(reboot.then_some(After::Reboot))
             }
             Command::UpdateCancel => self.updates.cancel(&caller.describe()).await.into(),
+            Command::Ping => Reply::ok(Done {
+                message: "pong".to_string(),
+            }),
+            Command::NetPing { .. } => Reply::err("net-ping is a stream; the server handles it"),
+            Command::NetProfiles => self.network.profiles().await.into(),
+            Command::NetShow { profile } => self.network.show(&profile).await.into(),
+            Command::NetLast => self.network.last().await.into(),
+            Command::Wifi => self.network.wifi().await.into(),
+            Command::WifiScan { interface, rescan } => {
+                self.network.scan(interface, rescan).await.into()
+            }
+            Command::WifiJoin {
+                ssid,
+                psk,
+                security,
+                hidden,
+                verify,
+            } => {
+                let psk = psk.map(|secret| secret.expose().to_string());
+                self.join(caller, ssid, psk, security, hidden, verify).await
+            }
+            Command::HotspotPassword => {
+                let reply: Reply = self.hotspot_password(caller).await.into();
+                reply.then(Some(After::Network))
+            }
+        }
+    }
+
+    /// `net wifi join`: client mode on `ssid`, as one change of the network
+    /// keys, with the password staged so it is saved only if the join holds.
+    async fn join(
+        self: &Arc<Self>,
+        caller: &Caller,
+        ssid: String,
+        psk: Option<String>,
+        security: Option<protocol::WifiSecurity>,
+        hidden: bool,
+        verify: protocol::Verify,
+    ) -> Reply {
+        let key = keys::find("wifi.ssid").expect("wifi.ssid is a key");
+        if let Err(err) = keys::validate(key, &ssid) {
+            return Reply::err(err);
+        }
+        if let Some(psk) = &psk {
+            if let Err(err) = keys::check_psk(psk) {
+                return Reply::err(err);
+            }
+        }
+        let state = match self.read_state().await {
+            Ok(state) => state,
+            Err(err) => return Reply::err(err),
+        };
+        let value = profiles::value_of(&state.settings, &self.defaults);
+        let interface = match profiles::effective(&value, "wifi.interface").as_str() {
+            "auto" => "wlan0".to_string(),
+            name => name.to_string(),
+        };
+        let security = match security {
+            Some(security) => security,
+            None if hidden => {
+                return Reply::err("a hidden network needs --security psk, sae or open")
+            }
+            None => match self.network.security_of_ssid(&interface, &ssid).await {
+                Ok(security) => security,
+                Err(err) => return Reply::err(err),
+            },
+        };
+        let word = match security {
+            protocol::WifiSecurity::Psk => "psk",
+            protocol::WifiSecurity::Sae => "sae",
+            protocol::WifiSecurity::Open => "open",
+        };
+        // Without a new password, only the network whose password is stored
+        // can be joined: another one would try it with the wrong one.
+        let same_network = profiles::effective(&value, "wifi.ssid") == ssid;
+        if psk.is_none() && word != "open" && !same_network {
+            return Reply::err(format!("{ssid} needs a password"));
+        }
+
+        let changes = BTreeMap::from([
+            ("wifi.mode".to_string(), Some("client".to_string())),
+            ("wifi.ssid".to_string(), Some(ssid)),
+            ("wifi.security".to_string(), Some(word.to_string())),
+            (
+                "wifi.hidden".to_string(),
+                Some(if hidden { "1" } else { "0" }.to_string()),
+            ),
+        ]);
+        self.change(caller, changes, None, true, verify, psk).await
+    }
+
+    /// A new random hotspot password, shown once. Unclaimed devices keep an
+    /// open hotspot, like an empty root password.
+    async fn hotspot_password(&self, caller: &Caller) -> Result<HotspotCredentials, String> {
+        let _writes = self.writes.lock().await;
+        if !self.claimed() {
+            return Err(
+                "an unclaimed device's hotspot is open; claiming it sets a password".to_string(),
+            );
+        }
+        let password = secrets::random_hotspot_psk()?;
+        let stored = password.clone();
+        self.update_secrets(move |secrets| secrets.hotspot_psk = Some(stored))
+            .await?;
+        self.log.info(format!(
+            "network: a new hotspot password was set by {}",
+            caller.describe()
+        ));
+        let config = self.net_config().await?;
+        Ok(HotspotCredentials {
+            ssid: config.wifi.hotspot_ssid,
+            password,
+        })
+    }
+
+    async fn read_secrets(&self) -> Secrets {
+        let store = self.secrets.clone();
+        let log = Arc::clone(&self.log);
+        blocking("reading secrets.json", move || {
+            Ok(store.read::<Secrets>(&log))
+        })
+        .await
+        .unwrap_or_default()
+    }
+
+    async fn update_secrets(
+        &self,
+        change: impl FnOnce(&mut Secrets) + Send + 'static,
+    ) -> Result<(), String> {
+        let store = self.secrets.clone();
+        let log = Arc::clone(&self.log);
+        blocking("updating secrets.json", move || {
+            store.update(&log, |secrets: &mut Secrets| {
+                change(secrets);
+                Ok(())
+            })
+        })
+        .await
+    }
+
+    /// The node name these settings give, as the hotspot is named after it.
+    fn node_name_for(&self, settings: &BTreeMap<String, String>) -> String {
+        let value = profiles::value_of(settings, &self.defaults);
+        profiles::node_name(&value, &crate::identity::friendly_name(&self.identity.id))
+    }
+
+    fn net_config_for(&self, settings: &BTreeMap<String, String>, secrets: &Secrets) -> NetConfig {
+        let value = profiles::value_of(settings, &self.defaults);
+        NetConfig::from_settings(
+            &value,
+            secrets.hotspot_psk.clone(),
+            secrets.wifi_psk.clone(),
+            &self.node_name_for(settings),
+        )
+    }
+
+    /// The network as `state.json` and `secrets.json` say it is.
+    async fn net_config(&self) -> Result<NetConfig, String> {
+        let state = self.read_state().await?;
+        let secrets = self.read_secrets().await;
+        Ok(self.net_config_for(&state.settings, &secrets))
+    }
+
+    /// Roll back a network change the previous agent never finished, onto
+    /// what the saved settings say.
+    pub async fn recover_network(&self) {
+        match self.net_config().await {
+            Ok(config) => self.network.recover(config),
+            Err(err) => self.log.info(format!("network: {err}")),
+        }
+    }
+
+    /// Re-render the profiles from the saved settings, outside a change:
+    /// after a claim, an unclaim or a new hotspot password.
+    async fn refresh_network(&self) {
+        let config = match self.net_config().await {
+            Ok(config) => config,
+            Err(err) => {
+                self.log.info(format!("network: {err}"));
+                return;
+            }
+        };
+        if let Err(err) = self.network.refresh(&config).await {
+            self.log
+                .info(format!("network: re-rendering the profiles: {err}"));
         }
     }
 
@@ -337,12 +567,20 @@ impl Control {
         blocking("reading state.json", move || Ok(store.read::<State>(&log))).await
     }
 
-    /// What the device reports now: derived name, node id, addresses.
+    /// What the device reports now: derived name, node id, addresses, and
+    /// the hotspot's name, which follows `node.name`.
     async fn live(&self) -> state::Live {
         let paths = self.paths.clone();
-        blocking("reading the network", move || Ok(render::live(&paths)))
+        let mut live = blocking("reading the network", move || Ok(render::live(&paths)))
             .await
-            .unwrap_or_default()
+            .unwrap_or_default();
+        if let Ok(state) = self.read_state().await {
+            live.values.insert(
+                "wifi.hotspot_ssid".to_string(),
+                profiles::hotspot_ssid(&self.node_name_for(&state.settings)),
+            );
+        }
+        live
     }
 
     async fn net(&self) -> Result<protocol::Net, String> {
@@ -556,6 +794,8 @@ impl Control {
         changes: BTreeMap<String, Option<String>>,
         if_revision: Option<u64>,
         apply: bool,
+        verify: protocol::Verify,
+        wifi_psk: Option<String>,
     ) -> Reply {
         if changes.is_empty() {
             return Reply::err("nothing to change");
@@ -593,101 +833,49 @@ impl Control {
             normalized.insert(name, value);
         }
 
+        let network = wifi_psk.is_some()
+            || normalized.keys().any(|name| {
+                keys::find(name).is_some_and(|key| key.consumers.contains(&Consumer::Network))
+            });
+        if network && !apply {
+            return Reply::err(
+                "network settings are applied and checked at once; drop --no-apply".to_string(),
+            );
+        }
+
         let _writes = self.writes.lock().await;
 
-        let store = self.state.clone();
-        let log = Arc::clone(&self.log);
-        let guarded_names: Vec<&'static str> = guarded.iter().map(|key| key.name).collect();
-        let default_templates: Vec<(&'static str, String)> = keys::TEMPLATES
-            .iter()
-            .map(|name| (*name, self.template(&BTreeMap::new(), name)))
-            .collect();
-        let default_debug = self.template(&BTreeMap::new(), "debug.template");
-        let defaults = self.defaults.clone();
-        let committed = blocking("updating state.json", move || {
-            store.update(&log, |state: &mut State| {
-                if let Some(expected) = if_revision {
-                    if state.revision != expected {
-                        return Err(format!(
-                            "the settings are at revision {}, not {expected}; someone else changed them",
-                            state.revision
-                        ));
-                    }
-                }
-                if !guarded_names.is_empty() {
-                    if let Some(pending) = &state.pending {
-                        return Err(format!(
-                            "{}={} is waiting for `tessaro-ctl confirm`; confirm it or let it revert first",
-                            pending.key, pending.value
-                        ));
-                    }
-                }
-
-                let before = state.settings.clone();
-                for (name, value) in &normalized {
-                    match value {
-                        Some(value) => state.settings.insert(name.clone(), value.clone()),
-                        None => state.settings.remove(name),
-                    };
-                }
-                if state.settings == before {
-                    return Ok((before, state.clone()));
-                }
-
-                // Every {placeholder} a template uses must have a value -
-                // checked on the result, so setting a template and its values
-                // in one command works, and unsetting a value still in use
-                // does not. Every template, whichever mode the device is in:
-                // a maintenance page or a debug screen that cannot expand is
-                // found at `set`, not when someone needs it. Read-only keys
-                // always have a value, so no live values are needed to know
-                // what is missing.
-                for (key, default) in &default_templates {
-                    let template = state.settings.get(*key).unwrap_or(default);
-                    let (_, missing) = state::expand_url(
-                        template,
-                        &state.settings,
-                        &defaults,
-                        &state::Live::default(),
-                    );
-                    check_template(key, template, &missing)?;
-                }
-
-                let template = state
-                    .settings
-                    .get("debug.template")
-                    .unwrap_or(&default_debug);
-                let (_, missing) = state::expand_text(
-                    template,
-                    &state.settings,
-                    &defaults,
-                    &state::Live::default(),
-                );
-                check_template("debug.template", template, &missing)?;
-
-                state.revision += 1;
-                for name in &guarded_names {
-                    if before.get(*name) != state.settings.get(*name) {
-                        state.pending = Some(PendingChange {
-                            key: name.to_string(),
-                            value: state
-                                .settings
-                                .get(*name)
-                                .cloned()
-                                .unwrap_or_else(|| "preferred".to_string()),
-                            previous: before.get(*name).cloned(),
-                        });
-                    }
-                }
-                Ok((before, state.clone()))
-            })
-        })
-        .await;
-
-        let (before, after) = match committed {
-            Ok(outcome) => outcome,
-            Err(err) => return Reply::err(err),
+        let edit = Edit {
+            normalized,
+            if_revision,
+            guarded: guarded.iter().map(|key| key.name).collect(),
+            default_templates: keys::TEMPLATES
+                .iter()
+                .map(|name| (*name, self.template(&BTreeMap::new(), name)))
+                .collect(),
+            default_debug: self.template(&BTreeMap::new(), "debug.template"),
+            defaults: self.defaults.clone(),
         };
+
+        let (committed, network_change) = if network {
+            match self.change_network(caller, &edit, verify, wifi_psk).await {
+                Ok(outcome) => outcome,
+                Err(err) => return Reply::err(err),
+            }
+        } else {
+            let store = self.state.clone();
+            let log = Arc::clone(&self.log);
+            let edit = edit.clone();
+            let committed = blocking("updating state.json", move || {
+                store.update(&log, |state: &mut State| edit.apply(state))
+            })
+            .await;
+            match committed {
+                Ok(outcome) => (outcome, None),
+                Err(err) => return Reply::err(err),
+            }
+        };
+        let (before, after) = committed;
 
         let changed = changed_keys(&before, &after.settings);
         if changed.is_empty() {
@@ -696,6 +884,7 @@ impl Control {
                 changed: Vec::new(),
                 restarted: Vec::new(),
                 pending: self.pending(&after),
+                network: network_change,
             });
         }
 
@@ -714,7 +903,111 @@ impl Control {
             self.arm_probation();
         }
 
-        self.converge(&changed, &after, apply).await
+        self.converge(&changed, &after, apply, network_change).await
+    }
+
+    /// A change that touches the network: tried as one transaction the
+    /// device verifies, and saved - `state.json`, and a staged WiFi password
+    /// to `secrets.json` - only once it has held. A change that did not hold
+    /// is an error, and nothing is saved. The saving is done by the
+    /// transaction itself, so it happens even if this caller is gone.
+    async fn change_network(
+        &self,
+        caller: &Caller,
+        edit: &Edit,
+        verify: protocol::Verify,
+        wifi_psk: Option<String>,
+    ) -> Result<
+        (
+            (BTreeMap<String, String>, State),
+            Option<protocol::NetChange>,
+        ),
+        String,
+    > {
+        if self.updates.is_pending() {
+            return Err(
+                "an update is committed and waiting for its reboot; change the network after it"
+                    .to_string(),
+            );
+        }
+        let current = self.read_state().await?;
+        let mut next = current.clone();
+        let (before, _) = edit.apply(&mut next)?;
+        if next.settings == before && wifi_psk.is_none() {
+            return Ok(((before, next), None));
+        }
+
+        let secrets = self.read_secrets().await;
+        let staged = Secrets {
+            wifi_psk: wifi_psk.clone().or_else(|| secrets.wifi_psk.clone()),
+            ..secrets.clone()
+        };
+        let value = profiles::value_of(&next.settings, &self.defaults);
+        keys::check_network(
+            |name| profiles::effective(&value, name),
+            staged.wifi_psk.is_some(),
+        )?;
+        let old = self.net_config_for(&current.settings, &secrets);
+        let new = self.net_config_for(&next.settings, &staged);
+
+        let action = match &wifi_psk {
+            Some(_) => format!(
+                "join {}",
+                new.wifi
+                    .client
+                    .as_ref()
+                    .map(|c| c.ssid.as_str())
+                    .unwrap_or("")
+            ),
+            None => format!(
+                "set {}",
+                changed_keys(&before, &next.settings)
+                    .iter()
+                    .map(|(name, _)| name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            ),
+        };
+
+        // What the transaction runs once the change has held.
+        let slot: Arc<Mutex<Option<Committed>>> = Arc::default();
+        let commit: crate::nm::txn::Commit = {
+            let store = self.state.clone();
+            let secrets_store = self.secrets.clone();
+            let log = Arc::clone(&self.log);
+            let edit = edit.clone();
+            let slot = Arc::clone(&slot);
+            Box::pin(async move {
+                let committed = blocking("saving the network settings", move || {
+                    if let Some(psk) = wifi_psk {
+                        secrets_store.update(&log, |secrets: &mut Secrets| {
+                            secrets.wifi_psk = Some(psk);
+                            Ok(())
+                        })?;
+                    }
+                    store.update(&log, |state: &mut State| edit.apply(state))
+                })
+                .await?;
+                *lock(&slot) = Some(committed);
+                Ok(())
+            })
+        };
+
+        // naked: Network bounds every NetworkManager call with within()
+        let change = self
+            .network
+            .apply(caller.describe(), action, old, new, verify, commit)
+            .await?;
+        if change.outcome == protocol::ChangeOutcome::RolledBack {
+            return Err(format!(
+                "the network change was rolled back: {}",
+                change.reason.as_deref().unwrap_or("it did not hold")
+            ));
+        }
+        let committed = lock(&slot).take().ok_or_else(|| {
+            "the network change held, but its settings were not saved".to_string()
+        })?;
+        Ok((committed, Some(change)))
     }
 
     /// kiosk.url as these settings, and the device as it is now, expand it.
@@ -868,7 +1161,7 @@ impl Control {
             "{name} now expands to {url} (the agent is on {}); applying",
             self.agent_url
         ));
-        let reply = self.converge(&[], &state, true).await;
+        let reply = self.converge(&[], &state, true, None).await;
         if let Err(err) = &reply.result {
             self.log.info(format!("applying the new {name}: {err}"));
         }
@@ -879,7 +1172,13 @@ impl Control {
 
     /// Render, then restart what reads the changed keys. The reply is built
     /// here so every path that changes settings reports it the same way.
-    async fn converge(&self, changed: &[Changed], state: &State, apply: bool) -> Reply {
+    async fn converge(
+        &self,
+        changed: &[Changed],
+        state: &State,
+        apply: bool,
+        network: Option<protocol::NetChange>,
+    ) -> Reply {
         let rendered = match self.render(&state.settings).await {
             Ok(rendered) => rendered,
             Err(err) => {
@@ -930,6 +1229,7 @@ impl Control {
             changed: changed.iter().map(|(name, _)| name.clone()).collect(),
             restarted,
             pending: self.pending(state),
+            network,
         })
         .then(after)
     }
@@ -1043,7 +1343,7 @@ impl Control {
             .map(|key| (pending.key.clone(), key))
             .into_iter()
             .collect();
-        let reply = self.converge(&changed, &state, true).await;
+        let reply = self.converge(&changed, &state, true, None).await;
         if let Err(err) = &reply.result {
             self.log.info(format!("reverting: {err}"));
         }
@@ -1140,6 +1440,11 @@ impl Control {
         let outcome = match &after {
             After::Restart(unit) => self.bus.restart(unit).await,
             After::Reboot => self.bus.reboot().await,
+            After::Network => {
+                // naked: refresh_network waits only through Network, whose calls are within()
+                self.refresh_network().await;
+                Ok(())
+            }
         };
         if let Err(err) = outcome {
             self.log.info(format!("{after:?}: {err}"));
@@ -1196,11 +1501,41 @@ impl Control {
             entry.id
         ));
 
+        // The hotspot's password last, after the claim that decides it: a
+        // power cut before it leaves a claimed device with an open hotspot
+        // until `net wifi hotspot-password`, never an unclaimed one with a
+        // password nobody was shown. Applied once the answer is out.
+        let hotspot = match self.set_hotspot_psk().await {
+            Ok(hotspot) => hotspot,
+            Err(err) => {
+                self.log
+                    .info(format!("claim: the hotspot keeps no password: {err}"));
+                None
+            }
+        };
+
         Ok(Claimed {
             token_id: entry.id,
             token: secret,
             root_password: password,
+            hotspot,
         })
+    }
+
+    /// A new hotspot password, stored; the credentials to show, when the
+    /// device has its WiFi interface at all. The profiles are re-rendered
+    /// afterwards, by `After::Network`.
+    async fn set_hotspot_psk(&self) -> Result<Option<HotspotCredentials>, String> {
+        let password = secrets::random_hotspot_psk()?;
+        let stored = password.clone();
+        self.update_secrets(move |secrets| secrets.hotspot_psk = Some(stored))
+            .await?;
+        let config = self.net_config().await?;
+        let here = self.network.has_wifi(&config.wifi.interface).await;
+        Ok(here.then_some(HotspotCredentials {
+            ssid: config.wifi.hotspot_ssid,
+            password,
+        }))
     }
 
     async fn token_create(&self, caller: &Caller, name: &str) -> Result<TokenCreated, String> {
@@ -1285,9 +1620,11 @@ impl Control {
             })
             .await?;
             self.set_root(None).await?;
+            self.update_secrets(|secrets| secrets.hotspot_psk = None)
+                .await?;
             self.announce_claimed(false);
             self.log.info(
-                "the last token was revoked: unclaimed, ssh keys removed, root password emptied",
+                "the last token was revoked: unclaimed, ssh keys removed, root password emptied, hotspot open",
             );
             return Ok(Done {
                 message: format!(
@@ -1363,7 +1700,11 @@ impl Control {
             ssh::clear(&path).map_err(|err| format!("{}: {err}", path.display()))
         })
         .await?;
-        self.set_root(None).await
+        self.set_root(None).await?;
+        // Unclaimed means an open hotspot, like an empty root password. The
+        // profiles follow once the answer is out (`After::Network`).
+        self.update_secrets(|secrets| secrets.hotspot_psk = None)
+            .await
     }
 
     async fn ssh_authorize(&self, caller: &Caller, key: &str) -> Result<SshAccess, String> {
@@ -1458,19 +1799,31 @@ impl Control {
             return Reply::err(err);
         }
         *lock(&self.probation) = None;
+        let secrets = self.secrets.clone();
+        if let Err(err) = blocking("removing secrets.json", move || {
+            secrets.remove().map_err(|err| err.to_string())
+        })
+        .await
+        {
+            return Reply::err(err);
+        }
 
         if let Err(err) = self.render(&BTreeMap::new()).await {
             return Reply::err(format!("reset, but rendering failed: {err}"));
         }
+        // The profiles now say the defaults: DHCP, an open hotspot. What is
+        // up keeps running until the next boot brings them up afresh.
+        self.refresh_network().await;
 
         self.log.info(format!(
-            "factory reset by {}: settings, tokens, ssh keys and root password cleared",
+            "factory reset by {}: settings, tokens, ssh keys, passwords and the network cleared",
             caller.describe()
         ));
         // Weston takes the browser and the agent with it (PartOf=), so every
         // consumer comes back up on the defaults.
         Reply::ok(Done {
-            message: "factory reset: defaults restored, unclaimed, restarting the display"
+            message: "factory reset: defaults restored, unclaimed, restarting the display; \
+                      the network is DHCP and an open hotspot from the next boot"
                 .to_string(),
         })
         .then(Some(After::Restart(self.paths.weston_unit.clone())))
@@ -1532,6 +1885,9 @@ impl Control {
 /// says what reads it.
 type Changed = (String, &'static Key);
 
+/// What a committed edit leaves: the settings before, and the state after.
+type Committed = (BTreeMap<String, String>, State);
+
 /// Every stored name whose value differs, in name order.
 fn changed_keys(
     before: &BTreeMap<String, String>,
@@ -1543,6 +1899,100 @@ fn changed_keys(
         .filter(|name| before.get(*name) != after.get(*name))
         .filter_map(|name| keys::find(name).map(|key| (name.clone(), key)))
         .collect()
+}
+
+/// One `set`/`unset`, validated, as it is applied to `state.json`: once as a
+/// dry run to know what a network change would become, then for real - by
+/// the store, or by the network transaction once the change has held.
+#[derive(Debug, Clone)]
+struct Edit {
+    normalized: BTreeMap<String, Option<String>>,
+    if_revision: Option<u64>,
+    /// The guarded keys among them (`display.resolution`).
+    guarded: Vec<&'static str>,
+    default_templates: Vec<(&'static str, String)>,
+    default_debug: String,
+    defaults: HashMap<String, String>,
+}
+
+impl Edit {
+    /// Apply to `state`, returning the settings before and the state after.
+    /// An edit that changes nothing leaves the revision where it was.
+    fn apply(&self, state: &mut State) -> Result<(BTreeMap<String, String>, State), String> {
+        if let Some(expected) = self.if_revision {
+            if state.revision != expected {
+                return Err(format!(
+                    "the settings are at revision {}, not {expected}; someone else changed them",
+                    state.revision
+                ));
+            }
+        }
+        if !self.guarded.is_empty() {
+            if let Some(pending) = &state.pending {
+                return Err(format!(
+                    "{}={} is waiting for `tessaro-ctl confirm`; confirm it or let it revert first",
+                    pending.key, pending.value
+                ));
+            }
+        }
+
+        let before = state.settings.clone();
+        for (name, value) in &self.normalized {
+            match value {
+                Some(value) => state.settings.insert(name.clone(), value.clone()),
+                None => state.settings.remove(name),
+            };
+        }
+        if state.settings == before {
+            return Ok((before, state.clone()));
+        }
+
+        // Every {placeholder} a template uses must have a value - checked on
+        // the result, so setting a template and its values in one command
+        // works, and unsetting a value still in use does not. Every template,
+        // whichever mode the device is in: a maintenance page or a debug
+        // screen that cannot expand is found at `set`, not when someone
+        // needs it. Read-only keys always have a value, so no live values
+        // are needed to know what is missing.
+        for (key, default) in &self.default_templates {
+            let template = state.settings.get(*key).unwrap_or(default);
+            let (_, missing) = state::expand_url(
+                template,
+                &state.settings,
+                &self.defaults,
+                &state::Live::default(),
+            );
+            check_template(key, template, &missing)?;
+        }
+
+        let template = state
+            .settings
+            .get("debug.template")
+            .unwrap_or(&self.default_debug);
+        let (_, missing) = state::expand_text(
+            template,
+            &state.settings,
+            &self.defaults,
+            &state::Live::default(),
+        );
+        check_template("debug.template", template, &missing)?;
+
+        state.revision += 1;
+        for name in &self.guarded {
+            if before.get(*name) != state.settings.get(*name) {
+                state.pending = Some(PendingChange {
+                    key: name.to_string(),
+                    value: state
+                        .settings
+                        .get(*name)
+                        .cloned()
+                        .unwrap_or_else(|| "preferred".to_string()),
+                    previous: before.get(*name).cloned(),
+                });
+            }
+        }
+        Ok((before, state.clone()))
+    }
 }
 
 /// Why a template (`keys::TEMPLATES`, debug.template) cannot be saved with these
@@ -1656,6 +2106,10 @@ mod tests {
             // None: nothing runs dropbearkey on the host.
             ("KIOSK_SSH_HOST_KEY_DIRS", String::new()),
             ("KIOSK_DRM", at("drm")),
+            // No interfaces, and profiles rendered into the sandbox: nothing
+            // here may ever reach this host's own NetworkManager.
+            ("KIOSK_SYS_NET", at("sys-net")),
+            ("KIOSK_NM_RUN_DIR", at("nm")),
         ]
         .into_iter()
         .map(|(k, v)| (k.to_string(), v))
@@ -1745,6 +2199,7 @@ mod tests {
                 .collect(),
             if_revision: None,
             apply: true,
+            verify: Default::default(),
         }
     }
 
@@ -1780,6 +2235,109 @@ mod tests {
         )
         .await;
         assert!(again.contains("already claimed"), "{again}");
+    }
+
+    fn secrets_of(fx: &Fixture) -> Secrets {
+        let path = fx.paths.state_dir.join(secrets::FILE);
+        fs::read_to_string(path)
+            .map(|text| serde_json::from_str(&text).unwrap())
+            .unwrap_or_default()
+    }
+
+    #[tokio::test]
+    async fn the_hotspot_password_follows_the_claim() {
+        let fx = fixture();
+        let claimed: Claimed = ok(
+            &fx.control,
+            &anonymous(),
+            Command::Claim {
+                name: "laptop".into(),
+            },
+        )
+        .await;
+        let psk = secrets_of(&fx)
+            .hotspot_psk
+            .expect("claim sets a hotspot password");
+        protocol::keys::check_psk(&psk).unwrap();
+        // No wlan0 in this sandbox: nothing to show, but it is stored for a
+        // WiFi dongle plugged in later.
+        assert_eq!(claimed.hotspot, None);
+
+        let rotated: HotspotCredentials =
+            ok(&fx.control, &Caller::Local, Command::HotspotPassword).await;
+        assert_ne!(rotated.password, psk);
+        assert!(rotated.ssid.starts_with("tessaro-"));
+        assert_eq!(secrets_of(&fx).hotspot_psk, Some(rotated.password));
+
+        let _: Done = ok(&fx.control, &Caller::Local, Command::Unclaim).await;
+        assert_eq!(secrets_of(&fx).hotspot_psk, None, "unclaimed means open");
+        let refused = err(&fx.control, &Caller::Local, Command::HotspotPassword).await;
+        assert!(refused.contains("open"), "{refused}");
+    }
+
+    #[tokio::test]
+    async fn network_settings_are_checked_before_anything_moves() {
+        let fx = fixture();
+        let no_apply = err(
+            &fx.control,
+            &Caller::Local,
+            Command::Set {
+                values: [("ethernet.mode".to_string(), "static".to_string())].into(),
+                if_revision: None,
+                apply: false,
+                verify: Default::default(),
+            },
+        )
+        .await;
+        assert!(no_apply.contains("--no-apply"), "{no_apply}");
+
+        let incomplete = err(
+            &fx.control,
+            &Caller::Local,
+            set(&[("ethernet.mode", "static")]),
+        )
+        .await;
+        assert!(
+            incomplete.contains("needs ethernet.address"),
+            "{incomplete}"
+        );
+        let client = err(&fx.control, &Caller::Local, set(&[("wifi.mode", "client")])).await;
+        assert!(client.contains("wifi.ssid"), "{client}");
+
+        let settings: Settings = ok(
+            &fx.control,
+            &Caller::Local,
+            Command::Get {
+                key: Some("ethernet.mode".into()),
+            },
+        )
+        .await;
+        assert_eq!(settings.revision, 0, "nothing was saved");
+    }
+
+    #[tokio::test]
+    async fn network_passwords_are_never_shown() {
+        let fx = fixture();
+        fs::create_dir_all(&fx.paths.state_dir).unwrap();
+        fs::write(
+            fx.paths.state_dir.join(secrets::FILE),
+            r#"{"hotspot_psk":"hotspotsecret1","wifi_psk":"clientsecret22"}"#,
+        )
+        .unwrap();
+        let everything = serde_json::to_string(
+            &ok::<Settings>(&fx.control, &Caller::Local, Command::Get { key: None }).await,
+        )
+        .unwrap()
+            + &serde_json::to_string(
+                &ok::<Vec<KeyInfo>>(&fx.control, &Caller::Local, Command::Keys).await,
+            )
+            .unwrap();
+        assert!(!everything.contains("hotspotsecret1"));
+        assert!(!everything.contains("clientsecret22"));
+        assert!(
+            everything.contains("tessaro-"),
+            "wifi.hotspot_ssid is reported"
+        );
     }
 
     #[tokio::test]
@@ -2103,6 +2661,7 @@ mod tests {
                 values: [("kiosk.url".to_string(), "https://shop.test/".to_string())].into(),
                 if_revision: None,
                 apply: false,
+                verify: Default::default(),
             },
         )
         .await;
@@ -2212,6 +2771,7 @@ mod tests {
                 values: [("agent.debug".to_string(), "0".to_string())].into(),
                 if_revision: Some(0),
                 apply: true,
+                verify: Default::default(),
             },
         )
         .await;
@@ -2335,6 +2895,7 @@ mod tests {
                 keys: vec!["data.store".into()],
                 if_revision: None,
                 apply: true,
+                verify: Default::default(),
             },
         )
         .await;
