@@ -1,0 +1,59 @@
+[Unit]
+Description=PipeWire, the kiosk's sound server
+Documentation=man:pipewire(1)
+
+# A system unit running as the weston user, not PipeWire's own units: the
+# user units need a logind session this image never has (Chromium and Weston
+# run from plain system units too), and the recipe's system-wide unit runs as
+# a `pipewire` user whose Pulse socket Chromium would then need extra
+# permissions for. As weston, PipeWire, WirePlumber, the Pulse server and
+# Chromium are one user, and /run/tessaro-audio is private to it.
+#
+# Nothing here depends on Weston: sound works with no screen, and a Weston
+# restart (a display setting, a hotplug) does not cut it.
+
+# No start limit, like the kiosk: a sound server that gave up is worse than
+# one that keeps trying and says why in the journal.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=weston
+Group=weston
+# audio is what opens /dev/snd/*. weston is not in it in /etc/group, and
+# Chromium deliberately is not either: it plays through the Pulse socket, so
+# it can never grab a card from under PipeWire.
+SupplementaryGroups=audio
+
+# The sockets (pipewire-0, pulse/native) go into XDG_RUNTIME_DIR, which
+# tmpfiles makes (tessaro-audio.conf). State and configuration are pointed
+# into it too: nothing about sound may persist outside state.json, where
+# tessaro-agent keeps the audio.* settings and puts them back every boot. A
+# ~/.config/pipewire on /data could otherwise override the image for good.
+Environment=XDG_RUNTIME_DIR=/run/tessaro-audio
+Environment=PIPEWIRE_RUNTIME_DIR=/run/tessaro-audio
+Environment=XDG_STATE_HOME=/run/tessaro-audio/state
+Environment=XDG_CONFIG_HOME=/run/tessaro-audio/config
+Environment=HOME=/run/tessaro-audio
+
+# module-rt raises the audio thread to real-time priority itself when the
+# limits allow it - there is no RTKit on this image. Without it the Pi 3
+# under a busy Chromium is where the crackles would come from. These are
+# module-rt's own defaults (rt.prio 88, nice.level -11).
+LimitRTPRIO=88
+LimitNICE=-11
+
+ExecStart=/usr/bin/pipewire
+Restart=always
+RestartSec=1
+
+# The hardening PipeWire's own unit ships.
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+NoNewPrivileges=yes
+RestrictNamespaces=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+
+[Install]
+WantedBy=multi-user.target

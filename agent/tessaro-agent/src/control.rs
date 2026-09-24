@@ -23,15 +23,16 @@ use std::time::Duration;
 use protocol::keys::{self, Consumer, Key};
 use protocol::sshkey::PublicKey;
 use protocol::{
-    Applied, Claimed, Command, Done, HotspotCredentials, KeyInfo, NodeInfo, Password, Pending,
-    Screenshot, Setting, Settings, Source, SshAccess, SshKeyInfo, Status, Target, TokenCreated,
-    TokenInfo,
+    Applied, AudioStatus, AudioTested, Claimed, Command, Done, HotspotCredentials, KeyInfo,
+    NodeInfo, Password, Pending, Screenshot, Setting, Settings, Source, SshAccess, SshKeyInfo,
+    Status, Target, TokenCreated, TokenInfo,
 };
 use serde::Serialize;
 use serde_json::{json, Value};
 use tokio::sync::watch;
 use tokio::time::Instant;
 
+use crate::audio::{self, Audio};
 use crate::auth::{self, Auth};
 use crate::cdp::session::SessionHandle;
 use crate::display;
@@ -170,6 +171,7 @@ pub struct Control {
     /// Held by the thread running a speed test, for as long as it runs.
     speedtest: Arc<tokio::sync::Mutex<()>>,
     network: Arc<Network>,
+    audio: Arc<Audio>,
 }
 
 impl Control {
@@ -190,6 +192,7 @@ impl Control {
             updates: Updates::new(Arc::clone(&log), paths.clone()),
             files: Files::new(Arc::clone(&log), paths.clone()),
             network: Network::new(Arc::clone(&log), paths.clone()),
+            audio: Audio::new(Arc::clone(&log), &paths),
             state: Store::new(&paths.state_dir, state::FILE),
             auth_store: Store::new(&paths.state_dir, auth::FILE),
             secrets: Store::new(&paths.state_dir, secrets::FILE),
@@ -409,6 +412,8 @@ impl Control {
                 let who = caller.describe();
                 self.files.delete(&who, paths, recursive).await.into()
             }
+            Command::AudioStatus => self.audio_status().await.into(),
+            Command::AudioTest { input } => self.audio_test(input).await.into(),
         }
     }
 
@@ -631,6 +636,9 @@ impl Control {
         .await
         .unwrap_or_default();
 
+        let wanted = self.audio_wanted_from(&state.settings);
+        let audio = self.audio.status(&wanted).await;
+
         Ok(Status {
             os,
             image_version,
@@ -643,6 +651,7 @@ impl Control {
             pending: self.pending(&state),
             maintenance: state::maintenance(&state.settings, &self.defaults),
             debug_screen: state::debug_screen(&state.settings, &self.defaults),
+            audio: Some(audio),
         })
     }
 
@@ -839,6 +848,15 @@ impl Control {
                     return Reply::err(err);
                 }
             }
+            // A kind of output (`usb`) may be set before it is plugged in;
+            // one output by name must be one the device has.
+            if let Some(name) = &value {
+                if let Some(direction) = audio::named_device(key, name) {
+                    if let Err(err) = self.audio.check_name(direction, name).await {
+                        return Reply::err(err);
+                    }
+                }
+            }
             if key.guarded {
                 if !apply {
                     return Reply::err(format!(
@@ -903,6 +921,7 @@ impl Control {
                 restarted: Vec::new(),
                 pending: self.pending(&after),
                 network: network_change,
+                audio: None,
             });
         }
 
@@ -1332,6 +1351,105 @@ impl Control {
             .await;
     }
 
+    // --- audio -------------------------------------------------------------
+
+    /// Keeps the sound server on the audio.* settings - see `audio.rs`. They
+    /// are applied once PipeWire is up, again whenever the sound hardware
+    /// changes (a sound card comes or goes, a screen is plugged in, PipeWire
+    /// restarts) and has held still for a moment, and once a minute anyway,
+    /// which puts back anything else that moved it. The hardware is read from
+    /// the kernel every 2s, which is cheap; PipeWire is only asked when there
+    /// is something to apply. Applying is idempotent and logs real changes
+    /// only.
+    pub fn watch_audio(self: &Arc<Self>) {
+        const POLL: Duration = Duration::from_secs(2);
+        const SETTLE: Duration = Duration::from_secs(2);
+        /// PipeWire not up yet, or nothing to play on yet.
+        const RETRY: Duration = Duration::from_secs(5);
+        const EVERY: Duration = Duration::from_secs(60);
+
+        let control = Arc::clone(self);
+        let mut shutdown = self.shutdown.clone();
+        tokio::spawn(async move {
+            let mut seen: Option<String> = None;
+            let mut due = Instant::now();
+            // The last problem logged, so a retry every few seconds is one
+            // journal line, not one per retry.
+            let mut reported: Option<String> = None;
+            loop {
+                // naked: a timer and the shutdown signal, not the outside world
+                tokio::select! {
+                    _ = tokio::time::sleep(POLL) => {}
+                    _ = shutdown.changed() => return,
+                }
+                let paths = control.paths.clone();
+                let Ok(now) = blocking("reading the sound hardware", move || {
+                    Ok(audio::hardware(&paths))
+                })
+                .await
+                else {
+                    continue;
+                };
+                if seen.as_deref() != Some(now.as_str()) {
+                    seen = Some(now);
+                    due = Instant::now() + SETTLE;
+                    continue;
+                }
+                if Instant::now() < due {
+                    continue;
+                }
+                // naked: apply_audio waits only on blocking() and Audio, both bounded
+                let outcome = control.apply_audio().await;
+                due = Instant::now()
+                    + match &outcome {
+                        Ok(done) if !done.incomplete => EVERY,
+                        _ => RETRY,
+                    };
+                let problem = outcome.err();
+                if problem != reported {
+                    match &problem {
+                        // Normal for a few seconds at boot, and on a host.
+                        Some(err) if err.starts_with("PipeWire is not running") => {
+                            control.log.debug(format!("audio: {err}"))
+                        }
+                        Some(err) => control.log.info(format!("audio: {err}")),
+                        None => {}
+                    }
+                    reported = problem;
+                }
+            }
+        });
+    }
+
+    async fn apply_audio(&self) -> Result<audio::Outcome, String> {
+        let wanted = self.audio_wanted().await?;
+        self.audio.apply(&wanted).await
+    }
+
+    /// What the audio.* settings ask for now, set or image default.
+    async fn audio_wanted(&self) -> Result<audio::Wanted, String> {
+        let state = self.read_state().await?;
+        Ok(self.audio_wanted_from(&state.settings))
+    }
+
+    fn audio_wanted_from(&self, settings: &BTreeMap<String, String>) -> audio::Wanted {
+        audio::Wanted::from_env(&state::Effective::new(&self.defaults, settings, &self.log))
+    }
+
+    async fn audio_status(&self) -> Result<AudioStatus, String> {
+        let wanted = self.audio_wanted().await?;
+        Ok(self.audio.status(&wanted).await)
+    }
+
+    async fn audio_test(&self, input: bool) -> Result<AudioTested, String> {
+        let wanted = self.audio_wanted().await?;
+        if input {
+            self.audio.test_input(&wanted).await
+        } else {
+            self.audio.test_output(&wanted).await
+        }
+    }
+
     /// Render, then restart what reads the changed keys. The reply is built
     /// here so every path that changes settings reports it the same way.
     async fn converge(
@@ -1365,6 +1483,19 @@ impl Control {
         let browser = !weston && (reads(Consumer::Browser) || rendered.policy_changed);
         let agent = !weston && (reads(Consumer::Agent) || url_moved);
 
+        // Sound restarts nothing: the running server is switched at once. A
+        // server that is not up yet gets the settings from the watcher when
+        // it is, so the change is saved either way.
+        let audio = if apply && reads(Consumer::Audio) {
+            let wanted = self.audio_wanted_from(&state.settings);
+            Some(match self.audio.apply(&wanted).await {
+                Ok(outcome) => outcome.summary,
+                Err(err) => format!("saved, not applied yet: {err}"),
+            })
+        } else {
+            None
+        };
+
         let mut restarted = Vec::new();
         let mut after = None;
         if apply {
@@ -1392,6 +1523,7 @@ impl Control {
             restarted,
             pending: self.pending(state),
             network,
+            audio,
         })
         .then(after)
     }
@@ -2292,6 +2424,9 @@ mod tests {
             // here may ever reach this host's own NetworkManager.
             ("KIOSK_SYS_NET", at("sys-net")),
             ("KIOSK_NM_RUN_DIR", at("nm")),
+            // No PipeWire: nothing here may reach this host's sound server.
+            ("KIOSK_AUDIO_RUNTIME_DIR", at("audio")),
+            ("KIOSK_ASOUND_CARDS", at("asound-cards")),
         ]
         .into_iter()
         .map(|(k, v)| (k.to_string(), v))
@@ -3253,5 +3388,52 @@ mod tests {
             env.contains("KIOSK_FPS_COUNTER=1\nKIOSK_FPS_ARGS=--show-fps-counter\n"),
             "{env}"
         );
+    }
+
+    #[tokio::test]
+    async fn an_audio_setting_restarts_nothing_and_is_saved_without_pipewire() {
+        let fx = fixture();
+        let reply = fx
+            .control
+            .handle(
+                &Caller::Local,
+                set(&[("audio.volume", "40"), ("audio.output", "usb")]),
+            )
+            .await;
+        assert_eq!(reply.after, None);
+        let applied: Applied = serde_json::from_value(reply.result.unwrap()).unwrap();
+        assert_eq!(applied.changed, ["audio.output", "audio.volume"]);
+        assert!(applied.restarted.is_empty());
+        let audio = applied.audio.unwrap();
+        assert!(audio.contains("not applied yet"), "{audio}");
+        assert!(audio.contains("PipeWire is not running"), "{audio}");
+
+        let status: AudioStatus = ok(&fx.control, &Caller::Local, Command::AudioStatus).await;
+        assert!(!status.running);
+        assert_eq!(status.output.setting, "usb");
+        assert_eq!(status.output.volume, 40);
+        assert_eq!(status.input.setting, "auto");
+        assert_eq!(status.input.volume, 100);
+    }
+
+    #[tokio::test]
+    async fn one_audio_output_by_name_must_exist() {
+        let fx = fixture();
+        let refused = err(
+            &fx.control,
+            &Caller::Local,
+            set(&[("audio.output", "alsa_output.usb-Speaker-00.analog-stereo")]),
+        )
+        .await;
+        assert!(refused.contains("cannot be checked"), "{refused}");
+        let settings: Settings = ok(
+            &fx.control,
+            &Caller::Local,
+            Command::Get {
+                key: Some("audio.output".to_string()),
+            },
+        )
+        .await;
+        assert_eq!(settings.settings[0].source, Source::Default);
     }
 }

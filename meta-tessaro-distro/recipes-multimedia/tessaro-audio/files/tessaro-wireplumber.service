@@ -1,0 +1,41 @@
+[Unit]
+Description=WirePlumber, the kiosk's sound session manager
+Documentation=https://pipewire.pages.freedesktop.org/wireplumber/
+
+# WirePlumber is what finds the sound cards, makes their outputs and inputs,
+# and links a playing stream to the default output. It is useless without
+# PipeWire and goes down and up with it. It retries until PipeWire's socket
+# is there, so a start right after PipeWire's is fine.
+BindsTo=tessaro-pipewire.service
+After=tessaro-pipewire.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=weston
+Group=weston
+SupplementaryGroups=audio
+
+# The same environment as tessaro-pipewire.service - see there. Its
+# configuration is the image's plus
+# /usr/share/wireplumber/wireplumber.conf.d/50-tessaro.conf; its state, which
+# that drop-in keeps it from using anyway, would be in /run.
+Environment=XDG_RUNTIME_DIR=/run/tessaro-audio
+Environment=PIPEWIRE_RUNTIME_DIR=/run/tessaro-audio
+Environment=XDG_STATE_HOME=/run/tessaro-audio/state
+Environment=XDG_CONFIG_HOME=/run/tessaro-audio/config
+Environment=HOME=/run/tessaro-audio
+
+ExecStart=/usr/bin/wireplumber
+Restart=always
+RestartSec=1
+
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+NoNewPrivileges=yes
+RestrictNamespaces=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+
+[Install]
+WantedBy=tessaro-pipewire.service

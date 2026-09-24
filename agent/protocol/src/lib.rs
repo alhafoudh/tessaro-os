@@ -414,6 +414,15 @@ pub enum Command {
         #[serde(default)]
         recursive: bool,
     },
+    /// What PipeWire has - every output and input - and which of them the
+    /// audio.* settings put in use.
+    AudioStatus,
+    /// A short tone on the output in use, or with `input`, a few seconds
+    /// recorded from the input in use and its level.
+    AudioTest {
+        #[serde(default)]
+        input: bool,
+    },
 }
 
 impl Command {
@@ -465,6 +474,67 @@ pub struct Status {
     /// way.
     #[serde(default)]
     pub debug_screen: bool,
+    /// Where sound plays and at what volume. `None` from a device that
+    /// predates audio.
+    #[serde(default)]
+    pub audio: Option<AudioStatus>,
+}
+
+/// One output or input as PipeWire has it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AudioDevice {
+    /// What audio.output or audio.input takes to pick exactly this one.
+    pub name: String,
+    pub description: String,
+    /// `hdmi`, `jack`, `usb`, `bluetooth`, or `other`.
+    pub kind: String,
+    /// Something is plugged in, as far as the hardware can tell; `None` when
+    /// it cannot.
+    pub available: Option<bool>,
+    /// The one the settings put in use.
+    pub in_use: bool,
+    /// Not there until its sound card is switched to another profile, which
+    /// choosing it does.
+    #[serde(default)]
+    pub needs_profile: bool,
+}
+
+/// The output side or the input side.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AudioSide {
+    /// audio.output or audio.input, as set or defaulted.
+    pub setting: String,
+    /// The device in use, if any.
+    pub using: Option<AudioDevice>,
+    /// Why that is not what the setting names: `usb is not connected`.
+    pub fallback: Option<String>,
+    /// audio.volume or audio.input_volume, percent.
+    pub volume: u8,
+    /// Muted: audio.mute, or the setting is `off`.
+    pub muted: bool,
+    pub devices: Vec<AudioDevice>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AudioStatus {
+    /// PipeWire answered. When it did not, `error` says why and the sides
+    /// carry only the settings.
+    pub running: bool,
+    pub error: Option<String>,
+    pub output: AudioSide,
+    pub input: AudioSide,
+}
+
+/// What `audio test` played or heard.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AudioTested {
+    pub message: String,
+    /// The recording's loudest sample and its average, dBFS: 0 is full
+    /// scale, silence is far below -60.
+    #[serde(default)]
+    pub peak_dbfs: Option<f64>,
+    #[serde(default)]
+    pub rms_dbfs: Option<f64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -572,6 +642,11 @@ pub struct Applied {
     /// older devices.
     #[serde(default)]
     pub network: Option<NetChange>,
+    /// What the audio.* keys did on the sound server, in words, when they
+    /// changed: where sound now plays and how loud, or why it could not be
+    /// applied (the setting is saved either way).
+    #[serde(default)]
+    pub audio: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

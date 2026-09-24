@@ -101,6 +101,14 @@
   "SerialAllowAllPortsForUrls": [@device-origins@],
   "WebHidAllowAllDevicesForUrls": [@device-origins@],
 
+  // The microphone, for the same origins and rewritten by tessaro-agent the
+  // same way: getUserMedia({audio: true}) is answered without the prompt
+  // nobody is there to click. Which input it records from, and how loud, is
+  // audio.input and audio.input_volume; audio.input=off leaves the grant
+  // alone and gives the page silence, so it never restarts the browser. The
+  // page still has to be a secure context - https, or http://127.0.0.1.
+  "AudioCaptureAllowedUrls": [@device-origins@],
+
   // --- the file store -----------------------------------------------------
   //
   // tessaro-ctl files puts files in /data/files, which nginx serves at

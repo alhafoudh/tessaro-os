@@ -99,11 +99,20 @@ repos:
   # over http is the cost of making those grants possible. Its collection name
   # is "webserver" and it depends on openembedded-layer, which the graphics
   # fragment already enables.
+  #
+  # meta-multimedia carries PipeWire and WirePlumber, the kiosk's sound
+  # server (meta-tessaro-distro/recipes-multimedia/tessaro-audio). Its
+  # collection name is "multimedia-layer" and it depends on meta-oe and
+  # meta-python, both enabled already. It has no bbappends, and none of its
+  # recipes replace one Chromium builds against - so enabling it does not
+  # rebuild Chromium. Check before a full build:
+  #   bitbake -n moonforge-image-base | grep -i chromium
   meta-openembedded:
     layers:
       meta-networking:
       meta-python:
       meta-webserver:
+      meta-multimedia:
   # No url: this is the repo holding this file, which kas never touches.
   tessaro-os:
     layers:

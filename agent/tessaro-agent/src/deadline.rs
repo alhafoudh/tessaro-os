@@ -218,6 +218,7 @@ mod tests {
             "src/nm/mod.rs",
             "src/nm/txn.rs",
             "src/nm/nat.rs",
+            "src/audio.rs",
         ];
 
         // Helpers whose every wait is already under `within()` in their own
@@ -252,6 +253,9 @@ mod tests {
             "files.",
             // nm::Live - the same methods called directly.
             "live.",
+            // audio::Audio - every pw-dump, wpctl and pw-play is within(),
+            // file work is blocking(); the scan of audio.rs checks that.
+            "self.audio.",
         ];
 
         let mut offences = Vec::new();

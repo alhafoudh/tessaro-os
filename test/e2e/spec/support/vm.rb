@@ -20,6 +20,16 @@ module AgentE2E
     build = File.join(ROOT, "build", "qemux86-64")
     File.exist?(build) ? File.expand_path("../..", File.realpath(build)) : ROOT
   end
+  # The emulated sound cards' output, as QEMU writes it: one WAV file per
+  # card per worker, in the build dir, which is runqemu's working directory
+  # inside the kas container. `jack` is an Intel HDA line out, `usb` a USB
+  # audio device, so the audio lane can tell which card a sound came out of.
+  def self.audio_capture(card)
+    File.join(vm_root, "build", "qemux86-64", audio_capture_name(card))
+  end
+
+  def self.audio_capture_name(card) = "e2e-worker-#{Ports.worker}.#{card}.wav"
+
   IMAGE = File.join(DEPLOY_DIR, "tessaro-os-qemux86-64.rootfs.wic")
   QEMUBOOT = File.join(DEPLOY_DIR, "tessaro-os-qemux86-64.rootfs.qemuboot.conf")
 
@@ -43,7 +53,8 @@ module AgentE2E
       accel = File.exist?("/dev/kvm") ? "kvm" : ""
       # The conf comes after the image: runqemu derives a conf from the image
       # name, and only a later .qemuboot.conf argument replaces that.
-      inner = %(runqemu $WIC #{worker_qemuboot} ovmf slirp snapshot #{accel} #{display} serialstdio)
+      inner = %(runqemu $WIC #{worker_qemuboot} ovmf slirp snapshot #{accel} #{display} serialstdio ) +
+              %(qemuparams='#{sound_cards}')
       command = %(kas-container --runtime-args "#{kvm} #{gpu} --network=host" shell $KAS_CONFIG -c "#{inner}")
       root = AgentE2E.vm_root
       from = root == ROOT ? "" : ", from #{root}"
@@ -135,6 +146,18 @@ module AgentE2E
       end
       File.write(File.join(DEPLOY_DIR, name), conf)
       "tmp/deploy/images/qemux86-64/#{name}"
+    end
+
+    # Two sound cards, each recorded to a WAV file on the host: an Intel HDA
+    # controller with a line out, and a USB audio device. Here and not in the
+    # kas fragment, so `mise run run` does not write WAV files forever. Both
+    # are output only - QEMU's wav backend cannot capture - so the VM has no
+    # microphone, which the audio lane allows for.
+    def sound_cards
+      jack = AgentE2E.audio_capture_name("jack")
+      usb = AgentE2E.audio_capture_name("usb")
+      "-audiodev wav,id=jack,path=#{jack} -device intel-hda -device hda-output,audiodev=jack " \
+        "-audiodev wav,id=usb,path=#{usb} -device usb-audio,audiodev=usb"
     end
 
     # runqemu moves a forward whose host port is taken and says so in the

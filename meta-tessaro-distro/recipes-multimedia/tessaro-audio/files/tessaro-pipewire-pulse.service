@@ -1,0 +1,37 @@
+[Unit]
+Description=PipeWire's PulseAudio server, which Chromium plays through
+Documentation=man:pipewire-pulse(1)
+
+# Chromium has no PipeWire backend; it plays through libpulse, and this is
+# the server libpulse talks to. The browser finds it through PULSE_SERVER in
+# tessaro-kiosk.service: /run/tessaro-audio/pulse/native.
+BindsTo=tessaro-pipewire.service
+After=tessaro-pipewire.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=weston
+Group=weston
+SupplementaryGroups=audio
+
+# The same environment as tessaro-pipewire.service - see there.
+Environment=XDG_RUNTIME_DIR=/run/tessaro-audio
+Environment=PIPEWIRE_RUNTIME_DIR=/run/tessaro-audio
+Environment=XDG_STATE_HOME=/run/tessaro-audio/state
+Environment=XDG_CONFIG_HOME=/run/tessaro-audio/config
+Environment=HOME=/run/tessaro-audio
+
+ExecStart=/usr/bin/pipewire-pulse
+Restart=always
+RestartSec=1
+
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+NoNewPrivileges=yes
+RestrictNamespaces=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+
+[Install]
+WantedBy=tessaro-pipewire.service

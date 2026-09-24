@@ -27,12 +27,14 @@ use crate::paths::Paths;
 use crate::state;
 use crate::store;
 
-/// The grants that follow the kiosk origin: the device APIs, and reaching
+/// The grants that follow the kiosk origin: the device APIs and the
+/// microphone, each without a prompt nobody is there to answer, and reaching
 /// `http://127.0.0.1` (the file store) from an https site without a Local
 /// Network Access prompt. Everything else in the policy is the image's.
-const ORIGIN_POLICIES: [&str; 3] = [
+const ORIGIN_POLICIES: &[&str] = &[
     "SerialAllowAllPortsForUrls",
     "WebHidAllowAllDevicesForUrls",
+    "AudioCaptureAllowedUrls",
     "LocalNetworkAccessAllowedForUrls",
 ];
 
@@ -63,6 +65,12 @@ pub fn env_file(
         if key.consumers == [protocol::keys::Consumer::Network] {
             // The network keys become NetworkManager keyfiles, never env:
             // no unit reads them, and an SSID has no business in an env file.
+            continue;
+        }
+        if key.consumers == [protocol::keys::Consumer::Audio] {
+            // Applied to PipeWire by the agent, which reads state.json. No
+            // unit reads them, and a change must not look like one to the
+            // browser's env.
             continue;
         }
         if let Some((env, value)) = overrides.iter().find(|(env, _)| *env == key.env) {
@@ -128,7 +136,7 @@ pub fn policy(base: &str, origins: &[String]) -> Result<String, String> {
     let mut document: Map<String, Value> = serde_json::from_str(&strict_json(base))
         .map_err(|err| format!("the base policy: {err}"))?;
 
-    for name in ORIGIN_POLICIES {
+    for name in ORIGIN_POLICIES.iter().copied() {
         document.insert(
             name.to_string(),
             Value::Array(origins.iter().cloned().map(Value::String).collect()),
@@ -365,6 +373,24 @@ mod tests {
     }
 
     #[test]
+    fn audio_settings_never_reach_the_env_file() {
+        let log = Log::buffered(true);
+        let text = env_file(
+            &settings(&[
+                ("audio.output", "hdmi"),
+                ("audio.volume", "40"),
+                ("screen.osk", "never"),
+            ]),
+            &factory(),
+            &state::Live::default(),
+            &log,
+        );
+
+        let lines: Vec<&str> = text.lines().filter(|line| !line.starts_with('#')).collect();
+        assert_eq!(lines, ["KIOSK_OSK=never"]);
+    }
+
+    #[test]
     fn a_placeholder_in_the_host_moves_the_device_grants() {
         let log = Log::buffered(true);
         let set = settings(&[
@@ -437,6 +463,10 @@ mod tests {
         );
         assert_eq!(
             parsed["LocalNetworkAccessAllowedForUrls"],
+            parsed["SerialAllowAllPortsForUrls"]
+        );
+        assert_eq!(
+            parsed["AudioCaptureAllowedUrls"],
             parsed["SerialAllowAllPortsForUrls"]
         );
         assert_eq!(parsed["TranslateEnabled"], Value::Bool(false));

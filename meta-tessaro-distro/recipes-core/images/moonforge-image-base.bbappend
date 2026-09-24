@@ -91,6 +91,14 @@ CORE_IMAGE_EXTRA_INSTALL += " \
     tessaro-selftest \
 "
 
+# Sound: PipeWire, WirePlumber and the Pulse server Chromium plays through,
+# with the units that run them as the weston user. Everything about which
+# output plays and how loud is the audio.* settings, applied by the agent;
+# see the Audio section in CLAUDE.md.
+CORE_IMAGE_EXTRA_INSTALL += " \
+    tessaro-audio \
+"
+
 # Remote access, on every image rather than only development ones.
 #
 # Until now an SSH server came exclusively from debug-tweaks, which

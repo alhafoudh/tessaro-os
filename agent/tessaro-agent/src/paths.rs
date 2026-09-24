@@ -70,6 +70,12 @@ pub struct Paths {
     pub meminfo: PathBuf,
     /// The image's os-release, for `status`.
     pub os_release: PathBuf,
+    /// Where PipeWire, WirePlumber and the Pulse server put their sockets:
+    /// the runtime directory their units share with nothing else.
+    pub audio_runtime: PathBuf,
+    /// `/proc/asound/cards`: the sound cards the kernel has, which is how the
+    /// agent notices a USB speaker without asking PipeWire every few seconds.
+    pub asound_cards: PathBuf,
     /// The kernel's file name on the boot partition: `bzImage` on x86,
     /// `Image` on the Pi. An update replaces exactly that file.
     pub kernel_file: String,
@@ -125,6 +131,8 @@ impl Paths {
             by_partuuid: path("KIOSK_BY_PARTUUID", "/dev/disk/by-partuuid"),
             meminfo: path("KIOSK_MEMINFO", "/proc/meminfo"),
             os_release: path("KIOSK_OS_RELEASE", "/usr/lib/os-release"),
+            audio_runtime: path("KIOSK_AUDIO_RUNTIME_DIR", "/run/tessaro-audio"),
+            asound_cards: path("KIOSK_ASOUND_CARDS", "/proc/asound/cards"),
             kernel_file: text("KIOSK_KERNEL_FILE", "bzImage"),
             machine: text("KIOSK_MACHINE", "unknown"),
             selftest_origin: text("KIOSK_SELFTEST_ORIGIN", "http://127.0.0.1"),

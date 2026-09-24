@@ -37,6 +37,12 @@ local_conf_header:
     # start the kas container with --network=host; runqemu shifts a port up
     # by itself if it is taken, and says so in its "Port forward:" line.
     QB_SLIRP_OPT = "-netdev user,id=net0,hostfwd=tcp:127.0.0.1:2222-:22,hostfwd=tcp:127.0.0.1:2323-:23,hostfwd=tcp:127.0.0.1:7400-:7400,tftp=${DEPLOY_DIR_IMAGE}"
+    # Sound drivers for the emulated cards the e2e suite plugs in (Intel HDA
+    # and a USB audio device, see test/e2e/spec/support/vm.rb). linux-yocto
+    # builds them as modules, and oe-core's qemux86-64.conf recommends only
+    # snd-ens1370 - with a hard `=` that is parsed after local.conf, so only
+    # an :append survives it. The real targets install every module already.
+    MACHINE_EXTRA_RRECOMMENDS:append = " kernel-module-snd-hda-intel kernel-module-snd-hda-codec-generic kernel-module-snd-usb-audio"
 
 # Both keys belong in the entry point of the config chain: an include cannot
 # set them, because meta-moonforge-distro.yml sets distro too and wins by

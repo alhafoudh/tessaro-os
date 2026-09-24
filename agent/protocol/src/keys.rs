@@ -38,6 +38,10 @@ pub enum Consumer {
     /// change the device verifies and rolls back by itself, before the
     /// setting is saved at all. Nothing restarts.
     Network,
+    /// PipeWire, through WirePlumber: the agent switches the output, the
+    /// input and their volumes on the running sound server at once. Nothing
+    /// restarts, and a sound that is playing moves over.
+    Audio,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,6 +88,11 @@ pub enum Kind {
     Addresses,
     /// A WiFi network name: 1 to 32 bytes.
     Ssid,
+    /// Where sound plays: `auto`, `off`, a kind of output (`AUDIO_OUTPUTS`),
+    /// or one output's exact PipeWire name from `tessaro-ctl audio outputs`.
+    AudioOutput,
+    /// Where sound is recorded from: the same, with `AUDIO_INPUTS`.
+    AudioInput,
     /// Not a setting: something the device reports - its address, its id.
     /// Listed with `config keys`, readable with `config get`, usable in
     /// browser.url, and refused by `config set`.
@@ -122,6 +131,14 @@ impl Kind {
             Kind::Address => "an IPv4 address, or empty".to_string(),
             Kind::Addresses => "IPv4 addresses, comma separated, or empty".to_string(),
             Kind::Ssid => "a WiFi network name, 1 to 32 bytes".to_string(),
+            Kind::AudioOutput => format!(
+                "one of: {}, or an output's name from `tessaro-ctl audio outputs`",
+                AUDIO_OUTPUTS.join(", ")
+            ),
+            Kind::AudioInput => format!(
+                "one of: {}, or an input's name from `tessaro-ctl audio inputs`",
+                AUDIO_INPUTS.join(", ")
+            ),
             Kind::ReadOnly => "read-only: reported by the device, cannot be set".to_string(),
         }
     }
@@ -145,6 +162,7 @@ const NOBODY: &[Consumer] = &[];
 const BROWSER: &[Consumer] = &[Consumer::Browser];
 const WESTON: &[Consumer] = &[Consumer::Weston];
 const NETWORK: &[Consumer] = &[Consumer::Network];
+const AUDIO: &[Consumer] = &[Consumer::Audio];
 /// The node name: the agent's mDNS name, and the hotspot's SSID.
 const AGENT_AND_NETWORK: &[Consumer] = &[Consumer::Agent, Consumer::Network];
 
@@ -222,6 +240,18 @@ pub static KEYS: &[Key] = &[
         "On-screen keyboard: auto shows it only without a USB/Bluetooth keyboard."),
     key("screen.vnc", "KIOSK_VNC", Kind::Choice(&["on", "off"]), WESTON,
         "Mirror the screen to VNC on 127.0.0.1:5900."),
+    // Sound, on PipeWire. Applied to the running sound server at once; see
+    // `tessaro-ctl audio show`.
+    key(AUDIO_OUTPUT, "KIOSK_AUDIO_OUTPUT", Kind::AudioOutput, AUDIO,
+        "Where sound plays: auto (the latest USB or Bluetooth output, else HDMI with a screen, else the jack), hdmi, jack, usb, bluetooth, off, or one output from `tessaro-ctl audio outputs`. One that is not plugged in plays on auto until it is back."),
+    key(AUDIO_VOLUME, "KIOSK_AUDIO_VOLUME", Kind::Int { min: 0, max: 100 }, AUDIO,
+        "Output volume in percent, on whichever output is playing."),
+    key(AUDIO_MUTE, "KIOSK_AUDIO_MUTE", Kind::Flag, AUDIO,
+        "Mute the output; audio.volume is kept for when it is unmuted."),
+    key(AUDIO_INPUT, "KIOSK_AUDIO_INPUT", Kind::AudioInput, AUDIO,
+        "Where sound is recorded from, for pages that use the microphone: auto (the latest USB or Bluetooth input, else the jack), usb, jack, bluetooth, off (the page records silence), or one input from `tessaro-ctl audio inputs`."),
+    key(AUDIO_INPUT_VOLUME, "KIOSK_AUDIO_INPUT_VOLUME", Kind::Int { min: 0, max: 100 }, AUDIO,
+        "Input (microphone) level in percent."),
     key("agent.enable", "KIOSK_AGENT_ENABLE", Kind::Flag, AGENT,
         "Supervise the browser at all; 0 parks the agent."),
     key("agent.debug", "KIOSK_DEBUG", Kind::Flag, AGENT,
@@ -325,6 +355,29 @@ pub const RESOLUTION: &str = "screen.resolution";
 pub const NAME: &str = "device.name";
 pub const ID: &str = "device.id";
 pub const PUBLIC_IP: &str = "network.public_ip";
+pub const AUDIO_OUTPUT: &str = "audio.output";
+pub const AUDIO_VOLUME: &str = "audio.volume";
+pub const AUDIO_MUTE: &str = "audio.mute";
+pub const AUDIO_INPUT: &str = "audio.input";
+pub const AUDIO_INPUT_VOLUME: &str = "audio.input_volume";
+
+/// The kinds of output audio.output names instead of one output. Besides
+/// these, `auto` and `off`.
+pub const AUDIO_OUTPUTS: &[&str] = &["auto", "hdmi", "jack", "usb", "bluetooth", "off"];
+/// The same for audio.input: there is no HDMI input.
+pub const AUDIO_INPUTS: &[&str] = &["auto", "jack", "usb", "bluetooth", "off"];
+
+/// A PipeWire node name as `tessaro-ctl audio outputs` lists it:
+/// `alsa_output.platform-bcm2835_audio.stereo-fallback`, or a card and the
+/// profile that would bring an output up,
+/// `alsa_card.pci-0000_00_1f.3:output:hdmi-stereo`.
+pub fn is_audio_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 160
+        && name
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-' | ':' | '+' | '@'))
+}
 
 /// Every key that was renamed, old name first. Only for devices that still
 /// carry the old names in state.json: the boot oneshot rewrites them once
@@ -761,7 +814,37 @@ pub fn validate(key: &Key, value: &str) -> Result<String, String> {
                 Ok(value.to_string())
             }
         }
+        Kind::AudioOutput | Kind::AudioInput => {
+            let (kinds, list) = if key.kind == Kind::AudioOutput {
+                (AUDIO_OUTPUTS, "outputs")
+            } else {
+                (AUDIO_INPUTS, "inputs")
+            };
+            let lower = value.to_ascii_lowercase();
+            if lower.is_empty() {
+                Ok("auto".to_string())
+            } else if kinds.contains(&lower.as_str()) {
+                Ok(lower)
+            } else if lower == "hdmi" {
+                fail("there is no HDMI input")
+            } else if is_audio_name(value) {
+                // Whether it exists is the device's check: it knows its
+                // outputs.
+                Ok(value.to_string())
+            } else {
+                fail(&format!(
+                    "must be one of {}, or a name from `tessaro-ctl audio {list}`",
+                    kinds.join(", ")
+                ))
+            }
+        }
     }
+}
+
+/// A value of audio.output or audio.input that names one device rather than
+/// a kind of them - which only exists if the device has it now.
+pub fn is_audio_device(value: &str) -> bool {
+    !AUDIO_OUTPUTS.contains(&value) && !AUDIO_INPUTS.contains(&value)
 }
 
 /// A name the kernel could give an interface: `IFNAMSIZ` less the NUL.
@@ -1291,6 +1374,55 @@ mod tests {
         ];
         assert!(check_network(with(&open), false).is_ok());
         assert!(check_network(with(&[("network.wifi.mode", "client")]), true).is_err());
+    }
+
+    #[test]
+    fn audio_values_are_a_kind_of_device_or_one_device() {
+        assert_eq!(check("audio.output", "HDMI").unwrap(), "hdmi");
+        assert_eq!(check("audio.output", "").unwrap(), "auto");
+        assert_eq!(check("audio.output", "off").unwrap(), "off");
+        assert_eq!(
+            check(
+                "audio.output",
+                "alsa_output.platform-bcm2835_audio.stereo-fallback"
+            )
+            .unwrap(),
+            "alsa_output.platform-bcm2835_audio.stereo-fallback"
+        );
+        assert_eq!(
+            check(
+                "audio.output",
+                "alsa_card.pci-0000_00_1f.3:output:hdmi-stereo"
+            )
+            .unwrap(),
+            "alsa_card.pci-0000_00_1f.3:output:hdmi-stereo"
+        );
+        assert!(check("audio.output", "a b").is_err());
+        assert!(check("audio.output", "x/y").is_err());
+        assert_eq!(check("audio.input", "USB").unwrap(), "usb");
+        assert!(check("audio.input", "hdmi")
+            .unwrap_err()
+            .contains("no HDMI input"));
+        assert!(is_audio_device("alsa_input.usb-mic"));
+        assert!(!is_audio_device("jack"));
+        assert!(!is_audio_device("auto"));
+    }
+
+    #[test]
+    fn audio_levels_are_percentages_applied_live() {
+        assert_eq!(check("audio.volume", "70").unwrap(), "70");
+        assert!(check("audio.volume", "101").is_err());
+        assert!(check("audio.input_volume", "-1").is_err());
+        assert_eq!(check("audio.mute", "on").unwrap(), "1");
+        for name in [
+            AUDIO_OUTPUT,
+            AUDIO_VOLUME,
+            AUDIO_MUTE,
+            AUDIO_INPUT,
+            AUDIO_INPUT_VOLUME,
+        ] {
+            assert_eq!(find(name).unwrap().consumers, [Consumer::Audio], "{name}");
+        }
     }
 
     #[test]

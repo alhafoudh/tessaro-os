@@ -19,6 +19,7 @@
 //! a standing test of the no-blocking-calls rule the whole design rests on.
 
 mod agent;
+mod audio;
 mod auth;
 mod boot;
 mod cdp;
@@ -288,6 +289,7 @@ async fn start_control(
     control.watch_url();
     control.watch_public_ip();
     control.watch_display();
+    control.watch_audio();
 }
 
 async fn run(

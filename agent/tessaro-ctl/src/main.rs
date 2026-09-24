@@ -9,6 +9,7 @@
 //! stores the token in ~/.config/tessaro/nodes.json, and prints the device's
 //! new root password - once.
 
+mod audio;
 mod connect;
 mod files;
 mod net;
@@ -86,6 +87,8 @@ const HELP_STYLES: Styles = Styles::styled()
         \x20 tessaro-ctl config set browser.fps_counter=on\n\
         \x20 tessaro-ctl browser maintenance on             show the maintenance page; `off` goes back\n\
         \x20 tessaro-ctl browser debug on                   name and addresses full screen; `off` goes back\n\
+        \x20 tessaro-ctl audio show                         where sound plays, how loud, what is plugged in\n\
+        \x20 tessaro-ctl audio output hdmi && tessaro-ctl audio volume 60 && tessaro-ctl audio test\n\
         \x20 tessaro-ctl config unset browser.url           back to the image default\n\
         \x20 tessaro-ctl device logs -f -u tessaro-agent.service\n\
         \x20 tessaro-ctl update send tessaro-os-qemux86-64.rootfs.wic.bz2   a new image; settings are kept\n\
@@ -152,6 +155,9 @@ enum Cmd {
     /// What the browser shows: a URL, maintenance mode, the debug screen.
     #[command(subcommand)]
     Browser(BrowserCmd),
+    /// Sound: which output plays and which input records, volume, a test.
+    #[command(subcommand)]
+    Audio(audio::AudioCmd),
     /// Put a new image on the device, keeping its settings and claim.
     #[command(subcommand)]
     Update(UpdateCmd),
@@ -783,6 +789,7 @@ fn run(cli: Cli) -> Result<(), String> {
         Cmd::Browser(BrowserCmd::Navigate { url }) => {
             done(&mut session, Command::Navigate { url }, json)
         }
+        Cmd::Audio(command) => audio::run(&mut session, command, json),
         Cmd::Device(DeviceCmd::Restart { what }) => {
             let what = match what {
                 What::Browser => RestartTarget::Browser,
@@ -1305,6 +1312,7 @@ fn show_key(key: &KeyInfo) {
             protocol::keys::Consumer::Network => {
                 "nothing: the network profiles are switched, and checked before it is saved"
             }
+            protocol::keys::Consumer::Audio => "nothing: applied to the sound server at once",
         })
         .collect::<Vec<_>>()
         .join(", ");
@@ -1409,6 +1417,9 @@ fn show_status(status: &Status) {
             paint(style::unit_state(state), state)
         );
     }
+    if let Some(audio) = &status.audio {
+        node_row("audio", &audio::summary(audio));
+    }
     if let Some(pending) = &status.pending {
         println!(
             "{} {}={} - {} within {}s or it goes back to {}",
@@ -1438,10 +1449,15 @@ fn show_applied(applied: &Applied, no_apply: bool) {
         paint(style::MUTED, format!("revision {}:", applied.revision)),
         paint(style::OK, applied.changed.join(", "))
     );
+    if let Some(audio) = &applied.audio {
+        audio::show_applied(audio);
+    }
     if no_apply {
         println!("{}", paint(style::MUTED, "saved; nothing restarted"));
     } else if applied.restarted.is_empty() {
-        println!("{}", paint(style::MUTED, "nothing to restart"));
+        if applied.audio.is_none() {
+            println!("{}", paint(style::MUTED, "nothing to restart"));
+        }
     } else {
         println!(
             "{}",

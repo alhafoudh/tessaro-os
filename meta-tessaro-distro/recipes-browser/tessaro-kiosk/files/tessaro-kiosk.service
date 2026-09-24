@@ -41,6 +41,13 @@ After=tessaro-config.service
 # within one probe interval rather than left on an error page.
 After=nginx.service
 
+# Sound goes through PipeWire's Pulse server (tessaro-audio). Ordered after
+# it so a page that plays at once finds the socket; Wants= and not Requires=,
+# so a sound server that failed never takes the screen with it - the page
+# just plays nothing.
+Wants=tessaro-pipewire-pulse.service
+After=tessaro-pipewire-pulse.service
+
 # Deliberately NOT Wants/After=network-online.target, which the old
 # wpe-simple-launcher unit had. That target pulls in whatever wait-online
 # implementation the image has - NetworkManager-wait-online.service here - and
@@ -101,6 +108,13 @@ Environment=XDG_RUNTIME_DIR=/run/tessaro-kiosk-xdg
 # profile; HOME still matters for the crashpad database and various dotfiles.
 Environment=HOME=/home/weston
 WorkingDirectory=/home/weston
+
+# Where Chromium's libpulse finds the sound server: pipewire-pulse, running
+# as this same user with its socket in its own runtime directory, not in
+# XDG_RUNTIME_DIR above (systemd wipes that one whenever the browser stops).
+# Chromium plays through this and nothing else: it is not in the audio group,
+# so it cannot open a card itself and fight PipeWire for it.
+Environment=PULSE_SERVER=unix:/run/tessaro-audio/pulse/native
 
 # /usr/bin/chromium is the chromium-wrapper the recipe installs. It prepends
 # CHROMIUM_EXTRA_ARGS, which tessaro.conf pins to exactly
