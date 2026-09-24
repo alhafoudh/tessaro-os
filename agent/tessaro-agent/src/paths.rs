@@ -36,6 +36,9 @@ pub struct Paths {
     /// its 127.0.0.53 stub, which says nothing about the network.
     pub resolv: PathBuf,
     pub hostname: PathBuf,
+    /// Where the four managed NetworkManager profiles are rendered: the
+    /// in-memory keyfile directory, highest precedence, gone at every boot.
+    pub nm_run_dir: PathBuf,
     /// Root's `authorized_keys`, in root's real home (`/etc/passwd` says
     /// `/root`, which is where dropbear looks). `/root` is a bind of
     /// `/data/overlay-root`, so it persists; the claim model owns it like
@@ -90,6 +93,7 @@ impl Paths {
             proc_route: path("KIOSK_PROC_ROUTE", "/proc/net/route"),
             resolv: path("KIOSK_RESOLV", "/run/systemd/resolve/resolv.conf"),
             hostname: path("KIOSK_HOSTNAME", "/proc/sys/kernel/hostname"),
+            nm_run_dir: path("KIOSK_NM_RUN_DIR", "/run/NetworkManager/system-connections"),
             authorized_keys: path("KIOSK_AUTHORIZED_KEYS", "/root/.ssh/authorized_keys"),
             ssh_host_key_dirs: text("KIOSK_SSH_HOST_KEY_DIRS", "/etc/dropbear:/var/lib/dropbear")
                 .split(':')
@@ -130,9 +134,8 @@ impl Paths {
         self.state_dir.join("update")
     }
 
-    /// Network changes: the one in progress, the profiles it touched with
-    /// their secrets (0600, like NetworkManager's own keyfiles on the same
-    /// `/data`), and what the last one did.
+    /// Network changes: the one in progress, and what the last one did. No
+    /// secrets; those are in `secrets.json`.
     pub fn network_dir(&self) -> PathBuf {
         self.state_dir.join("network")
     }

@@ -18,12 +18,17 @@
 //! 2. **Migration** of a leftover `/etc/default/tessaro-kiosk`, once.
 //! 3. **Probation**: a guarded change still pending at boot was never
 //!    confirmed - the device was rebooted instead - so it reverts.
-//! 4. **The claim invariant**: unclaimed means an empty root password and no
-//!    ssh keys. This is also what heals a power cut in the middle of a claim
-//!    or an unclaim.
+//! 4. **The claim invariant**: unclaimed means an empty root password, no
+//!    ssh keys and an open hotspot. This is also what heals a power cut in
+//!    the middle of a claim or an unclaim.
 //! 5. **The TLS identity**, made if missing, so its fingerprint is in the
 //!    journal from the first boot.
 //! 6. **Render.**
+//! 7. **The network**: the four managed NetworkManager profiles, rendered
+//!    from the saved settings into `/run/NetworkManager/system-connections`
+//!    before NetworkManager starts (the unit is ordered before it), and the
+//!    hotspot's NAT table. Whatever a change that never committed left
+//!    there is gone with `/run`.
 //!
 //! Every step logs and carries on. A failure here must never keep the kiosk
 //! from booting: the worst outcome is the image's defaults.
@@ -34,8 +39,10 @@ use crate::auth::{self, Auth};
 use crate::config::Env;
 use crate::identity;
 use crate::log::Log;
+use crate::nm::{nat, profiles};
 use crate::paths::Paths;
 use crate::render;
+use crate::secrets::{self, Secrets};
 use crate::shadow;
 use crate::ssh;
 use crate::state::{self, State};
@@ -47,11 +54,12 @@ pub fn run(env: &dyn Env, log: &Log) {
     let defaults = state::defaults(env);
     let state_store = Store::new(&paths.state_dir, state::FILE);
     let auth_store = Store::new(&paths.state_dir, auth::FILE);
+    let secrets_store = Store::new(&paths.state_dir, secrets::FILE);
 
     updates::report(&paths, log);
 
     if factory_reset_requested(&paths) {
-        factory_reset(&paths, &state_store, &auth_store, log);
+        factory_reset(&paths, &state_store, &auth_store, &secrets_store, log);
     }
 
     migrate(&paths, &state_store, log);
@@ -67,7 +75,7 @@ pub fn run(env: &dyn Env, log: &Log) {
         Err(err) => log.info(format!("could not check for an unconfirmed change: {err}")),
     }
 
-    reconcile(&paths, &auth_store, log);
+    reconcile(&paths, &auth_store, &secrets_store, log);
 
     match identity::tls(&paths.tls_dir()) {
         Ok((tls, made)) => log.info(format!(
@@ -96,6 +104,51 @@ pub fn run(env: &dyn Env, log: &Log) {
         )),
         Err(err) => log.info(format!("render failed, the image defaults apply: {err}")),
     }
+
+    network(&paths, &defaults, &state, &secrets_store.read(log), log);
+}
+
+/// The managed profiles and the NAT table, from the saved settings.
+fn network(
+    paths: &Paths,
+    defaults: &std::collections::HashMap<String, String>,
+    state: &State,
+    secrets: &Secrets,
+    log: &Log,
+) {
+    let value = profiles::value_of(&state.settings, defaults);
+    let derived = identity::read_node_id(&paths.machine_id)
+        .map(|id| identity::friendly_name(&id))
+        .unwrap_or_else(|_| "kiosk".to_string());
+    let config = profiles::NetConfig::from_settings(
+        &value,
+        secrets.hotspot_psk.clone(),
+        secrets.wifi_psk.clone(),
+        &profiles::node_name(&value, &derived),
+    );
+    match profiles::write(&paths.nm_run_dir, &profiles::render(&config)) {
+        Ok(_) => log.info(format!(
+            "network profiles: ethernet {}, wifi {} ({}, {})",
+            config.ethernet_profile().id,
+            config
+                .wifi_profile()
+                .map(|profile| profile.id)
+                .unwrap_or("off"),
+            config.wifi.hotspot_ssid,
+            if config.wifi.hotspot_psk.is_some() {
+                "WPA2"
+            } else {
+                "open"
+            }
+        )),
+        Err(err) => log.info(format!(
+            "network profiles: {}: {err}",
+            paths.nm_run_dir.display()
+        )),
+    }
+    if let Err(err) = nat::apply_blocking(config.wifi.nat, &config.wifi.interface) {
+        log.info(format!("hotspot NAT: {err}"));
+    }
 }
 
 fn factory_reset_requested(paths: &Paths) -> bool {
@@ -107,7 +160,13 @@ fn factory_reset_requested(paths: &Paths) -> bool {
         })
 }
 
-fn factory_reset(paths: &Paths, state_store: &Store, auth_store: &Store, log: &Log) {
+fn factory_reset(
+    paths: &Paths,
+    state_store: &Store,
+    auth_store: &Store,
+    secrets_store: &Store,
+    log: &Log,
+) {
     // Tokens before the password, as everywhere else.
     if let Err(err) = auth_store.remove() {
         log.info(format!("factory reset: auth.json: {err}"));
@@ -121,12 +180,15 @@ fn factory_reset(paths: &Paths, state_store: &Store, auth_store: &Store, log: &L
     if let Err(err) = state_store.remove() {
         log.info(format!("factory reset: state.json: {err}"));
     }
+    if let Err(err) = secrets_store.remove() {
+        log.info(format!("factory reset: secrets.json: {err}"));
+    }
     match fs::remove_file(paths.factory_reset_marker()) {
         Ok(()) => {}
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
         Err(err) => log.info(format!("factory reset: cannot remove the marker: {err}")),
     }
-    log.info("factory reset: settings, tokens, ssh keys and root password cleared");
+    log.info("factory reset: settings, tokens, ssh keys, root and network passwords cleared");
 }
 
 /// Import the old runtime override file into `state.json`, once. Only the
@@ -210,10 +272,20 @@ fn parse_legacy(text: &str) -> (Vec<(String, String)>, Vec<String>) {
     (imported, skipped)
 }
 
-fn reconcile(paths: &Paths, auth_store: &Store, log: &Log) {
+fn reconcile(paths: &Paths, auth_store: &Store, secrets_store: &Store, log: &Log) {
     let auth: Auth = auth_store.read(log);
     if auth.claimed() {
         return;
+    }
+    let secrets: Secrets = secrets_store.read(log);
+    if secrets.hotspot_psk.is_some() {
+        match secrets_store.update(log, |secrets: &mut Secrets| {
+            secrets.hotspot_psk = None;
+            Ok(())
+        }) {
+            Ok(()) => log.info("unclaimed but the hotspot had a password: opened it"),
+            Err(err) => log.info(format!("could not open the hotspot: {err}")),
+        }
     }
     match ssh::clear(&paths.authorized_keys) {
         Ok(true) => log.info("unclaimed but root had ssh keys: removed them"),

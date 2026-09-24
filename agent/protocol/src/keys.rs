@@ -13,7 +13,7 @@
 //! variable into the env file, and systemd's env-file parser gives quotes,
 //! backslashes and `${...}` meanings of their own.
 
-use std::net::SocketAddr;
+use std::net::{Ipv4Addr, SocketAddr};
 
 use serde::{Deserialize, Serialize};
 
@@ -29,6 +29,10 @@ pub enum Consumer {
     /// Read by tessaro-weston-config before the compositor starts: Weston
     /// restarts, and with it (`PartOf=`) the browser and the agent.
     Weston,
+    /// The device's own NetworkManager profiles: applied as one network
+    /// change the device verifies and rolls back by itself, before the
+    /// setting is saved at all. Nothing restarts.
+    Network,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,6 +69,16 @@ pub enum Kind {
     /// `\n` - a literal backslash and `n` - for a line break, the one
     /// backslash any value may carry.
     Template,
+    /// An interface name, or `auto`.
+    Interface,
+    /// An IPv4 address with its prefix: `192.168.1.50/24`, or empty.
+    Cidr,
+    /// One IPv4 address, or empty.
+    Address,
+    /// IPv4 addresses, comma separated, or empty.
+    Addresses,
+    /// A WiFi network name: 1 to 32 bytes.
+    Ssid,
     /// Not a setting: something the device reports - its address, its id.
     /// Listed with `keys`, readable with `get`, usable in kiosk.url, and
     /// refused by `set`.
@@ -96,6 +110,11 @@ impl Kind {
                 "text; \\n breaks a line; {key} placeholders as in kiosk.url, plus {kiosk.url}"
                     .to_string()
             }
+            Kind::Interface => "an interface name (eth0, enp1s0, wlan0), or auto".to_string(),
+            Kind::Cidr => "ADDRESS/PREFIX, e.g. 192.168.1.50/24, or empty".to_string(),
+            Kind::Address => "an IPv4 address, or empty".to_string(),
+            Kind::Addresses => "IPv4 addresses, comma separated, or empty".to_string(),
+            Kind::Ssid => "a WiFi network name, 1 to 32 bytes".to_string(),
             Kind::ReadOnly => "read-only: reported by the device, cannot be set".to_string(),
         }
     }
@@ -118,6 +137,9 @@ const AGENT: &[Consumer] = &[Consumer::Agent];
 const NOBODY: &[Consumer] = &[];
 const BROWSER: &[Consumer] = &[Consumer::Browser];
 const WESTON: &[Consumer] = &[Consumer::Weston];
+const NETWORK: &[Consumer] = &[Consumer::Network];
+/// The node name: the agent's mDNS name, and the hotspot's SSID.
+const AGENT_AND_NETWORK: &[Consumer] = &[Consumer::Agent, Consumer::Network];
 
 const fn key(
     name: &'static str,
@@ -223,8 +245,42 @@ pub static KEYS: &[Key] = &[
         "DevTools websocket keepalive, seconds."),
     seconds("agent.cdp_reconnect_max", "KIOSK_CDP_RECONNECT_MAX", 1, 3600,
         "Ceiling on the DevTools reconnect backoff, seconds."),
-    key("node.name", "KIOSK_NODE_NAME", Kind::Name, AGENT,
-        "The device's name on the network (NAME.local); empty derives one from the node id."),
+    key("node.name", "KIOSK_NODE_NAME", Kind::Name, AGENT_AND_NETWORK,
+        "The device's name on the network (NAME.local, and the hotspot tessaro-NAME); empty derives one from the node id."),
+    // The device's own network: four NetworkManager profiles the agent
+    // generates (tessaro-ethernet-dhcp/-static, tessaro-wifi-hotspot/-client)
+    // and switches between. A change is kept only if the device still
+    // reaches the network afterwards; see `tessaro-ctl set --verify`.
+    key("ethernet.interface", "KIOSK_ETHERNET_INTERFACE", Kind::Interface, NETWORK,
+        "The Ethernet port the device manages; auto is the first one that comes up. Other ports are left to hand-made profiles."),
+    key("ethernet.mode", "KIOSK_ETHERNET_MODE", Kind::Choice(&["dhcp", "static"]), NETWORK,
+        "dhcp, or static with ethernet.address, ethernet.gateway and ethernet.dns."),
+    key("ethernet.address", "KIOSK_ETHERNET_ADDRESS", Kind::Cidr, NETWORK,
+        "The static address with ethernet.mode=static, e.g. 192.168.1.50/24."),
+    key("ethernet.gateway", "KIOSK_ETHERNET_GATEWAY", Kind::Address, NETWORK,
+        "The default gateway with ethernet.mode=static; inside ethernet.address. Empty for none."),
+    key("ethernet.dns", "KIOSK_ETHERNET_DNS", Kind::Addresses, NETWORK,
+        "DNS servers with ethernet.mode=static, comma separated."),
+    key("wifi.interface", "KIOSK_WIFI_INTERFACE", Kind::Interface, NETWORK,
+        "The WiFi device the device manages; auto is wlan0. Without it, nothing WiFi ever comes up."),
+    key("wifi.mode", "KIOSK_WIFI_MODE", Kind::Choice(&["hotspot", "client", "off"]), NETWORK,
+        "hotspot (tessaro-NAME, for installation and management), client (joins wifi.ssid; `tessaro-ctl net wifi join`), or off."),
+    key("wifi.nat", "KIOSK_WIFI_NAT", Kind::Flag, NETWORK,
+        "Let hotspot clients reach the internet and the LAN through the device; 0 lets them reach the device only."),
+    key("wifi.ssid", "KIOSK_WIFI_SSID", Kind::Ssid, NETWORK,
+        "The network wifi.mode=client joins. Its password is set by `tessaro-ctl net wifi join` and never shown."),
+    key("wifi.security", "KIOSK_WIFI_SECURITY", Kind::Choice(&["psk", "sae", "open"]), NETWORK,
+        "The client network's security: psk (WPA2), sae (WPA3) or open. `net wifi join` finds it by scanning."),
+    key("wifi.hidden", "KIOSK_WIFI_HIDDEN", Kind::Flag, NETWORK,
+        "The client network does not broadcast its name."),
+    key("wifi.ipv4", "KIOSK_WIFI_IPV4", Kind::Choice(&["dhcp", "static"]), NETWORK,
+        "Client addressing: dhcp, or static with wifi.address, wifi.gateway and wifi.dns."),
+    key("wifi.address", "KIOSK_WIFI_ADDRESS", Kind::Cidr, NETWORK,
+        "The static client address with wifi.ipv4=static, e.g. 192.168.1.51/24."),
+    key("wifi.gateway", "KIOSK_WIFI_GATEWAY", Kind::Address, NETWORK,
+        "The default gateway with wifi.ipv4=static; inside wifi.address. Empty for none."),
+    key("wifi.dns", "KIOSK_WIFI_DNS", Kind::Addresses, NETWORK,
+        "DNS servers with wifi.ipv4=static, comma separated."),
     key("api.listen", "KIOSK_API_LISTEN", Kind::Listen, AGENT,
         "Where the TLS control API listens, address:port, or off."),
     key("api.mdns", "KIOSK_MDNS", Kind::Choice(&["on", "off"]), AGENT,
@@ -248,6 +304,7 @@ pub static KEYS: &[Key] = &[
     live("net.ipv6", "Every IPv6 address on every interface but loopback, comma separated."),
     live("net.public_ip", "The address the internet sees, from Cloudflare's trace; looked up by `net` and `get net.public_ip`, and every 5 minutes while kiosk.url uses it."),
     live("net.interfaces", "Every interface but loopback with its state and addresses, as eth0 up 10.0.0.20/24; wlan0 down."),
+    live("wifi.hotspot_ssid", "The hotspot's network name, tessaro-NAME. Open while the device is unclaimed; claiming it sets a password, shown once."),
 ];
 
 /// Custom values: `data.<name>`, named by whoever sets them. The kiosk gives
@@ -554,7 +611,158 @@ pub fn validate(key: &Key, value: &str) -> Result<String, String> {
                 .map(|addr| addr.to_string())
                 .or_else(|_| fail("must be off or address:port, e.g. 0.0.0.0:7400"))
         }
+        Kind::Interface => {
+            if value.is_empty() || value.eq_ignore_ascii_case("auto") {
+                return Ok("auto".to_string());
+            }
+            if is_interface(value) {
+                Ok(value.to_string())
+            } else {
+                fail("must be auto or an interface name (letters, digits, - _ .; up to 15)")
+            }
+        }
+        Kind::Cidr => {
+            if value.is_empty() {
+                return Ok(String::new());
+            }
+            parse_cidr(value)
+                .map(|(address, prefix)| format!("{address}/{prefix}"))
+                .or_else(|why| fail(&why))
+        }
+        Kind::Address => {
+            if value.is_empty() {
+                return Ok(String::new());
+            }
+            value
+                .parse::<Ipv4Addr>()
+                .map(|address| address.to_string())
+                .or_else(|_| fail(&format!("{value} is not an IPv4 address")))
+        }
+        Kind::Addresses => parse_addresses(value)
+            .map(|list| {
+                list.iter()
+                    .map(Ipv4Addr::to_string)
+                    .collect::<Vec<_>>()
+                    .join(",")
+            })
+            .or_else(|why| fail(&why)),
+        Kind::Ssid => {
+            if value.is_empty() || value.len() > 32 {
+                fail("must be 1 to 32 bytes")
+            } else {
+                Ok(value.to_string())
+            }
+        }
     }
+}
+
+/// A name the kernel could give an interface: `IFNAMSIZ` less the NUL.
+pub fn is_interface(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 15
+        && name
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+}
+
+/// `192.168.1.50/24`.
+pub fn parse_cidr(value: &str) -> Result<(Ipv4Addr, u8), String> {
+    let (address, prefix) = value
+        .split_once('/')
+        .ok_or_else(|| format!("{value} needs a prefix, as in {value}/24"))?;
+    let address = address
+        .parse::<Ipv4Addr>()
+        .map_err(|_| format!("{address} is not an IPv4 address"))?;
+    match prefix.parse::<u8>() {
+        Ok(prefix @ 1..=32) => Ok((address, prefix)),
+        _ => Err(format!("{value}: the prefix must be 1 to 32")),
+    }
+}
+
+/// Comma separated, spaces allowed, empty for none.
+pub fn parse_addresses(value: &str) -> Result<Vec<Ipv4Addr>, String> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(|item| {
+            item.parse::<Ipv4Addr>()
+                .map_err(|_| format!("{item} is not an IPv4 address"))
+        })
+        .collect()
+}
+
+/// Whether `ip` is inside `network/prefix`.
+pub fn contains(network: Ipv4Addr, prefix: u8, ip: Ipv4Addr) -> bool {
+    let mask = if prefix == 0 {
+        0
+    } else {
+        u32::MAX << (32 - u32::from(prefix))
+    };
+    u32::from(network) & mask == u32::from(ip) & mask
+}
+
+/// A WPA passphrase: 8 to 63 printable ASCII characters, or the 64 hex
+/// digits of a raw key - what wpa_supplicant itself accepts.
+pub fn check_psk(psk: &str) -> Result<(), String> {
+    if psk.len() == 64 && psk.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return Ok(());
+    }
+    if !(8..=63).contains(&psk.len()) {
+        return Err("a WiFi password is 8 to 63 characters, or 64 hex digits".to_string());
+    }
+    if !psk
+        .chars()
+        .all(|ch| ch.is_ascii() && !ch.is_ascii_control())
+    {
+        return Err("a WiFi password is printable ASCII only".to_string());
+    }
+    Ok(())
+}
+
+/// What the network keys must say together, over the effective values (set
+/// or image default) that `value` returns. `has_psk` is whether a client
+/// password is stored.
+pub fn check_network(value: impl Fn(&str) -> String, has_psk: bool) -> Result<(), String> {
+    for (mode_key, static_word, prefix) in [
+        ("ethernet.mode", "static", "ethernet"),
+        ("wifi.ipv4", "static", "wifi"),
+    ] {
+        if value(mode_key) != static_word {
+            continue;
+        }
+        let address = value(&format!("{prefix}.address"));
+        let (network, bits) = parse_cidr(&address).map_err(|_| {
+            format!("{mode_key}=static needs {prefix}.address, e.g. 192.168.1.50/24")
+        })?;
+        let gateway = value(&format!("{prefix}.gateway"));
+        if !gateway.is_empty() {
+            let gateway: Ipv4Addr = gateway
+                .parse()
+                .map_err(|_| format!("{prefix}.gateway: {gateway} is not an IPv4 address"))?;
+            if !contains(network, bits, gateway) {
+                return Err(format!(
+                    "{prefix}.gateway {gateway} is outside {prefix}.address {address}"
+                ));
+            }
+        }
+    }
+    if value("wifi.mode") == "client" {
+        if value("wifi.ssid").is_empty() {
+            return Err(
+                "wifi.mode=client needs wifi.ssid; `tessaro-ctl net wifi join SSID` sets both"
+                    .to_string(),
+            );
+        }
+        if value("wifi.security") != "open" && !has_psk {
+            return Err(format!(
+                "{} needs a password; join it with `tessaro-ctl net wifi join {}`",
+                value("wifi.ssid"),
+                value("wifi.ssid")
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// `WIDTHxHEIGHT` with both sides in a plausible range.
@@ -862,5 +1070,94 @@ mod tests {
         for key in KEYS.iter().chain([&DATA]) {
             assert!(!key.kind.describe().is_empty(), "{}", key.name);
         }
+    }
+
+    #[test]
+    fn network_values_are_normalized() {
+        assert_eq!(check("ethernet.interface", "").unwrap(), "auto");
+        assert_eq!(check("ethernet.interface", "enp1s0").unwrap(), "enp1s0");
+        assert!(check("ethernet.interface", "eth 0").is_err());
+        assert_eq!(
+            check("ethernet.address", "192.168.1.50/24").unwrap(),
+            "192.168.1.50/24"
+        );
+        assert!(check("ethernet.address", "192.168.1.50").is_err());
+        assert!(check("ethernet.address", "192.168.1.50/33").is_err());
+        assert_eq!(check("ethernet.gateway", "").unwrap(), "");
+        assert!(check("ethernet.gateway", "2001:db8::1").is_err());
+        assert_eq!(
+            check("ethernet.dns", "1.1.1.1, 9.9.9.9").unwrap(),
+            "1.1.1.1,9.9.9.9"
+        );
+        assert_eq!(check("wifi.mode", "Hotspot").unwrap(), "hotspot");
+        assert!(check("wifi.ssid", "").is_err());
+        assert!(check("wifi.ssid", &"x".repeat(33)).is_err());
+        assert_eq!(check("wifi.ssid", "Office 2").unwrap(), "Office 2");
+    }
+
+    #[test]
+    fn network_keys_are_checked_together() {
+        let with = |pairs: &[(&str, &str)]| {
+            let pairs: Vec<(String, String)> = pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect();
+            move |name: &str| {
+                pairs
+                    .iter()
+                    .find(|(k, _)| k == name)
+                    .map(|(_, v)| v.clone())
+                    .unwrap_or_default()
+            }
+        };
+        assert!(check_network(with(&[("ethernet.mode", "dhcp")]), false).is_ok());
+        let alone = check_network(with(&[("ethernet.mode", "static")]), false);
+        assert!(alone.unwrap_err().contains("needs ethernet.address"));
+        let outside = check_network(
+            with(&[
+                ("ethernet.mode", "static"),
+                ("ethernet.address", "10.99.0.5/24"),
+                ("ethernet.gateway", "192.168.1.1"),
+            ]),
+            false,
+        );
+        assert!(outside.unwrap_err().contains("outside"));
+        assert!(check_network(
+            with(&[
+                ("ethernet.mode", "static"),
+                ("ethernet.address", "192.168.1.50/24"),
+                ("ethernet.gateway", "192.168.1.1"),
+            ]),
+            false
+        )
+        .is_ok());
+
+        let client = [
+            ("wifi.mode", "client"),
+            ("wifi.ssid", "Office"),
+            ("wifi.security", "psk"),
+        ];
+        assert!(check_network(with(&client), false)
+            .unwrap_err()
+            .contains("net wifi join Office"));
+        assert!(check_network(with(&client), true).is_ok());
+        let open = [
+            ("wifi.mode", "client"),
+            ("wifi.ssid", "Cafe"),
+            ("wifi.security", "open"),
+        ];
+        assert!(check_network(with(&open), false).is_ok());
+        assert!(check_network(with(&[("wifi.mode", "client")]), true).is_err());
+    }
+
+    #[test]
+    fn subnets_and_passphrases() {
+        let net = Ipv4Addr::new(192, 168, 1, 50);
+        assert!(contains(net, 24, Ipv4Addr::new(192, 168, 1, 1)));
+        assert!(!contains(net, 24, Ipv4Addr::new(192, 168, 2, 1)));
+        assert!(check_psk("correct horse").is_ok());
+        assert!(check_psk("short").is_err());
+        assert!(check_psk(&"a".repeat(64)).is_ok());
+        assert!(check_psk("pässwort123").is_err());
     }
 }

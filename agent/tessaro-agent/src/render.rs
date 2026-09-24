@@ -55,6 +55,11 @@ pub fn env_file(
             // it reads state.json.
             continue;
         }
+        if key.consumers == [protocol::keys::Consumer::Network] {
+            // The network keys become NetworkManager keyfiles, never env:
+            // no unit reads them, and an SSID has no business in an env file.
+            continue;
+        }
         if let Some((env, value)) = overrides.iter().find(|(env, _)| *env == key.env) {
             out.push_str(&format!("{env}={value}\n"));
         }

@@ -1,29 +1,30 @@
 //! `tessaro-ctl net ...` beyond the kernel's view: NetworkManager's profiles,
 //! WiFi, a ping from the device, and `tessaro-ctl ping` to it.
 //!
-//! A change (`net set`, `up`, `down`, `forget`, `wifi join|on|off`) is one
-//! request. The device applies it, checks on its own that it still reaches
-//! the network, and keeps it or rolls it back - so this client does not
-//! have to be there for the end. When the change takes this very connection
-//! away, which re-addressing the link it came in on does, the answer never
-//! arrives; `net last` asks what happened.
+//! The device manages four profiles of its own and switches between them
+//! through settings (`set ethernet.mode=static ...`, `set wifi.mode=...`);
+//! `net wifi join` is the one change made here, as sugar for those settings
+//! plus the password. Either way it is one request: the device applies it,
+//! checks on its own that it still reaches the network, and keeps it or
+//! rolls it back - so this client does not have to be there for the end.
+//! When the change takes this very connection away, which re-addressing the
+//! link it came in on does, the answer never arrives; `net last` asks what
+//! happened.
 
-use std::collections::BTreeMap;
 use std::io::Read;
 use std::time::{Duration, Instant};
 
 use anstream::{eprintln, println};
 use clap::{Args, Subcommand, ValueEnum};
-use protocol::netkeys;
 use protocol::{
-    ChangeOutcome, Command, Done, NetAddress, NetChange, NetKeyInfo, NetProfile, NetProfileDetail,
-    PingEvent, Secret, Verify, WifiNetwork, WifiSecurity, WifiStatus,
+    Applied, ChangeOutcome, Command, Done, HotspotCredentials, NetAddress, NetChange, NetProfile,
+    NetProfileDetail, PingEvent, Secret, Verify, WifiNetwork, WifiSecurity, WifiStatus,
 };
 use serde_json::json;
 
 use crate::connect::{Answer, Session};
 use crate::style::{self, pad, paint, yes_no};
-use crate::{call, print};
+use crate::{call, print, show_applied, show_once};
 
 /// Longer than the device takes to apply, check and roll back a change
 /// (about 90s at most), so its answer is waited for - and short enough that
@@ -34,53 +35,12 @@ const CHANGE: Duration = Duration::from_secs(180);
 pub enum NetCmd {
     /// Every network interface: kind, state, MAC, MTU, addresses.
     Interfaces,
-    /// NetworkManager's saved profiles: which is active where, and which
-    /// come up on their own.
+    /// NetworkManager's profiles: the device's own tessaro-* four, and any
+    /// made by hand - which is active where, and which come up on their own.
     Profiles,
     /// One profile, by name or uuid: addressing, DNS, WiFi - never its
     /// password - and what its device has right now.
     Show { profile: String },
-    /// The properties `net set` can change, documented. With KEY, one.
-    Keys { key: Option<String> },
-    /// Change a profile: KEY=VALUE ... (`net keys` lists them). The device
-    /// applies it as one change and keeps it only if it still reaches the
-    /// network (--verify); otherwise it puts everything back by itself.
-    ///
-    ///   tessaro-ctl net set 'Wired connection 1' ipv4.method=manual ipv4.addresses=192.168.1.50/24 ipv4.gateway=192.168.1.1 ipv4.dns=192.168.1.1
-    Set {
-        profile: String,
-        #[arg(value_name = "KEY=VALUE")]
-        pairs: Vec<String>,
-        /// Also change the WiFi password: prompted, or read from stdin with
-        /// --password-stdin.
-        #[arg(long)]
-        psk: bool,
-        /// Read the new WiFi password from stdin instead of prompting.
-        #[arg(long, requires = "psk")]
-        password_stdin: bool,
-        #[command(flatten)]
-        verify: VerifyArg,
-    },
-    /// Bring a profile up.
-    Up {
-        profile: String,
-        #[command(flatten)]
-        verify: VerifyArg,
-    },
-    /// Take a profile down until the next boot or autoconnect.
-    Down {
-        profile: String,
-        #[command(flatten)]
-        verify: VerifyArg,
-    },
-    /// Delete a profile.
-    Forget {
-        profile: String,
-        #[arg(long, short)]
-        yes: bool,
-        #[command(flatten)]
-        verify: VerifyArg,
-    },
     /// What the last network change did: for when the change took the
     /// connection that asked for it.
     Last,
@@ -100,7 +60,7 @@ pub enum NetCmd {
         interface: Option<String>,
     },
     /// The WiFi radio and what each WiFi device is connected to. Scan, join
-    /// and switch it with the subcommands.
+    /// with the subcommands; `set wifi.mode=hotspot` goes back to the hotspot.
     Wifi {
         #[command(subcommand)]
         what: Option<WifiCmd>,
@@ -117,9 +77,11 @@ pub enum WifiCmd {
         #[arg(long)]
         cached: bool,
     },
-    /// Join SSID. The password is prompted, or read from stdin with
-    /// --password-stdin - never taken from the command line. A network
-    /// joined before comes back up on its saved password if you give none.
+    /// Join SSID as a client: wifi.mode=client, and the hotspot goes down.
+    /// The password is prompted, or read from stdin with --password-stdin -
+    /// never taken from the command line, never shown by `get`. Rejoining
+    /// the same network keeps its saved password if you give none.
+    /// `set wifi.mode=hotspot` brings the hotspot back.
     ///
     ///   tessaro-ctl net wifi join Office
     ///   tessaro-ctl net wifi join Backroom --hidden --security psk
@@ -135,22 +97,12 @@ pub enum WifiCmd {
         /// network that is not hidden.
         #[arg(long, value_enum)]
         security: Option<Security>,
-        #[arg(long, short = 'I')]
-        interface: Option<String>,
         #[command(flatten)]
         verify: VerifyArg,
     },
-    /// Turn the WiFi radio on.
-    On {
-        #[command(flatten)]
-        verify: VerifyArg,
-    },
-    /// Turn the WiFi radio off. Refused - rolled back - if that leaves the
-    /// device with no route.
-    Off {
-        #[command(flatten)]
-        verify: VerifyArg,
-    },
+    /// A new random password for the hotspot, shown once. Claimed devices
+    /// only: an unclaimed device's hotspot is open.
+    HotspotPassword,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -178,7 +130,7 @@ pub struct VerifyArg {
     /// answers a ping), `HOST` (a ping), `HOST:PORT` (a TCP connection), or
     /// `none`. A change must also leave a default route if there was one.
     #[arg(long, value_name = "CHECK", default_value = "gateway", value_parser = Verify::parse)]
-    verify: Verify,
+    pub verify: Verify,
 }
 
 /// Whether `net ping` streams, which drops the read timeout.
@@ -196,113 +148,6 @@ pub fn run(session: &mut Session, command: NetCmd, json: bool) -> Result<(), Str
         NetCmd::Show { profile } => {
             let detail: NetProfileDetail = call(session, Command::NetShow { profile })?;
             print(json, &detail, || show_detail(&detail))
-        }
-        NetCmd::Keys { key } => {
-            let mut keys: Vec<NetKeyInfo> = call(session, Command::NetKeys)?;
-            if let Some(wanted) = &key {
-                keys.retain(|k| &k.name == wanted);
-                if keys.is_empty() {
-                    return Err(format!(
-                        "{wanted} cannot be changed here; `tessaro-ctl net keys` lists what can"
-                    ));
-                }
-            }
-            print(json, &keys, || {
-                for (at, info) in keys.iter().enumerate() {
-                    if at > 0 {
-                        println!();
-                    }
-                    show_key(info);
-                }
-            })
-        }
-        NetCmd::Set {
-            profile,
-            pairs,
-            psk,
-            password_stdin,
-            verify,
-        } => {
-            let mut values = BTreeMap::new();
-            for pair in pairs {
-                let (key, value) = pair
-                    .split_once('=')
-                    .ok_or_else(|| format!("{pair}: expected KEY=VALUE"))?;
-                // Refuse a typo here, before a connection is spent on it.
-                let known = netkeys::find(key).ok_or_else(|| {
-                    format!("{key} cannot be changed here; `tessaro-ctl net keys` lists what can")
-                })?;
-                netkeys::validate(known, value)?;
-                values.insert(key.to_string(), value.to_string());
-            }
-            let psk = if psk {
-                Some(password(
-                    password_stdin,
-                    &format!("new WiFi password for {profile}: "),
-                )?)
-            } else {
-                None
-            };
-            if values.is_empty() && psk.is_none() {
-                return Err("nothing to change: give KEY=VALUE pairs, or --psk".to_string());
-            }
-            change(
-                session,
-                json,
-                &format!("changing {profile}"),
-                &verify.verify,
-                Command::NetSet {
-                    profile,
-                    values,
-                    psk: psk.map(Secret),
-                    verify: verify.verify.clone(),
-                },
-            )
-        }
-        NetCmd::Up { profile, verify } => change(
-            session,
-            json,
-            &format!("bringing {profile} up"),
-            &verify.verify,
-            Command::NetUp {
-                profile,
-                verify: verify.verify.clone(),
-            },
-        ),
-        NetCmd::Down { profile, verify } => change(
-            session,
-            json,
-            &format!("taking {profile} down"),
-            &verify.verify,
-            Command::NetDown {
-                profile,
-                verify: verify.verify.clone(),
-            },
-        ),
-        NetCmd::Forget {
-            profile,
-            yes,
-            verify,
-        } => {
-            if !yes
-                && !crate::connect::ask(&format!(
-                    "Delete profile {} on {}?",
-                    paint(style::HEADING, &profile),
-                    paint(style::HEADING, &session.node.name)
-                ))?
-            {
-                return Err("nothing deleted".to_string());
-            }
-            change(
-                session,
-                json,
-                &format!("forgetting {profile}"),
-                &verify.verify,
-                Command::NetForget {
-                    profile,
-                    verify: verify.verify.clone(),
-                },
-            )
         }
         NetCmd::Last => {
             let last: Option<NetChange> = call(session, Command::NetLast)?;
@@ -349,11 +194,10 @@ fn wifi(session: &mut Session, json: bool, what: Option<WifiCmd>) -> Result<(), 
             password_stdin,
             hidden,
             security,
-            interface,
             verify,
         }) => {
             let psk = join_password(session, &ssid, security, password_stdin)?;
-            change(
+            apply(
                 session,
                 json,
                 &format!("joining {ssid}"),
@@ -363,31 +207,19 @@ fn wifi(session: &mut Session, json: bool, what: Option<WifiCmd>) -> Result<(), 
                     psk: psk.map(Secret),
                     security: security.map(WifiSecurity::from),
                     hidden,
-                    interface,
                     verify: verify.verify.clone(),
                 },
             )
         }
-        Some(WifiCmd::On { verify }) => change(
-            session,
-            json,
-            "turning the WiFi radio on",
-            &verify.verify,
-            Command::WifiRadio {
-                on: true,
-                verify: verify.verify.clone(),
-            },
-        ),
-        Some(WifiCmd::Off { verify }) => change(
-            session,
-            json,
-            "turning the WiFi radio off",
-            &verify.verify,
-            Command::WifiRadio {
-                on: false,
-                verify: verify.verify.clone(),
-            },
-        ),
+        Some(WifiCmd::HotspotPassword) => {
+            let hotspot: HotspotCredentials = call(session, Command::HotspotPassword)?;
+            print(json, &hotspot, || {
+                show_once(
+                    &format!("hotspot {} password - shown this once:", hotspot.ssid),
+                    &hotspot.password,
+                )
+            })
+        }
     }
 }
 
@@ -431,7 +263,7 @@ fn join_password(
     if psk.is_empty() && known {
         return Ok(None);
     }
-    netkeys::check_psk(&psk)?;
+    protocol::keys::check_psk(&psk)?;
     Ok(Some(psk))
 }
 
@@ -446,9 +278,16 @@ fn password(from_stdin: bool, prompt: &str) -> Result<String, String> {
     rpassword::prompt_password(prompt).map_err(|err| err.to_string())
 }
 
-/// Send one change and wait for the device's verdict, or explain why it
-/// never came.
-fn change(
+/// Whether `key` is one of the device's network settings, whose change runs
+/// as a verified network transaction.
+pub fn is_network_key(key: &str) -> bool {
+    protocol::keys::find(key)
+        .is_some_and(|key| key.consumers.contains(&protocol::keys::Consumer::Network))
+}
+
+/// Send one change of network settings - a `set`, an `unset`, a join - and
+/// wait for the device's verdict, or explain why it never came.
+pub fn apply(
     session: &mut Session,
     json: bool,
     doing: &str,
@@ -474,6 +313,7 @@ fn change(
 
     let value = match answer {
         Answer::Ok(value) => value,
+        // A rolled-back change is the device refusing it, with the reason.
         Answer::Refused(error) => return Err(error),
         Answer::Lost(why) => {
             eprintln!(
@@ -497,16 +337,14 @@ fn change(
             return Err("no answer from the device".to_string());
         }
     };
-    let change: NetChange =
+    let applied: Applied =
         serde_json::from_value(value).map_err(|err| format!("unexpected answer: {err}"))?;
-    print(json, &change, || show_change(&change))?;
-    match (change.outcome, &change.reason) {
-        (ChangeOutcome::Committed, _) => Ok(()),
-        (ChangeOutcome::RolledBack, Some(reason)) => {
-            Err(format!("the change was rolled back: {reason}"))
+    print(json, &applied, || {
+        if let Some(change) = &applied.network {
+            show_change(change);
         }
-        (ChangeOutcome::RolledBack, None) => Err("the change was rolled back".to_string()),
-    }
+        show_applied(&applied, false);
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -860,16 +698,6 @@ fn address(address: &NetAddress) -> String {
         address.prefix,
         paint(style::MUTED, &address.scope)
     )
-}
-
-fn show_key(key: &NetKeyInfo) {
-    let row = |label: &str, value: &str| println!("    {} {value}", pad(style::LABEL, label, 9));
-    println!("{}", paint(style::HEADING, &key.name));
-    println!("    {}", key.doc);
-    row("accepts", &key.values);
-    if key.wifi {
-        row("for", "WiFi profiles only");
-    }
 }
 
 fn show_wifi(status: &WifiStatus) {

@@ -69,8 +69,12 @@ const HELP_STYLES: Styles = Styles::styled()
         \x20 tessaro-ctl net                                address, gateway, DNS, interfaces\n\
         \x20 tessaro-ctl net interfaces                     every interface in detail\n\
         \x20 tessaro-ctl net profiles                       NetworkManager's profiles\n\
-        \x20 tessaro-ctl net set 'Wired connection 1' ipv4.dns=1.1.1.1   kept only if the gateway still answers\n\
-        \x20 tessaro-ctl net wifi scan && tessaro-ctl net wifi join Office\n\
+        \x20 tessaro-ctl set ethernet.mode=static ethernet.address=192.168.1.50/24 ethernet.gateway=192.168.1.1\n\
+        \x20                                                kept only if the gateway still answers\n\
+        \x20 tessaro-ctl set ethernet.mode=dhcp\n\
+        \x20 tessaro-ctl net wifi scan && tessaro-ctl net wifi join Office   the hotspot goes down\n\
+        \x20 tessaro-ctl set wifi.mode=hotspot              back to the hotspot, tessaro-NAME\n\
+        \x20 tessaro-ctl set wifi.nat=0                     hotspot clients reach the device only\n\
         \x20 tessaro-ctl net last                           what the last change did, if the answer never came\n\
         \x20 tessaro-ctl net ping 192.168.1.1               from the device\n\
         \x20 tessaro-ctl -n brave-otter-3fa2 ping           from here to the device\n\
@@ -156,15 +160,27 @@ enum Cmd {
     /// `{node.name}`, `{display.osk}`, ...
     ///
     ///   tessaro-ctl set 'kiosk.url=https://menu.test/?table={data.table}&screen={data.screen}' data.table=12 data.screen=entrance
+    ///
+    /// The ethernet.* and wifi.* keys switch the device's own network
+    /// profiles. That change is applied and checked by the device before it
+    /// is saved at all - see --verify - and rolled back by the device alone
+    /// if it cuts it off:
+    ///
+    ///   tessaro-ctl set ethernet.mode=static ethernet.address=192.168.1.50/24 ethernet.gateway=192.168.1.1 ethernet.dns=192.168.1.1
+    ///   tessaro-ctl set ethernet.mode=dhcp
+    ///   tessaro-ctl set wifi.mode=hotspot
     Set {
         #[arg(required = true, value_name = "KEY=VALUE")]
         pairs: Vec<String>,
         /// Refuse unless the settings are still at this revision.
         #[arg(long)]
         if_revision: Option<u64>,
-        /// Save and render, but restart nothing yet.
+        /// Save and render, but restart nothing yet. Not for network keys,
+        /// which are always applied and checked at once.
         #[arg(long)]
         no_apply: bool,
+        #[command(flatten)]
+        verify: net::VerifyArg,
     },
     /// Go back to the image default for KEY ...
     Unset {
@@ -174,6 +190,8 @@ enum Cmd {
         if_revision: Option<u64>,
         #[arg(long)]
         no_apply: bool,
+        #[command(flatten)]
+        verify: net::VerifyArg,
     },
     /// Keep a change that is on probation (display.resolution).
     Confirm,
@@ -568,6 +586,7 @@ fn run(cli: Cli) -> Result<(), String> {
             pairs,
             if_revision,
             no_apply,
+            verify,
         } => {
             let mut values = BTreeMap::new();
             for pair in pairs {
@@ -576,29 +595,48 @@ fn run(cli: Cli) -> Result<(), String> {
                     .ok_or_else(|| format!("{pair}: expected KEY=VALUE"))?;
                 values.insert(key.to_string(), value.to_string());
             }
-            let applied: Applied = call(
-                &mut session,
-                Command::Set {
-                    values,
-                    if_revision,
-                    apply: !no_apply,
-                },
-            )?;
+            let network = values.keys().any(|key| net::is_network_key(key));
+            let command = Command::Set {
+                values,
+                if_revision,
+                apply: !no_apply,
+                verify: verify.verify.clone(),
+            };
+            if network && !no_apply {
+                return net::apply(
+                    &mut session,
+                    json,
+                    "changing the network",
+                    &verify.verify,
+                    command,
+                );
+            }
+            let applied: Applied = call(&mut session, command)?;
             print(json, &applied, || show_applied(&applied, no_apply))
         }
         Cmd::Unset {
             keys,
             if_revision,
             no_apply,
+            verify,
         } => {
-            let applied: Applied = call(
-                &mut session,
-                Command::Unset {
-                    keys,
-                    if_revision,
-                    apply: !no_apply,
-                },
-            )?;
+            let network = keys.iter().any(|key| net::is_network_key(key));
+            let command = Command::Unset {
+                keys,
+                if_revision,
+                apply: !no_apply,
+                verify: verify.verify.clone(),
+            };
+            if network && !no_apply {
+                return net::apply(
+                    &mut session,
+                    json,
+                    "changing the network",
+                    &verify.verify,
+                    command,
+                );
+            }
+            let applied: Applied = call(&mut session, command)?;
             print(json, &applied, || show_applied(&applied, no_apply))
         }
         Cmd::Confirm => done(&mut session, Command::Confirm, json),
@@ -728,6 +766,15 @@ fn run(cli: Cli) -> Result<(), String> {
                 "root password - shown this once, store it now:",
                 &claimed.root_password,
             );
+            if let Some(hotspot) = &claimed.hotspot {
+                show_once(
+                    &format!(
+                        "hotspot {} password - shown this once; anyone on the hotspot now is dropped:",
+                        hotspot.ssid
+                    ),
+                    &hotspot.password,
+                );
+            }
             Ok(())
         }
         Cmd::Login { token, .. } => {
@@ -949,6 +996,7 @@ fn toggle(
             values,
             if_revision: None,
             apply: true,
+            verify: Default::default(),
         },
     )?;
     print(json, &applied, || {
@@ -1136,6 +1184,9 @@ fn show_key(key: &KeyInfo) {
             protocol::keys::Consumer::Agent => "the agent (invisible on screen)",
             protocol::keys::Consumer::Browser => "the browser",
             protocol::keys::Consumer::Weston => "the display (Weston, browser and agent)",
+            protocol::keys::Consumer::Network => {
+                "nothing: the network profiles are switched, and checked before it is saved"
+            }
         })
         .collect::<Vec<_>>()
         .join(", ");

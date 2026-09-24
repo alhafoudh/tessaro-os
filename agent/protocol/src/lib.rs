@@ -20,7 +20,6 @@
 //! needs none.
 
 pub mod keys;
-pub mod netkeys;
 pub mod sshkey;
 
 use std::collections::BTreeMap;
@@ -205,6 +204,9 @@ pub enum Command {
         if_revision: Option<u64>,
         #[serde(default = "yes")]
         apply: bool,
+        /// What the device checks before it keeps a change to network keys.
+        #[serde(default)]
+        verify: Verify,
     },
     Unset {
         keys: Vec<String>,
@@ -212,6 +214,8 @@ pub enum Command {
         if_revision: Option<u64>,
         #[serde(default = "yes")]
         apply: bool,
+        #[serde(default)]
+        verify: Verify,
     },
     /// Keep a guarded change that is on probation.
     Confirm,
@@ -305,41 +309,12 @@ pub enum Command {
     /// One round trip and nothing else, for `tessaro-ctl ping`. Public, like
     /// `id`: it says no more than that the agent is answering.
     Ping,
-    /// NetworkManager's saved profiles.
+    /// NetworkManager's profiles: the four the device manages, and any made
+    /// by hand.
     NetProfiles,
     /// One profile's addressing, DNS and WiFi settings, never its secrets.
     NetShow {
         profile: String,
-    },
-    /// The properties `net-set` may change, documented.
-    NetKeys,
-    /// Change a profile: `netkeys` names, and a new WiFi password. Applied
-    /// as one transaction the device keeps or rolls back by itself, so the
-    /// answer arriving is not what makes it stick.
-    NetSet {
-        profile: String,
-        values: BTreeMap<String, String>,
-        #[serde(default)]
-        psk: Option<Secret>,
-        #[serde(default)]
-        verify: Verify,
-    },
-    NetUp {
-        profile: String,
-        #[serde(default)]
-        verify: Verify,
-    },
-    /// Until the next boot or autoconnect: a profile that autoconnects comes
-    /// back.
-    NetDown {
-        profile: String,
-        #[serde(default)]
-        verify: Verify,
-    },
-    NetForget {
-        profile: String,
-        #[serde(default)]
-        verify: Verify,
     },
     /// What the last network change did, for a client whose connection went
     /// with the change.
@@ -353,27 +328,24 @@ pub enum Command {
         #[serde(default = "yes")]
         rescan: bool,
     },
-    /// Join a network: a new profile, or the saved one for that SSID with
-    /// the new password.
+    /// Join a network in client mode: `wifi.mode=client`, `wifi.ssid`,
+    /// `wifi.security` and `wifi.hidden` in one change, with the password
+    /// stored where `get` never shows it. The hotspot goes down.
     WifiJoin {
         ssid: String,
+        /// `None` keeps the stored one: rejoining the same network.
         #[serde(default)]
         psk: Option<Secret>,
-        /// Only needed for a hidden network, which a scan cannot see.
+        /// Found by scanning when not given; a hidden network needs it.
         #[serde(default)]
         security: Option<WifiSecurity>,
         #[serde(default)]
         hidden: bool,
         #[serde(default)]
-        interface: Option<String>,
-        #[serde(default)]
         verify: Verify,
     },
-    WifiRadio {
-        on: bool,
-        #[serde(default)]
-        verify: Verify,
-    },
+    /// A new random hotspot password, shown once. Claimed devices only.
+    HotspotPassword,
     /// Ping a host from the device. A stream of `PingEvent`s.
     NetPing {
         host: String,
@@ -536,6 +508,11 @@ pub struct Applied {
     /// Units restarted, or to be restarted once this reply is out.
     pub restarted: Vec<String>,
     pub pending: Option<Pending>,
+    /// What the network change did, when network keys changed: its checks.
+    /// A rolled-back change is an error, not an `Applied`. Defaulted for
+    /// older devices.
+    #[serde(default)]
+    pub network: Option<NetChange>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -667,14 +644,6 @@ pub struct NetProfileDetail {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct NetKeyInfo {
-    pub name: String,
-    pub values: String,
-    pub wifi: bool,
-    pub doc: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WifiDeviceInfo {
     pub interface: String,
     /// NetworkManager's device state: `activated`, `disconnected`, ...
@@ -778,6 +747,16 @@ pub struct Claimed {
     pub token_id: String,
     pub token: String,
     pub root_password: String,
+    /// The hotspot's new password, shown once like the root password. `None`
+    /// on a device without its WiFi interface, or an older one.
+    #[serde(default)]
+    pub hotspot: Option<HotspotCredentials>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HotspotCredentials {
+    pub ssid: String,
+    pub password: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -932,6 +911,7 @@ mod tests {
                 values: [("kiosk.url".to_string(), "https://a.test/".to_string())].into(),
                 if_revision: Some(3),
                 apply: false,
+                verify: Verify::None,
             },
         };
 
@@ -995,7 +975,6 @@ mod tests {
             psk: Some(Secret("hunter2hunter2".into())),
             security: None,
             hidden: false,
-            interface: None,
             verify: Verify::Gateway,
         };
         assert!(to_line(&command).contains("hunter2hunter2"));
@@ -1005,14 +984,19 @@ mod tests {
     #[test]
     fn a_network_change_verifies_the_gateway_unless_told() {
         let request: Request =
-            from_line(r#"{"id":1,"command":{"cmd":"net-up","profile":"Office"}}"#).unwrap();
-        assert_eq!(
+            from_line(r#"{"id":1,"command":{"cmd":"set","values":{"ethernet.mode":"dhcp"}}}"#)
+                .unwrap();
+        assert!(matches!(
             request.command,
-            Command::NetUp {
-                profile: "Office".into(),
-                verify: Verify::Gateway
+            Command::Set {
+                verify: Verify::Gateway,
+                ..
             }
-        );
+        ));
+        // An older device's claim answer has no hotspot.
+        let claimed: Claimed =
+            serde_json::from_str(r#"{"token_id":"a","token":"b","root_password":"c"}"#).unwrap();
+        assert_eq!(claimed.hotspot, None);
         let tcp = serde_json::to_value(Verify::Tcp {
             host: "a.test".into(),
             port: 443,

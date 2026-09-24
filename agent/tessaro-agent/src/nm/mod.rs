@@ -1,15 +1,15 @@
-//! NetworkManager, for `tessaro-ctl net profiles|show|set|up|down|forget`
-//! and `net wifi`.
+//! NetworkManager: the four profiles the device manages, and what
+//! `tessaro-ctl net profiles|show|wifi|wifi scan` read.
 //!
-//! Two halves, and the split is deliberate:
-//!
+//! * **The profiles** are rendered from the settings (`profiles.rs`) as
+//!   keyfiles under `/run/NetworkManager/system-connections`, and a change to
+//!   `ethernet.*`, `wifi.*` or `node.name` switches them as one transaction
+//!   (`txn.rs`) the device keeps or rolls back by itself, before the setting
+//!   is saved at all. Profiles made by hand are listed and never touched.
 //! * **Reading** goes through nmrs: saved profiles, access points, WiFi
 //!   devices. Its types already decode what NetworkManager's properties
-//!   mean, and nothing it reads can change anything.
-//! * **Changing** goes through `proxy.rs` on nmrs's own connection, as one
-//!   transaction (`txn.rs`) the device keeps or rolls back by itself. nmrs's
-//!   write calls save to disk at once and know no checkpoints, which is the
-//!   opposite of what a change made over the network it is changing needs.
+//!   mean. The calls that change anything - checkpoints, activation,
+//!   reloading - are `proxy.rs`, on nmrs's own connection.
 //!
 //! `net` and `net interfaces` stay on the kernel (`net.rs`): they have to
 //! answer on a device whose NetworkManager is the broken thing. So does the
@@ -18,11 +18,13 @@
 //! Every call to NetworkManager is under `within()`, through `nm_call`, and
 //! none of it touches the watchdog: this is the control plane.
 
+pub mod nat;
+pub mod profiles;
 pub mod proxy;
 pub mod settings;
 pub mod txn;
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::net::IpAddr;
 use std::sync::Arc;
@@ -30,19 +32,19 @@ use std::time::Duration;
 
 use futures_util::StreamExt;
 use protocol::{
-    netkeys, NetChange, NetKeyInfo, NetProfile, NetProfileDetail, Verify, WifiDeviceInfo,
-    WifiNetwork, WifiSecurity, WifiStatus,
+    NetChange, NetProfile, NetProfileDetail, Verify, WifiDeviceInfo, WifiNetwork, WifiSecurity,
+    WifiStatus,
 };
 use zbus::proxy::CacheProperties;
-use zbus::zvariant::{ObjectPath, OwnedObjectPath, OwnedValue, Value};
+use zbus::zvariant::{ObjectPath, OwnedObjectPath};
 
 use crate::control::blocking;
 use crate::deadline::within;
 use crate::log::Log;
 use crate::paths::Paths;
+use profiles::{Keyfile, NetConfig, Profile, WifiMode};
 use proxy::{ActiveProxy, DeviceProxy, ManagerProxy, ProfileProxy, SettingsProxy, WirelessProxy};
-use settings::Dict;
-use txn::{Applied, Files, Ops, Plan, Route, Snapshot, Step};
+use txn::{Activated, Commit, Files, Nat, Ops, Plan, Route, Up};
 
 /// One method call to NetworkManager, which answers in milliseconds when it
 /// is well. Listing every profile is one `GetSettings` per profile, so it
@@ -75,33 +77,13 @@ fn path(text: &str) -> Result<ObjectPath<'_>, String> {
     ObjectPath::try_from(text).map_err(|err| format!("{text}: {err}"))
 }
 
-/// What a client asked to change, before it is resolved into a `Plan`.
-#[derive(Debug, Clone)]
-pub enum Change {
-    Set {
-        profile: String,
-        values: BTreeMap<String, String>,
-        psk: Option<String>,
-    },
-    Up {
-        profile: String,
-    },
-    Down {
-        profile: String,
-    },
-    Forget {
-        profile: String,
-    },
-    Join {
-        ssid: String,
-        psk: Option<String>,
-        security: Option<WifiSecurity>,
-        hidden: bool,
-        interface: Option<String>,
-    },
-    Radio {
-        on: bool,
-    },
+/// The interfaces the kernel has, by kind: `ethernet` and `wireless`.
+fn interfaces(paths: &Paths) -> Vec<(String, String)> {
+    crate::net::snapshot(paths)
+        .interfaces
+        .into_iter()
+        .map(|iface| (iface.name, iface.kind))
+        .collect()
 }
 
 pub struct Network {
@@ -150,6 +132,19 @@ impl Network {
             conn: nm.dbus_connection().clone(),
             paths: self.paths.clone(),
         })
+    }
+
+    /// Whether the managed WiFi interface exists right now.
+    pub async fn has_wifi(&self, interface: &str) -> bool {
+        let paths = self.paths.clone();
+        let interface = interface.to_string();
+        blocking("reading the network", move || {
+            Ok(interfaces(&paths)
+                .iter()
+                .any(|(name, kind)| *name == interface && kind == "wireless"))
+        })
+        .await
+        .unwrap_or(false)
     }
 
     // --- reading -------------------------------------------------------------
@@ -238,18 +233,6 @@ impl Network {
         })
     }
 
-    pub fn keys(&self) -> Vec<NetKeyInfo> {
-        netkeys::NET_KEYS
-            .iter()
-            .map(|key| NetKeyInfo {
-                name: key.name.to_string(),
-                values: key.kind.describe(),
-                wifi: key.wifi,
-                doc: key.doc.to_string(),
-            })
-            .collect()
-    }
-
     pub async fn wifi(&self) -> Result<WifiStatus, String> {
         let nm = self.client().await?;
         let live = self.live().await?;
@@ -333,359 +316,42 @@ impl Network {
             .collect())
     }
 
-    pub async fn last(&self) -> Result<Option<NetChange>, String> {
-        self.files.last().await
-    }
-
-    // --- changing ------------------------------------------------------------
-
-    /// Run a change to the end on a task of its own, so a client that is
-    /// cut off by it - the expected case when it re-addresses the link it
-    /// came in on - does not stop it half way.
-    pub async fn change(
-        self: &Arc<Self>,
-        who: String,
-        change: Change,
-        verify: Verify,
-    ) -> Result<NetChange, String> {
-        let lock = Arc::clone(&self.changing)
-            .try_lock_owned()
-            .map_err(|_| "a network change is already in progress on this device".to_string())?;
-        let plan = self.plan(change, verify).await?;
-        self.log.info(format!(
-            "network: {} {} requested by {who}",
-            plan.action,
-            plan.profile.as_deref().unwrap_or("")
-        ));
-
-        let this = Arc::clone(self);
-        let task = tokio::spawn(async move {
-            let _lock = lock;
-            // naked: live() only waits on the connect deadline in client()
-            let live = this.live().await?;
-            // naked: every step of the transaction is under within() in Live
-            txn::run(&live, &this.files, plan, &this.log).await
-        });
-        // naked: the task bounds itself; this only waits for its answer
-        match task.await {
-            Ok(outcome) => outcome,
-            Err(err) => Err(format!("the network change failed: {err}")),
-        }
-    }
-
-    /// Roll back a change the previous agent left unfinished. NetworkManager
-    /// may still be starting, so this keeps trying for a minute.
-    pub fn recover(self: &Arc<Self>) {
-        let this = Arc::clone(self);
-        tokio::spawn(async move {
-            for attempt in 0..12 {
-                if attempt > 0 {
-                    // naked: a plain timer between tries
-                    tokio::time::sleep(Duration::from_secs(5)).await;
-                }
-                // naked: a disk read under blocking()'s within()
-                match this.files.unfinished().await {
-                    Ok(None) => return,
-                    Ok(Some(_)) => {}
-                    Err(err) => {
-                        this.log.info(format!("network: {err}"));
-                        return;
-                    }
-                }
-                // naked: live() only waits on the connect deadline in client()
-                let Ok(live) = this.live().await else {
-                    continue;
-                };
-                // naked: the lock is only ever held by a change, which bounds itself
-                let _lock = this.changing.lock().await;
-                // naked: every step is under within() in Live
-                match txn::recover(&live, &this.files, &this.log).await {
-                    Ok(_) => return,
-                    Err(err) => this.log.info(format!("network: recovering: {err}")),
-                }
-            }
-            this.log.info(
-                "network: NetworkManager never answered; an unfinished change is left as it is",
-            );
-        });
-    }
-
-    async fn plan(&self, change: Change, verify: Verify) -> Result<Plan, String> {
-        let live = self.live().await?;
-        let route = live.route().await;
-        let route_device: Vec<String> = route.iter().map(|r| r.interface.clone()).collect();
-        let with_route = |mut devices: Vec<String>| {
-            for device in &route_device {
-                if !devices.contains(device) {
-                    devices.push(device.clone());
-                }
-            }
-            devices
-        };
-
-        match change {
-            Change::Set {
-                profile,
-                values,
-                psk,
-            } => {
-                if values.is_empty() && psk.is_none() {
-                    return Err("nothing to change".to_string());
-                }
-                let target = self.resolve(&profile).await?;
-                let dict = live.settings_of(&target.uuid).await?;
-                let patched = settings::patch(&dict, &values, psk.as_deref())?;
-
-                let carries_route =
-                    target.active && route.as_ref().map(|r| &r.interface) == target.device.as_ref();
-                if carries_route && !settings::autoconnect(&patched) && settings::autoconnect(&dict)
-                {
-                    return Err(format!(
-                        "{} carries the default route; with autoconnect off the device would \
-                         come back from its next boot with no network",
-                        target.name
-                    ));
-                }
-                let device = target.device.clone().filter(|_| target.active);
-                Ok(Plan {
-                    action: "set".to_string(),
-                    note: (!target.active).then(|| {
-                        "the profile is not active; the change applies when it next comes up"
-                            .to_string()
-                    }),
-                    profile: Some(target.name.clone()),
-                    uuid: Some(target.uuid.clone()),
-                    devices: with_route(device.iter().cloned().collect()),
-                    touched: vec![target.uuid.clone()],
-                    step: Step::Update {
-                        uuid: target.uuid,
-                        settings: patched,
-                        device,
-                    },
-                    verify,
-                })
-            }
-            Change::Up { profile } => {
-                let target = self.resolve(&profile).await?;
-                Ok(Plan {
-                    action: "up".to_string(),
-                    profile: Some(target.name.clone()),
-                    uuid: Some(target.uuid.clone()),
-                    devices: with_route(target.device.iter().cloned().collect()),
-                    touched: Vec::new(),
-                    step: Step::Activate {
-                        uuid: target.uuid,
-                        device: target.device,
-                    },
-                    verify,
-                    note: None,
-                })
-            }
-            Change::Down { profile } => {
-                let target = self.resolve(&profile).await?;
-                if !target.active {
-                    return Err(format!("{} is not active", target.name));
-                }
-                Ok(Plan {
-                    action: "down".to_string(),
-                    note: target.autoconnect.then(|| {
-                        "until the next boot: it autoconnects then; set \
-                         connection.autoconnect=no to keep it down"
-                            .to_string()
-                    }),
-                    profile: Some(target.name.clone()),
-                    uuid: Some(target.uuid.clone()),
-                    devices: with_route(target.device.iter().cloned().collect()),
-                    touched: Vec::new(),
-                    step: Step::Deactivate { uuid: target.uuid },
-                    verify,
-                })
-            }
-            Change::Forget { profile } => {
-                let target = self.resolve(&profile).await?;
-                Ok(Plan {
-                    action: "forget".to_string(),
-                    profile: Some(target.name.clone()),
-                    uuid: Some(target.uuid.clone()),
-                    devices: with_route(target.device.iter().cloned().collect()),
-                    touched: vec![target.uuid.clone()],
-                    step: Step::Delete { uuid: target.uuid },
-                    verify,
-                    note: None,
-                })
-            }
-            Change::Join {
-                ssid,
-                psk,
-                security,
-                hidden,
-                interface,
-            } => {
-                self.plan_join(
-                    &live, ssid, psk, security, hidden, interface, verify, with_route,
-                )
-                .await
-            }
-            Change::Radio { on } => {
-                let nm = self.client().await?;
-                let devices = nm_call("listing WiFi devices", CALL, nm.list_wifi_devices()).await?;
-                if devices.is_empty() {
-                    return Err("this device has no WiFi".to_string());
-                }
-                Ok(Plan {
-                    action: if on { "wifi on" } else { "wifi off" }.to_string(),
-                    profile: None,
-                    uuid: None,
-                    devices: with_route(devices.into_iter().map(|d| d.interface).collect()),
-                    touched: Vec::new(),
-                    step: Step::Radio { on },
-                    verify,
-                    note: None,
-                })
-            }
-        }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    async fn plan_join(
+    /// The security of `ssid` as a scan of `interface` sees it, scanning
+    /// again once when it is not in the last results: what `net wifi join`
+    /// stores as `wifi.security` when it is not given.
+    pub async fn security_of_ssid(
         &self,
-        live: &Live,
-        ssid: String,
-        psk: Option<String>,
-        security: Option<WifiSecurity>,
-        hidden: bool,
-        interface: Option<String>,
-        verify: Verify,
-        with_route: impl Fn(Vec<String>) -> Vec<String>,
-    ) -> Result<Plan, String> {
-        if ssid.is_empty() || ssid.len() > 32 {
-            return Err("an SSID is 1 to 32 bytes".to_string());
+        interface: &str,
+        ssid: &str,
+    ) -> Result<WifiSecurity, String> {
+        let mut found = self.find_network(interface, ssid).await?;
+        if found.is_none() {
+            let live = self.live().await?;
+            live.scan(Some(interface)).await?;
+            found = self.find_network(interface, ssid).await?;
         }
-        let nm = self.client().await?;
-        let devices = nm_call("listing WiFi devices", CALL, nm.list_wifi_devices()).await?;
-        let device = match interface {
-            Some(name) => devices
-                .iter()
-                .find(|d| d.interface == name)
-                .map(|d| d.interface.clone())
-                .ok_or_else(|| format!("{name} is not a WiFi device"))?,
-            None => devices
-                .first()
-                .map(|d| d.interface.clone())
-                .ok_or_else(|| "this device has no WiFi".to_string())?,
-        };
-
-        let key_mgmt = match (security, hidden) {
-            (Some(security), _) => key_mgmt(security).to_string(),
-            (None, true) => {
-                return Err("a hidden network needs --security psk, sae or open".to_string())
-            }
-            (None, false) => {
-                let mut found = self.find_network(&device, &ssid).await?;
-                if found.is_none() {
-                    live.scan(Some(&device)).await?;
-                    found = self.find_network(&device, &ssid).await?;
-                }
-                let point = found.ok_or_else(|| {
-                    format!(
-                        "{ssid} is not in range of {device}; for a hidden network pass \
-                         --hidden --security psk|sae|open"
-                    )
-                })?;
-                let features = &point.security;
-                if features.eap || features.eap_suite_b_192 {
-                    return Err(format!(
-                        "{ssid} is an enterprise (802.1X) network, which is not supported yet"
-                    ));
-                }
-                if features.wep40
-                    || features.wep104
-                    || (features.privacy && !features.psk && !features.sae)
-                {
-                    return Err(format!("{ssid} uses WEP, which is not supported"));
-                }
-                if features.psk {
-                    "wpa-psk".to_string()
-                } else if features.sae {
-                    "sae".to_string()
-                } else {
-                    "open".to_string()
-                }
-            }
-        };
-        let existing = self.profile_for_ssid(&ssid).await?;
-        if key_mgmt != "open" && psk.is_none() {
-            // A network joined before comes up on the password it has.
-            let profile = existing.ok_or_else(|| format!("{ssid} needs a password"))?;
-            return Ok(Plan {
-                action: "join".to_string(),
-                profile: Some(profile.name.clone()),
-                uuid: Some(profile.uuid.clone()),
-                devices: with_route(vec![device.clone()]),
-                touched: Vec::new(),
-                step: Step::Activate {
-                    uuid: profile.uuid,
-                    device: Some(device),
-                },
-                verify,
-                note: None,
-            });
+        let point = found.ok_or_else(|| {
+            format!(
+                "{ssid} is not in range of {interface}; for a hidden network pass --hidden \
+                 --security psk|sae|open"
+            )
+        })?;
+        let features = &point.security;
+        if features.eap || features.eap_suite_b_192 {
+            return Err(format!(
+                "{ssid} is an enterprise (802.1X) network, which is not supported"
+            ));
         }
-
-        let (step, touched, profile, uuid) = match existing {
-            Some(profile) => {
-                let mut dict = live.settings_of(&profile.uuid).await?;
-                settings::wifi_security(&mut dict, &key_mgmt, psk.as_deref())?;
-                if hidden {
-                    let wifi = dict.entry(settings::WIFI.to_string()).or_default();
-                    wifi.insert(
-                        "hidden".to_string(),
-                        OwnedValue::try_from(Value::from(true)).map_err(|e| e.to_string())?,
-                    );
-                }
-                (
-                    Step::Update {
-                        uuid: profile.uuid.clone(),
-                        settings: dict,
-                        device: Some(device.clone()),
-                    },
-                    vec![profile.uuid.clone()],
-                    profile.name,
-                    Some(profile.uuid),
-                )
-            }
-            None => {
-                let builder = nmrs::builders::WifiConnectionBuilder::new(ssid.clone());
-                let builder = match (key_mgmt.as_str(), psk.as_deref()) {
-                    ("sae", Some(psk)) => builder.sae(psk),
-                    ("wpa-psk", Some(psk)) => builder.wpa_psk(psk),
-                    _ => builder.open(),
-                };
-                if let Some(psk) = &psk {
-                    netkeys::check_psk(psk)?;
-                }
-                let built = builder.hidden(hidden).autoconnect(true).build();
-                (
-                    Step::Add {
-                        settings: to_dict(built)?,
-                        device: device.clone(),
-                    },
-                    Vec::new(),
-                    ssid.clone(),
-                    None,
-                )
-            }
-        };
-
-        Ok(Plan {
-            action: "join".to_string(),
-            profile: Some(profile),
-            uuid,
-            devices: with_route(vec![device]),
-            touched,
-            step,
-            verify,
-            note: None,
+        if features.wep40 || features.wep104 || (features.privacy && !features.psk && !features.sae)
+        {
+            return Err(format!("{ssid} uses WEP, which is not supported"));
+        }
+        Ok(if features.psk {
+            WifiSecurity::Psk
+        } else if features.sae {
+            WifiSecurity::Sae
+        } else {
+            WifiSecurity::Open
         })
     }
 
@@ -707,27 +373,197 @@ impl Network {
             .max_by_key(|point| point.strength))
     }
 
-    async fn profile_for_ssid(&self, ssid: &str) -> Result<Option<NetProfile>, String> {
-        let nm = self.client().await?;
-        let saved = nm_call("listing profiles", LIST, nm.list_saved_connections()).await?;
-        let uuid = saved.into_iter().find_map(|profile| match profile.summary {
-            nmrs::models::SettingsSummary::Wifi { ssid: known, .. } if known == ssid => {
-                Some(profile.uuid)
-            }
-            _ => None,
+    pub async fn last(&self) -> Result<Option<NetChange>, String> {
+        self.files.last().await
+    }
+
+    // --- changing ------------------------------------------------------------
+
+    /// Switch from `old` to `new` as one transaction on a task of its own, so
+    /// a client that is cut off by it - the expected case when it re-addresses
+    /// the link it came in on - does not stop it half way. `commit` saves the
+    /// settings, and runs only once the change has held.
+    pub async fn apply(
+        self: &Arc<Self>,
+        who: String,
+        action: String,
+        old: NetConfig,
+        new: NetConfig,
+        verify: Verify,
+        commit: Commit,
+    ) -> Result<NetChange, String> {
+        let lock = Arc::clone(&self.changing)
+            .try_lock_owned()
+            .map_err(|_| "a network change is already in progress on this device".to_string())?;
+        let plan = self.plan(action, &old, &new, verify).await?;
+        self.log
+            .info(format!("network: {} requested by {who}", plan.action));
+
+        let this = Arc::clone(self);
+        let task = tokio::spawn(async move {
+            let _lock = lock;
+            // naked: live() only waits on the connect deadline in client()
+            let live = this.live().await?;
+            // naked: every step of the transaction is under within() in Live
+            txn::run(&live, &this.files, plan, &this.log, commit).await
         });
-        match uuid {
-            Some(uuid) => self.resolve(&uuid).await.map(Some),
-            None => Ok(None),
+        // naked: the task bounds itself; this only waits for its answer
+        match task.await {
+            Ok(outcome) => outcome,
+            Err(err) => Err(format!("the network change failed: {err}")),
         }
     }
-}
 
-fn key_mgmt(security: WifiSecurity) -> &'static str {
-    match security {
-        WifiSecurity::Open => "open",
-        WifiSecurity::Psk => "wpa-psk",
-        WifiSecurity::Sae => "sae",
+    /// What going from `old` to `new` takes: the keyfiles, which profiles to
+    /// bring up or down, and the NAT.
+    async fn plan(
+        &self,
+        action: String,
+        old: &NetConfig,
+        new: &NetConfig,
+        verify: Verify,
+    ) -> Result<Plan, String> {
+        let paths = self.paths.clone();
+        let present = blocking("reading the network", move || Ok(interfaces(&paths))).await?;
+        let has = |name: &str, kind: &str| present.iter().any(|(n, k)| n == name && k == kind);
+        let any_ethernet = present.iter().any(|(_, kind)| kind == "ethernet");
+        let wifi_here = has(&new.wifi.interface, "wireless");
+
+        let mut up = Vec::new();
+        let mut down = Vec::new();
+        let mut devices: Vec<String> = Vec::new();
+
+        let ethernet_present = match &new.ethernet.interface {
+            Some(name) => has(name, "ethernet"),
+            None => any_ethernet,
+        };
+        if old.ethernet != new.ethernet && ethernet_present {
+            up.push(Up {
+                profile: new.ethernet_profile(),
+                device: new.ethernet.interface.clone(),
+            });
+            match &new.ethernet.interface {
+                Some(name) => devices.push(name.clone()),
+                None => devices.extend(
+                    present
+                        .iter()
+                        .filter(|(_, kind)| kind == "ethernet")
+                        .map(|(name, _)| name.clone()),
+                ),
+            }
+        }
+
+        // The NAT is its own switch: changing it alone reactivates nothing.
+        let mut old_wifi = old.wifi.clone();
+        old_wifi.nat = new.wifi.nat;
+        if old_wifi != new.wifi && wifi_here {
+            match new.wifi_profile() {
+                Some(profile) => up.push(Up {
+                    profile,
+                    device: Some(new.wifi.interface.clone()),
+                }),
+                None => down.extend([profiles::WIFI_HOTSPOT, profiles::WIFI_CLIENT]),
+            }
+            devices.push(new.wifi.interface.clone());
+        }
+        let nat = (old.wifi.nat != new.wifi.nat).then(|| Nat {
+            on: new.wifi.nat,
+            was: old.wifi.nat,
+            interface: new.wifi.interface.clone(),
+        });
+
+        // Going back to the hotspot, or off, gives up WiFi as an uplink on
+        // purpose: that it takes the default route with it is the point, not
+        // a failure - on a device whose only uplink was the client network.
+        let note = match (old.wifi.mode, new.wifi.mode) {
+            (WifiMode::Client, WifiMode::Hotspot) => Some(format!(
+                "{} is the hotspot {} again",
+                new.wifi.interface, new.wifi.hotspot_ssid
+            )),
+            _ => None,
+        };
+        let leaves_wifi = old.wifi.mode == WifiMode::Client && new.wifi.mode != WifiMode::Client;
+
+        Ok(Plan {
+            action,
+            devices,
+            new: profiles::render(new),
+            old: profiles::render(old),
+            down,
+            up,
+            nat,
+            verify,
+            keep_route: !leaves_wifi,
+            note,
+        })
+    }
+
+    /// Re-render the profiles for `config` outside any transaction - after a
+    /// claim, an unclaim or a new hotspot password - and bring the hotspot
+    /// back up on its new security if it is the one up. Nothing here can cut
+    /// the device off anything but its own hotspot.
+    pub async fn refresh(&self, config: &NetConfig) -> Result<(), String> {
+        // naked: the lock is only ever held by a change, which bounds itself
+        let _lock = self.changing.lock().await;
+        let live = self.live().await?;
+        live.write_profiles(&profiles::render(config)).await?;
+        if config.wifi.mode == WifiMode::Hotspot && self.has_wifi(&config.wifi.interface).await {
+            let device = live.device_path(&config.wifi.interface).await?;
+            if let Some((_, uuid)) = live.active_on(device.as_str()).await {
+                if uuid == profiles::WIFI_HOTSPOT.uuid {
+                    live.activate(&Up {
+                        profile: profiles::WIFI_HOTSPOT,
+                        device: Some(config.wifi.interface.clone()),
+                    })
+                    .await?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Roll back a change the previous agent left unfinished, onto
+    /// `current` - what `state.json` renders. NetworkManager may still be
+    /// starting, so this keeps trying for a minute.
+    pub fn recover(self: &Arc<Self>, current: NetConfig) {
+        let this = Arc::clone(self);
+        tokio::spawn(async move {
+            let files = profiles::render(&current);
+            let nat = Nat {
+                on: current.wifi.nat,
+                was: current.wifi.nat,
+                interface: current.wifi.interface.clone(),
+            };
+            for attempt in 0..12 {
+                if attempt > 0 {
+                    // naked: a plain timer between tries
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                }
+                // naked: a disk read under blocking()'s within()
+                match this.files.unfinished().await {
+                    Ok(None) => return,
+                    Ok(Some(_)) => {}
+                    Err(err) => {
+                        this.log.info(format!("network: {err}"));
+                        return;
+                    }
+                }
+                // naked: live() only waits on the connect deadline in client()
+                let Ok(live) = this.live().await else {
+                    continue;
+                };
+                // naked: the lock is only ever held by a change, which bounds itself
+                let _lock = this.changing.lock().await;
+                // naked: every step is under within() in Live
+                match txn::recover(&live, &this.files, &files, &nat, &this.log).await {
+                    Ok(_) => return,
+                    Err(err) => this.log.info(format!("network: recovering: {err}")),
+                }
+            }
+            this.log.info(
+                "network: NetworkManager never answered; an unfinished change is left as it is",
+            );
+        });
     }
 }
 
@@ -751,26 +587,6 @@ fn security_of(features: &nmrs::models::SecurityFeatures) -> String {
         kinds.push("open");
     }
     kinds.join("/")
-}
-
-/// nmrs's builder output as the owned dict the proxies take.
-fn to_dict(
-    built: HashMap<&'static str, HashMap<&'static str, Value<'static>>>,
-) -> Result<Dict, String> {
-    built
-        .into_iter()
-        .map(|(section, values)| {
-            let values = values
-                .into_iter()
-                .map(|(key, value)| {
-                    OwnedValue::try_from(value)
-                        .map(|value| (key.to_string(), value))
-                        .map_err(|err| format!("encoding {section}.{key}: {err}"))
-                })
-                .collect::<Result<HashMap<_, _>, _>>()?;
-            Ok((section.to_string(), values))
-        })
-        .collect()
 }
 
 /// NetworkManager and the kernel, for real.
@@ -847,7 +663,7 @@ impl Live {
         nm_call("a device's interface", CALL, device.interface()).await
     }
 
-    async fn settings_of(&self, uuid: &str) -> Result<Dict, String> {
+    async fn settings_of(&self, uuid: &str) -> Result<settings::Dict, String> {
         let at = self.profile_path(uuid).await?;
         let profile = self.profile(at.as_str()).await?;
         nm_call("GetSettings", CALL, profile.get_settings()).await
@@ -889,7 +705,7 @@ impl Live {
         Ok(out)
     }
 
-    /// The active connection on `interface`, and its profile's uuid.
+    /// The active connection on a device, and its profile's uuid.
     async fn active_on(&self, device_at: &str) -> Option<(OwnedObjectPath, String)> {
         let device = self.device(device_at).await.ok()?;
         let active = nm_call("a device's connection", CALL, device.active_connection())
@@ -922,8 +738,8 @@ impl Live {
             }
             let wireless = self.wireless(at.as_str()).await?;
             let before = nm_call("LastScan", CALL, wireless.last_scan()).await?;
-            // Refused when a scan ran a moment ago; what it found is then
-            // fresh enough.
+            // Refused when a scan ran a moment ago - or while the device is
+            // the hotspot; what it found last is then what the list shows.
             if nm_call("RequestScan", CALL, wireless.request_scan(HashMap::new()))
                 .await
                 .is_ok()
@@ -946,8 +762,6 @@ impl Live {
             }
             Ok::<(), String>(())
         };
-        // A scan that has not reported back by now still leaves whatever the
-        // device saw before, which is what the list shows.
         let _ = within("the WiFi scan", SCAN, wait).await;
         Ok(())
     }
@@ -1003,193 +817,68 @@ impl Ops for Live {
         .await
     }
 
-    async fn snapshot(&self, uuid: &str) -> Result<Option<Snapshot>, String> {
-        let Ok(at) = self.profile_path(uuid).await else {
-            return Ok(None);
-        };
-        let profile = self.profile(at.as_str()).await?;
-        let mut dict = nm_call("GetSettings", CALL, profile.get_settings()).await?;
-        for section in [settings::WIFI_SECURITY, "802-1x"] {
-            if dict.contains_key(section) {
-                if let Ok(secrets) = nm_call("GetSecrets", CALL, profile.get_secrets(section)).await
-                {
-                    settings::merge(&mut dict, secrets);
-                }
-            }
-        }
-        let unsaved = nm_call("Unsaved", CALL, profile.unsaved()).await?;
-        Ok(Some(Snapshot {
-            uuid: uuid.to_string(),
-            saved: !unsaved,
-            settings: settings::encode(&dict)?,
-        }))
+    async fn write_profiles(&self, files: &[Keyfile]) -> Result<(), String> {
+        let dir = self.paths.nm_run_dir.clone();
+        let files = files.to_vec();
+        blocking("writing the network profiles", move || {
+            profiles::write(&dir, &files).map_err(|err| format!("{}: {err}", dir.display()))
+        })
+        .await?;
+        let settings = self.settings().await?;
+        nm_call("ReloadConnections", CALL, settings.reload_connections())
+            .await
+            .map(drop)
     }
 
-    async fn restore(&self, snapshot: &Snapshot) -> Result<(), String> {
-        let dict = settings::decode(&snapshot.settings)?;
-        match self.profile_path(&snapshot.uuid).await {
-            Ok(at) => {
-                let profile = self.profile(at.as_str()).await?;
-                let flags = if snapshot.saved {
-                    proxy::TO_DISK
-                } else {
-                    proxy::IN_MEMORY
-                };
-                nm_call(
-                    "Update2",
-                    CALL,
-                    profile.update2(&dict, flags, HashMap::new()),
-                )
-                .await
-                .map(drop)
-            }
-            // Gone - forgotten - and it was on disk: put it back there. One
-            // that only ever lived in memory is not worth resurrecting.
-            Err(_) if snapshot.saved => {
-                let settings = self.settings().await?;
-                nm_call(
-                    "AddConnection2",
-                    CALL,
-                    settings.add_connection2(&dict, proxy::TO_DISK, HashMap::new()),
-                )
-                .await
-                .map(drop)
-            }
-            Err(_) => Ok(()),
-        }
-    }
-
-    async fn apply(&self, step: &Step) -> Result<Applied, String> {
+    async fn activate(&self, up: &Up) -> Result<Activated, String> {
         let manager = self.manager().await?;
         let none = path("/")?;
-        match step {
-            Step::Update {
-                uuid,
-                settings,
-                device,
-            } => {
-                let at = self.profile_path(uuid).await?;
-                let profile = self.profile(at.as_str()).await?;
-                nm_call(
-                    "Update2",
+        let at = self.profile_path(up.profile.uuid).await?;
+        let device_at: OwnedObjectPath = match &up.device {
+            Some(device) => self.device_path(device).await?,
+            None => none.clone().into(),
+        };
+        let active = nm_call(
+            "ActivateConnection",
+            CALL,
+            manager.activate_connection(&at, &device_at, &none),
+        )
+        .await?;
+        let proxy = self.active(active.as_str()).await?;
+        let devices = nm_call("an active connection's devices", CALL, proxy.devices())
+            .await
+            .unwrap_or_default();
+        let mut interface = up.device.clone();
+        if let Some(first) = devices.first() {
+            interface = self.interface_of(first.as_str()).await.ok().or(interface);
+        }
+        Ok(Activated {
+            active: active.to_string(),
+            device: interface,
+        })
+    }
+
+    async fn deactivate(&self, profile: Profile) -> Result<(), String> {
+        let manager = self.manager().await?;
+        let actives = nm_call("ActiveConnections", CALL, manager.active_connections()).await?;
+        for at in actives {
+            let Ok(proxy) = self.active(at.as_str()).await else {
+                continue;
+            };
+            if nm_call("an active connection's uuid", CALL, proxy.uuid())
+                .await
+                .as_deref()
+                == Ok(profile.uuid)
+            {
+                return nm_call(
+                    "DeactivateConnection",
                     CALL,
-                    profile.update2(settings, proxy::IN_MEMORY, HashMap::new()),
+                    manager.deactivate_connection(&at),
                 )
-                .await?;
-                let Some(device) = device else {
-                    return Ok(Applied::default());
-                };
-                let device_at = self.device_path(device).await?;
-                let current = self.active_on(device_at.as_str()).await;
-                let active = match current {
-                    Some((active, active_uuid)) if &active_uuid == uuid => {
-                        // Reapply keeps the link up and only redoes addressing;
-                        // what it cannot do live, a fresh activation does.
-                        let proxy = self.device(device_at.as_str()).await?;
-                        let empty = Dict::new();
-                        match nm_call("Reapply", CALL, proxy.reapply(&empty, 0, 0)).await {
-                            Ok(()) => active,
-                            Err(_) => {
-                                nm_call(
-                                    "ActivateConnection",
-                                    CALL,
-                                    manager.activate_connection(&at, &device_at, &none),
-                                )
-                                .await?
-                            }
-                        }
-                    }
-                    _ => {
-                        nm_call(
-                            "ActivateConnection",
-                            CALL,
-                            manager.activate_connection(&at, &device_at, &none),
-                        )
-                        .await?
-                    }
-                };
-                Ok(Applied {
-                    active: Some(active.to_string()),
-                    device: Some(device.clone()),
-                    created: None,
-                })
-            }
-            Step::Activate { uuid, device } => {
-                let at = self.profile_path(uuid).await?;
-                let device_at = match device {
-                    Some(device) => self.device_path(device).await?,
-                    None => none.clone().into(),
-                };
-                let active = nm_call(
-                    "ActivateConnection",
-                    CALL,
-                    manager.activate_connection(&at, &device_at, &none),
-                )
-                .await?;
-                let proxy = self.active(active.as_str()).await?;
-                let devices = nm_call("an active connection's devices", CALL, proxy.devices())
-                    .await
-                    .unwrap_or_default();
-                let mut interface = device.clone();
-                if let Some(first) = devices.first() {
-                    interface = self.interface_of(first.as_str()).await.ok().or(interface);
-                }
-                Ok(Applied {
-                    active: Some(active.to_string()),
-                    device: interface,
-                    created: None,
-                })
-            }
-            Step::Deactivate { uuid } => {
-                let actives =
-                    nm_call("ActiveConnections", CALL, manager.active_connections()).await?;
-                for at in actives {
-                    let proxy = self.active(at.as_str()).await?;
-                    if nm_call("an active connection's uuid", CALL, proxy.uuid())
-                        .await
-                        .as_deref()
-                        == Ok(uuid.as_str())
-                    {
-                        nm_call(
-                            "DeactivateConnection",
-                            CALL,
-                            manager.deactivate_connection(&at),
-                        )
-                        .await?;
-                        return Ok(Applied::default());
-                    }
-                }
-                Err(format!("{uuid} is not active"))
-            }
-            Step::Delete { uuid } => {
-                self.delete(uuid).await?;
-                Ok(Applied::default())
-            }
-            Step::Add { settings, device } => {
-                let device_at = self.device_path(device).await?;
-                let options = HashMap::from([("persist", Value::from("memory"))]);
-                let (profile_at, active, _) = nm_call(
-                    "AddAndActivateConnection2",
-                    CALL,
-                    manager.add_and_activate_connection2(settings, &device_at, &none, options),
-                )
-                .await?;
-                let profile = self.profile(profile_at.as_str()).await?;
-                let created = nm_call("GetSettings", CALL, profile.get_settings())
-                    .await
-                    .ok()
-                    .and_then(|dict| settings::uuid(&dict));
-                Ok(Applied {
-                    active: Some(active.to_string()),
-                    device: Some(device.clone()),
-                    created,
-                })
-            }
-            Step::Radio { on } => {
-                self.set_radio(*on).await?;
-                Ok(Applied::default())
+                .await;
             }
         }
+        Ok(())
     }
 
     async fn activated(&self, active: &str, limit: Duration) -> Result<(), String> {
@@ -1238,27 +927,9 @@ impl Ops for Live {
         }
     }
 
-    async fn save(&self, uuid: &str) -> Result<(), String> {
-        let at = self.profile_path(uuid).await?;
-        let profile = self.profile(at.as_str()).await?;
-        nm_call("Save", CALL, profile.save()).await
-    }
-
-    async fn delete(&self, uuid: &str) -> Result<(), String> {
-        let Ok(at) = self.profile_path(uuid).await else {
-            return Ok(());
-        };
-        let profile = self.profile(at.as_str()).await?;
-        nm_call("Delete", CALL, profile.delete()).await
-    }
-
-    async fn radio(&self) -> Result<bool, String> {
-        self.radios().await.map(|(enabled, _)| enabled)
-    }
-
-    async fn set_radio(&self, on: bool) -> Result<(), String> {
-        let manager = self.manager().await?;
-        nm_call("WirelessEnabled", CALL, manager.set_wireless_enabled(on)).await
+    async fn set_nat(&self, on: bool, interface: &str) -> Result<(), String> {
+        // naked: nat::apply runs nft under within()
+        nat::apply(on, interface).await
     }
 
     async fn route(&self) -> Option<Route> {
@@ -1343,21 +1014,6 @@ mod tests {
         assert_eq!(security_of(&features), "wpa-psk");
         features.sae = true;
         assert_eq!(security_of(&features), "sae/wpa-psk");
-    }
-
-    #[test]
-    fn a_built_profile_converts() {
-        let built = nmrs::builders::WifiConnectionBuilder::new("Office")
-            .wpa_psk("hunter2hunter2")
-            .build();
-        let dict = to_dict(built).unwrap();
-        assert!(settings::is_wifi(&dict));
-        assert_eq!(settings::ssid(&dict).as_deref(), Some("Office"));
-        assert!(settings::uuid(&dict).is_some());
-        assert_eq!(
-            settings::text(&dict, settings::WIFI_SECURITY, "key-mgmt").as_deref(),
-            Some("wpa-psk")
-        );
     }
 
     /// Read-only, against the workstation's own NetworkManager.

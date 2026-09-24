@@ -653,11 +653,15 @@ module AgentE2E
   # CONFIRM_SECONDS in the protocol crate.
   def self.protocol_confirm_seconds = 60
 
-  # The network cases. The guest has one NIC, on slirp, and NetworkManager's
-  # own `Wired connection 1` on it; the suite's SSH comes in through it. So a
-  # change that breaks it takes the case's own session away - which is the
-  # point: the change is started detached (run_detached), and what the device
-  # decided is read back once SSH answers again.
+  # The network cases. The guest has one NIC, on slirp, with the device's own
+  # tessaro-ethernet-dhcp on it, and no WiFi; the suite's SSH comes in through
+  # that NIC. So a change that breaks it takes the case's own session away -
+  # which is the point: the change is started detached (run_detached), and
+  # what the device decided is read back once SSH answers again. Network keys
+  # are always applied, so every case puts ethernet.mode back itself rather
+  # than through CASE_SETTINGS, whose unset is --no-apply.
+
+  PROFILES_DIR = "/run/NetworkManager/system-connections"
 
   # The profile active on the interface with the default route, and that
   # interface's IPv4 address.
@@ -671,13 +675,19 @@ module AgentE2E
     [profile, address]
   end
 
-  def self.keyfiles(guest)
-    guest.run("cat /etc/NetworkManager/system-connections/*.nmconnection 2>/dev/null", allow_failure: true)
+  def self.keyfile(guest, id)
+    guest.run("cat #{PROFILES_DIR}/#{id}.nmconnection 2>/dev/null", allow_failure: true)
   end
 
   # A static address on a subnet with nobody in it: the gateway can never
   # answer, so the device must put DHCP back by itself.
-  BAD_ADDRESS = "ipv4.method=manual ipv4.addresses=10.99.0.5/24 ipv4.gateway=10.99.0.1"
+  BAD_ADDRESS = "ethernet.mode=static ethernet.address=10.99.0.5/24 ethernet.gateway=10.99.0.1"
+
+  def self.back_to_dhcp(guest)
+    guest.run("tessaro-ctl set ethernet.mode=dhcp", allow_failure: true, timeout: 200)
+    guest.run("tessaro-ctl unset ethernet.address ethernet.gateway ethernet.dns",
+              allow_failure: true, timeout: 200)
+  end
 
   def self.last_change(guest)
     out = guest.run("tessaro-ctl --json net last", allow_failure: true).strip
@@ -706,47 +716,71 @@ module AgentE2E
     end
   end
 
-  check "net-read", "net profiles and net show read NetworkManager's profiles" do |guest, _journal|
+  check "net-profiles", "the four managed profiles are rendered at boot, DHCP is up, the hotspot waits for wlan0" do |guest, _journal|
     profile, = uplink(guest)
-    shown = JSON.parse(guest.run("tessaro-ctl --json net show '#{profile["uuid"]}'"))
-    raise Failure, "net show is not about #{profile["name"]}" unless shown["profile"]["uuid"] == profile["uuid"]
+    raise Failure, "the uplink is #{profile["name"]}, not tessaro-ethernet-dhcp" unless profile["name"] == "tessaro-ethernet-dhcp"
+    names = JSON.parse(guest.run("tessaro-ctl --json net profiles")).map { _1["name"] }
+    raise Failure, "NetworkManager made its own profile: #{names}" if names.include?("Wired connection 1")
+
+    listing = guest.run("stat -c '%a %n' #{PROFILES_DIR}/tessaro-*.nmconnection")
+    %w[tessaro-ethernet-dhcp tessaro-ethernet-static tessaro-wifi-hotspot].each do |id|
+      raise Failure, "no 0600 #{id}:\n#{listing}" unless listing.include?("600 #{PROFILES_DIR}/#{id}.nmconnection")
+    end
+    hotspot = keyfile(guest, "tessaro-wifi-hotspot")
+    raise Failure, "the hotspot is not bound to wlan0:\n#{hotspot}" unless hotspot.include?("interface-name=wlan0")
+    raise Failure, "an unclaimed hotspot has a password:\n#{hotspot}" if hotspot.include?("[wifi-security]")
+    raise Failure, "the hotspot is not tessaro-NAME:\n#{hotspot}" unless hotspot.match?(/^ssid=tessaro-/)
+
+    shown = JSON.parse(guest.run("tessaro-ctl --json net show tessaro-ethernet-dhcp"))
     raise Failure, "net show has no live address" if shown["addresses"].empty?
-    keys = guest.run("tessaro-ctl net keys ipv4.method")
-    raise Failure, "net keys does not document ipv4.method:\n#{keys}" unless keys.include?("auto is DHCP")
-    typo = guest.run("tessaro-ctl net set '#{profile["uuid"]}' ipv4.metod=manual 2>&1", allow_failure: true)
-    raise Failure, "a typo was sent to the device:\n#{typo}" unless typo.include?("cannot be changed here")
+    typo = guest.run("tessaro-ctl set ethernet.mode=stati 2>&1", allow_failure: true)
+    raise Failure, "a typo was accepted:\n#{typo}" unless typo.include?("must be one of")
+
+    # dnsmasq is only NetworkManager's, for the hotspot: its own unit off,
+    # its resolved drop-in gone, resolved's stub still what resolv.conf says.
+    raise Failure, "dnsmasq.service is enabled" if guest.run("systemctl is-enabled dnsmasq", allow_failure: true).strip == "enabled"
+    raise Failure, "dnsmasq's resolved drop-in is there" if guest.run("ls /etc/systemd/resolved.conf.d 2>/dev/null", allow_failure: true).include?("dnsmasq")
+    raise Failure, "resolved's stub is gone" unless guest.run("cat /etc/resolv.conf").include?("127.0.0.53")
   end
 
-  check "net-commit", "a change that keeps the network is verified, committed and saved to disk" do |guest, _journal|
-    profile, = uplink(guest)
-    out = guest.run("tessaro-ctl --json net set '#{profile["uuid"]}' ipv4.dns=9.9.9.9")
-    change = JSON.parse(out)
+  check "ethernet-static", "set ethernet.mode=static is verified and committed; dhcp brings it back" do |guest, _journal|
+    _, address = uplink(guest)
+    out = guest.run("tessaro-ctl --json set ethernet.mode=static ethernet.address=#{address}/24 " \
+                    "ethernet.gateway=10.0.2.2 ethernet.dns=10.0.2.3", timeout: 200)
+    applied = JSON.parse(out)
+    change = applied["network"] or raise Failure, "no network change in the answer:\n#{out}"
     raise Failure, "not committed:\n#{out}" unless change["outcome"] == "committed"
     raise Failure, "the gateway was not checked:\n#{out}" unless change["checks"].any? { _1["name"] == "reach" && _1["passed"] }
+    profile, = uplink(guest)
+    raise Failure, "#{profile["name"]} is up, not tessaro-ethernet-static" unless profile["name"] == "tessaro-ethernet-static"
+    raise Failure, "not saved" unless guest.run("tessaro-ctl get ethernet.mode").include?("static")
+    raise Failure, "the static keyfile has no address" unless keyfile(guest, "tessaro-ethernet-static").include?("address1=#{address}/24")
 
-    shown = JSON.parse(guest.run("tessaro-ctl --json net show '#{profile["uuid"]}'"))
-    raise Failure, "net show has no 9.9.9.9: #{shown["ipv4"]}" unless shown["ipv4"]["dns"].include?("9.9.9.9")
-    raise Failure, "the change is not on disk" unless keyfiles(guest).include?("9.9.9.9")
-    last = JSON.parse(guest.run("tessaro-ctl --json net last"))
-    raise Failure, "net last does not say so: #{last}" unless last["outcome"] == "committed"
+    applied = JSON.parse(guest.run("tessaro-ctl --json set ethernet.mode=dhcp", timeout: 200))
+    raise Failure, "back to dhcp was not committed: #{applied}" unless applied.dig("network", "outcome") == "committed"
+    profile, = uplink(guest)
+    raise Failure, "#{profile["name"]} is up, not tessaro-ethernet-dhcp" unless profile["name"] == "tessaro-ethernet-dhcp"
   ensure
-    guest.run("tessaro-ctl net set '#{profile["uuid"]}' ipv4.dns=", allow_failure: true) if profile
+    back_to_dhcp(guest)
   end
 
-  check "net-rollback", "a change that cuts the device off is rolled back by the device alone" do |guest, journal|
-    profile, before = uplink(guest)
+  check "ethernet-rollback", "a static address that cuts the device off is rolled back by the device alone" do |guest, journal|
+    _, before = uplink(guest)
     previous = last_change(guest)
-    guest.run_detached("net-rollback", "tessaro-ctl net set '#{profile["uuid"]}' #{BAD_ADDRESS}")
+    guest.run_detached("net-rollback", "tessaro-ctl set #{BAD_ADDRESS}")
     last = wait_for_rollback(guest, before, previous)
 
     raise Failure, "net last says #{last}" unless last["outcome"] == "rolled-back"
     raise Failure, "rolled back for the wrong reason: #{last["reason"]}" unless last["reason"].to_s.include?("did not hold")
-    raise Failure, "the bad address reached the disk" if keyfiles(guest).include?("10.99.0.5")
+    raise Failure, "the static mode was saved" if guest.run("tessaro-ctl get ethernet.mode").include?("static")
+    raise Failure, "the bad address is in the keyfile" if keyfile(guest, "tessaro-ethernet-static").include?("10.99.0.5")
     journal.wait_for(/^network: set .* rolled back: /, timeout: 5)
+  ensure
+    guest.run("systemctl reset-failed e2e-net-rollback", allow_failure: true)
   end
 
   check "net-recovery", "an agent killed during a change rolls it back when it starts again" do |guest, journal|
-    profile, before = uplink(guest)
+    _, before = uplink(guest)
     previous = last_change(guest)
     # Both halves on the guest, since the change takes this session away:
     # the change itself, and a watcher that kills the agent once it started.
@@ -755,16 +789,59 @@ module AgentE2E
       sleep 2
       systemctl kill -s KILL tessaro-agent
     SH
-    guest.run_detached("net-recovery", "tessaro-ctl net set '#{profile["uuid"]}' #{BAD_ADDRESS}")
+    guest.run_detached("net-recovery", "tessaro-ctl set #{BAD_ADDRESS}")
     last = wait_for_rollback(guest, before, previous)
 
     raise Failure, "net last says #{last}" unless last["outcome"] == "rolled-back"
     raise Failure, "not rolled back by recovery: #{last["reason"]}" unless last["reason"].to_s.include?("stopped")
     journal.wait_for(/^network: rolled back an unfinished network change \(set /, timeout: 30)
-    raise Failure, "the bad address reached the disk" if keyfiles(guest).include?("10.99.0.5")
+    raise Failure, "the static mode was saved" if guest.run("tessaro-ctl get ethernet.mode").include?("static")
   ensure
     guest.run("systemctl reset-failed e2e-net-kill e2e-net-recovery", allow_failure: true)
     guest.restart_agent
+  end
+
+  # Claimed, the root password is not empty, so - as in the claim case - the
+  # whole round trip is one guest command with an unclaim in a trap. The
+  # hotspot is re-rendered just after each answer, hence the short waits.
+  check "hotspot-claim", "claim gives the hotspot a WPA2 password, hotspot-password rotates it, unclaim opens it" do |guest, _journal|
+    out = guest.run(<<~SH, timeout: 120)
+      set -e
+      trap 'tessaro-ctl unclaim --yes >/dev/null 2>&1 || true' EXIT
+      export TESSARO_CONFIG_DIR=/tmp/e2e-hotspot
+      rm -rf "$TESSARO_CONFIG_DIR"
+      hotspot=#{PROFILES_DIR}/tessaro-wifi-hotspot.nmconnection
+      tessaro-ctl -n 127.0.0.1 --json claim --yes --name e2e > /tmp/e2e-hotspot-claim.json
+      sleep 3
+      grep -q '^key-mgmt=wpa-psk$' "$hotspot"
+      grep -q '^pmf=1$' "$hotspot"
+      first=$(grep '^psk=' "$hotspot")
+      tessaro-ctl --json net wifi hotspot-password > /tmp/e2e-hotspot-rotated.json
+      sleep 3
+      second=$(grep '^psk=' "$hotspot")
+      test "$first" != "$second"
+      grep -q "\\"password\\": *\\"${second#psk=}\\"" /tmp/e2e-hotspot-rotated.json
+      ! tessaro-ctl get 2>/dev/null | grep -q "${second#psk=}"
+      tessaro-ctl -n 127.0.0.1 unclaim --yes
+      sleep 3
+      ! grep -q 'wifi-security' "$hotspot"
+      echo hotspot-ok
+    SH
+    raise Failure, "the hotspot did not follow the claim:\n#{out}" unless out.include?("hotspot-ok")
+  end
+
+  check "hotspot-nat", "wifi.nat=0 keeps hotspot clients to the device with a table of its own; 1 removes it" do |guest, _journal|
+    applied = JSON.parse(guest.run("tessaro-ctl --json set wifi.nat=0", timeout: 200))
+    raise Failure, "not committed: #{applied}" unless applied.dig("network", "outcome") == "committed"
+    tables = guest.run("nft list tables")
+    raise Failure, "no inet tessaro-hotspot table:\n#{tables}" unless tables.include?("inet tessaro-hotspot")
+    raise Failure, "the drop rule is not there" unless guest.run("nft list table inet tessaro-hotspot").include?('iifname "wlan0" drop')
+
+    applied = JSON.parse(guest.run("tessaro-ctl --json set wifi.nat=1", timeout: 200))
+    raise Failure, "not committed: #{applied}" unless applied.dig("network", "outcome") == "committed"
+    raise Failure, "the table stayed" if guest.run("nft list tables").include?("tessaro-hotspot")
+  ensure
+    guest.run("tessaro-ctl unset wifi.nat", allow_failure: true, timeout: 200)
   end
 
   # `ping` needs no token, so it works on this unclaimed device over TLS. The

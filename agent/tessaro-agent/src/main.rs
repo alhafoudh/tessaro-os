@@ -41,6 +41,7 @@ mod ping;
 mod ports;
 mod probe;
 mod render;
+mod secrets;
 mod server;
 mod shadow;
 mod speedtest;
@@ -281,7 +282,7 @@ async fn start_control(
 
     control.arm_if_pending().await; // naked: a disk read under blocking()'s within()
     control.load_update().await; // naked: a disk read under blocking()'s within()
-    control.recover_network();
+    control.recover_network().await; // naked: two disk reads under blocking()'s within()
     control.watch_url();
     control.watch_public_ip();
 }

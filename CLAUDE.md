@@ -451,10 +451,13 @@ agent, SIGTERM - and the control plane: a `tessaro-ctl set` that restarts the
 agent onto the new value, the debug screen and maintenance mode each on and
 off with the browser left running, a claim and unclaim round trip, an ssh key
 authorized with a pinned host key, then revoked and cleared by unclaim, a resolution
-change that refuses an unoffered mode and reverts unconfirmed, a network
-change that is committed, one that cuts the VM off and is rolled back by the
-device alone, one whose agent is killed half way and is rolled back at its
-restart, and `ping` and `net ping` with and without ping sockets. Last, because
+change that refuses an unoffered mode and reverts unconfirmed, the four
+managed network profiles as the boot renders them, a static Ethernet address
+that is committed and switched back to DHCP, one that cuts the VM off and is
+rolled back by the device alone, one whose agent is killed half way and is
+rolled back at its restart, the hotspot password following a claim and an
+unclaim, the hotspot's NAT table, and `ping` and `net ping` with and without
+ping sockets. Last, because
 each reboots the VM, three image updates of the image it booted from:
 damaged staging refused at boot with nothing written, an update that keeps
 the settings, and one with `--wipe-data`. About twenty minutes; exits non-zero on any failure and prints
@@ -904,8 +907,8 @@ kiosk origin, Weston restarts - taking the browser and agent with it - for a
   means the
   interface carrying the IPv4 default route. `tessaro-ctl net` shows the same
   as an overview, `net interfaces` every interface with kind, state, carrier,
-  MAC, MTU, speed and addresses. Editing the network is NetworkManager's,
-  through `net set|up|down|forget` and `net wifi` - see **Network control**.
+  MAC, MTU, speed and addresses. Changing the network is the `ethernet.*` and
+  `wifi.*` settings - see **Network control**.
   **A URL using one moves on its own**: the boot render runs before DHCP, and
   leases change, so while `kiosk.url` uses a read-only key the agent checks
   every 15s and, when the expanded URL is no longer the one it drives,
@@ -1328,11 +1331,11 @@ serial console, or over SSH.
 
 Things to know:
 
-* **Ethernet DHCP is still zero-configuration.** NM's auto-default gives any
-  managed ethernet device with no stored profile an in-memory
-  `Wired connection 1` with `ipv4.method=auto`. Nothing sets `no-auto-default`.
-  A factory device boots and takes a lease exactly as before; the profile is
-  just ephemeral until someone saves a real one.
+* **Ethernet DHCP is still zero-configuration**, but no longer NM's
+  `Wired connection 1`: `10-tessaro.conf` sets `no-auto-default=*`, and the
+  device's own `tessaro-ethernet-dhcp` takes the first port that comes up -
+  see **Network control**. A saved `Wired connection 1` left on an upgraded
+  device stays, and loses to priority 100.
 * **Profiles persist for free, state needs a unit.**
   `/etc/NetworkManager/system-connections` is on the `/etc` overlay, so saved
   connections land on `/data` with no work. `/var/lib/NetworkManager` is tmpfs,
@@ -1412,74 +1415,116 @@ Things to know:
 
 ### Network control
 
-**`tessaro-ctl net set|up|down|forget` and `net wifi join|on|off` change
-NetworkManager's profiles from anywhere, over the pinned, token-checked
-control connection, and the device keeps a change only if it still reaches
-the network afterwards.** There is no confirm step, on purpose: a change is
-one request, and whether it sticks is the device's decision alone, so a change
-that takes the operator's own connection away - re-addressing the link it came
-in on - is safe by construction. The client explains a lost connection and
-`net last` reads the verdict afterwards. `net profiles`, `net show`, `net keys`,
-`net wifi` and `net wifi scan` read; `net ping HOST` pings from the device
-(streamed, like `speedtest`); `tessaro-ctl ping` times the client's own path to
-the agent - TCP connect, TLS handshake, round trips - and, like `id`, needs no
-token. The logic is `agent/tessaro-agent/src/nm/` and `ping.rs`; the editable
-properties are `agent/protocol/src/netkeys.rs`, in nmcli's own names.
+**The device manages four NetworkManager profiles of its own and switches
+between them through ordinary settings**, over the pinned, token-checked
+control connection:
 
-* **One change is one transaction** (`nm/txn.rs`): snapshot every profile it
-  touches, secrets included, to `/data/tessaro/network/snapshot.json` (0600,
-  in a 0700 directory - the same exposure as NetworkManager's own keyfiles on
-  the same `/data`), write `txn.json`, take a NetworkManager **checkpoint** on
-  the devices involved (with a 150s rollback timer of NetworkManager's own, the
-  backstop if the agent dies), apply **in memory only** (`Update2` with
-  `IN_MEMORY`, a new WiFi profile with `persist: memory`), verify, and only
-  then `Save()` to disk and drop the checkpoint. Any failure rolls back: the
-  radio first, then the checkpoint, then every snapshot (a checkpoint only
-  covers profiles active at the time), then whatever was created. The outcome
-  goes to `last.json`. A power cut before `Save()` boots the old config from
-  disk, since `/run` - where in-memory profiles live - is gone.
-* **Verify means, on the device:** a connection it activated reaches
-  ACTIVATED (failing fast with NetworkManager's reason - `no secrets (wrong
+| profile | up when |
+| --- | --- |
+| `tessaro-ethernet-dhcp` | `ethernet.mode=dhcp` (the default) |
+| `tessaro-ethernet-static` | `ethernet.mode=static`, with `ethernet.address`, `.gateway`, `.dns` |
+| `tessaro-wifi-hotspot` | `wifi.mode=hotspot` (the default) and `wifi.interface` (`auto` = `wlan0`) exists |
+| `tessaro-wifi-client` | `wifi.mode=client`, joining `wifi.ssid` (`wifi.ipv4=dhcp\|static` like Ethernet) |
+
+`tessaro-ctl set ethernet.mode=static ethernet.address=192.168.1.50/24
+ethernet.gateway=192.168.1.1` and `set ethernet.mode=dhcp` switch Ethernet,
+`net wifi join SSID` makes WiFi a client (the hotspot goes down), `set
+wifi.mode=hotspot` brings the hotspot back, `wifi.mode=off` frees the radio.
+Profiles made by hand - other ports, anything nmtui saved - are listed by `net
+profiles` and never touched. `ethernet.interface` names the managed port;
+`auto` leaves the profile unbound, so NetworkManager puts it on the first
+Ethernet device that comes up.
+
+**A network change is kept only if the device still reaches the network
+afterwards, and it is saved only then.** There is no confirm step, on purpose:
+a change is one request, and whether it sticks is the device's decision alone,
+so a change that takes the operator's own connection away - re-addressing the
+link it came in on - is safe by construction. The client explains a lost
+connection and `net last` reads the verdict afterwards. `net profiles`, `net
+show`, `net wifi` and `net wifi scan` read; `net ping HOST` pings from the
+device (streamed, like `speedtest`); `tessaro-ctl ping` times the client's own
+path to the agent - TCP connect, TLS handshake, round trips - and, like `id`,
+needs no token. The logic is `agent/tessaro-agent/src/nm/` (`profiles.rs`
+renders, `txn.rs` switches) and `ping.rs`.
+
+* **The profiles are generated, never saved.** The agent renders them as
+  keyfiles into `/run/NetworkManager/system-connections` (0600, the in-memory
+  directory NetworkManager reads with the highest precedence) from
+  `state.json`, `secrets.json` and the node name, and the boot oneshot renders
+  them again before NetworkManager starts (`tessaro-config.service` is
+  `Before=NetworkManager.service`). So `state.json` is the truth: a reboot at
+  any point comes back on the committed configuration, and nothing managed is
+  ever written to `/etc`. Only the selected profile of each pair has
+  `autoconnect=true`, at priority 100, so it wins over a hand-made profile on
+  the same device. The uuids are fixed, the same on every device.
+* **One change is one transaction** (`nm/txn.rs`): write `txn.json`, take a
+  NetworkManager **checkpoint** on the devices involved (with a 150s rollback
+  timer of NetworkManager's own, the backstop if the agent dies), write the
+  new keyfiles and reload them, bring profiles down and up, set the NAT,
+  verify - and only then run the caller's commit, which writes `state.json`
+  (and a staged WiFi password to `secrets.json`), and drop the checkpoint. Any
+  failure puts the old keyfiles back, then rolls the checkpoint back; nothing
+  is saved. The outcome goes to `last.json`. `set` answers with the checks
+  (`Applied.network`); a rolled-back change is an error with the reason.
+  Network keys are always applied: `set --no-apply` refuses them.
+* **Verify means, on the device:** what was brought up reaches ACTIVATED
+  (failing fast with NetworkManager's reason - `no secrets (wrong
   password?)`), its device gets a global address, a default route is still
   there if there was one, and `--verify` holds: `gateway` (the default, one
   ping from the interface), `HOST` (a ping), `HOST:PORT` (a TCP connect) or
-  `none`. About 90s at most; the client waits 180s.
+  `none`. About 90s at most; the client waits 180s. Leaving client mode for
+  the hotspot or `off` gives up WiFi's route on purpose, so that one change
+  does not require the route.
 * **An agent that dies half way is rolled back at its next start** (`recover`,
-  from `start_control`, retrying for a minute while NetworkManager comes up).
-  That covers SIGTERM too: the transaction is not waited for at shutdown.
+  from `start_control`, retrying for a minute while NetworkManager comes up),
+  onto what `state.json` renders. That covers SIGTERM too: the transaction is
+  not waited for at shutdown.
 * **The transaction runs on a task of its own**, holding the one-at-a-time
   lock the way a speed test holds its own, so a client that is cut off does
-  not stop it. A network change is refused while an update waits for its
-  reboot, and `update commit` is refused during a change.
-* **Update2 keeps stored secrets only when the new settings carry none at
-  all** (`nm-settings-connection.c`). So a patch starts from `GetSettings`,
-  which never includes secrets, and adds a `psk` only when one is being
-  changed; one secret too many would erase the rest.
-* **nmrs is for reading only.** Saved profiles, access points, WiFi devices,
-  and the builder for a new WiFi profile come from it; every write goes
-  through our own proxies (`nm/proxy.rs`) on nmrs's connection, because nmrs's
-  writes save to disk at once and know no checkpoints. It costs 19 crates -
-  it asks for zbus's default features, which bring async-io, async-executor,
-  blocking and polling back - compiled but idle: zbus still runs on tokio,
-  and the nmrs calls that start futures-timer's thread are never made.
-* **Guards before anything moves**: `connection.autoconnect=no` on the profile
-  carrying the default route is refused (reachability now says nothing about
-  the next boot), and `net down` says it lasts until the next boot or
-  autoconnect. A patch is checked whole first - `manual` needs addresses, the
-  gateway must be inside one of them - on both ends.
+  not stop it - the commit happens anyway. A network change is refused while
+  an update waits for its reboot, and `update commit` is refused during one.
+  `node.name` is a network key too: it renames the hotspot.
+* **The hotspot is `tessaro-<node name>`, open while the device is unclaimed.**
+  `claim` gives it a random 16-character WPA2 password, stored in
+  `/data/tessaro/secrets.json` (0600, never in `state.json`, never shown by
+  `get` or `keys`) and shown once with the root password; the profiles are
+  re-rendered only after the answer is out (`After::Network`), so a claimer on
+  the hotspot gets the password before it drops them. `net wifi
+  hotspot-password` makes a new one. Unclaim, revoking the last token, a
+  factory reset and the boot oneshot's claim invariant open it again. It is
+  WPA2 with CCMP and `pmf=1` (disabled): the Pi's brcmfmac refuses clients
+  with PMF on in AP mode, and its WPA3 AP support is broken.
+* **Hotspot clients get DHCP and DNS from NetworkManager's own dnsmasq**
+  (`ipv4.method=shared`, 10.42.0.x) and, with `wifi.nat=1`, NAT through
+  NetworkManager's nftables table (`firewall-backend=nftables` in
+  `10-tessaro.conf`). `wifi.nat=0` is a table of the agent's, `inet
+  tessaro-hotspot`, dropping forwarded traffic from the WiFi interface - NM
+  1.46 has no per-connection switch - so clients reach the device itself and
+  nothing past it. dnsmasq and nftables are `RDEPENDS` of `tessaro-network`;
+  the dnsmasq bbappend removes its resolved drop-in (`DNSStubListener=no`,
+  which would break every lookup on the device) and never enables its own
+  unit (which would hold port 53). The NAT modules are recommended, since
+  linux-yocto builds them as modules.
 * **WiFi joins are Open, WPA2-PSK and WPA3-SAE.** The security comes from a
-  scan, or `--hidden --security`; enterprise (802.1X) is refused as not yet
-  supported. A known network is updated in place rather than duplicated, and
-  comes back up on its saved password if none is given. The password is
-  prompted or read from stdin, never argv, and travels as `protocol::Secret`,
-  whose `Debug` prints `***`.
+  scan, or `--hidden --security`; enterprise (802.1X) and WEP are refused.
+  Rejoining the same network keeps its saved password if none is given. The
+  password is prompted or read from stdin, never argv, travels as
+  `protocol::Secret` (whose `Debug` prints `***`), and is saved only if the
+  join holds.
+* **nmrs is for reading only.** Saved profiles, access points and WiFi
+  devices come from it; checkpoints, activation and reloading are our own
+  proxies (`nm/proxy.rs`) on nmrs's connection. It costs 19 crates - it asks
+  for zbus's default features, which bring async-io, async-executor, blocking
+  and polling back - compiled but idle: zbus still runs on tokio, and the nmrs
+  calls that start futures-timer's thread are never made.
 * **`net ping` falls back to a raw socket.** It prefers the kernel's ICMP
   datagram sockets, but `net.ipv4.ping_group_range` does not exempt root: the
   kernel's own `1 0` refuses even uid 0 (systemd's default opens it). Refused,
   the agent opens a raw socket, which root may, and does the identifier, the
   IPv4 checksum and the IP header itself. The e2e runs both.
-* **qemu cannot exercise WiFi** - no emulated wireless NIC - so joins, scans
-  and the radio are tested on the Pi by hand.
+* **qemu cannot exercise WiFi** - no emulated wireless NIC - so the e2e checks
+  the hotspot's keyfile and NAT table, and joins, scans and the hotspot
+  itself are tested on the Pi by hand.
 
 ## Gotchas
 

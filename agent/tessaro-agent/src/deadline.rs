@@ -216,6 +216,7 @@ mod tests {
             "src/ping.rs",
             "src/nm/mod.rs",
             "src/nm/txn.rs",
+            "src/nm/nat.rs",
         ];
 
         // Helpers whose every wait is already under `within()` in their own

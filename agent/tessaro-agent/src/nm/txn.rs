@@ -1,30 +1,33 @@
-//! A network change as one transaction the device keeps or undoes by itself.
+//! A change to the device's network as one transaction it keeps or undoes by
+//! itself.
 //!
 //! The operator's client sends one request and may never hear back - the
 //! change can take its own connection away - so nothing here waits for it.
-//! The order is what makes that safe:
+//! What makes that safe is the order:
 //!
-//! 1. **Snapshot** every profile the change touches, secrets included, to
-//!    `/data/tessaro/network/snapshot.json` (0600), and write the record of
-//!    what is under way next to it.
+//! 1. **Record** what is under way in `/data/tessaro/network/txn.json`.
 //! 2. **Checkpoint** the devices involved in NetworkManager, with a rollback
 //!    timer of its own: if this process dies, NetworkManager undoes the
 //!    runtime half by itself.
-//! 3. **Apply in memory only** - `Update2` with `IN_MEMORY`, a new profile
-//!    with `persist: memory` - so a power cut at any point boots the old
-//!    configuration from disk.
-//! 4. **Verify on the device**: the connection comes up, a default route is
-//!    still there if there was one, and the `--verify` target answers.
-//! 5. Only then **save** to disk and drop the checkpoint. On any failure,
-//!    **roll back**: the checkpoint, then every snapshot (which covers
-//!    profiles that were not active, which a checkpoint does not), then
-//!    whatever was created.
+//! 3. **Switch**: write the new keyfiles under `/run` (never saved anywhere),
+//!    reload, bring profiles down and up, set the hotspot's NAT.
+//! 4. **Verify on the device**: what was brought up comes up and gets an
+//!    address, a default route is still there if there was one, and the
+//!    `--verify` target answers.
+//! 5. Only then **commit** - the caller's future, which writes `state.json` -
+//!    and drop the checkpoint. On any failure, **roll back**: the old
+//!    keyfiles, the old NAT, the checkpoint.
 //!
-//! An agent that stops half way leaves the record behind, and the next one
-//! rolls it back at startup (`recover`).
+//! The settings in `state.json` are the truth throughout: the boot oneshot
+//! renders the profiles from them before NetworkManager starts, so a reboot
+//! at any point comes back on the committed configuration, and an agent that
+//! stops half way leaves the record behind for the next one to roll back
+//! (`recover`).
 
+use std::future::Future;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::time::Duration;
 
 use protocol::{ChangeOutcome, NetChange, NetCheck, Verify};
@@ -32,7 +35,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::control::blocking;
 use crate::log::Log;
-use crate::nm::settings::Dict;
+use crate::nm::profiles::{Keyfile, Profile};
 
 /// How long a connection has to come up: association, the handshake, DHCP.
 pub const ACTIVATE: Duration = Duration::from_secs(45);
@@ -45,85 +48,57 @@ const REACH_TRIES: u32 = 5;
 pub const BACKSTOP: Duration = Duration::from_secs(150);
 
 const RECORD: &str = "txn.json";
-const SNAPSHOT: &str = "snapshot.json";
 const LAST: &str = "last.json";
 
-/// A profile as it was before the change: its settings with its secrets, in
-/// D-Bus's own encoding, and whether it was on disk.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Snapshot {
-    pub uuid: String,
-    pub saved: bool,
-    pub settings: Vec<u8>,
-}
-
-/// What is under way. No secrets: those are in the snapshot file.
+/// What is under way. No secrets: those never leave `secrets.json` and the
+/// keyfiles under `/run`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Record {
     pub action: String,
-    pub profile: Option<String>,
     pub checkpoint: Option<String>,
-    /// Profiles that existed before and were changed or removed.
-    pub touched: Vec<String>,
-    /// Profiles this change created.
-    pub created: Vec<String>,
-    /// The WiFi radio before a `wifi on|off`.
-    pub radio_was: Option<bool>,
 }
 
-/// One change, already resolved to uuids and settings.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Step {
-    /// New settings for a profile, in memory. With a device, it is brought
-    /// up there: reapplied if it is active on it, activated if not.
-    Update {
-        uuid: String,
-        settings: Dict,
-        device: Option<String>,
-    },
-    Activate {
-        uuid: String,
-        device: Option<String>,
-    },
-    Deactivate {
-        uuid: String,
-    },
-    Delete {
-        uuid: String,
-    },
-    /// A new profile, in memory, activated on `device`.
-    Add {
-        settings: Dict,
-        device: String,
-    },
-    Radio {
-        on: bool,
-    },
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Up {
+    pub profile: Profile,
+    /// Where: the managed interface, or `None` for NetworkManager to choose.
+    pub device: Option<String>,
 }
 
+/// The hotspot's NAT, before and after.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Nat {
+    pub on: bool,
+    pub was: bool,
+    pub interface: String,
+}
+
+/// One change, resolved to keyfiles and profiles.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Plan {
     pub action: String,
-    pub profile: Option<String>,
-    pub uuid: Option<String>,
     /// Interfaces the checkpoint covers.
     pub devices: Vec<String>,
-    /// Existing profiles to snapshot, and to save once it holds.
-    pub touched: Vec<String>,
-    pub step: Step,
+    /// The keyfiles as they will be, and as they are - for a rollback.
+    pub new: Vec<Keyfile>,
+    pub old: Vec<Keyfile>,
+    pub down: Vec<Profile>,
+    pub up: Vec<Up>,
+    pub nat: Option<Nat>,
     pub verify: Verify,
+    /// A default route there before must still be there. Off when the
+    /// change gives up the WiFi client on purpose, whose route goes with it.
+    pub keep_route: bool,
     pub note: Option<String>,
 }
 
-/// What applying the step started.
+/// What activating a profile started.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Applied {
+pub struct Activated {
     /// The active connection to wait for.
-    pub active: Option<String>,
+    pub active: String,
     /// The interface it is coming up on.
     pub device: Option<String>,
-    /// The uuid of a profile the step created.
-    pub created: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -132,6 +107,10 @@ pub struct Route {
     pub gateway: Option<IpAddr>,
 }
 
+/// Writes `state.json` once the change has held. Built by the caller, run
+/// only after every check passed.
+pub type Commit = Pin<Box<dyn Future<Output = Result<(), String>> + Send>>;
+
 /// Everything the transaction asks of NetworkManager and the kernel. The
 /// real one is `nm::Live`; the tests drive a fake that can fail anywhere.
 #[async_trait::async_trait]
@@ -139,16 +118,15 @@ pub trait Ops: Send + Sync {
     async fn checkpoint(&self, devices: &[String], backstop: Duration) -> Result<String, String>;
     async fn rollback(&self, checkpoint: &str) -> Result<(), String>;
     async fn destroy(&self, checkpoint: &str) -> Result<(), String>;
-    /// `None` when there is no such profile.
-    async fn snapshot(&self, uuid: &str) -> Result<Option<Snapshot>, String>;
-    async fn restore(&self, snapshot: &Snapshot) -> Result<(), String>;
-    async fn apply(&self, step: &Step) -> Result<Applied, String>;
+    /// Replace the managed keyfiles with these, and have NetworkManager
+    /// reload them.
+    async fn write_profiles(&self, files: &[Keyfile]) -> Result<(), String>;
+    async fn activate(&self, up: &Up) -> Result<Activated, String>;
+    /// Take a profile down; a profile that is not up is not an error.
+    async fn deactivate(&self, profile: Profile) -> Result<(), String>;
     /// Until the active connection is up, or why it will not be.
     async fn activated(&self, active: &str, limit: Duration) -> Result<(), String>;
-    async fn save(&self, uuid: &str) -> Result<(), String>;
-    async fn delete(&self, uuid: &str) -> Result<(), String>;
-    async fn radio(&self) -> Result<bool, String>;
-    async fn set_radio(&self, on: bool) -> Result<(), String>;
+    async fn set_nat(&self, on: bool, interface: &str) -> Result<(), String>;
     /// The kernel's IPv4 default route.
     async fn route(&self) -> Option<Route>;
     async fn has_address(&self, interface: &str) -> bool;
@@ -202,17 +180,11 @@ impl Files {
         .await
     }
 
-    /// Both working files, in the order that leaves no record without its
-    /// snapshot: the record goes first.
     async fn clear(&self) -> Result<(), String> {
         let record = self.path(RECORD);
-        let snapshot = self.path(SNAPSHOT);
         blocking("clearing a network change", move || {
-            for path in [record, snapshot] {
-                update::fsutil::remove_if_exists(&path)
-                    .map_err(|err| format!("{}: {err}", path.display()))?;
-            }
-            Ok(())
+            update::fsutil::remove_if_exists(&record)
+                .map_err(|err| format!("{}: {err}", record.display()))
         })
         .await
     }
@@ -267,28 +239,18 @@ impl Failed {
 
 /// Run `plan` to the end: committed, or rolled back. `Err` only when it
 /// could not even start - nothing was changed then.
-pub async fn run(ops: &dyn Ops, files: &Files, plan: Plan, log: &Log) -> Result<NetChange, String> {
+pub async fn run(
+    ops: &dyn Ops,
+    files: &Files,
+    plan: Plan,
+    log: &Log,
+    commit: Commit,
+) -> Result<NetChange, String> {
     let route_before = ops.route().await;
-    let radio_was = match plan.step {
-        Step::Radio { .. } => Some(ops.radio().await?),
-        _ => None,
-    };
-
-    let mut snapshots = Vec::new();
-    for uuid in &plan.touched {
-        if let Some(snapshot) = ops.snapshot(uuid).await? {
-            snapshots.push(snapshot);
-        }
-    }
     let mut record = Record {
         action: plan.action.clone(),
-        profile: plan.profile.clone(),
         checkpoint: None,
-        touched: plan.touched.clone(),
-        created: Vec::new(),
-        radio_was,
     };
-    files.write(SNAPSHOT, snapshots.clone()).await?;
     files.write(RECORD, record.clone()).await?;
 
     let checkpoint = match ops.checkpoint(&plan.devices, BACKSTOP).await {
@@ -301,38 +263,35 @@ pub async fn run(ops: &dyn Ops, files: &Files, plan: Plan, log: &Log) -> Result<
     };
     record.checkpoint = Some(checkpoint.clone());
     files.write(RECORD, record.clone()).await?;
-    log.info(format!(
-        "network: {} {} started",
-        plan.action,
-        plan.profile.as_deref().unwrap_or("")
-    ));
+    log.info(format!("network: {} started", plan.action));
 
-    // naked: attempt() and commit() wait only through ops. and files.
-    let outcome = attempt(ops, files, &plan, &mut record, route_before.as_ref()).await;
+    // naked: attempt() waits only through ops.
+    let outcome = attempt(ops, &plan, route_before.as_ref()).await;
     let outcome = match outcome {
-        // naked: see above
-        Ok(checks) => match commit(ops, &plan, &record, &checkpoint).await {
+        // naked: the caller's commit is blocking() under within()
+        Ok(checks) => match commit.await {
             Ok(()) => Ok(checks),
-            Err(reason) => Err(Failed { reason, checks }),
+            Err(reason) => Err(Failed {
+                reason: format!("the settings could not be saved: {reason}"),
+                checks,
+            }),
         },
         Err(failed) => Err(failed),
     };
 
     let change = match outcome {
         Ok(checks) => {
-            log.info(format!(
-                "network: {} {} committed",
-                plan.action,
-                plan.profile.as_deref().unwrap_or("")
-            ));
+            if let Err(err) = ops.destroy(&checkpoint).await {
+                // Saved already; a checkpoint left behind would only roll
+                // the runtime back at the backstop, onto what boot renders.
+                log.info(format!("network: dropping the checkpoint: {err}"));
+            }
+            log.info(format!("network: {} committed", plan.action));
             NetChange {
                 outcome: ChangeOutcome::Committed,
                 action: plan.action.clone(),
-                profile: plan.profile.clone(),
-                uuid: plan
-                    .uuid
-                    .clone()
-                    .or_else(|| record.created.first().cloned()),
+                profile: plan.up.first().map(|up| up.profile.id.to_string()),
+                uuid: None,
                 reason: None,
                 checks,
                 note: plan.note.clone(),
@@ -340,18 +299,16 @@ pub async fn run(ops: &dyn Ops, files: &Files, plan: Plan, log: &Log) -> Result<
         }
         Err(failed) => {
             log.info(format!(
-                "network: {} {} rolled back: {}",
-                plan.action,
-                plan.profile.as_deref().unwrap_or(""),
-                failed.reason
+                "network: {} rolled back: {}",
+                plan.action, failed.reason
             ));
             // naked: undo() waits only through ops.
-            undo(ops, &record, &snapshots, log).await;
+            undo(ops, &plan.old, plan.nat.as_ref(), Some(&checkpoint), log).await;
             NetChange {
                 outcome: ChangeOutcome::RolledBack,
                 action: plan.action.clone(),
-                profile: plan.profile.clone(),
-                uuid: plan.uuid.clone(),
+                profile: plan.up.first().map(|up| up.profile.id.to_string()),
+                uuid: None,
                 reason: Some(failed.reason),
                 checks: failed.checks,
                 note: None,
@@ -366,56 +323,63 @@ pub async fn run(ops: &dyn Ops, files: &Files, plan: Plan, log: &Log) -> Result<
     Ok(change)
 }
 
-/// Apply and verify. Every check that ran is in the answer either way.
+/// Switch and verify. Every check that ran is in the answer either way.
 async fn attempt(
     ops: &dyn Ops,
-    files: &Files,
     plan: &Plan,
-    record: &mut Record,
     route_before: Option<&Route>,
 ) -> Result<Vec<NetCheck>, Failed> {
-    let applied = ops.apply(&plan.step).await.map_err(Failed::new)?;
-    if let Some(uuid) = &applied.created {
-        record.created.push(uuid.clone());
-        // Best effort: the checkpoint deletes new profiles on a rollback too.
-        let _ = files.write(RECORD, record.clone()).await;
+    ops.write_profiles(&plan.new).await.map_err(Failed::new)?;
+    for profile in &plan.down {
+        ops.deactivate(*profile).await.map_err(Failed::new)?;
+    }
+    if let Some(nat) = &plan.nat {
+        ops.set_nat(nat.on, &nat.interface)
+            .await
+            .map_err(|err| Failed::new(format!("setting the hotspot's NAT: {err}")))?;
     }
 
     let mut checks = Vec::new();
-    if let Some(active) = &applied.active {
-        match ops.activated(active, ACTIVATE).await {
-            Ok(()) => checks.push(pass(
-                "activated",
-                applied.device.as_deref().unwrap_or("up").to_string(),
-            )),
+    for up in &plan.up {
+        let started = match ops.activate(up).await {
+            Ok(started) => started,
             Err(why) => {
-                checks.push(fail("activated", &why));
+                checks.push(fail(up.profile.id, &why));
                 return Err(Failed {
-                    reason: format!("the connection did not come up: {why}"),
+                    reason: format!("{} could not be brought up: {why}", up.profile.id),
+                    checks,
+                });
+            }
+        };
+        let device = started
+            .device
+            .clone()
+            .or_else(|| up.device.clone())
+            .unwrap_or_else(|| "its device".to_string());
+        if let Err(why) = ops.activated(&started.active, ACTIVATE).await {
+            checks.push(fail(up.profile.id, &why));
+            return Err(Failed {
+                reason: format!("{} did not come up: {why}", up.profile.id),
+                checks,
+            });
+        }
+        checks.push(pass(up.profile.id, format!("up on {device}")));
+
+        if let Some(interface) = started.device.as_deref().or(up.device.as_deref()) {
+            if settle(ops, SETTLE, || ops.has_address(interface)).await {
+                checks.push(pass("address", format!("{interface} has an address")));
+            } else {
+                checks.push(fail("address", format!("{interface} has no address")));
+                return Err(Failed {
+                    reason: format!("{interface} got no address"),
                     checks,
                 });
             }
         }
     }
 
-    let brings_up = !matches!(
-        plan.step,
-        Step::Deactivate { .. } | Step::Delete { .. } | Step::Radio { on: false }
-    );
-    if let (true, Some(device)) = (brings_up, &applied.device) {
-        if settle(ops, SETTLE, || ops.has_address(device)).await {
-            checks.push(pass("address", format!("{device} has an address")));
-        } else {
-            checks.push(fail("address", format!("{device} has no address")));
-            return Err(Failed {
-                reason: format!("{device} got no address"),
-                checks,
-            });
-        }
-    }
-
     let mut route = ops.route().await;
-    if let Some(before) = route_before {
+    if let (true, Some(before)) = (plan.keep_route, route_before) {
         if route.is_none() && settle(ops, SETTLE, || async { ops.route().await.is_some() }).await {
             route = ops.route().await;
         }
@@ -494,80 +458,60 @@ where
     false
 }
 
-/// Write what held to disk, then let the checkpoint go. A `Down` or `Up`
-/// changed no profile, and a forgotten one is gone already.
-async fn commit(
+/// Put the old configuration back, as far as it goes. The keyfiles first,
+/// so the checkpoint brings back up profiles that already say the old thing.
+/// Each part is tried whatever the others did: a half undone change is worse
+/// than a noisy journal.
+async fn undo(
     ops: &dyn Ops,
-    plan: &Plan,
-    record: &Record,
-    checkpoint: &str,
-) -> Result<(), String> {
-    let saves: Vec<&String> = match &plan.step {
-        Step::Update { uuid, .. } => vec![uuid],
-        Step::Add { .. } => record.created.iter().collect(),
-        _ => Vec::new(),
-    };
-    for uuid in saves {
-        ops.save(uuid)
-            .await
-            .map_err(|err| format!("saving {uuid}: {err}"))?;
+    old: &[Keyfile],
+    nat: Option<&Nat>,
+    checkpoint: Option<&str>,
+    log: &Log,
+) {
+    if let Err(err) = ops.write_profiles(old).await {
+        log.info(format!("network: restoring the profiles: {err}"));
     }
-    if let Err(err) = ops.destroy(checkpoint).await {
-        // The change is on disk; a checkpoint left behind would roll the
-        // runtime back at the backstop, so this one is worth a line.
-        return Err(format!("dropping the checkpoint: {err}"));
-    }
-    Ok(())
-}
-
-/// Put everything back, as far as it goes. Each part is tried whatever the
-/// others did: a half undone change is worse than a noisy journal.
-async fn undo(ops: &dyn Ops, record: &Record, snapshots: &[Snapshot], log: &Log) {
-    // The radio first: a checkpoint cannot bring a WiFi profile back up on
-    // a radio that is off.
-    if let Some(was) = record.radio_was {
-        if let Err(err) = ops.set_radio(was).await {
-            log.info(format!("network: restoring the WiFi radio: {err}"));
+    if let Some(nat) = nat {
+        if let Err(err) = ops.set_nat(nat.was, &nat.interface).await {
+            log.info(format!("network: restoring the hotspot's NAT: {err}"));
         }
     }
-    if let Some(checkpoint) = &record.checkpoint {
+    if let Some(checkpoint) = checkpoint {
         if let Err(err) = ops.rollback(checkpoint).await {
             log.debug(format!("network: checkpoint rollback: {err}"));
         }
     }
-    for snapshot in snapshots {
-        if let Err(err) = ops.restore(snapshot).await {
-            log.info(format!("network: restoring {}: {err}", snapshot.uuid));
-        }
-    }
-    for uuid in &record.created {
-        if let Err(err) = ops.delete(uuid).await {
-            log.debug(format!("network: removing {uuid}: {err}"));
-        }
-    }
 }
 
-/// A change the previous agent never finished: undo it now. After a reboot
-/// the in-memory half is gone already and only what reached disk is put
-/// back - a forgotten profile, the radio.
-pub async fn recover(ops: &dyn Ops, files: &Files, log: &Log) -> Result<bool, String> {
+/// A change the previous agent never finished: undo it now, onto `current`
+/// - the keyfiles `state.json` renders, which never saw the change.
+pub async fn recover(
+    ops: &dyn Ops,
+    files: &Files,
+    current: &[Keyfile],
+    nat: &Nat,
+    log: &Log,
+) -> Result<bool, String> {
     let Some(record) = files.unfinished().await? else {
         return Ok(false);
     };
-    let snapshots: Vec<Snapshot> = files.read(SNAPSHOT).await?.unwrap_or_default();
     log.info(format!(
-        "network: rolled back an unfinished network change ({} {})",
-        record.action,
-        record.profile.as_deref().unwrap_or("")
+        "network: rolled back an unfinished network change ({})",
+        record.action
     ));
+    let nat = Nat {
+        was: nat.on,
+        ..nat.clone()
+    };
     // naked: undo() waits only through ops.
-    undo(ops, &record, &snapshots, log).await;
+    undo(ops, current, Some(&nat), record.checkpoint.as_deref(), log).await;
     files.clear().await?;
     let change = NetChange {
         outcome: ChangeOutcome::RolledBack,
         action: record.action.clone(),
-        profile: record.profile.clone(),
-        uuid: record.touched.first().cloned(),
+        profile: None,
+        uuid: None,
         reason: Some("the agent stopped before it finished".to_string()),
         checks: Vec::new(),
         note: None,
@@ -579,7 +523,8 @@ pub async fn recover(ops: &dyn Ops, files: &Files, log: &Log) -> Result<bool, St
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
+    use crate::nm::profiles::{ETHERNET_DHCP, ETHERNET_STATIC};
+    use std::sync::{Arc, Mutex};
 
     /// Records every call; fails the one named in `fail_at`.
     #[derive(Default)]
@@ -588,9 +533,8 @@ mod tests {
         fail_at: Option<&'static str>,
         /// `activated` answers this error.
         not_activated: Option<String>,
-        /// No default route after the change.
+        /// No default route once profiles have been switched.
         loses_route: bool,
-        radio: Mutex<bool>,
     }
 
     impl Fake {
@@ -614,8 +558,8 @@ mod tests {
             self.calls.lock().unwrap().clone()
         }
 
-        fn applied(&self) -> bool {
-            self.calls().iter().any(|call| call == "apply")
+        fn switched(&self) -> bool {
+            self.calls().iter().any(|call| call.starts_with("up "))
         }
     }
 
@@ -630,39 +574,21 @@ mod tests {
         async fn destroy(&self, _: &str) -> Result<(), String> {
             self.call("destroy")
         }
-        async fn snapshot(&self, uuid: &str) -> Result<Option<Snapshot>, String> {
-            self.call("snapshot")?;
-            Ok(Some(Snapshot {
-                uuid: uuid.to_string(),
-                saved: true,
-                settings: vec![1, 2, 3],
-            }))
+        async fn write_profiles(&self, files: &[Keyfile]) -> Result<(), String> {
+            let tag = files.first().map(|f| f.body.as_str()).unwrap_or("none");
+            self.call(&format!("write {tag}"))?;
+            self.call("write")
         }
-        async fn restore(&self, snapshot: &Snapshot) -> Result<(), String> {
-            self.call(&format!("restore {}", snapshot.uuid))
-        }
-        async fn apply(&self, step: &Step) -> Result<Applied, String> {
-            self.call("apply")?;
-            Ok(match step {
-                Step::Add { device, .. } => Applied {
-                    active: Some("/ac/1".into()),
-                    device: Some(device.clone()),
-                    created: Some("new-uuid".into()),
-                },
-                Step::Update {
-                    device: Some(device),
-                    ..
-                }
-                | Step::Activate {
-                    device: Some(device),
-                    ..
-                } => Applied {
-                    active: Some("/ac/1".into()),
-                    device: Some(device.clone()),
-                    created: None,
-                },
-                _ => Applied::default(),
+        async fn activate(&self, up: &Up) -> Result<Activated, String> {
+            self.call(&format!("up {}", up.profile.id))?;
+            self.call("activate")?;
+            Ok(Activated {
+                active: "/ac/1".into(),
+                device: up.device.clone(),
             })
+        }
+        async fn deactivate(&self, profile: Profile) -> Result<(), String> {
+            self.call(&format!("down {}", profile.id))
         }
         async fn activated(&self, _: &str, _: Duration) -> Result<(), String> {
             self.call("activated")?;
@@ -671,22 +597,11 @@ mod tests {
                 None => Ok(()),
             }
         }
-        async fn save(&self, uuid: &str) -> Result<(), String> {
-            self.call(&format!("save {uuid}"))?;
-            self.call("save")
-        }
-        async fn delete(&self, uuid: &str) -> Result<(), String> {
-            self.call(&format!("delete {uuid}"))
-        }
-        async fn radio(&self) -> Result<bool, String> {
-            Ok(*self.radio.lock().unwrap())
-        }
-        async fn set_radio(&self, on: bool) -> Result<(), String> {
-            *self.radio.lock().unwrap() = on;
-            self.call(&format!("radio {on}"))
+        async fn set_nat(&self, on: bool, _: &str) -> Result<(), String> {
+            self.call(&format!("nat {on}"))
         }
         async fn route(&self) -> Option<Route> {
-            if self.loses_route && self.applied() {
+            if self.loses_route && self.switched() {
                 return None;
             }
             Some(Route {
@@ -699,25 +614,33 @@ mod tests {
         }
         async fn reach(&self, _: &Verify, _: Option<&Route>) -> Result<String, String> {
             self.call("reach")
-                .map(|()| "10.0.2.2 answered".to_string())
-                .map_err(|_| "10.0.2.2 did not answer".to_string())
+                .map(|()| "gateway answered".to_string())
+                .map_err(|_| "gateway did not answer".to_string())
         }
         async fn pause(&self, _: Duration) {}
     }
 
-    fn update() -> Plan {
+    fn keyfile(tag: &str) -> Keyfile {
+        Keyfile {
+            name: "tessaro-ethernet-static.nmconnection".into(),
+            body: tag.into(),
+        }
+    }
+
+    fn to_static() -> Plan {
         Plan {
-            action: "set".into(),
-            profile: Some("Wired connection 1".into()),
-            uuid: Some("wired".into()),
+            action: "set ethernet.mode".into(),
             devices: vec!["eth0".into()],
-            touched: vec!["wired".into()],
-            step: Step::Update {
-                uuid: "wired".into(),
-                settings: Dict::new(),
+            new: vec![keyfile("new")],
+            old: vec![keyfile("old")],
+            down: Vec::new(),
+            up: vec![Up {
+                profile: ETHERNET_STATIC,
                 device: Some("eth0".into()),
-            },
+            }],
+            nat: None,
             verify: Verify::Gateway,
+            keep_route: true,
             note: None,
         }
     }
@@ -728,83 +651,112 @@ mod tests {
         (dir, files)
     }
 
-    async fn run_with(fake: &Fake, plan: Plan) -> (NetChange, Files, tempfile::TempDir) {
+    /// A commit that notes it ran, and fails if told to.
+    fn commit(ran: &Arc<Mutex<bool>>, ok: bool) -> Commit {
+        let ran = Arc::clone(ran);
+        Box::pin(async move {
+            *ran.lock().unwrap() = true;
+            if ok {
+                Ok(())
+            } else {
+                Err("disk full".to_string())
+            }
+        })
+    }
+
+    async fn run_with(
+        fake: &Fake,
+        plan: Plan,
+        commit_ok: bool,
+    ) -> (NetChange, bool, Files, tempfile::TempDir) {
         let (dir, files) = files();
-        let log = Log::buffered(false);
-        let change = run(fake, &files, plan, &log).await.unwrap();
-        (change, files, dir)
+        let ran = Arc::new(Mutex::new(false));
+        let change = run(
+            fake,
+            &files,
+            plan,
+            &Log::buffered(false),
+            commit(&ran, commit_ok),
+        )
+        .await
+        .unwrap();
+        let committed = *ran.lock().unwrap();
+        (change, committed, files, dir)
     }
 
     #[tokio::test]
-    async fn a_change_that_holds_is_saved_only_after_it_is_verified() {
+    async fn a_change_that_holds_is_committed_only_after_it_is_verified() {
         let fake = Fake::default();
-        let (change, files, _dir) = run_with(&fake, update()).await;
+        let (change, committed, files, _dir) = run_with(&fake, to_static(), true).await;
 
         assert_eq!(change.outcome, ChangeOutcome::Committed);
+        assert!(committed);
         let calls = fake.calls();
         let at = |name: &str| calls.iter().position(|call| call == name).unwrap();
-        assert!(at("snapshot") < at("checkpoint"));
-        assert!(at("checkpoint") < at("apply"));
-        assert!(at("activated") < at("save wired"));
-        assert!(at("reach") < at("save wired"));
-        assert!(at("save wired") < at("destroy"));
+        assert!(at("checkpoint") < at("write new"));
+        assert!(at("write new") < at("up tessaro-ethernet-static"));
+        assert!(at("activated") < at("reach"));
+        assert!(at("reach") < at("destroy"));
         assert!(!calls.contains(&"rollback".to_string()));
+        assert!(!calls.contains(&"write old".to_string()));
         assert_eq!(files.unfinished().await.unwrap(), None);
         assert_eq!(files.last().await.unwrap(), Some(change));
     }
 
     #[tokio::test]
-    async fn every_failure_after_the_checkpoint_rolls_back_and_saves_nothing() {
-        for at in ["apply", "activated", "reach", "save"] {
+    async fn every_failure_rolls_back_and_commits_nothing() {
+        for at in ["write", "activate", "activated", "reach"] {
             let fake = Fake::failing(at);
-            let (change, files, _dir) = run_with(&fake, update()).await;
+            let (change, committed, files, _dir) = run_with(&fake, to_static(), true).await;
 
             assert_eq!(change.outcome, ChangeOutcome::RolledBack, "failing {at}");
+            assert!(!committed, "failing {at}: the settings were saved");
             let calls = fake.calls();
+            assert!(calls.contains(&"write old".to_string()), "failing {at}");
             assert!(calls.contains(&"rollback".to_string()), "failing {at}");
-            assert!(calls.contains(&"restore wired".to_string()), "failing {at}");
             assert!(!calls.contains(&"destroy".to_string()), "failing {at}");
-            if at != "save" {
-                assert!(!calls.iter().any(|c| c.starts_with("save")), "failing {at}");
-            }
             assert_eq!(files.unfinished().await.unwrap(), None);
-            assert_eq!(
-                files.last().await.unwrap().unwrap().outcome,
-                ChangeOutcome::RolledBack
-            );
         }
+    }
+
+    #[tokio::test]
+    async fn a_commit_that_fails_rolls_the_network_back_too() {
+        let fake = Fake::default();
+        let (change, _, _files, _dir) = run_with(&fake, to_static(), false).await;
+        assert_eq!(change.outcome, ChangeOutcome::RolledBack);
+        assert!(change.reason.unwrap().contains("disk full"));
+        assert!(fake.calls().contains(&"rollback".to_string()));
     }
 
     #[tokio::test]
     async fn a_refused_checkpoint_changes_nothing() {
         let fake = Fake::failing("checkpoint");
-        let (dir, files) = files();
-        let outcome = run(&fake, &files, update(), &Log::buffered(false)).await;
+        let (_dir, files) = files();
+        let ran = Arc::new(Mutex::new(false));
+        let outcome = run(
+            &fake,
+            &files,
+            to_static(),
+            &Log::buffered(false),
+            commit(&ran, true),
+        )
+        .await;
         assert!(outcome.is_err());
-        assert!(!fake.applied());
+        assert!(!fake.switched());
+        assert!(!*ran.lock().unwrap());
         assert_eq!(files.unfinished().await.unwrap(), None);
-        drop(dir);
     }
 
     #[tokio::test]
-    async fn a_wrong_password_says_so_and_removes_the_new_profile() {
+    async fn a_wrong_password_says_so() {
         let fake = Fake {
             not_activated: Some("no secrets (wrong password?)".into()),
             ..Fake::default()
         };
-        let plan = Plan {
-            action: "join".into(),
-            touched: Vec::new(),
-            step: Step::Add {
-                settings: Dict::new(),
-                device: "wlan0".into(),
-            },
-            ..update()
-        };
-        let (change, _files, _dir) = run_with(&fake, plan).await;
+        let (change, committed, _files, _dir) = run_with(&fake, to_static(), true).await;
         assert_eq!(change.outcome, ChangeOutcome::RolledBack);
+        assert!(!committed);
         assert!(change.reason.unwrap().contains("wrong password"));
-        assert!(fake.calls().contains(&"delete new-uuid".to_string()));
     }
 
     #[tokio::test]
@@ -813,60 +765,73 @@ mod tests {
             loses_route: true,
             ..Fake::default()
         };
-        let plan = Plan {
-            action: "down".into(),
-            step: Step::Deactivate {
-                uuid: "wired".into(),
-            },
-            ..update()
-        };
-        let (change, _files, _dir) = run_with(&fake, plan).await;
+        let (change, committed, _files, _dir) = run_with(&fake, to_static(), true).await;
         assert_eq!(change.outcome, ChangeOutcome::RolledBack);
+        assert!(!committed);
         assert!(change.checks.iter().any(|c| c.name == "route" && !c.passed));
     }
 
     #[tokio::test]
-    async fn the_radio_comes_back_on_a_rollback() {
+    async fn giving_up_the_wifi_uplink_on_purpose_is_not_a_lost_route() {
         let fake = Fake {
             loses_route: true,
-            radio: Mutex::new(true),
             ..Fake::default()
         };
         let plan = Plan {
-            action: "wifi off".into(),
-            touched: Vec::new(),
-            step: Step::Radio { on: false },
-            ..update()
+            keep_route: false,
+            ..to_static()
         };
-        let (change, _files, _dir) = run_with(&fake, plan).await;
-        assert_eq!(change.outcome, ChangeOutcome::RolledBack);
-        assert!(fake.calls().contains(&"radio true".to_string()));
+        let (change, committed, _files, _dir) = run_with(&fake, plan, true).await;
+        assert_eq!(change.outcome, ChangeOutcome::Committed);
+        assert!(committed);
     }
 
     #[tokio::test]
-    async fn an_unfinished_change_is_rolled_back_at_startup() {
+    async fn nat_is_set_and_put_back() {
+        let fake = Fake::failing("reach");
+        let plan = Plan {
+            nat: Some(Nat {
+                on: false,
+                was: true,
+                interface: "wlan0".into(),
+            }),
+            ..to_static()
+        };
+        let (change, _, _files, _dir) = run_with(&fake, plan, true).await;
+        assert_eq!(change.outcome, ChangeOutcome::RolledBack);
+        let calls = fake.calls();
+        assert!(calls.contains(&"nat false".to_string()));
+        assert!(calls.contains(&"nat true".to_string()));
+    }
+
+    #[tokio::test]
+    async fn an_unfinished_change_is_rolled_back_onto_the_saved_settings() {
         let (_dir, files) = files();
-        let record = Record {
-            action: "set".into(),
-            profile: Some("Office".into()),
-            checkpoint: Some("/cp/1".into()),
-            touched: vec!["office".into()],
-            created: vec!["new".into()],
-            radio_was: Some(true),
-        };
-        let snapshot = Snapshot {
-            uuid: "office".into(),
-            saved: true,
-            settings: vec![9],
-        };
-        files.write(SNAPSHOT, vec![snapshot]).await.unwrap();
-        files.write(RECORD, record).await.unwrap();
+        files
+            .write(
+                RECORD,
+                Record {
+                    action: "set ethernet.mode".into(),
+                    checkpoint: Some("/cp/1".into()),
+                },
+            )
+            .await
+            .unwrap();
 
         let fake = Fake::default();
         let log = Log::buffered(false);
-        assert!(recover(&fake, &files, &log).await.unwrap());
+        let nat = Nat {
+            on: true,
+            was: true,
+            interface: "wlan0".into(),
+        };
+        let current = vec![Keyfile {
+            name: ETHERNET_DHCP.file_name(),
+            body: "saved".into(),
+        }];
+        assert!(recover(&fake, &files, &current, &nat, &log).await.unwrap());
         let calls = fake.calls();
-        for expected in ["radio true", "rollback", "restore office", "delete new"] {
+        for expected in ["write saved", "nat true", "rollback"] {
             assert!(
                 calls.contains(&expected.to_string()),
                 "{expected}: {calls:?}"
@@ -881,19 +846,6 @@ mod tests {
             files.last().await.unwrap().unwrap().outcome,
             ChangeOutcome::RolledBack
         );
-
-        // Nothing left to do the second time, as after a reboot with no
-        // snapshot: the record alone still undoes what it names.
-        assert!(!recover(&fake, &files, &log).await.unwrap());
-    }
-
-    #[tokio::test]
-    async fn the_snapshot_file_is_private() {
-        use std::os::unix::fs::PermissionsExt;
-        let (_dir, files) = files();
-        files.write(SNAPSHOT, Vec::<Snapshot>::new()).await.unwrap();
-        let mode = |path: PathBuf| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
-        assert_eq!(mode(files.path(SNAPSHOT)), 0o600);
-        assert_eq!(mode(files.dir.clone()), 0o700);
+        assert!(!recover(&fake, &files, &current, &nat, &log).await.unwrap());
     }
 }
