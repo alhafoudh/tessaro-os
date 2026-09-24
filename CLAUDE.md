@@ -180,12 +180,16 @@ Builds are long. Run them in a Herdr pane, not the Bash tool.
   else is building: `pgrep -af 'kas-container|bitbake'` must come back empty,
   worktrees included. If something is running, say what and wait, or ask -
   never start a second one next to it.
+* **A worktree is always a Claude-managed one**, made with the `EnterWorktree`
+  tool (or `claude --worktree`), which puts it under `.claude/worktrees/<name>`
+  (gitignored). Never `git worktree add` by hand or anywhere else: the cache
+  link below, the cleanup and the build rules all assume that location.
 * **A new worktree gets the cache symlinked the moment it is created**, even
   for cargo-only work, so nothing ever re-downloads the ~40G cache:
 
   ```sh
-  ln -s <main checkout>/cache <worktree>/cache   # .claude/worktrees/<name>: ln -s ../../../cache cache
-  mkdir -p <worktree>/build                      # kas-container's mkdir is not recursive
+  ln -s ../../../cache .claude/worktrees/<name>/cache
+  mkdir -p .claude/worktrees/<name>/build   # kas-container's mkdir is not recursive
   ```
 
   `mise.toml` derives `DL_DIR`/`SSTATE_DIR` from `{{config_root}}`, so without
