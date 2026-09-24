@@ -62,6 +62,8 @@ pub struct Paths {
     /// root, for checking that an update was built for this disk.
     pub sys_block: PathBuf,
     pub by_partuuid: PathBuf,
+    /// `/proc/meminfo`: whether a disk update's upload fits in RAM.
+    pub meminfo: PathBuf,
     /// The image's os-release, for `status`.
     pub os_release: PathBuf,
     /// The kernel's file name on the boot partition: `bzImage` on x86,
@@ -116,6 +118,7 @@ impl Paths {
                 .collect(),
             sys_block: path("KIOSK_SYS_BLOCK", "/sys/class/block"),
             by_partuuid: path("KIOSK_BY_PARTUUID", "/dev/disk/by-partuuid"),
+            meminfo: path("KIOSK_MEMINFO", "/proc/meminfo"),
             os_release: path("KIOSK_OS_RELEASE", "/usr/lib/os-release"),
             kernel_file: text("KIOSK_KERNEL_FILE", "bzImage"),
             machine: text("KIOSK_MACHINE", "unknown"),

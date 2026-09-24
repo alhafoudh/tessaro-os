@@ -9,8 +9,13 @@
 //!
 //! ```text
 //! tessaro-flash apply --dir DIR --root DEV --esp DIR [--data-device DEV --data-mount DIR]
+//!                     [--disk DEV --ram DIR [--meminfo FILE]]
 //! tessaro-flash finish-wipe --esp DIR --data-device DEV --data-mount DIR
 //! ```
+//!
+//! `--disk` and `--ram` are what a disk update (`--repartition`) needs: the
+//! whole disk to write, and where to mount the tmpfs the upload is copied
+//! into first. Without them one is refused, and a root update ignores them.
 //!
 //! `apply` exits 0 (written, reboot), 1 (retry: reboot), 2 (refused, nothing
 //! written: boot on), 3 (nothing pending: boot on) or 4 (gave up).
@@ -26,7 +31,7 @@ use std::io::{self, Stdout, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use update::flash::{self, Exit, Targets};
+use update::flash::{self, Disk, Exit, Targets};
 use update::wipe::{self, System};
 
 fn main() -> ExitCode {
@@ -50,11 +55,17 @@ fn main() -> ExitCode {
                 return usage();
             };
             let data = path("data-device").zip(path("data-mount"));
+            let disk = path("disk").zip(path("ram")).map(|(device, ram)| Disk {
+                device,
+                ram,
+                meminfo: path("meminfo").unwrap_or_else(|| "/proc/meminfo".into()),
+            });
             let targets = Targets {
                 dir,
                 root,
                 esp,
                 data,
+                disk,
             };
             let exit = flash::apply_pending(&targets, &mut console, &mut System);
             ExitCode::from(exit as u8)
@@ -139,6 +150,7 @@ fn options(args: &[String]) -> Option<HashMap<String, String>> {
 fn usage() -> ExitCode {
     eprintln!(
         "usage: tessaro-flash apply --dir DIR --root DEV --esp DIR [--data-device DEV --data-mount DIR]\n       \
+         \x20                   [--disk DEV --ram DIR [--meminfo FILE]]\n       \
          tessaro-flash finish-wipe --esp DIR --data-device DEV --data-mount DIR"
     );
     ExitCode::from(64)

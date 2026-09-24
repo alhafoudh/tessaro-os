@@ -3,20 +3,24 @@
 //! `update-begin` describes a `.wic.bz2` and its bmap, `update-chunk`s
 //! append it to `/data/tessaro/update/upload.part`, and once the last one is
 //! in, a background thread checks the whole file against its SHA-256 and
-//! stages it (`update::prepare`). `update-commit` writes the marker the
-//! initramfs acts on at the next boot. Everything the agent knows about an
-//! update is on disk, so a restart - of the agent, or of the device before
-//! the commit - resumes where it was: an upload from its last byte, a
-//! preparation from the start.
+//! decompresses it once as a dry run (`update::prepare`). The upload stays
+//! as it is: the initramfs decompresses it again to write it.
+//! `update-commit` writes the marker the initramfs acts on at the next boot.
+//! Everything the agent knows about an update is on disk, so a restart - of
+//! the agent, or of the device before the commit - resumes where it was: an
+//! upload from its last byte, a preparation from the start.
 //!
 //! The partition table is checked as soon as the first chunk is in, so an
 //! image for the wrong machine or the old disk layout fails in seconds
-//! rather than after the whole upload.
+//! rather than after the whole upload. With `repartition` the layout may
+//! differ - the whole disk is rewritten - but the image has to fit on it,
+//! and the upload has to fit in RAM, since the initramfs copies it there
+//! before it overwrites the `/data` it is on.
 //!
-//! Preparing reads and writes several hundred megabytes, so it runs on a
-//! thread of its own at idle CPU and I/O priority, not on the blocking pool:
-//! the pool's threads are shared with every deadline-bound disk call, and
-//! this one has no deadline - it is watched through `update-status` instead.
+//! Preparing reads several hundred megabytes, so it runs on a thread of its
+//! own at idle CPU and I/O priority, not on the blocking pool: the pool's
+//! threads are shared with every deadline-bound disk call, and this one has
+//! no deadline - it is watched through `update-status` instead.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
@@ -26,16 +30,27 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use protocol::{Done, UpdateBegun, UpdatePhase, UpdateReceived, UpdateResult, UpdateStatus};
-use update::manifest::{Manifest, Outcome, Pending, Source, Upload};
+use update::image::Image;
+use update::manifest::{Manifest, Mode, Outcome, Pending, Source, Upload};
 use update::{bmap, flash, fsutil, layout, megabytes, prepare, ptable};
 
 use crate::control::blocking;
 use crate::log::Log;
 use crate::paths::Paths;
 
-/// Beyond the upload and the staged blocks: the manifest, the kernel, and
-/// room for the kiosk to keep writing its profile meanwhile.
+/// Beyond the upload: the manifest, and room for the kiosk to keep writing
+/// its profile meanwhile.
 const MARGIN: u64 = 128 << 20;
+
+/// A root update also stages the image's boot partition, sparse, to copy
+/// the kernel out of: at most its mapped bytes, and the kernel once more.
+/// The largest boot partition is the Pi's 512M.
+const BOOT_ROOM: u64 = 512 << 20;
+
+/// RAM the running system needs beyond what the initramfs of a disk update
+/// takes: the kernel, the initramfs itself, and whatever the firmware keeps.
+/// MemTotal is what the initramfs will see, less about this.
+const RAM_RESERVED: u64 = 128 << 20;
 
 /// How much must have arrived before the partition table can be read from
 /// the compressed upload. pbzip2 streams are 900 kB each, and the first MiB
@@ -65,6 +80,8 @@ struct Job {
     wipe_data: bool,
     /// The staged image, once prepared: its name and SHA-256.
     staged: Option<(String, String)>,
+    /// What the upload under way, or the staged one, writes.
+    mode: Mode,
     head_checked: bool,
     cancel: Arc<AtomicBool>,
 }
@@ -81,6 +98,7 @@ impl Default for Job {
             error: None,
             wipe_data: false,
             staged: None,
+            mode: Mode::Root,
             head_checked: false,
             cancel: Arc::new(AtomicBool::new(false)),
         }
@@ -145,14 +163,18 @@ impl Updates {
         if size == 0 {
             return Err("the file is empty".to_string());
         }
-        let bmap = bmap::parse(&upload.bmap)?;
+        bmap::parse(&upload.bmap)?;
 
         {
             let mut job = lock(&self.job);
             let same_upload = job.upload.as_ref().is_some_and(|known| {
-                known.sha256 == sha256 && known.size == size && known.bmap == upload.bmap
+                known.sha256 == sha256
+                    && known.size == size
+                    && known.bmap == upload.bmap
+                    && known.repartition == upload.repartition
             });
-            let same_staged = job.staged.as_ref().is_some_and(|(_, sha)| *sha == sha256);
+            let same_staged = job.staged.as_ref().is_some_and(|(_, sha)| *sha == sha256)
+                && job.mode == upload.mode();
             match job.phase {
                 UpdatePhase::Pending => {
                     return Err(format!(
@@ -206,9 +228,17 @@ impl Updates {
         }
 
         let dir = self.paths.update_dir();
-        let needed = size + bmap.mapped_within(0, bmap.image_size) + MARGIN;
+        let needed = match upload.mode() {
+            Mode::Root => size + BOOT_ROOM + MARGIN,
+            Mode::Disk => size + MARGIN,
+        };
+        let meminfo = self.paths.meminfo.clone();
         let meta = upload.clone();
+        let mode = upload.mode();
         blocking("starting the upload", move || {
+            if mode == Mode::Disk {
+                fits_in_ram(&meminfo, size)?;
+            }
             fs::create_dir_all(&dir).map_err(|err| format!("{}: {err}", dir.display()))?;
             flash::clean(&dir, &mut io::sink());
             let free =
@@ -231,11 +261,17 @@ impl Updates {
         *lock(&self.job) = Job {
             phase: UpdatePhase::Receiving,
             upload: Some(upload),
+            mode,
             ..Job::default()
         };
         self.log.info(format!(
-            "update: receiving {name} ({}) from {caller}",
-            megabytes(size)
+            "update: receiving {name} ({}) from {caller}{}",
+            megabytes(size),
+            if mode == Mode::Disk {
+                ", to rewrite the whole disk"
+            } else {
+                ""
+            }
         ));
         Ok(UpdateBegun {
             offset: 0,
@@ -323,8 +359,9 @@ impl Updates {
         if !head_checked && now >= HEAD_CHECK.min(upload.size) {
             let dir = self.paths.update_dir();
             let probe = self.probe();
+            let meta = upload.clone();
             let check = blocking("reading the image's partition table", move || {
-                Ok(check_head(&dir.join(update::UPLOAD), &probe))
+                Ok(check_head(&dir.join(update::UPLOAD), &probe, &meta))
             })
             .await?;
             match check {
@@ -371,6 +408,7 @@ impl Updates {
             to_prepare: job.to_prepare,
             error: job.error.clone(),
             wipe_data: job.wipe_data,
+            repartition: job.mode == Mode::Disk && job.phase != UpdatePhase::Idle,
             last: last.map(|outcome| UpdateResult {
                 applied: outcome.applied,
                 message: outcome.message,
@@ -388,10 +426,12 @@ impl Updates {
 
     pub async fn commit(self: &Arc<Self>, caller: &str, wipe_data: bool) -> Result<Done, String> {
         self.load().await;
-        let name = {
+        let (name, mode) = {
             let job = lock(&self.job);
             match (job.phase, &job.staged) {
-                (UpdatePhase::Ready | UpdatePhase::Pending, Some((name, _))) => name.clone(),
+                (UpdatePhase::Ready | UpdatePhase::Pending, Some((name, _))) => {
+                    (name.clone(), job.mode)
+                }
                 (UpdatePhase::Verifying, _) => {
                     return Err("the upload is still being verified".to_string())
                 }
@@ -410,6 +450,9 @@ impl Updates {
                 _ => return Err("no update is staged".to_string()),
             }
         };
+        // A disk update writes the image's own, empty /data whatever is
+        // asked; saying so keeps the marker and the status honest.
+        let wipe_data = wipe_data || mode == Mode::Disk;
 
         let path = self.paths.update_dir().join(update::PENDING);
         blocking("marking the update", move || {
@@ -428,19 +471,16 @@ impl Updates {
             job.phase = UpdatePhase::Pending;
             job.wipe_data = wipe_data;
         }
+        let what = match (mode, wipe_data) {
+            (Mode::Disk, _) => ", rewriting the whole disk: /data is wiped",
+            (Mode::Root, true) => ", and /data is wiped",
+            (Mode::Root, false) => "",
+        };
         self.log.info(format!(
-            "update: {name} committed by {caller}{}; it is applied at the next boot",
-            if wipe_data { ", /data to be wiped" } else { "" }
+            "update: {name} committed by {caller}; it is applied at the next boot{what}"
         ));
         Ok(Done {
-            message: format!(
-                "{name} is applied at the next boot{}",
-                if wipe_data {
-                    ", and /data is wiped"
-                } else {
-                    ""
-                }
-            ),
+            message: format!("{name} is applied at the next boot{what}"),
         })
     }
 
@@ -601,8 +641,9 @@ impl Updates {
         let bmap = bmap::parse(&upload.bmap)?;
         let device = layout::probe(&self.probe())
             .map_err(|err| format!("cannot tell which disk this device booted from: {err}"))?;
-        let image =
-            prepare::open_image(&path).map_err(|err| format!("reading the upload: {err}"))?;
+        let image = Image::open(&path).map_err(|err| format!("reading the upload: {err}"))?;
+        let mode = upload.mode();
+        let image_size = bmap.image_size;
 
         let mut observer = Progress {
             job: Arc::clone(&self.job),
@@ -616,35 +657,42 @@ impl Updates {
         let manifest = prepare::prepare(
             image,
             &bmap,
+            mode,
             Source {
                 name: upload.name.clone(),
                 sha256: upload.sha256.clone(),
             },
             &dir,
-            |partitions| layout::check(&device, partitions),
+            |partitions| check_partitions(&device, partitions, mode, image_size),
             |boot, dest| extract(boot, dest, &kernel).map(|()| kernel.clone()),
             &mut observer,
         )?;
 
-        // The staging is complete; the upload has done its job.
-        for name in [update::UPLOAD, update::UPLOAD_META] {
-            fsutil::remove_if_exists(&dir.join(name)).map_err(|err| format!("{name}: {err}"))?;
-        }
-        fsutil::sync_dir(&dir).map_err(|err| err.to_string())?;
+        // The manifest describes the upload now; it stays, to be written.
+        fsutil::remove_if_exists(&dir.join(update::UPLOAD_META))
+            .and_then(|()| fsutil::sync_dir(&dir))
+            .map_err(|err| format!("{}: {err}", update::UPLOAD_META))?;
         Ok(manifest)
     }
 
     fn finish(&self, upload: &Upload, outcome: Result<Manifest, String>, cancel: &AtomicBool) {
         match outcome {
             Ok(manifest) => {
-                self.log.info(format!(
-                    "update: {} is staged: {} of the root filesystem to write, kernel {}",
-                    upload.name,
-                    megabytes(manifest.root.mapped()),
-                    manifest.boot.kernel.name
-                ));
+                let to_write = megabytes(manifest.target.mapped());
+                self.log.info(match &manifest.kernel {
+                    Some(kernel) => format!(
+                        "update: {} is checked: {to_write} of the root filesystem to write, \
+                         kernel {}",
+                        upload.name, kernel.name
+                    ),
+                    None => format!(
+                        "update: {} is checked: {to_write} of the whole disk to write",
+                        upload.name
+                    ),
+                });
                 let mut job = lock(&self.job);
                 job.phase = UpdatePhase::Ready;
+                job.mode = manifest.mode;
                 job.staged = Some((upload.name.clone(), upload.sha256.clone()));
                 job.upload = None;
                 job.prepared = job.to_prepare;
@@ -739,8 +787,9 @@ fn scan(dir: &Path) -> Job {
     let mut job = Job::default();
     if let Ok(manifest) = fsutil::read_json::<Manifest>(&dir.join(update::MANIFEST)) {
         job.phase = UpdatePhase::Ready;
-        job.prepared = manifest.root.mapped();
+        job.prepared = manifest.target.mapped();
         job.to_prepare = job.prepared;
+        job.mode = manifest.mode;
         job.staged = Some((manifest.source.name, manifest.source.sha256));
         if let Ok(pending) = fsutil::read_json::<Pending>(&dir.join(update::PENDING)) {
             job.phase = UpdatePhase::Pending;
@@ -760,16 +809,60 @@ fn scan(dir: &Path) -> Job {
         } else {
             UpdatePhase::Receiving
         };
+        job.mode = upload.mode();
         job.upload = Some(upload);
     }
     job
 }
 
+/// A root update needs this disk's own layout; a disk update brings its
+/// own and only has to fit.
+fn check_partitions(
+    device: &layout::Layout,
+    partitions: &[ptable::Partition],
+    mode: Mode,
+    image_size: u64,
+) -> Result<(), String> {
+    match mode {
+        Mode::Root => layout::check(device, partitions),
+        Mode::Disk => layout::check_disk(device, partitions, image_size),
+    }
+}
+
+/// Whether the initramfs can hold a disk update's upload in RAM. MemTotal,
+/// not MemAvailable: the initramfs runs before anything else is started.
+fn fits_in_ram(meminfo: &Path, size: u64) -> Result<(), String> {
+    let text =
+        fs::read_to_string(meminfo).map_err(|err| format!("{}: {err}", meminfo.display()))?;
+    let total = text
+        .lines()
+        .find_map(|line| line.strip_prefix("MemTotal:"))
+        .and_then(|rest| {
+            rest.trim()
+                .trim_end_matches("kB")
+                .trim()
+                .parse::<u64>()
+                .ok()
+        })
+        .map(|kib| kib * 1024)
+        .ok_or_else(|| format!("{} has no MemTotal", meminfo.display()))?;
+    let needed = size + flash::RAM_MARGIN + RAM_RESERVED;
+    if total < needed {
+        return Err(format!(
+            "this device has {} of RAM; rewriting its disk from a {} upload needs {}, \
+             since the upload is held in RAM while /data is overwritten",
+            megabytes(total),
+            megabytes(size),
+            megabytes(needed)
+        ));
+    }
+    Ok(())
+}
+
 /// The partition table from the start of a partial upload, against this
 /// disk. An upload too short to decompress that far is not an error yet.
-fn check_head(upload: &Path, probe: &layout::Probe) -> Result<(), String> {
-    let mut image =
-        prepare::open_image(upload).map_err(|err| format!("reading the upload: {err}"))?;
+fn check_head(upload: &Path, probe: &layout::Probe, meta: &Upload) -> Result<(), String> {
+    let mut image = Image::open(upload).map_err(|err| format!("reading the upload: {err}"))?;
     let mut head = vec![0u8; 1 << 20];
     let mut filled = 0;
     while filled < head.len() {
@@ -787,7 +880,8 @@ fn check_head(upload: &Path, probe: &layout::Probe) -> Result<(), String> {
     let partitions = ptable::parse(&head[..filled])?;
     let device = layout::probe(probe)
         .map_err(|err| format!("cannot tell which disk this device booted from: {err}"))?;
-    layout::check(&device, &partitions)
+    let image_size = bmap::parse(&meta.bmap)?.image_size;
+    check_partitions(&device, &partitions, meta.mode(), image_size)
 }
 
 fn check_name(name: &str) -> Result<(), String> {
@@ -881,12 +975,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let probe = testing::device(dir.path());
         let at = |name: &str| dir.path().join(name).display().to_string();
+        fs::write(dir.path().join("meminfo"), "MemTotal:  4000000 kB\n").unwrap();
         let env: HashMap<String, String> = [
             ("KIOSK_STATE_DIR", at("data")),
             ("KIOSK_AUTHORIZED_KEYS", at("root/.ssh/authorized_keys")),
             ("KIOSK_CMDLINE", probe.cmdline.display().to_string()),
             ("KIOSK_SYS_BLOCK", probe.sys_block.display().to_string()),
             ("KIOSK_BY_PARTUUID", probe.by_partuuid.display().to_string()),
+            ("KIOSK_MEMINFO", at("meminfo")),
         ]
         .into_iter()
         .map(|(k, v)| (k.to_string(), v))
@@ -919,7 +1015,17 @@ mod tests {
             sha256,
             bmap: device.bmap.clone(),
             verify,
+            repartition: false,
         }
+    }
+
+    /// The same disk, booted from a root with another PARTUUID: as far as
+    /// the layout check can tell, a disk laid out for another build.
+    fn relayout(device: &Device) {
+        let other = "09b3d676-0000-0000-0000-000000000000";
+        let by = &device.paths.by_partuuid;
+        fs::rename(by.join(testing::ROOT_PARTUUID), by.join(other)).unwrap();
+        fs::write(&device.paths.cmdline, format!("root=PARTUUID={other}\n")).unwrap();
     }
 
     async fn begin(updates: &Arc<Updates>, device: &Device) -> Result<UpdateBegun, String> {
@@ -961,8 +1067,14 @@ mod tests {
         assert_eq!(status.prepared, status.to_prepare);
 
         let dir = device.paths.update_dir();
-        assert!(dir.join(update::MANIFEST).exists());
-        assert!(!dir.join(update::UPLOAD).exists());
+        let manifest: Manifest = fsutil::read_json(&dir.join(update::MANIFEST)).unwrap();
+        assert_eq!(manifest.mode, Mode::Root);
+        assert_eq!(manifest.upload.sha256, update::sha256(&device.image));
+        // The upload is what the initramfs writes from; nothing else is kept.
+        assert!(dir.join(update::UPLOAD).exists());
+        assert!(dir.join(update::KERNEL).exists());
+        assert!(!dir.join(update::BOOT_IMAGE).exists());
+        assert!(!dir.join(update::UPLOAD_META).exists());
 
         updates.commit("a test", true).await.unwrap();
         let pending: Pending = fsutil::read_json(&dir.join(update::PENDING)).unwrap();
@@ -1013,20 +1125,80 @@ mod tests {
     #[tokio::test]
     async fn an_image_for_another_disk_fails_on_the_first_chunk() {
         let device = device();
-        // The same disk, booted from a root with another PARTUUID.
-        let other = "09b3d676-0000-0000-0000-000000000000";
-        let by = &device.paths.by_partuuid;
-        fs::rename(by.join(testing::ROOT_PARTUUID), by.join(other)).unwrap();
-        fs::write(&device.paths.cmdline, format!("root=PARTUUID={other}\n")).unwrap();
+        relayout(&device);
 
         let updates = updates(&device);
         begin(&updates, &device).await.unwrap();
         let chunk = openssl::base64::encode_block(&device.image[..protocol::UPDATE_CHUNK]);
         let err = updates.chunk(0, chunk).await.unwrap_err();
-        assert!(err.contains("reflash"), "{err}");
+        assert!(err.contains("--repartition"), "{err}");
         let status = updates.status().await.unwrap();
         assert_eq!(status.phase, UpdatePhase::Failed);
         assert!(!device.paths.update_dir().join(update::UPLOAD).exists());
+    }
+
+    #[tokio::test]
+    async fn a_repartition_takes_another_layout_and_always_wipes() {
+        let device = device();
+        relayout(&device);
+        let first = updates(&device);
+        let upload = Upload {
+            repartition: true,
+            ..upload(&device, update::sha256(&device.image), true)
+        };
+        first.begin("a test", upload).await.unwrap();
+        send(&first, &device, 0).await.unwrap();
+        let status = settle(&first).await;
+        assert_eq!(status.phase, UpdatePhase::Ready, "{status:?}");
+        assert!(status.repartition);
+
+        let dir = device.paths.update_dir();
+        let manifest: Manifest = fsutil::read_json(&dir.join(update::MANIFEST)).unwrap();
+        assert_eq!(manifest.mode, Mode::Disk);
+        assert!(manifest.kernel.is_none());
+        assert!(!dir.join(update::KERNEL).exists());
+
+        // Not asked to wipe, and wiped anyway: the image's /data is empty.
+        let done = first.commit("a test", false).await.unwrap();
+        assert!(done.message.contains("whole disk"), "{}", done.message);
+        let pending: Pending = fsutil::read_json(&dir.join(update::PENDING)).unwrap();
+        assert!(pending.wipe_data);
+
+        // A restart finds it as it was.
+        let restarted = updates(&device);
+        let status = restarted.status().await.unwrap();
+        assert_eq!(status.phase, UpdatePhase::Pending);
+        assert!(status.repartition && status.wipe_data);
+    }
+
+    #[tokio::test]
+    async fn a_repartition_needs_the_ram_to_hold_the_upload() {
+        let device = device();
+        fs::write(&device.paths.meminfo, "MemTotal:  100000 kB\n").unwrap();
+        let updates = updates(&device);
+        let upload = Upload {
+            repartition: true,
+            ..upload(&device, update::sha256(&device.image), true)
+        };
+        let err = updates.begin("a test", upload).await.unwrap_err();
+        assert!(err.contains("RAM"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn a_repartition_needs_a_disk_the_image_fits_on() {
+        let device = device();
+        // The disk shrinks to 8 MiB; the image is 12.
+        let disk = device.paths.sys_block.join("sda/size");
+        fs::write(disk, "16384\n").unwrap();
+        let updates = updates(&device);
+        let upload = Upload {
+            repartition: true,
+            ..upload(&device, update::sha256(&device.image), true)
+        };
+        updates.begin("a test", upload).await.unwrap();
+        let chunk = openssl::base64::encode_block(&device.image[..protocol::UPDATE_CHUNK]);
+        let err = updates.chunk(0, chunk).await.unwrap_err();
+        assert!(err.contains("holds"), "{err}");
     }
 
     #[tokio::test]

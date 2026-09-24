@@ -2,7 +2,8 @@
 //! its boot partition next to it. An image is only applied to a disk laid
 //! out exactly as the image expects - same PARTUUIDs, same root offset and
 //! size - because the new root filesystem names those PARTUUIDs itself (the
-//! fstab wic writes into it), and the partition table is never rewritten.
+//! fstab wic writes into it), and a root update never rewrites the partition
+//! table. A disk update does, so it only has to fit (`check_disk`).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -10,7 +11,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::ptable::{self, Partition, SECTOR};
-use crate::{megabytes, BOOT_PARTITION, ROOT_PARTITION};
+use crate::{megabytes, BOOT_PARTITION, DATA_PARTITION, ROOT_PARTITION};
 
 /// Where to look. `/proc/cmdline`, `/sys/class/block`, `/dev/disk/by-partuuid`
 /// on a device; a temporary tree in the tests.
@@ -44,6 +45,9 @@ pub struct Part {
 pub struct Layout {
     pub root: Part,
     pub boot: Part,
+    /// The disk both are on, `sda` or `mmcblk0`, and its size in bytes.
+    pub disk: String,
+    pub disk_size: u64,
 }
 
 pub fn probe(probe: &Probe) -> Result<Layout, String> {
@@ -83,13 +87,70 @@ pub fn probe(probe: &Probe) -> Result<Layout, String> {
             "the root filesystem is on {name}, not on partition {ROOT_PARTITION}"
         ));
     }
-    Ok(Layout { root, boot })
+    let disk_name = disk
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .ok_or_else(|| format!("{} has no name", disk.display()))?;
+    let disk_size = read_number(&disk.join("size"))
+        .map(|sectors| sectors * SECTOR)
+        .ok_or_else(|| format!("{}/size is unreadable", disk.display()))?;
+    Ok(Layout {
+        root,
+        boot,
+        disk: disk_name,
+        disk_size,
+    })
+}
+
+/// For a disk update: the image replaces the partition table, so it need
+/// not match this one - but it has to fit on the disk, be the same kind of
+/// table, and have the boot, root and `/data` partitions the initramfs finds
+/// by number.
+pub fn check_disk(layout: &Layout, image: &[Partition], image_size: u64) -> Result<(), String> {
+    for (number, what) in [
+        (BOOT_PARTITION, "boot"),
+        (ROOT_PARTITION, "root"),
+        (DATA_PARTITION, "/data"),
+    ] {
+        if ptable::find(image, number).is_none() {
+            return Err(format!(
+                "the image has no {what} partition (number {number})"
+            ));
+        }
+    }
+    let root = ptable::find(image, ROOT_PARTITION).expect("checked above");
+    if is_mbr(&root.partuuid) != is_mbr(&layout.root.partuuid) {
+        return Err(format!(
+            "the image has {} partition table and this device {}: the image is for another \
+             machine",
+            if is_mbr(&root.partuuid) {
+                "an MBR"
+            } else {
+                "a GPT"
+            },
+            if is_mbr(&layout.root.partuuid) {
+                "an MBR one"
+            } else {
+                "a GPT one"
+            }
+        ));
+    }
+    if image_size > layout.disk_size {
+        return Err(format!(
+            "the image is {}, {} holds {}",
+            megabytes(image_size),
+            layout.disk,
+            megabytes(layout.disk_size)
+        ));
+    }
+    Ok(())
 }
 
 /// Refuse an image whose boot or root partition is not this disk's.
 pub fn check(layout: &Layout, image: &[Partition]) -> Result<(), String> {
-    let reflash = "the disk layout changed, so this device needs one full reflash \
-                   (mise run image:flash) before it can take updates";
+    let reflash = "the disk layout changed: send it with `update send --repartition` to \
+                   rewrite the whole disk, /data included, or reflash the device \
+                   (mise run image:flash)";
     let root = ptable::find(image, ROOT_PARTITION).ok_or("the image has no root partition")?;
     let boot = ptable::find(image, BOOT_PARTITION).ok_or("the image has no boot partition")?;
 
@@ -256,9 +317,57 @@ mod tests {
                 start: root_start,
                 size: 2048 << 20,
             },
+            disk: "mmcblk0".to_string(),
+            disk_size: 16 << 30,
         };
         // Another build's disk signature, the same partitions.
         check(&device(104 << 20), &image).unwrap();
         assert!(check(&device(200 << 20), &image).is_err());
+    }
+
+    /// `disk()`'s table: boot, root and data.
+    fn whole_image() -> Vec<Partition> {
+        let (image, _) = testing::disk();
+        ptable::parse(&image[..1 << 20]).unwrap()
+    }
+
+    #[test]
+    fn the_disk_is_found_with_its_size() {
+        let dir = tempfile::tempdir().unwrap();
+        let layout = super::probe(&fake(dir.path(), "/dev/sda2")).unwrap();
+        assert_eq!(layout.disk, "sda");
+        assert_eq!(layout.disk_size, testing::DISK_SECTORS * SECTOR);
+    }
+
+    #[test]
+    fn a_disk_update_needs_only_to_fit() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut layout = super::probe(&fake(dir.path(), "/dev/sda2")).unwrap();
+        // Another layout altogether: a root partition twice the size.
+        layout.root.size *= 2;
+        layout.root.partuuid = "09b3d676-0000-0000-0000-000000000000".to_string();
+        assert!(check(&layout, &whole_image()).is_err());
+        check_disk(&layout, &whole_image(), 12 * testing::MIB).unwrap();
+
+        let err = check_disk(&layout, &whole_image(), 17 * testing::MIB).unwrap_err();
+        assert!(err.contains("holds"), "{err}");
+    }
+
+    #[test]
+    fn a_disk_update_needs_the_partitions_the_initramfs_uses() {
+        let dir = tempfile::tempdir().unwrap();
+        let layout = super::probe(&fake(dir.path(), "/dev/sda2")).unwrap();
+        // Boot and root only.
+        let err = check_disk(&layout, &image(), 8 * testing::MIB).unwrap_err();
+        assert!(err.contains("/data"), "{err}");
+    }
+
+    #[test]
+    fn a_disk_update_keeps_the_kind_of_partition_table() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut layout = super::probe(&fake(dir.path(), "/dev/sda2")).unwrap();
+        layout.root.partuuid = "aaaa0001-02".to_string();
+        let err = check_disk(&layout, &whole_image(), 12 * testing::MIB).unwrap_err();
+        assert!(err.contains("another machine"), "{err}");
     }
 }

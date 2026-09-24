@@ -362,8 +362,8 @@ enum SshKeyCmd {
 enum UpdateCmd {
     /// Upload IMAGE, a .wic.bz2 with its .wic.bmap next to it, and reboot
     /// the device into it. Only the blocks the bmap lists are written, and
-    /// only to the boot and root partitions; /data is kept. Run it again
-    /// after a dropped connection and it resumes.
+    /// only to the root partition, plus the kernel file; /data is kept.
+    /// Run it again after a dropped connection and it resumes.
     ///
     ///   tessaro-ctl -n brave-otter-3fa2 update send tessaro-os-qemux86-64.rootfs.wic.bz2
     Send {
@@ -375,6 +375,13 @@ enum UpdateCmd {
         /// profile and the device's identity go. It comes back unclaimed.
         #[arg(long)]
         wipe_data: bool,
+        /// Write the whole disk - partition table, boot, root and /data - as
+        /// `mise run image:flash` would, for a device on another disk layout.
+        /// Implies --wipe-data. The device holds the upload in RAM while it
+        /// writes, and a power cut before it is done needs a physical
+        /// reflash.
+        #[arg(long)]
+        repartition: bool,
         /// Stage and commit it, but leave the reboot for later.
         #[arg(long)]
         no_reboot: bool,
@@ -924,6 +931,7 @@ fn run(cli: Cli) -> Result<(), String> {
                 image,
                 bmap,
                 wipe_data,
+                repartition,
                 no_reboot,
                 no_wait,
                 no_verify,
@@ -932,7 +940,8 @@ fn run(cli: Cli) -> Result<(), String> {
                 let options = update::Send {
                     image,
                     bmap,
-                    wipe_data,
+                    wipe_data: wipe_data || repartition,
+                    repartition,
                     no_reboot,
                     no_wait,
                     no_verify,

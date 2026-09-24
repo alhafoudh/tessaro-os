@@ -3,8 +3,9 @@
 //! The `.wic.bz2` goes up in `UPDATE_CHUNK` pieces, each acknowledged
 //! before the next, so a dropped link resumes from the last one the device
 //! has - running the same command again is the resume. The device then
-//! checks and stages it while the kiosk keeps running, and applies it at the
-//! next boot, from its initramfs.
+//! checks it while the kiosk keeps running, and writes it at the next boot,
+//! from its initramfs: to the root partition, or with `--repartition` to the
+//! whole disk.
 //!
 //! Every phase reports progress on stderr: one line that redraws itself on a
 //! terminal, one line per step otherwise.
@@ -33,6 +34,7 @@ pub struct Send {
     pub image: PathBuf,
     pub bmap: Option<PathBuf>,
     pub wipe_data: bool,
+    pub repartition: bool,
     pub no_reboot: bool,
     pub no_wait: bool,
     pub no_verify: bool,
@@ -75,7 +77,17 @@ pub fn send(
         .len();
 
     let node = session.node.name.clone();
-    if options.wipe_data {
+    if options.repartition {
+        crate::confirm_destructive(
+            session,
+            options.yes,
+            &format!(
+                "rewrite the whole disk with {name} (partition table, boot, root and /data: \
+                 every setting, the claim and the identity go, and a power cut while it \
+                 writes needs a physical reflash)"
+            ),
+        )?;
+    } else if options.wipe_data {
         crate::confirm_destructive(
             session,
             options.yes,
@@ -108,6 +120,7 @@ pub fn send(
             sha256,
             bmap,
             verify: !options.no_verify,
+            repartition: options.repartition,
         },
     )?;
     if begun.phase == UpdatePhase::Receiving {
@@ -224,7 +237,9 @@ fn show(status: &UpdateStatus) {
         UpdatePhase::Pending => println!(
             "{name} {}{}",
             paint(style::OK, "is applied at the next boot"),
-            if status.wipe_data {
+            if status.repartition {
+                paint(style::WARN, ", rewriting the whole disk")
+            } else if status.wipe_data {
                 paint(style::WARN, ", and /data is wiped")
             } else {
                 String::new()
@@ -406,7 +421,7 @@ fn prepare(session: &mut Session, progress: &mut Progress) -> Result<(), String>
                 progress.done(&step_line(
                     style::OK,
                     "prepared",
-                    format!("{} of the image checked and staged", mb(status.to_prepare)),
+                    format!("{} of the image checked", mb(status.to_prepare)),
                 ));
                 return Ok(());
             }

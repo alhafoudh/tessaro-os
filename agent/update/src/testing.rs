@@ -5,13 +5,16 @@ use std::fs;
 use std::os::unix::fs::symlink;
 use std::path::Path;
 
+use crate::image::Image;
 use crate::layout::Probe;
-use crate::manifest::{Manifest, Source};
+use crate::manifest::{Manifest, Mode, Source};
 use crate::prepare::{self, Observer};
 use crate::ptable::SECTOR;
 
 pub const BLOCK: u64 = 4096;
 pub const MIB: u64 = 1 << 20;
+/// The size of `device()`'s disk, in sectors: 16 MiB.
+pub const DISK_SECTORS: u64 = 32768;
 pub const BOOT_UUID: [u8; 16] = [1; 16];
 pub const ROOT_UUID: [u8; 16] = [2; 16];
 /// The same two, as `/dev/disk/by-partuuid` spells them.
@@ -126,7 +129,9 @@ pub fn device(dir: &Path) -> Probe {
         symlink(&part, class.join(name)).unwrap();
         symlink(format!("../../{name}"), by_partuuid.join(uuid)).unwrap();
     }
-    // The disk itself is in the class too, and has no partition file.
+    // The disk itself is in the class too, and has no partition file. It
+    // is 16 MiB, room for `disk()` and some to spare.
+    fs::write(devices.join("size"), format!("{DISK_SECTORS}\n")).unwrap();
     symlink(&devices, class.join("sda")).unwrap();
     let cmdline = dir.join("cmdline");
     fs::write(
@@ -159,13 +164,38 @@ pub fn source() -> Source {
     }
 }
 
-/// `disk()`, prepared into `dir`.
+/// `bytes` as the image stream prepare and apply read.
+pub fn image(bytes: Vec<u8>) -> Image {
+    Image::new(std::io::Cursor::new(bytes)).unwrap()
+}
+
+/// `bytes`, bz2-compressed in two streams, the way pbzip2 writes them.
+pub fn compress(bytes: &[u8]) -> Vec<u8> {
+    use std::io::Write;
+    let mut out = Vec::new();
+    for half in bytes.chunks(bytes.len().div_ceil(2)) {
+        let mut encoder = bzip2::write::BzEncoder::new(Vec::new(), bzip2::Compression::fast());
+        encoder.write_all(half).unwrap();
+        out.extend(encoder.finish().unwrap());
+    }
+    out
+}
+
+/// `disk()` uploaded into `dir` and prepared there as a root update.
 pub fn staged(dir: &Path) -> (Vec<u8>, Manifest) {
+    staged_as(dir, Mode::Root)
+}
+
+/// `disk()` uploaded into `dir`, compressed, and prepared there for `mode`.
+pub fn staged_as(dir: &Path, mode: Mode) -> (Vec<u8>, Manifest) {
     let (image, text) = disk();
+    let upload = dir.join(crate::UPLOAD);
+    fs::write(&upload, compress(&image)).unwrap();
     let bmap = crate::bmap::parse(&text).unwrap();
     let manifest = prepare::prepare(
-        &image[..],
+        Image::open(&upload).unwrap(),
         &bmap,
+        mode,
         source(),
         dir,
         |_| Ok(()),

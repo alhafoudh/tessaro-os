@@ -4,8 +4,11 @@
 # Runs as /init.d/80-tessaro_update, after udev (01) and before the root
 # filesystem is mounted (90-rootfs) - which is the whole point: nothing has
 # the blocks of the root partition open while tessaro-flash rewrites them.
-# The staging and the marker are on /data, which tessaro-agent filled in while
+# The upload and the marker are on /data, which tessaro-agent filled in while
 # the kiosk ran (`tessaro-ctl update send`); see agent/update/src/lib.rs.
+# A disk update (`--repartition`) rewrites the whole disk, /data included:
+# tessaro-flash copies the upload into RAM and unmounts /data and the ESP
+# itself before it starts.
 #
 # On an ordinary boot this mounts the ESP and /data read-only, finds no
 # marker, unmounts both and returns. With one, tessaro-flash decides, and its
@@ -19,11 +22,15 @@
 #
 # The partitions are found from root= the way 90-rootfs does, then by number
 # on the same disk: 1 is the ESP (or the Pi's vfat boot partition), 3 is
-# /data. Every Tessaro wks has that layout, and the updater only ever writes
-# an image whose partition table matched this disk's.
+# /data. Every Tessaro wks has that layout; a root update is only ever
+# written with a partition table that matched this disk's, and a disk update
+# only with one that has partitions 1 to 3.
 
 TESSARO_UPDATE_DATA=/run/tessaro-update/data
 TESSARO_UPDATE_ESP=/run/tessaro-update/esp
+# A disk update (--repartition) copies the upload into a tmpfs here before
+# it overwrites the /data it came from.
+TESSARO_UPDATE_RAM=/run/tessaro-update/ram
 
 # To the console, and to the screen when no virtual terminal is a console
 # (the Pi boots with console=serial0 only), so whoever is in front of the
@@ -61,6 +68,7 @@ tessaro_update_enabled() {
 
 	disk=$(readlink -f "/sys/class/block/${TESSARO_UPDATE_ROOT##*/}/..")
 	disk=${disk##*/}
+	TESSARO_UPDATE_DISK=/dev/$disk
 	TESSARO_UPDATE_BOOT=$(tessaro_update_partition "$disk" 1) || return 1
 	TESSARO_UPDATE_DATA_DEV=$(tessaro_update_partition "$disk" 3) || return 1
 
@@ -98,7 +106,9 @@ tessaro_update_run() {
 			--root "$TESSARO_UPDATE_ROOT" \
 			--esp $TESSARO_UPDATE_ESP \
 			--data-device "$TESSARO_UPDATE_DATA_DEV" \
-			--data-mount $TESSARO_UPDATE_DATA
+			--data-mount $TESSARO_UPDATE_DATA \
+			--disk "$TESSARO_UPDATE_DISK" \
+			--ram $TESSARO_UPDATE_RAM
 	fi
 	status=$?
 

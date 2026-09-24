@@ -1,7 +1,8 @@
 SUMMARY = "initramfs-framework module: apply a pending Tessaro image update"
 DESCRIPTION = "Runs before the root filesystem is mounted. If tessaro-agent staged an \
 image update on /data and marked it, tessaro-flash writes it to the root partition and \
-swaps the kernel on the boot partition, then the device reboots into it."
+swaps the kernel on the boot partition - or, for a disk update, writes the whole disk \
+from a copy in RAM - then the device reboots into it."
 LICENSE = "MIT"
 LIC_FILES_CHKSUM = "file://${COMMON_LICENSE_DIR}/MIT;md5=0835ade698e0bcf8506ecda2f7b4f302"
 

@@ -75,6 +75,21 @@ pub fn available(path: &Path) -> io::Result<u64> {
     Ok(stat.f_bavail as u64 * stat.f_frsize as u64)
 }
 
+/// `BLKRRPART` on `disk`: the kernel drops its partitions and reads the
+/// table again. Fails with EBUSY while any of them is mounted.
+pub fn reread_partitions(disk: &Path) -> io::Result<()> {
+    use std::os::fd::AsRawFd;
+    // _IO(0x12, 95), from <linux/fs.h>.
+    const BLKRRPART: u32 = 0x125f;
+    let file = File::open(disk)?;
+    // SAFETY: a valid open descriptor, and an ioctl that takes no argument.
+    let rc = unsafe { libc::ioctl(file.as_raw_fd(), BLKRRPART as _) };
+    if rc != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
 /// Drop `file`'s pages from the page cache, so the next read comes from the
 /// device and not from what was just written. Best effort.
 pub fn drop_cache(file: &File) {

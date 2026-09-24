@@ -1,11 +1,14 @@
-//! Turn an uploaded `.wic.bz2` into staging the initramfs can apply blindly.
+//! The dry run: prove an uploaded `.wic.bz2` is what its bmap says, so the
+//! initramfs can write it without second-guessing.
 //!
-//! One sequential pass over the decompressed image: the bmap's ranges come
-//! in disk order, so each is read, hashed and - where it overlaps the boot or
-//! the root partition - written into `boot.img` / `root.img` at the
-//! partition-relative offset. Both are sparse files the size of their
-//! partition, so only the mapped bytes take space on `/data`. The pass stops
-//! after the root partition: `/data` and swap in the image are never needed.
+//! One sequential pass over the decompressed image. The bmap's ranges come in
+//! disk order, so each is read and hashed against the bmap, and the parts
+//! inside the target - the root partition, or the whole disk - are cut into
+//! chunks with checksums of their own, which is what the initramfs checks
+//! each piece against as it writes it. Nothing of the image is kept except,
+//! for a root update, the image's boot partition, sparse in `boot.img`, long
+//! enough to copy the kernel out of it. The pass stops at the end of what is
+//! needed: a root update never decompresses `/data` and swap.
 //!
 //! The bmap's checksum covers a whole range and is only known at its end,
 //! so a mismatch fails the whole preparation rather than one piece of it.
@@ -13,18 +16,17 @@
 //! different builds.
 
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Cursor, Read};
+use std::io::{Cursor, Read};
 use std::os::unix::fs::FileExt;
 use std::path::Path;
 
 use sha2::{Digest, Sha256};
 
 use crate::bmap::Bmap;
-use crate::manifest::{self, Boot, Chunk, Manifest, Root, Source};
+use crate::image::{short, skip, Image};
+use crate::manifest::{self, Chunk, Manifest, Mode, Source, Target};
 use crate::ptable::{self, Partition};
-use crate::{
-    fsutil, BOOT_IMAGE, BOOT_PARTITION, CHUNK, KERNEL, MANIFEST, ROOT_IMAGE, ROOT_PARTITION,
-};
+use crate::{fsutil, BOOT_IMAGE, BOOT_PARTITION, CHUNK, KERNEL, MANIFEST, ROOT_PARTITION};
 
 /// How much of the image is read before anything else, for the partition
 /// table. GPT needs 17 KiB of it.
@@ -40,30 +42,18 @@ pub trait Observer {
     }
 }
 
-/// Reads the image, bz2-compressed or not: pbzip2 output starts `BZh`.
-pub fn open_image(path: &Path) -> io::Result<Box<dyn Read>> {
-    let mut file = File::open(path)?;
-    let mut magic = [0u8; 3];
-    let read = file.read(&mut magic)?;
-    let file = File::open(path)?;
-    if read == 3 && &magic == b"BZh" {
-        Ok(Box::new(bzip2::read::MultiBzDecoder::new(
-            io::BufReader::new(file),
-        )))
-    } else {
-        Ok(Box::new(io::BufReader::new(file)))
-    }
-}
-
-/// Stage `image` into `dir`.
+/// Check `image` and describe it in `dir`'s manifest.
 ///
 /// * `check` sees the image's partition table before anything is written,
 ///   and refuses an image that is not for this disk.
-/// * `kernel` copies the kernel out of the staged boot partition (a vfat
-///   image) into the path it is given, and returns its name on the ESP.
+/// * `kernel`, for a root update, copies the kernel out of the image's boot
+///   partition (a vfat image) into the path it is given, and returns its name
+///   on the ESP.
+#[allow(clippy::too_many_arguments)]
 pub fn prepare(
-    image: impl Read,
+    image: Image,
     bmap: &Bmap,
+    mode: Mode,
     source: Source,
     dir: &Path,
     check: impl FnOnce(&[Partition]) -> Result<(), String>,
@@ -82,103 +72,119 @@ pub fn prepare(
         .ok_or("the image has no root partition")?
         .clone();
     check(&partitions)?;
-    let limit = boot.end().max(root.end());
-    if limit > bmap.image_size {
+    if partitions.iter().any(|part| part.end() > bmap.image_size) {
         return Err("the image's partitions extend past its end".to_string());
     }
 
-    let root_path = dir.join(ROOT_IMAGE);
+    // Where the chunks come from, and how far the pass has to read.
+    let (target, limit) = match mode {
+        Mode::Root => ((root.start, root.size), boot.end().max(root.end())),
+        Mode::Disk => ((0, bmap.image_size), bmap.image_size),
+    };
+    let (target_start, target_size) = target;
+    let target_end = target_start + target_size;
+
     let boot_path = dir.join(BOOT_IMAGE);
-    let root_file = sparse(&root_path, root.size)?;
-    let boot_file = sparse(&boot_path, boot.size)?;
+    let boot_file = match mode {
+        Mode::Root => Some(sparse(&boot_path, boot.size)?),
+        Mode::Disk => None,
+    };
 
     let total = bmap.mapped_within(0, limit);
     let mut done = 0u64;
     let mut chunks = Chunker::default();
-    let mut image = Cursor::new(head).chain(image);
     let mut position = 0u64;
     let mut buffer = vec![0u8; BUFFER];
-
-    for range in &bmap.ranges {
-        let start = bmap.start(range);
-        let end = bmap.end(range);
-        if start >= limit {
-            break;
-        }
-        skip(&mut image, start - position)?;
-        position = start;
-
-        let mut hasher = Sha256::new();
-        while position < end {
-            if observer.cancelled() {
-                return Err("cancelled".to_string());
+    {
+        let mut stream = Cursor::new(head).chain(&mut image);
+        for range in &bmap.ranges {
+            let start = bmap.start(range);
+            let end = bmap.end(range);
+            if start >= limit {
+                break;
             }
-            let len = (end - position).min(BUFFER as u64) as usize;
-            let data = &mut buffer[..len];
-            image.read_exact(data).map_err(short)?;
-            hasher.update(&*data);
+            skip(&mut stream, start - position)?;
+            position = start;
 
-            for (partition, file, is_root) in
-                [(&root, &root_file, true), (&boot, &boot_file, false)]
-            {
-                let from = position.max(partition.start);
-                let to = (position + len as u64).min(partition.end());
-                if from >= to {
-                    continue;
+            let mut hasher = Sha256::new();
+            while position < end {
+                if observer.cancelled() {
+                    return Err("cancelled".to_string());
                 }
-                let piece = &data[(from - position) as usize..(to - position) as usize];
-                let offset = from - partition.start;
-                file.write_at(piece, offset)
-                    .map_err(|err| format!("writing the staging on /data: {err}"))?;
-                if is_root {
-                    chunks.feed(offset, piece);
+                let len = (end - position).min(BUFFER as u64) as usize;
+                let data = &mut buffer[..len];
+                stream.read_exact(data).map_err(short)?;
+                hasher.update(&*data);
+
+                if let Some((from, to)) = overlap(position, len, target_start, target_end) {
+                    let piece = &data[(from - position) as usize..(to - position) as usize];
+                    chunks.feed(from - target_start, piece);
                 }
+                if let Some(file) = &boot_file {
+                    if let Some((from, to)) = overlap(position, len, boot.start, boot.end()) {
+                        let piece = &data[(from - position) as usize..(to - position) as usize];
+                        file.write_at(piece, from - boot.start)
+                            .map_err(|err| format!("writing the staging on /data: {err}"))?;
+                    }
+                }
+
+                position += len as u64;
+                done += (position.min(limit)).saturating_sub(position - len as u64);
+                observer.progress(done.min(total), total);
             }
 
-            position += len as u64;
-            done += (position.min(limit)).saturating_sub(position - len as u64);
-            observer.progress(done.min(total), total);
-        }
-
-        if crate::hex(&hasher.finalize()) != range.sha256 {
-            return Err(format!(
-                "blocks {}-{} do not match the bmap's checksum: the image and the bmap \
-                 are from different builds, or the upload is damaged",
-                range.first, range.last
-            ));
+            if crate::hex(&hasher.finalize()) != range.sha256 {
+                return Err(format!(
+                    "blocks {}-{} do not match the bmap's checksum: the image and the bmap \
+                     are from different builds, or the upload is damaged",
+                    range.first, range.last
+                ));
+            }
         }
     }
-
     let chunks = chunks.finish();
-    for file in [&root_file, &boot_file] {
-        file.sync_all()
-            .map_err(|err| format!("syncing the staging on /data: {err}"))?;
-    }
-    drop((root_file, boot_file));
 
-    let kernel_path = dir.join(KERNEL);
-    let name = kernel(&boot_path, &kernel_path)?;
-    let (size, sha256) = crate::sha256_file(&kernel_path)
-        .map_err(|err| format!("reading the staged kernel: {err}"))?;
-    fs::remove_file(&boot_path).map_err(|err| format!("{}: {err}", boot_path.display()))?;
+    let kernel = match boot_file {
+        Some(file) => {
+            file.sync_all()
+                .map_err(|err| format!("syncing the staging on /data: {err}"))?;
+            drop(file);
+            let kernel_path = dir.join(KERNEL);
+            let name = kernel(&boot_path, &kernel_path)?;
+            let (size, sha256) = crate::sha256_file(&kernel_path)
+                .map_err(|err| format!("reading the staged kernel: {err}"))?;
+            fs::remove_file(&boot_path).map_err(|err| format!("{}: {err}", boot_path.display()))?;
+            Some(manifest::File { name, size, sha256 })
+        }
+        None => None,
+    };
 
+    let (size, sha256) = image
+        .finish()
+        .map_err(|err| format!("reading the upload: {err}"))?;
     let manifest = Manifest {
         format: manifest::FORMAT,
         source,
-        root: Root {
+        upload: manifest::Digest { size, sha256 },
+        mode,
+        target: Target {
+            start: target_start,
+            size: target_size,
             partuuid: root.partuuid,
-            start: root.start,
-            size: root.size,
             chunks,
         },
-        boot: Boot {
-            partuuid: boot.partuuid,
-            kernel: manifest::File { name, size, sha256 },
-        },
+        kernel,
     };
     fsutil::write_json(&dir.join(MANIFEST), &manifest)
         .map_err(|err| format!("writing the manifest: {err}"))?;
     Ok(manifest)
+}
+
+/// The part of `position..position+len` inside `start..end`, if any.
+fn overlap(position: u64, len: usize, start: u64, end: u64) -> Option<(u64, u64)> {
+    let from = position.max(start);
+    let to = (position + len as u64).min(end);
+    (from < to).then_some((from, to))
 }
 
 fn sparse(path: &Path, size: u64) -> Result<File, String> {
@@ -193,24 +199,8 @@ fn sparse(path: &Path, size: u64) -> Result<File, String> {
     Ok(file)
 }
 
-fn skip(image: &mut impl Read, bytes: u64) -> Result<(), String> {
-    let copied = io::copy(&mut image.take(bytes), &mut io::sink()).map_err(short)?;
-    if copied < bytes {
-        return Err("the image ends before its bmap does".to_string());
-    }
-    Ok(())
-}
-
-fn short(err: io::Error) -> String {
-    if err.kind() == io::ErrorKind::UnexpectedEof {
-        "the image ends before its bmap does".to_string()
-    } else {
-        format!("reading the image: {err}")
-    }
-}
-
-/// Cuts what is written to the root partition into chunks: contiguous, at
-/// most `CHUNK` long, each with its SHA-256.
+/// Cuts what is written to the target into chunks: contiguous, at most
+/// `CHUNK` long, each with its SHA-256.
 #[derive(Default)]
 struct Chunker {
     done: Vec<Chunk>,
@@ -254,119 +244,135 @@ impl Chunker {
 mod tests {
     use super::*;
     use crate::bmap;
-    use crate::testing::{disk, fake_kernel, source, staged, Quiet, BLOCK, MIB};
+    use crate::testing::{disk, fake_kernel, image, source, staged, Quiet, BLOCK, MIB};
+
+    fn run(image_bytes: Vec<u8>, text: &str, mode: Mode, dir: &Path) -> Result<Manifest, String> {
+        prepare(
+            image(image_bytes),
+            &bmap::parse(text).unwrap(),
+            mode,
+            source(),
+            dir,
+            |_| Ok(()),
+            fake_kernel,
+            &mut Quiet,
+        )
+    }
 
     #[test]
-    fn only_the_mapped_root_and_boot_bytes_are_staged() {
+    fn a_root_update_chunks_the_mapped_root_bytes() {
         let dir = tempfile::tempdir().unwrap();
         let (image, manifest) = staged(dir.path());
 
-        let root_start = (2 * MIB) as usize;
-        let root = fs::read(dir.path().join(ROOT_IMAGE)).unwrap();
-        assert_eq!(root.len() as u64, 6 * MIB);
-        // Mapped: the first 1101 blocks (more than one chunk), and the last
-        // MiB (the range that runs on into data is cut at the partition's end).
-        let first = (1101 * BLOCK) as usize;
-        assert_eq!(&root[..first], &image[root_start..root_start + first]);
-        assert!(root[first..(5 * MIB) as usize].iter().all(|b| *b == 0));
+        assert_eq!(manifest.mode, Mode::Root);
+        assert_eq!(manifest.target.start, 2 * MIB);
+        assert_eq!(manifest.target.size, 6 * MIB);
         assert_eq!(
-            &root[(5 * MIB) as usize..],
-            &image[(7 * MIB) as usize..(8 * MIB) as usize]
-        );
-
-        assert_eq!(manifest.root.start, 2 * MIB);
-        assert_eq!(manifest.root.size, 6 * MIB);
-        assert_eq!(
-            manifest.root.partuuid,
+            manifest.target.partuuid,
             "02020202-0202-0202-0202-020202020202"
         );
-        assert_eq!(
-            manifest.boot.partuuid,
-            "01010101-0101-0101-0101-010101010101"
-        );
-        assert_eq!(manifest.root.mapped(), 1101 * BLOCK + MIB);
-        assert_eq!(manifest.boot.kernel.name, "bzImage");
-        assert_eq!(manifest.boot.kernel.size, 8);
-        assert!(!dir.path().join(BOOT_IMAGE).exists());
-
-        // Chunks are contiguous, capped, and hash what is in root.img.
-        let chunks = &manifest.root.chunks;
+        // Mapped: the first 1101 blocks (more than one chunk), and the last
+        // MiB (the range that runs on into data is cut at the partition's end).
+        assert_eq!(manifest.target.mapped(), 1101 * BLOCK + MIB);
+        let chunks = &manifest.target.chunks;
         assert!(chunks.iter().all(|chunk| chunk.len <= CHUNK));
         assert_eq!(chunks[0].offset, 0);
         assert_eq!(chunks[1].offset, CHUNK);
         assert_eq!(chunks[2].offset, 5 * MIB);
+        let root = &image[(2 * MIB) as usize..(8 * MIB) as usize];
         for chunk in chunks {
             let bytes = &root[chunk.offset as usize..(chunk.offset + chunk.len) as usize];
             assert_eq!(crate::sha256(bytes), chunk.sha256);
         }
+
+        let kernel = manifest.kernel.as_ref().unwrap();
+        assert_eq!(kernel.name, "bzImage");
+        assert_eq!(kernel.size, 8);
+        assert!(dir.path().join(KERNEL).exists());
+        assert!(!dir.path().join(BOOT_IMAGE).exists());
+
+        // The whole upload is hashed, though the pass stopped at root's end.
+        let upload = fs::read(dir.path().join(crate::UPLOAD)).unwrap();
+        assert_eq!(manifest.upload.size, upload.len() as u64);
+        assert_eq!(manifest.upload.sha256, crate::sha256(&upload));
         let on_disk: Manifest = fsutil::read_json(&dir.path().join(MANIFEST)).unwrap();
         assert_eq!(on_disk, manifest);
     }
 
     #[test]
-    fn a_bz2_image_stages_the_same() {
-        use bzip2::write::BzEncoder;
-        use std::io::Write;
-
+    fn a_disk_update_chunks_every_mapped_byte_and_needs_no_kernel() {
         let (image, text) = disk();
-        // Two concatenated streams, the way pbzip2 writes them.
-        let mut compressed = Vec::new();
-        for half in image.chunks(image.len() / 2) {
-            let mut encoder = BzEncoder::new(Vec::new(), bzip2::Compression::fast());
-            encoder.write_all(half).unwrap();
-            compressed.extend(encoder.finish().unwrap());
-        }
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("image.wic.bz2");
-        fs::write(&path, &compressed).unwrap();
-
-        let staging = dir.path().join("staging");
-        fs::create_dir(&staging).unwrap();
-        let bmap = bmap::parse(&text).unwrap();
         let manifest = prepare(
-            open_image(&path).unwrap(),
-            &bmap,
+            crate::testing::image(image.clone()),
+            &bmap::parse(&text).unwrap(),
+            Mode::Disk,
             source(),
-            &staging,
+            dir.path(),
             |_| Ok(()),
-            fake_kernel,
+            |_, _| panic!("a disk update writes the whole ESP; no kernel is copied"),
             &mut Quiet,
         )
         .unwrap();
 
+        assert_eq!(manifest.mode, Mode::Disk);
+        assert_eq!(manifest.target.start, 0);
+        assert_eq!(manifest.target.size, 12 * MIB);
+        assert!(manifest.kernel.is_none());
+        let bmap = bmap::parse(&text).unwrap();
+        assert_eq!(manifest.target.mapped(), bmap.mapped_within(0, 12 * MIB));
+        // The partition table, first.
+        assert_eq!(manifest.target.chunks[0].offset, 0);
+        for chunk in &manifest.target.chunks {
+            let bytes = &image[chunk.offset as usize..(chunk.offset + chunk.len) as usize];
+            assert_eq!(crate::sha256(bytes), chunk.sha256);
+        }
+        assert!(!dir.path().join(BOOT_IMAGE).exists());
+    }
+
+    #[test]
+    fn a_bz2_image_prepares_the_same() {
+        let (image, text) = disk();
+        let compressed = crate::testing::compress(&image);
+        let dir = tempfile::tempdir().unwrap();
+        let manifest = run(compressed.clone(), &text, Mode::Root, dir.path()).unwrap();
+
         let plain = tempfile::tempdir().unwrap();
         let (_, expected) = staged(plain.path());
-        assert_eq!(manifest.root.chunks, expected.root.chunks);
+        assert_eq!(manifest.target.chunks, expected.target.chunks);
+        // What the initramfs checks is the file as uploaded, compressed.
+        assert_eq!(manifest.upload.sha256, crate::sha256(&compressed));
     }
 
     #[test]
     fn a_bmap_from_another_build_is_refused() {
         let (mut image, text) = disk();
         image[(3 * MIB) as usize] ^= 0xff;
-        let bmap = bmap::parse(&text).unwrap();
         let dir = tempfile::tempdir().unwrap();
-        let err = prepare(
-            &image[..],
-            &bmap,
-            source(),
-            dir.path(),
-            |_| Ok(()),
-            fake_kernel,
-            &mut Quiet,
-        )
-        .unwrap_err();
+        let err = run(image, &text, Mode::Root, dir.path()).unwrap_err();
         assert!(err.contains("different builds"), "{err}");
         assert!(!dir.path().join(MANIFEST).exists());
     }
 
     #[test]
+    fn a_disk_update_checks_data_too() {
+        // Past the root partition: a root update never reads it.
+        let (mut image, text) = disk();
+        image[(10 * MIB) as usize] ^= 0xff;
+        let dir = tempfile::tempdir().unwrap();
+        run(image.clone(), &text, Mode::Root, dir.path()).unwrap();
+        let err = run(image, &text, Mode::Disk, dir.path()).unwrap_err();
+        assert!(err.contains("different builds"), "{err}");
+    }
+
+    #[test]
     fn the_layout_check_runs_before_anything_is_written() {
-        let (image, text) = disk();
-        let bmap = bmap::parse(&text).unwrap();
+        let (image_bytes, text) = disk();
         let dir = tempfile::tempdir().unwrap();
         let err = prepare(
-            &image[..],
-            &bmap,
+            image(image_bytes),
+            &bmap::parse(&text).unwrap(),
+            Mode::Root,
             source(),
             dir.path(),
             |_| Err("not this disk".to_string()),
@@ -375,22 +381,18 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(err, "not this disk");
-        assert!(!dir.path().join(ROOT_IMAGE).exists());
+        assert!(!dir.path().join(BOOT_IMAGE).exists());
     }
 
     #[test]
     fn a_truncated_image_is_refused() {
         let (image, text) = disk();
-        let bmap = bmap::parse(&text).unwrap();
         let dir = tempfile::tempdir().unwrap();
-        let err = prepare(
-            &image[..(5 * MIB) as usize],
-            &bmap,
-            source(),
+        let err = run(
+            image[..(5 * MIB) as usize].to_vec(),
+            &text,
+            Mode::Root,
             dir.path(),
-            |_| Ok(()),
-            fake_kernel,
-            &mut Quiet,
         )
         .unwrap_err();
         assert!(err.contains("ends before"), "{err}");
@@ -401,35 +403,38 @@ mod tests {
     /// next to it; the kernel is not extracted (that needs a loop mount).
     #[test]
     #[ignore]
-    fn a_real_image_stages() {
+    fn a_real_image_prepares() {
         let Ok(path) = std::env::var("TESSARO_TEST_WIC") else {
             return;
         };
         let path = Path::new(&path);
         let bmap_path = path.with_extension("bmap");
         let bmap = bmap::parse(&fs::read_to_string(bmap_path).unwrap()).unwrap();
-        let dir = tempfile::tempdir().unwrap();
-        let started = std::time::Instant::now();
-        let manifest = prepare(
-            open_image(path).unwrap(),
-            &bmap,
-            source(),
-            dir.path(),
-            |partitions| {
-                eprintln!("{partitions:#?}");
-                Ok(())
-            },
-            fake_kernel,
-            &mut Quiet,
-        )
-        .unwrap();
-        eprintln!(
-            "root {} mapped of {}, {} chunks, in {:?}",
-            manifest.root.mapped(),
-            manifest.root.size,
-            manifest.root.chunks.len(),
-            started.elapsed()
-        );
+        for mode in [Mode::Root, Mode::Disk] {
+            let dir = tempfile::tempdir().unwrap();
+            let started = std::time::Instant::now();
+            let manifest = prepare(
+                Image::open(path).unwrap(),
+                &bmap,
+                mode,
+                source(),
+                dir.path(),
+                |partitions| {
+                    eprintln!("{partitions:#?}");
+                    Ok(())
+                },
+                fake_kernel,
+                &mut Quiet,
+            )
+            .unwrap();
+            eprintln!(
+                "{mode:?}: {} mapped of {}, {} chunks, in {:?}",
+                manifest.target.mapped(),
+                manifest.target.size,
+                manifest.target.chunks.len(),
+                started.elapsed()
+            );
+        }
     }
 
     #[test]
@@ -441,13 +446,14 @@ mod tests {
                 *self = Last(done, total);
             }
         }
-        let (image, text) = disk();
+        let (image_bytes, text) = disk();
         let bmap = bmap::parse(&text).unwrap();
         let dir = tempfile::tempdir().unwrap();
         let mut last = Last(0, 0);
         prepare(
-            &image[..],
+            image(image_bytes),
             &bmap,
+            Mode::Root,
             source(),
             dir.path(),
             |_| Ok(()),

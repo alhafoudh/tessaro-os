@@ -278,6 +278,13 @@ pub enum Command {
         /// The bmap's per-range checksums are checked either way.
         #[serde(default = "yes")]
         verify: bool,
+        /// Write the whole disk (partition table, every partition, `/data`)
+        /// instead of the root partition: for a device on another disk
+        /// layout. Implies wiping `/data`; a power cut while it writes needs
+        /// a physical reflash. An older device ignores it and refuses the
+        /// layout as before.
+        #[serde(default)]
+        repartition: bool,
     },
     /// The next piece of the upload, starting at `offset`, base64. At most
     /// `UPDATE_CHUNK` bytes before encoding.
@@ -421,8 +428,8 @@ pub enum UpdatePhase {
     /// All of it has; the device is checking the whole file against its
     /// SHA-256 (`verified` of `size`). Skipped with `verify: false`.
     Verifying,
-    /// Checked; the device is staging the boot and root partitions,
-    /// checking each bmap range as it goes (`prepared` of `to_prepare`).
+    /// Checked; the device is decompressing it once as a dry run, checking
+    /// each bmap range it will write (`prepared` of `to_prepare`).
     Preparing,
     /// Staged and verified; waiting for `update-commit`.
     Ready,
@@ -457,12 +464,15 @@ pub struct UpdateStatus {
     /// devices, which do not report it.
     #[serde(default)]
     pub verified: u64,
-    /// Mapped bytes of the boot and root partitions checked and staged, of
-    /// `to_prepare`.
+    /// Mapped bytes of the image checked, of `to_prepare`.
     pub prepared: u64,
     pub to_prepare: u64,
     pub error: Option<String>,
     pub wipe_data: bool,
+    /// The whole disk is rewritten, not the root partition. Defaulted for
+    /// older devices, which cannot.
+    #[serde(default)]
+    pub repartition: bool,
     /// What the last boot that applied an update did.
     pub last: Option<UpdateResult>,
 }
