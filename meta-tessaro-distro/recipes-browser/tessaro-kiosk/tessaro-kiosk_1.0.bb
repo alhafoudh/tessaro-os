@@ -72,7 +72,7 @@ TESSARO_KIOSK_ORIGIN ?= "${@'/'.join((d.getVar('TESSARO_KIOSK_URL') or '').split
 # Must match the listen address in tessaro-selftest's nginx conf.
 TESSARO_SELFTEST_ORIGIN ?= "http://127.0.0.1"
 
-# The two of them, deduplicated and order-stable. On a factory image they are
+# Both origins, deduplicated and order-stable. On a factory image they are
 # the same string and this collapses to one entry.
 #
 # A plain space-separated list, *not* a ready-made JSON array: this value is
@@ -132,7 +132,7 @@ do_install:append() {
     # JSON-quote the origins here rather than in the bitbake variable - see the
     # comment on tessaro_device_origins above for why that matters.
     #
-    # The same file goes to two places. The copy in /etc is what Chromium
+    # The same file goes to /etc and /usr/lib. The copy in /etc is what Chromium
     # reads on a first boot before anything else has run. The copy in /usr/lib
     # is what tessaro-agent renders the /etc one from, with the device-API
     # origins rewritten for the kiosk URL as set on the device - so the /etc

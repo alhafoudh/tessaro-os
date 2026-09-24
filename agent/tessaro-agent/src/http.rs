@@ -1,6 +1,6 @@
 //! The one HTTP client, behind a trait.
 //!
-//! Two call sites use it: the reachability probe (which may be https, against
+//! Its call sites are the reachability probe (which may be https, against
 //! the real internet) and the CDP session's `/json/list` (plaintext,
 //! loopback). They get separate instances because their timeouts differ.
 //!
@@ -9,7 +9,7 @@
 //! are what a technician reads on the serial console, so they are worth
 //! testing.
 //!
-//! It is hyper's low-level client, not a batteries-included one, and four
+//! It is hyper's low-level client, not a batteries-included one, and these
 //! things follow from that which are easy to get wrong:
 //!
 //! 1. **hyper adds no `Host` header.** Without one most servers answer 400,
@@ -32,8 +32,8 @@
 //! `within()`, so each reaches the journal under its own name and each pledges
 //! its own budget to the watchdog.
 //!
-//! **TLS is openssl, through native-tls, and there are two ways to get it
-//! wrong quietly.** A missing provider used to be the silent one (ureq linked
+//! **TLS is openssl, through native-tls, and there are ways to get it wrong
+//! quietly.** A missing provider used to be the silent one (ureq linked
 //! cleanly without libssl and panicked on the first https request); with
 //! native-tls used directly that is now a link error. The silent one now is
 //! an https URL that never takes the TLS path: a plaintext GET to port 443

@@ -1,4 +1,4 @@
-//! The two ways in: the local unix socket and TLS on TCP.
+//! The ways in: the local unix socket and TLS on TCP.
 //!
 //! Both carry the same newline-delimited JSON (see the protocol crate) and
 //! end up in `Control::handle`. What differs is who is asking:

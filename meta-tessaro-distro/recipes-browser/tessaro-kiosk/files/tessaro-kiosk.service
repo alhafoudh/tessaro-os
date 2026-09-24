@@ -67,10 +67,10 @@ EnvironmentFile=-/run/tessaro-kiosk/generated.env
 
 User=weston
 Group=weston
-# The first four are redundant - systemd already grants the groups the weston
-# user holds in /etc/group - but named as documentation: "wayland" is what
-# makes /run/wayland-0 (0775, group wayland) reachable, and video/render are
-# what let the GPU process open /dev/dri.
+# Those before dialout are redundant - systemd already grants the groups the
+# weston user holds in /etc/group - but named as documentation: "wayland" is
+# what makes /run/wayland-0 (0775, group wayland) reachable, and video/render
+# are what let the GPU process open /dev/dri.
 #
 # dialout and plugdev are not redundant: the weston user is in neither, and
 # this is what grants them. They are what the device APIs need, because
@@ -107,7 +107,7 @@ WorkingDirectory=/home/weston
 #
 #     --kiosk --no-first-run --ozone-platform=wayland
 #
-# Do not repeat any of those three here. Note in particular that --incognito
+# Do not repeat any of those here. Note in particular that --incognito
 # is no longer among them: tessaro.conf overrides CHROMIUM_EXTRA_ARGS to drop
 # it, because it threw away cookies, localStorage and service worker caches on
 # every restart. Read the comment there before touching either end.
@@ -161,7 +161,7 @@ WorkingDirectory=/home/weston
 #   in; this way only the panel changes. With no input method client bound,
 #   weston's input_method_context_create() returns early, no panel surface
 #   exists and show_input_panel reaches nothing.
-#   These two are the exception to the counterable-from-EXTRA rule below:
+#   These switches are the exception to the counterable-from-EXTRA rule below:
 #   --disable-wayland-ime cannot undo them, because IsImeEnabled() tests for
 #   --enable-wayland-ime first and returns true. KIOSK_OSK is the lever.
 # --enable-features is the single place base::Features are named, because

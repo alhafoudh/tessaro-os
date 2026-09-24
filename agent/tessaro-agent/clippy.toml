@@ -1,6 +1,6 @@
 # Enforced by `mise run agent-lint` (clippy --all-targets -D warnings).
 #
-# Two halves of one rule: every wait on the outside world has a deadline, and
+# The halves of one rule: every wait on the outside world has a deadline, and
 # nothing blocks the one runtime thread.
 #
 # The first half is this list plus the source-grep test in deadline.rs. The

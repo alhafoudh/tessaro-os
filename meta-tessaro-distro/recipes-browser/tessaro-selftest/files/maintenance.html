@@ -12,7 +12,8 @@
   Everything is inline on purpose: maintenance is often exactly when the site
   or the network is down, so a single external byte could stop it rendering.
 
-  Two optional query parameters replace the text, as plain text - never HTML:
+  The optional title and message query parameters replace the text, as plain
+  text - never HTML:
 
       ?title=Back%20soon&message=We%20are%20restocking%20the%20menu.
 
@@ -63,7 +64,7 @@
     cursor: none;
   }
 
-  /* Two soft glows drifting slowly behind everything. Transform-only, so the
+  /* Soft glows drifting slowly behind everything. Transform-only, so the
      compositor moves them without repainting the page every frame. */
   .glow {
     position: fixed;

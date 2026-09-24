@@ -1,8 +1,8 @@
 # short-description: EFI disk image for genericx86-64 with a persistent /data
 # long-description: meta-yocto-bsp's genericx86.wks.in without a /data
 # partition, which overlayfs-etc requires. The layout matches Moonforge's
-# qemux86-64 one, so /data is the third partition (OVERLAYFS_ETC_DEVICE =
-# "/dev/sda3" in kas/machine/genericx86-64.yml) on both x86 targets.
+# qemux86-64 one, so /data is the third partition on both x86 targets; it is
+# mounted by its "data" label (OVERLAYFS_ETC_DEVICE in kas/common/tessaro.yml).
 #
 # GPT plus an ESP, so this boots on UEFI firmware only. genericx86-64 declares
 # the pcbios MACHINE_FEATURE, but no legacy boot sector is installed here.
@@ -23,7 +23,7 @@
 # reverts to /dev/sda3, which systemd then fails to mount on an NVMe board even
 # though the preinit already mounted /data by label.
 #
-# In-place updates (tessaro-ctl update) need two more things:
+# In-place updates (tessaro-ctl update) also need:
 #
 # * Every identifier the root filesystem names is fixed: the PARTUUIDs with
 #   --uuid (grub.cfg's root=), and the /boot vfat serial and the swap UUID

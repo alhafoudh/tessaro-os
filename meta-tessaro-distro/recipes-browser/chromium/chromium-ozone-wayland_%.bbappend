@@ -1,4 +1,4 @@
-# The vendored bytemuck gates its two core::simd impls on a nightly *date*
+# The vendored bytemuck gates its core::simd impls on a nightly *date*
 # (rustversion::before/since 2026-01-27, see Lokathor/bytemuck#343). rustversion
 # orders any stable compiler below every nightly date - upstream behaviour, the
 # vendored crate is pristine dtolnay and chromium does not patch it - so the OE

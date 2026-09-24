@@ -262,7 +262,7 @@ pub static KEYS: &[Key] = &[
         "Where the TLS control API listens, address:port, or off."),
     key("access.mdns", "KIOSK_MDNS", Kind::Choice(&["on", "off"]), AGENT,
         "Advertise the device as NAME.local and _tessaro._tcp."),
-    // The device's own network: four NetworkManager profiles the agent
+    // The device's own network: the NetworkManager profiles the agent
     // generates (tessaro-ethernet-dhcp/-static, tessaro-wifi-hotspot/-client)
     // and switches between. A change is kept only if the device still
     // reaches the network afterwards; see `tessaro-ctl config set --verify`.

@@ -2,13 +2,13 @@
 //!
 //! `state.json` and `auth.json` both live here. A kiosk loses power as a
 //! matter of routine, so a write must leave either the old file or the new
-//! one on disk, never half of each, and two writers - the agent, the boot
+//! one on disk, never half of each, and the writers - the agent, the boot
 //! oneshot, a factory reset - must never interleave.
 //!
 //! * **Locking** is `flock` on a separate `<name>.lock`. Not on the data file
 //!   itself: the rename below swaps its inode, so a lock held on the old one
 //!   would protect nothing. Readers take it shared, writers exclusive, and a
-//!   read-modify-write (`update`) holds it exclusively across all three.
+//!   read-modify-write (`update`) holds it exclusively throughout.
 //! * **Writing** is: the new content into `<name>.tmp`, `fsync`; the current
 //!   file hard-linked to `<name>.prev`; `rename` over the current file;
 //!   `fsync` the directory, which is what makes the link and the rename

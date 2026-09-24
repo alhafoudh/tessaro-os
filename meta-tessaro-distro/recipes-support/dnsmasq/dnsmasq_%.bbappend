@@ -1,7 +1,7 @@
 # dnsmasq is in the image for one thing: NetworkManager runs it itself, per
 # shared connection, to hand out DHCP and forward DNS on the hotspot
-# (ipv4.method=shared). Two things the package does on its own would break
-# the rest of the device, so both go:
+# (ipv4.method=shared). These things the package does on its own would break
+# the rest of the device, so they go:
 #
 # * /etc/systemd/resolved.conf.d/dnsmasq-resolved.conf sets
 #   DNSStubListener=no. That switches off systemd-resolved's 127.0.0.53

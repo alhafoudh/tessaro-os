@@ -1,6 +1,6 @@
 //! The systemd watchdog: proving the state machine is still making progress.
 //!
-//! The two obvious designs are both wrong. A timer that pings every N seconds
+//! The obvious designs are both wrong. A timer that pings every N seconds
 //! keeps patting the dog while the state machine sits wedged in an await that
 //! never returns - the one failure this exists to catch. Pinging at the end of
 //! each cycle does catch it, but then `WatchdogSec=` must exceed the probe
@@ -12,10 +12,10 @@
 //! So the state machine publishes a *pledge* instead: before every external
 //! call, "whatever I am doing now will be over by T". The keepalive task pings
 //! only while T is still in the future. The pledge is made by the same
-//! `within()` that enforces the call's deadline, so the two cannot drift
-//! apart, and a pledge is computed from the configured timeout at runtime -
-//! `WatchdogSec=` is decoupled from every tunable. Waiting between cycles is a
-//! pledge too, so idle is alive.
+//! `within()` that enforces the call's deadline, so pledge and deadline
+//! cannot drift apart, and a pledge is computed from the configured timeout
+//! at runtime - `WatchdogSec=` is decoupled from every tunable. Waiting
+//! between cycles is a pledge too, so idle is alive.
 //!
 //! `tokio::time::Instant`, never `SystemTime`: a kiosk with no RTC takes a
 //! large NTP step minutes after boot, and a wall-clock staleness check would

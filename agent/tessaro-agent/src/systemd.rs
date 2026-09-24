@@ -7,11 +7,11 @@
 //! caller decides what a failed restart means. That is what lets the same
 //! binary run in the integration setup, where there is no system bus at all.
 //!
-//! Every call has two deadlines, and they are not redundant. `within()`
-//! bounds *our* wait and pledges it to the watchdog; zbus's own
-//! `method_timeout` expires the pending call inside zbus and frees its slot,
-//! and bounds the calls zbus makes on its own behalf that `within()` never
-//! sees. Before this, none of these calls had any deadline at all, and
+//! Every call has a deadline of ours and one of zbus's, and they are not
+//! redundant. `within()` bounds *our* wait and pledges it to the watchdog;
+//! zbus's own `method_timeout` expires the pending call inside zbus and frees
+//! its slot, and bounds the calls zbus makes on its own behalf that `within()`
+//! never sees. Before this, none of these calls had any deadline at all, and
 //! `main_pid()` runs on every cycle.
 
 use std::cell::RefCell;

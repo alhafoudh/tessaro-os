@@ -9,9 +9,9 @@
 # a system account.
 #
 # @libexecdir@/tessaro-vnc-auth checks KIOSK_VNC_USER and KIOSK_VNC_PASSWORD
-# from the kiosk's own environment files instead, so the login is product
-# configuration rather than a system login, and changing it needs no rebuild
-# and no restart - the checker reads those files on every attempt.
+# from the image defaults instead, so the login is a property of the image
+# rather than a system login. There is no setting for it; changing it takes a
+# new image.
 #
 # Not "quiet": a refused login then leaves a line in the journal, which is the
 # only trace a support case would have.

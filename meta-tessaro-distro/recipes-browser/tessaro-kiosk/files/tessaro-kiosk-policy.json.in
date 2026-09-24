@@ -10,7 +10,7 @@
 // It is also generated. This file ships twice: here, as what Chromium reads on
 // the very first boot, and as /usr/lib/tessaro-kiosk/policy.json, which
 // tessaro-agent renders the /etc copy from on every boot and after every
-// change, rewriting the two device-API origin lists below for browser.url and
+// change, rewriting the device-API origin lists below for browser.url and
 // browser.device_origins as set on the device. Edit neither on a device: the
 // agent puts /etc back, and /usr/lib is the image. Settings go through
 // tessaro-ctl.
@@ -64,7 +64,7 @@
 
   // --- device APIs --------------------------------------------------------
   //
-  // 3 = "Ask", 2 = "Block". There is no "Allow" value for any of these four;
+  // 3 = "Ask", 2 = "Block". There is no "Allow" value for any of these;
   // the *AllowDevicesForUrls policies below are the only way to grant access
   // without a human in front of the screen, and they override the guard.
   //
@@ -78,12 +78,12 @@
   "DefaultWebUsbGuardSetting": 3,
   "DefaultWebBluetoothGuardSetting": 3,
 
-  // Serial and HID are granted wholesale to two origins: the kiosk's own, from
-  // TESSARO_KIOSK_URL, and http://127.0.0.1, where nginx serves the self-test
-  // page. They collapse to one entry on a factory image, where those are the
-  // same thing. The second is what keeps the diagnostic page able to open a
-  // serial port on a *deployed* device, after TESSARO_KIOSK_URL has been
-  // pointed at a customer's site.
+  // Serial and HID are granted wholesale to the kiosk's own origin, from
+  // TESSARO_KIOSK_URL, and to http://127.0.0.1, where nginx serves the
+  // self-test page. They collapse to one entry on a factory image, where those
+  // are the same thing. The self-test origin is what keeps the diagnostic page
+  // able to open a serial port on a *deployed* device, after TESSARO_KIOSK_URL
+  // has been pointed at a customer's site.
   //
   // These match on *origin* only - scheme, host and port - with no [*.]host
   // wildcard support, unlike the Ask/Blocked variants. A host served on a

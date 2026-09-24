@@ -1,5 +1,5 @@
 # nginx on Tessaro serves exactly one thing: the local self-test page, on the
-# loopback. Two changes are needed to make that true.
+# loopback. These changes are needed to make that true.
 
 # 1. Give nginx a config directory outside /etc.
 #
@@ -14,7 +14,7 @@
 #
 #    nginx.conf itself has to stay in /etc - the path is compiled into the
 #    binary by --conf-path - so this is one sed on that file rather than a
-#    replacement of it. The include is added before the two upstream ones, so
+#    replacement of it. The include is added before the upstream ones, so
 #    an operator's /etc/nginx/conf.d entry is parsed after ours.
 #
 # 2. Drop the stock default_server.

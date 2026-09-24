@@ -25,7 +25,7 @@
 //! 5. **The TLS identity**, made if missing, so its fingerprint is in the
 //!    journal from the first boot.
 //! 6. **Render.**
-//! 7. **The network**: the four managed NetworkManager profiles, rendered
+//! 7. **The network**: the managed NetworkManager profiles, rendered
 //!    from the saved settings into `/run/NetworkManager/system-connections`
 //!    before NetworkManager starts (the unit is ordered before it), and the
 //!    hotspot's NAT table. Whatever a change that never committed left

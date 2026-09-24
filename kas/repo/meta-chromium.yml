@@ -2,7 +2,7 @@
 #
 # The meta-browser repo root is not a layer, so the layers key is mandatory
 # here, same as meta-yocto. meta-chromium layerdepends on meta-clang and the
-# Rust mixin, so all three come in together; the mixin is a second checkout of
+# Rust mixin, so they all come in together; the mixin is a second checkout of
 # meta-lts-mixins on its scarthgap/rust branch - Moonforge already pins the
 # same repo on scarthgap/u-boot for the Pi, and kas happily clones one URL
 # twice under two names.

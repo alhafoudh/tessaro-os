@@ -1,4 +1,4 @@
-//! NetworkManager: the four profiles the device manages, and what
+//! NetworkManager: the profiles the device manages, and what
 //! `tessaro-ctl network profiles list|show` and `network wifi status|scan` read.
 //!
 //! * **The profiles** are rendered from the settings (`profiles.rs`) as

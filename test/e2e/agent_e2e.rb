@@ -791,7 +791,7 @@ module AgentE2E
     end
   end
 
-  check "net-profiles", "the four managed profiles are rendered at boot, DHCP is up, the hotspot waits for wlan0" do |guest, _journal|
+  check "net-profiles", "the managed profiles are rendered at boot, DHCP is up, the hotspot waits for wlan0" do |guest, _journal|
     profile, = uplink(guest)
     raise Failure, "the uplink is #{profile["name"]}, not tessaro-ethernet-dhcp" unless profile["name"] == "tessaro-ethernet-dhcp"
     names = JSON.parse(guest.run("tessaro-ctl --json network profiles list")).map { _1["name"] }

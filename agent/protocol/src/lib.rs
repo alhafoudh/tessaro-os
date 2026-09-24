@@ -1,8 +1,8 @@
 //! The Tessaro control protocol.
 //!
 //! One command model, every transport an encoding of it (TODO.md item 8).
-//! Today there are two transports and one encoding: newline-delimited JSON
-//! over the local unix socket, and the same over TLS on TCP.
+//! Today there is one encoding, newline-delimited JSON, over the local unix
+//! socket and over TLS on TCP.
 //!
 //! A conversation is:
 //!
@@ -316,7 +316,7 @@ pub enum Command {
     /// One round trip and nothing else, for `tessaro-ctl device ping`. Public, like
     /// `id`: it says no more than that the agent is answering.
     Ping,
-    /// NetworkManager's profiles: the four the device manages, and any made
+    /// NetworkManager's profiles: the ones the device manages, and any made
     /// by hand.
     NetProfiles,
     /// One profile's addressing, DNS and WiFi settings, never its secrets.
@@ -623,7 +623,7 @@ pub struct NetProfile {
     /// Written to disk. A profile under `/run` counts as unsaved, the
     /// managed ones included.
     pub saved: bool,
-    /// One of the four fixed profiles the agent renders from settings on
+    /// One of the fixed profiles the agent renders from settings on
     /// every boot, so unsaved but never lost.
     #[serde(default)]
     pub managed: bool,

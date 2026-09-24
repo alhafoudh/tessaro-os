@@ -51,7 +51,7 @@ if-addrs = "0.15"
 # is not a thing to reimplement.
 tokio = { version = "1", features = ["rt", "macros", "net", "time", "signal", "io-util", "sync", "process"] }
 
-# The four ports are async traits held as `&dyn`, and `async fn` in a trait is
+# The ports are async traits held as `&dyn`, and `async fn` in a trait is
 # not dyn-compatible. Already in the lock through zbus, so it costs nothing.
 async-trait = "0.1"
 

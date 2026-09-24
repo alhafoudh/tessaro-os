@@ -12,7 +12,7 @@
 
 use sha2::{Digest, Sha256};
 
-/// What dropbear 2022.83 verifies. The two `sk-` types are FIDO keys.
+/// What dropbear 2022.83 verifies. The `sk-` types are FIDO keys.
 pub const TYPES: &[&str] = &[
     "ssh-ed25519",
     "ecdsa-sha2-nistp256",

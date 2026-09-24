@@ -44,7 +44,7 @@ pub struct Paths {
     /// its 127.0.0.53 stub, which says nothing about the network.
     pub resolv: PathBuf,
     pub hostname: PathBuf,
-    /// Where the four managed NetworkManager profiles are rendered: the
+    /// Where the managed NetworkManager profiles are rendered: the
     /// in-memory keyfile directory, highest precedence, gone at every boot.
     pub nm_run_dir: PathBuf,
     /// Root's `authorized_keys`, in root's real home (`/etc/passwd` says

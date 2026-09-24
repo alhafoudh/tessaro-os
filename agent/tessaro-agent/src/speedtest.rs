@@ -7,7 +7,7 @@
 //!
 //! cfspeedtest is blocking reqwest, so the whole test is one
 //! `spawn_blocking` thread that sends a `SpeedtestEvent` per step down a
-//! channel, and the server forwards each as it arrives. Three rules follow:
+//! channel, and the server forwards each as it arrives. These rules follow:
 //!
 //! 1. **The reqwest client lives and dies on that thread.** A blocking
 //!    client owns a runtime of its own, and dropping one on the agent's

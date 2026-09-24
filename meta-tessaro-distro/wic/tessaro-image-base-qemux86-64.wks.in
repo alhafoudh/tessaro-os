@@ -1,6 +1,6 @@
 # short-description: EFI disk image for qemux86-64 that can take in-place updates
 # long-description: Moonforge's moonforge-image-base-qemux86-64.wks.in (ESP,
-# rootfs, /data, swap), with the two things an in-place update needs and that
+# rootfs, /data, swap), with what an in-place update needs and that
 # upstream leaves to chance. See tessaro-image-base-genericx86-64.wks.in for
 # the full reasoning; this is the same layout for the development target.
 #

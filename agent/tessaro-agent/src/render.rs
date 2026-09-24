@@ -1,6 +1,6 @@
 //! What the device's settings turn into on disk.
 //!
-//! Two files, both written only when their content actually changes - an
+//! These files, each written only when its content actually changes - an
 //! unchanged render must never restart anything, because a restart is a
 //! blank screen in a public place:
 //!
@@ -27,8 +27,8 @@ use crate::paths::Paths;
 use crate::state;
 use crate::store;
 
-/// The two grants that follow the kiosk origin. Everything else in the policy
-/// is the image's.
+/// The device-API grants that follow the kiosk origin. Everything else in the
+/// policy is the image's.
 const ORIGIN_POLICIES: [&str; 2] = ["SerialAllowAllPortsForUrls", "WebHidAllowAllDevicesForUrls"];
 
 pub fn env_file(
@@ -142,7 +142,7 @@ pub fn policy(base: &str, origins: &[String]) -> Result<String, String> {
 
 /// Chromium's policy loader accepts `//` and `/* */` comments and trailing
 /// commas (`JSON_PARSE_CHROMIUM_EXTENSIONS`), and the shipped file uses all
-/// three to document itself. serde_json accepts none of them.
+/// of them to document itself. serde_json accepts none of them.
 pub fn strict_json(text: &str) -> String {
     let chars: Vec<char> = text.chars().collect();
     let mut out = String::with_capacity(text.len());

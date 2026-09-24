@@ -17,7 +17,7 @@
 # The bitbake target stays moonforge-image-base; only the output is renamed.
 # WKS_FILE is unaffected - image_types_wic.bbclass would derive it from
 # IMAGE_BASENAME, but that is a ??= default and every machine here already has
-# a real value (our own for x86, rpi-base.inc's for the Pi).
+# a real value (our own, from meta-tessaro-distro/wic/).
 IMAGE_BASENAME = "tessaro-os"
 
 # A block map next to every .wic.bz2, so `mise run image:flash` writes only the
@@ -59,7 +59,7 @@ CORE_IMAGE_EXTRA_INSTALL += " \
 # package: the only TTF family present was liberation-fonts, and it arrives by
 # accident, as an RRECOMMENDS of the weston recipe. So every generic family a
 # stylesheet asks for - serif, sans-serif, monospace - resolved to the same
-# three Liberation faces, and every emoji anywhere on the kiosk rendered as a
+# Liberation faces, and every emoji anywhere on the kiosk rendered as a
 # tofu box.
 #
 # ttf-noto-emoji-color is NotoColorEmoji.ttf, the CBDT colour font, and it is
@@ -68,7 +68,7 @@ CORE_IMAGE_EXTRA_INSTALL += " \
 # inherit fontcache, so fc-cache runs at rootfs time and Chromium's fontconfig
 # fallback finds them with no further configuration.
 #
-# All four come from meta-openembedded/meta-oe, which is why layer.conf now
+# All of them come from meta-openembedded/meta-oe, which is why layer.conf now
 # names openembedded-layer in LAYERDEPENDS.
 CORE_IMAGE_EXTRA_INSTALL += " \
     ttf-noto-emoji-color \
@@ -102,7 +102,7 @@ CORE_IMAGE_EXTRA_INSTALL += " \
 #
 # allow-empty-password is the one that does the work for dropbear: it adds -B
 # to its arguments. empty-root-password on its own only clears the password
-# hash, and dropbear refuses a blank password without -B, so the two are a
+# hash, and dropbear refuses a blank password without -B, so they are a
 # pair. Development builds get all of this from debug-tweaks as well; stating
 # it twice costs nothing.
 #

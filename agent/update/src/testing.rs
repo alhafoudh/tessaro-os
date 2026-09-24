@@ -17,7 +17,7 @@ pub const MIB: u64 = 1 << 20;
 pub const DISK_SECTORS: u64 = 32768;
 pub const BOOT_UUID: [u8; 16] = [1; 16];
 pub const ROOT_UUID: [u8; 16] = [2; 16];
-/// The same two, as `/dev/disk/by-partuuid` spells them.
+/// The same UUIDs, as `/dev/disk/by-partuuid` spells them.
 pub const BOOT_PARTUUID: &str = "01010101-0101-0101-0101-010101010101";
 pub const ROOT_PARTUUID: &str = "02020202-0202-0202-0202-020202020202";
 

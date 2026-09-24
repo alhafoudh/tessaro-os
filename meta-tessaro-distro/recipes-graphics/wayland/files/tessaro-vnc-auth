@@ -12,7 +12,7 @@
 # that can ever work is "weston" - the compositor's own account - which is a
 # detail of how the kiosk is built leaking into what a technician types.
 #
-# Checking the credential here instead decouples the two: the login is
+# Checking the credential here instead decouples login from account: it is
 # whatever KIOSK_VNC_USER/KIOSK_VNC_PASSWORD say, no system account is
 # involved, /etc/shadow is never consulted, and nothing needs privilege.
 #

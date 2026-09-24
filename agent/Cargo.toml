@@ -9,7 +9,7 @@
 #                   by tessaro-flash from the initramfs.
 #
 # The recipe builds the whole workspace from this directory (S is agent/), and
-# cargo.bbclass installs every binary it finds, so all three land in /usr/bin.
+# cargo.bbclass installs every binary it finds, so all of them land in /usr/bin.
 [workspace]
 resolver = "2"
 members = ["protocol", "tessaro-agent", "tessaro-ctl", "update"]

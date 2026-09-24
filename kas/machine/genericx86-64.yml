@@ -22,8 +22,7 @@ local_conf_header:
     # disk name is least predictable (SATA and USB are /dev/sda*, NVMe is
     # /dev/nvme0n1p*, eMMC is /dev/mmcblk0p*), which is exactly why
     # kas/common/tessaro.yml mounts /data by label instead.
-    OVERLAYFS_ETC_DEVICE = "/dev/sda3"
-    # WiFi drivers need nothing added here; firmware is only mostly covered.
+    # WiFi drivers and firmware need nothing added here.
     #
     # meta-yocto-bsp's genericx86-common.inc already carries
     #   MACHINE_EXTRA_RRECOMMENDS += "kernel-modules linux-firmware"
@@ -32,31 +31,18 @@ local_conf_header:
     # brcmfmac, mt76). That side is genuinely complete - 39MB for 683 modules,
     # of which the wifi ones are 7.3MB.
     #
-    # linux-firmware is the part to be careful about, and "the whole thing" is
-    # not what gets installed. oe-core splits the recipe into 138 packages and
-    # the base package is only the catch-all:
-    #   FILES:${PN} += "${nonarch_base_libdir}/firmware/*"
-    # so whatever a split package claims is NOT in it and is NOT pulled in by
-    # anything. For wifi that boundary runs straight through Intel: the
-    # ${PN}-iwlwifi-* packages claim 135, 3160, 6000, 6050, 7260, 7265, 8000C,
-    # 8265, 9000 and 9260, while the newer cc/so/ty/gl/ma blobs (AX200, AX210,
-    # BE200) match no split and so land in the catch-all. Same story for
-    # ath10k and ath11k, which are split out; ath12k is not, because the base
-    # package RDEPENDS on it explicitly.
+    # linux-firmware is complete too, even though oe-core splits the recipe
+    # into a few hundred packages: populate_packages:prepend in
+    # linux-firmware_*.bb makes the base package RRECOMMENDS every split one,
+    # so iwlwifi-8265, ath10k and the rest come in with it, and the newer
+    # Intel blobs (AX200, AX210, BE200) through ${PN}-iwlwifi-misc. Not yet
+    # confirmed on a built rootfs; `dmesg | grep -i firmware` on the first
+    # real board is the check.
     #
-    # Net effect: a modern Intel or Atheros card works out of the box, an
-    # Intel 8265 or 9260 or an ath10k card - very common in the mini PCs and
-    # thin clients this target is for - comes up with the driver bound and no
-    # firmware, which presents as a NIC that never appears in nmtui. Check
-    # `dmesg | grep -i firmware` on the first real board and add what it asks
-    # for, e.g.:
-    #   MACHINE_EXTRA_RRECOMMENDS += "linux-firmware-iwlwifi-8265"
-    #
-    # Going the other way, once the hardware is fixed, is where the size is:
-    # the catch-all is a few hundred MB and almost all of it is GPU, Mellanox
-    # and modem blobs a kiosk never touches.
+    # The size is the cost: a few hundred MB, almost all of it GPU, Mellanox
+    # and modem blobs a kiosk never touches. Once the hardware is fixed:
     #   BAD_RECOMMENDATIONS += "linux-firmware"
-    # plus the one or two split packages the board needs.
+    # plus the split packages the board needs.
 
 # Both keys belong in the entry point of the config chain: an include cannot
 # set them, because meta-moonforge-distro.yml sets distro too and wins by

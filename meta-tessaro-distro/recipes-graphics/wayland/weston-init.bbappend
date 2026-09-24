@@ -112,7 +112,7 @@ do_install:append() {
     # colour, so the seam is invisible; ARGB, and the alpha has to be there or
     # the fill is transparent and the frame shows black.
     #
-    # A sed rather than our own copy of weston.ini: the delta is two keys, and
+    # A sed rather than our own copy of weston.ini: the delta is these keys, and
     # forking the file would mean silently dropping whatever Moonforge changes
     # in it next. oe-core's own do_install patches this file the same way.
     sed -i -e '/^\[shell\]/a background-type=centered' \

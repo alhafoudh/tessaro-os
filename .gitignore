@@ -33,7 +33,7 @@
 # Per-workstation settings: build host, flash device, tunnel addresses
 /mise.local.toml
 
-# Images pulled from the build host by `mise run pull`
+# Images pulled from the build host by `mise run image:pull`
 /*.wic
 /*.wic.*
 

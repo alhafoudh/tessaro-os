@@ -197,7 +197,7 @@ impl<'a> Agent<'a> {
         // A browser that restarted under us is showing whatever its ExecStart
         // URL produced, which we cannot be sure of, so stop claiming to know.
         //
-        // Two independent witnesses. A new page generation from the DevTools
+        // Independent witnesses. A new page generation from the DevTools
         // session means a new browser, a new page target, or a crashed tab -
         // never merely a reconnect to the same live page. The
         // MainPID check catches a restart over the bus - but only when
@@ -429,7 +429,7 @@ impl<'a> Agent<'a> {
     /// moment `/usr/bin/chromium` is exec'd - seconds before Chromium opens
     /// its DevTools port. Our `After=` on it therefore guarantees nothing, and
     /// the first cycle after every boot finds the port closed. Logging that at
-    /// info put two lines that read like faults into the journal of every
+    /// info put lines that read like faults into the journal of every
     /// device on every boot, which is how a technician learns to skim past the
     /// journal. Nothing is hidden: if the browser never comes up at all, the
     /// escalation still logs the restart at info, which is the line that

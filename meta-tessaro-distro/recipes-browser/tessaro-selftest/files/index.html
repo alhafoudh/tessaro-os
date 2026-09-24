@@ -330,7 +330,7 @@
   </div>
 
   <h3>CSS features</h3>
-  <p class="hint" style="margin:0 0 0.7em;">Grid of twelve boxes: gradient, radius,
+  <p class="hint" style="margin:0 0 0.7em;">Grid of boxes: gradient, radius,
     shadow, transform, filter, animation, blend, clip-path, sticky, custom
     property, <code>clamp()</code> type, and a flex row. A broken box is a
     missing feature.</p>
@@ -546,7 +546,7 @@
 <!-- ===================================================================== -->
 <section id="s8">
   <h2><span class="num">8</span> Audio playback <span class="pill" data-state="pending" id="p-audio">pending</span></h2>
-  <p class="hint">The same two-second tone in three containers - 440 Hz in the
+  <p class="hint">The same two-second tone in each container - 440 Hz in the
     left channel, 880 Hz in the right, so a single file also proves channel
     mapping. Audio on this image goes straight to ALSA: Chromium is built
     against PulseAudio but no libpulse ships, so it fails to load and falls
@@ -556,7 +556,7 @@
 
   <div class="row">
     <label>volume <input type="range" id="audio-vol" min="0" max="1" step="0.05" value="0.7"></label>
-    <button id="audio-play-all">Play all three</button>
+    <button id="audio-play-all">Play all</button>
   </div>
 
   <h3>Declared codec support</h3>
@@ -786,8 +786,8 @@ function buildCssDemo() {
 
 const PANGRAM = "Sphinx of black quartz, judge my vow. 0123456789";
 
-// The families worth asking about: the three generics every stylesheet leans
-// on, the two nobody ships, system-ui, and then the named families this image
+// The families worth asking about: the generics every stylesheet leans on,
+// the ones nobody ships, system-ui, and then the named families this image
 // does or does not install.
 //
 // Third element overrides the probe string. An emoji font has no Latin glyphs
@@ -806,7 +806,7 @@ const FONT_ROWS = [
 ];
 
 // Width-probe: render a string in "<family>, <base>" and in "<base>" alone. If
-// the family exists the widths differ from at least one base. Three bases,
+// the family exists the widths differ from at least one base. Several bases,
 // because a family that happens to metric-match one of them would otherwise
 // read as missing.
 function fontPresent(family, probe) {
@@ -1540,7 +1540,7 @@ function buildAudio() {
   for (const a of players) a.volume = 0.7;
 
   document.getElementById("audio-play-all").addEventListener("click", async () => {
-    // Sequentially, so three tones do not arrive as one chord.
+    // Sequentially, so the tones do not arrive as one chord.
     for (const a of players) {
       a.currentTime = 0;
       try { await a.play(); } catch (err) { logToConsoleOnly(err); }

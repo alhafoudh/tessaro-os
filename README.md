@@ -109,10 +109,10 @@ and on the build host `localhost:5022` reaches SSH on `$TESSARO_DEVICE_IP`.
 | --- | --- | --- |
 | QEMU x86_64 | `qemux86-64` | builds and boots, used for development |
 | x86_64 hardware | `genericx86-64` | configured, first build still to be run |
-| Raspberry Pi 3B+ | `raspberrypi3-64` | configured, first build still to be run |
+| Raspberry Pi 3B+ | `raspberrypi3-64` | builds, boots and runs the kiosk |
 
-All three build the same image: read-only rootfs, overlayfs `/etc`, persistent
-`/data`, Weston and the Chromium kiosk.
+Every machine builds the same image: read-only rootfs, overlayfs `/etc`,
+persistent `/data`, Weston and the Chromium kiosk.
 
 ## Kiosk browser
 
@@ -122,16 +122,15 @@ shows the self-test page described below, served locally on
 build-time default is `TESSARO_KIOSK_URL` in
 `meta-tessaro-distro/conf/distro/tessaro.conf`.
 
-On a running device, change the URL without rebuilding by uncommenting and
-editing `KIOSK_URL` in `/etc/default/tessaro-kiosk`:
+On a running device, change the URL without rebuilding with `tessaro-ctl`,
+which restarts whatever reads the setting:
 
 ```sh
-vi /etc/default/tessaro-kiosk
-systemctl restart tessaro-kiosk tessaro-kiosk-watchdog
+tessaro-ctl config set browser.url=https://example.com/
 ```
 
-`/etc` is an overlayfs whose upper layer is the persistent `/data` partition,
-so the change survives a reboot.
+Settings live in `/data/tessaro/state.json` on the persistent `/data`
+partition, so the change survives a reboot and image updates.
 
 ## Checking a device
 
@@ -141,48 +140,48 @@ emoji, every HTML input type, touch and mouse scrolling, WebSerial and WebHID,
 audio and video playback, and WebAudio synthesis - all from local files, so it
 works with the network down.
 
-Deploying a device means pointing `KIOSK_URL` at the site it is there to show.
-To get back to the self-test page afterwards:
+Deploying a device means pointing `browser.url` at the site it is there to
+show. To get back to the self-test page afterwards:
 
 ```sh
-vi /etc/default/tessaro-kiosk
-#   KIOSK_URL=http://127.0.0.1/
-systemctl restart tessaro-kiosk tessaro-agent
+tessaro-ctl config set browser.url=http://127.0.0.1/ agent.refresh_interval=0
 ```
 
-Set `KIOSK_REFRESH_INTERVAL=0` as well before working through it by hand -
-otherwise the supervisor reloads the page every ten minutes, closing any serial
-port it has open and wiping every field you have typed into.
+`agent.refresh_interval=0` matters when working through it by hand - otherwise
+the agent reloads the page every ten minutes, closing any serial port it has
+open and wiping every field you have typed into. `tessaro-ctl config unset`
+both afterwards.
 
 It is served over http rather than opened as a file on purpose: a `file://`
 page has no origin, and Chromium's serial and HID policy grants match on
 origin, so the page could only reach a device through a chooser dialog.
 `http://127.0.0.1` is a real origin and a secure context, so the pre-grants
-apply. One thing that does still need hardware: this image has no on-screen
-keyboard, so the text fields need a USB keyboard. Everything else works with a
-finger.
+apply. The on-screen keyboard only appears on a device with no hardware
+keyboard attached; `tessaro-ctl config set screen.osk=always` forces it.
+Everything else works with a finger.
 
-A watchdog keeps the page honest: it watches the browser over CDP (the
+An agent keeps the page honest: it watches the browser over CDP (the
 DevTools protocol, on `127.0.0.1:9222`), probes the URL, re-opens it every ten
 minutes, shows a local offline page while the site is unreachable, and restarts
-the browser over systemd's D-Bus API if it stops responding. The watchdog is a
-Ruby 4 container, built by `mise run watchdog-image` and run by podman with
-storage on `/data`. Replace the offline page by dropping a file at
+the browser over systemd's D-Bus API if it stops responding. It is a native
+Rust binary, `tessaro-agent`, and also the device's control plane for
+`tessaro-ctl`. Replace the offline page by dropping a file at
 `/data/kiosk/offline.html`. Why it failed is in the journal, not on the screen:
 
 ```sh
-journalctl -fu tessaro-kiosk-watchdog        # the browser and the watchdog unit
-journalctl CONTAINER_NAME=tessaro-kiosk-watchdog   # the container's own output
+journalctl -fu tessaro-agent    # the agent
+journalctl -fu tessaro-kiosk    # the browser
 ```
 
-## Developing the watchdog
+## Developing the agent
 
-The watchdog lives in `watchdog/`, as a plain Ruby project with minitest tests,
-and runs in Docker locally - no Ruby on the host needed:
+The agent is a Rust workspace in `agent/`, tested on the host:
 
 ```sh
-mise run watchdog-test         # unit tests in the Ruby 4 container
-mise run watchdog-integration  # real Chromium + the watchdog in compose
+mise run agent-test          # cargo test for the workspace
+mise run agent-lint          # cargo fmt --check plus clippy
+mise run agent-integration   # the agent against a real headless Chromium in compose
+mise run agent-e2e           # boot the qemu image and exercise the agent on it
 ```
 
 ## Structure

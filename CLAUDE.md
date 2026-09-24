@@ -8,6 +8,16 @@ for the platforms it ships on. Derivative of
 
 Obsidian tracking: no
 
+**Do not count the things you list.** Anywhere in the repo - code comments,
+docs, user-facing strings, test names, this file - never announce or refer
+to a set of items by how many there are, spelled or numeric: not "the
+following three items", "the four profiles", "these two flags", "all three
+land in `/usr/bin`". The count goes stale the moment an item is added or
+removed, and nothing catches it. Name what the items are instead ("the
+managed profiles", "these flags", "every binary"). Numbers that are facts
+rather than a count of listed things - timeouts, sizes, retries, a
+16-character password, measured line counts - are fine.
+
 ## Commands
 
 Use the mise tasks rather than calling `kas-container` directly:
@@ -24,9 +34,9 @@ Use the mise tasks rather than calling `kas-container` directly:
 | `mise run run-vnc` | Boot in QEMU with VNC on localhost:5900 |
 | `mise run image-sizes` | Size of every built `.wic`, all machines at once |
 | `mise run clean` | Drop build artifacts, keep sstate and downloads |
-| `mise run agent-test` | `cargo test` for the agent workspace (protocol, agent, ctl) |
+| `mise run agent-test` | `cargo test` for the whole agent workspace |
 | `mise run agent-lint` | `cargo fmt --check` plus clippy for the workspace |
-| `mise run agent-integration` | The agent against a real headless Chromium, control plane in a sandbox |
+| `mise run agent-integration` | The agent against a real headless Chromium (`agent/compose.yaml`, needs docker compose), control plane in a sandbox |
 | `mise run build-ctl` | Release `tessaro-ctl` for this host, to manage devices remotely |
 | `mise run agent-e2e` | Boot the qemu image, provoke each agent behaviour, assert on its journal |
 | `mise run image:pull` | Workstation: fetch the image and bmap from the build host |
@@ -48,8 +58,9 @@ TESSARO_MACHINE=raspberrypi3-64 mise run shell
 `mise.toml` derives `KAS_CONFIG`, `KAS_BUILD_DIR` and `WIC` from that one
 variable, so each machine gets its own TOPDIR under `build/<machine>/` while
 `cache/` (`DL_DIR` + `SSTATE_DIR`) stays shared. Valid values are exactly the
-basenames in `kas/machine/`. `run`, `run-vnc` and OVMF are qemu-only and refuse
-to run on anything else. `build` has no prerequisites beyond kas.
+basenames in `kas/machine/`. `run`, `run-vnc` and `agent-e2e` refuse any
+machine but `qemux86-64`, and `build` adds OVMF only there. `build` has no
+prerequisites beyond kas.
 
 The agent is an ordinary Rust workspace under `agent/`, built into the image by
 the `tessaro-kiosk` recipe: `protocol/` (the wire types and the settings
@@ -75,12 +86,13 @@ macros) with the semantic palette in `tessaro-ctl/src/style.rs`: `LABEL`,
 `HEADING`, `OK`, `WARN`, `BAD`, `MUTED`, `SECRET`, `CMD`, `SOURCE`. Reuse that
 palette rather than picking raw colors at a call site. anstream drops the
 codes by itself when the stream is not a terminal, under `NO_COLOR` or
-`TERM=dumb`, and with `--color never`, so no call site ever checks. Three
+`TERM=dumb`, and with `--color never`, so no call site ever checks. The
 rules: styles decorate text and never change it, so the plain output stays
 parseable; `--json` output is never styled; and aligned columns use
 `style::pad`, which pads *inside* the escape codes, because `{:<N}` around a
-painted string counts the escape bytes. Both crates were already in the lock
-through clap, so this cost no new crates.
+painted string counts the escape bytes. anstream and anstyle were already in
+the lock through clap, so this cost no new crates. The exception is
+`tessaro-flash`, which prints plain text to the initramfs console.
 
 **tessaro-ctl command and key structure.** The tree is always `tessaro-ctl
 <group> <command>`, and a setting key starts with the group that acts on the
@@ -144,7 +156,7 @@ bitbake -c update_crates tessaro-kiosk  # writes tessaro-kiosk-crates.inc
 ```
 
 `do_compile` runs `cargo build --frozen` with no network, so `Cargo.lock` and
-`tessaro-kiosk-crates.inc` have to agree or the build fails at fetch time.
+`tessaro-kiosk-crates.inc` have to agree or the build fails.
 
 For Yocto work on a single recipe, go through the kas shell so bitbake sees the
 right environment:
@@ -183,11 +195,12 @@ Builds are long. Run them in a Herdr pane, not the Bash tool.
 ## Architecture
 
 **This repository is the kas root repo.** Everything else is a build input that
-kas clones and checks out from pins under `kas/`, and is gitignored:
-`meta-moonforge/`, `openembedded-core/`, `bitbake/`, `meta-openembedded/`, the
-BSP layers a target pulls in (`meta-raspberrypi/`, `meta-lts-mixins/`,
-`meta-yocto/`), plus `build/<machine>/` (TOPDIR) and `cache/` (`DL_DIR` +
-`SSTATE_DIR`).
+kas clones and checks out from pins under `kas/` here and in meta-moonforge's
+`kas/include/repo/`, and is gitignored: `meta-moonforge/`,
+`openembedded-core/`, `bitbake/`, `meta-openembedded/`, Chromium's layers
+(`meta-browser/`, `meta-clang/`, `meta-lts-mixins-rust/`), the BSP layers a
+target pulls in (`meta-raspberrypi/`, `meta-lts-mixins/`, `meta-yocto/`), plus
+`build/<machine>/` (TOPDIR) and `cache/` (`DL_DIR` + `SSTATE_DIR`).
 
 In kas, a `repos:` entry with **no `url:`** is the repo holding the config file,
 which kas never touches. That is the `tessaro-os:` entry. Upstream layers get a
@@ -197,31 +210,36 @@ hash in `kas/common/tessaro.yml`.
 **One config chain per machine.** A build is always a machine fragment plus the
 shared debug fragment, `kas/machine/<machine>.yml:kas/common/debug.yml`, which
 is what `mise.toml` assembles. The machine fragment includes
-`kas/common/tessaro.yml` (the pins, `meta-tessaro-distro`, the kiosk layers,
-`IMAGE_DATA_MIN_SIZE`) and adds only what is board-specific: the layer fragment
-for that BSP, `WKS_FILE`, `OVERLAYFS_ETC_DEVICE`, `distro`, `machine`. Adding a
-target is one new file in `kas/machine/`; nothing else moves.
+`kas/common/tessaro.yml` (the Moonforge pin, the kiosk layers with Chromium's
+pins from `kas/repo/meta-chromium.yml`, `meta-tessaro-distro`, and the disk
+layout: `IMAGE_DATA_MIN_SIZE`, `OVERLAYFS_ETC_DEVICE`, `TESSARO_ROOTFS_SIZE`,
+`TESSARO_ESP_SIZE`, the bundled initramfs) and adds only what is
+board-specific: the layer or repo fragment for that BSP, `WKS_FILE`, `distro`,
+`machine`, and board knobs (`QB_*` on qemu, `VC4DTBO` and the boot files on
+the Pi). Adding a target is one new file in `kas/machine/`; nothing else moves.
 
 `kas/common/debug.yml` is a one-line wrapper that includes Moonforge's own
 `kas/common/debug.yml`. It has to exist as a local file because kas splits a
 config chain on `:` and treats each element as a plain path, so only an
 `includes:` entry can be repo-prefixed, never a top-level config.
 
-Configuration arrives through three chains that each span several files:
+Configuration arrives through chains that each span several files:
 
-1. **kas includes.** `kas/machine/<machine>.yml` and `kas/common/tessaro.yml`
-   pull `meta-moonforge:kas/include/layer/meta-moonforge-*.yml`. Each *layer*
+1. **kas includes.** `kas/common/tessaro.yml` and the qemu and Pi machine
+   fragments pull `meta-moonforge:kas/include/layer/meta-moonforge-*.yml`. Each *layer*
    fragment activates its layer, pulls the *repo* fragments it needs
    (`kas/include/repo/*.yml`, which carry the url/commit pins), and contributes
    `local_conf_header` defaults. So enabling a feature is one `includes:` entry
    here, never a manual `bblayers.conf` edit - kas regenerates
    `build/<machine>/conf/` on every invocation. `local_conf_header` keys merge
-   by *name* across the whole chain, so a key reused by two fragments silently
-   replaces the other's block; ours are `20_tessaro-common` and
-   `25_tessaro-machine`, upstream's are `10_`/`20_meta-moonforge-*`.
+   by *name* across the whole chain, so a key reused by another fragment
+   silently replaces the other's block; ours are `20_tessaro-common`,
+   `25_tessaro-machine` and `30_tessaro-qemu-kiosk`, upstream's are
+   `10_`/`20_`/`30_meta-moonforge-*` and `20_common-*`.
 2. **Distro.** `meta-tessaro-distro/conf/distro/tessaro.conf` does
-   `require conf/distro/moonforge.conf` and overrides only identity fields plus
-   the hostname. Everything else (systemd, uninative, `OEEquivHash`,
+   `require conf/distro/moonforge.conf`, overrides the identity fields and the
+   hostname, and carries the product's system-wide policy (`PACKAGECONFIG`s,
+   the kiosk URLs, Chromium's arguments). Everything else (systemd, uninative, `OEEquivHash`,
    security flags, `linux-yocto 6.6`, `TARGET_VENDOR = "-moonforge"`) is
    inherited.
 3. **Image.** `moonforge-image-base.bb` in meta-moonforge is just
@@ -235,13 +253,17 @@ kiosk supervision behaviour in `agent/`, which is ordinary Rust and not a Yocto
 concern at all. The image recipe itself stays upstream's - do not fork it.
 
 Appends to recipes from an optional upstream layer go under
-`meta-tessaro-distro/dynamic-layers/<collection>/`, wired up by `BBFILES_DYNAMIC`
-in `meta-tessaro-distro/conf/layer.conf`. That way a target that does not enable
-that layer does not trip over a dangling bbappend. There are none right now -
-and note the key is the layer's `BBFILE_COLLECTIONS` name, not its directory
-name: meta-chromium registers itself as `chromium-browser-layer`. Prefer a
+`meta-tessaro-distro/dynamic-layers/<collection>/`, wired up by a
+`BBFILES_DYNAMIC` in `meta-tessaro-distro/conf/layer.conf` (only a comment
+there today). That way a target that does not enable that layer does not trip
+over a dangling bbappend. There are none right now: meta-chromium is on in
+every target, so `recipes-browser/chromium/chromium-ozone-wayland_%.bbappend`
+(a source patch) lives in the plain tree; move it under
+`dynamic-layers/chromium-browser-layer/` if a target ever drops Chromium. Note
+the key is the layer's `BBFILE_COLLECTIONS` name, not its directory name:
+meta-chromium registers itself as `chromium-browser-layer`. Prefer a
 `:pn-<recipe>` override in `tessaro.conf` when all you need is a variable; that
-is how Chromium's `PACKAGECONFIG` is set without a bbappend at all.
+is how Chromium's `PACKAGECONFIG` and `CHROMIUM_EXTRA_ARGS` are set.
 
 ## Kiosk browser
 
@@ -249,12 +271,12 @@ is how Chromium's `PACKAGECONFIG` is set without a bbappend at all.
 layer) fullscreen on Weston. It replaced cog/WPE: Chromium is the only browser
 that will ever support the WebBluetooth/WebSerial/WebUSB APIs on the roadmap,
 and CDP gives the agent a real health channel where cog's D-Bus surface was
-write-only. The cost is footprint - the Pi 3B+ with its 1GB is likely to OOM,
+write-only. The cost is footprint - memory is tight on the Pi 3B+'s 1GB -
 and a full build takes hours.
 
 The layers arrive through `kas/repo/meta-chromium.yml`, which pins meta-browser
 (repo root is not a layer, so `layers:` is mandatory, same pattern as
-`kas/repo/meta-yocto.yml`), plus its two dependencies: meta-clang and the Rust
+`kas/repo/meta-yocto.yml`), plus its dependencies: meta-clang and the Rust
 mixin, a *second* checkout of meta-lts-mixins on its `scarthgap/rust` branch
 (Moonforge pins the same repo on `scarthgap/u-boot`). That mixin is also what
 builds `tessaro-agent`, so the agent's rustc version is Chromium's to choose.
@@ -314,14 +336,14 @@ Things to know:
   `::1` fallback unconditionally. There is nothing to widen and nothing to get
   wrong. Recent Chromium does refuse to open the DevTools port with the
   *default* user-data-dir, so `--user-data-dir` must stay set.
-* **The wrapper contributes exactly three flags**, pinned by `tessaro.conf`:
-  `--kiosk --no-first-run --ozone-platform=wayland`. Everything else is in
+* **The wrapper contributes only `--kiosk --no-first-run
+  --ozone-platform=wayland`**, pinned by `tessaro.conf`. Everything else is in
   `tessaro-kiosk.service`. Keep it that way - flags in two places is how
   `--incognito` went unnoticed for as long as it did.
 * **`--incognito` is gone, and how it was removed matters.** The `kiosk-mode`
   PACKAGECONFIG selects `--kiosk --no-first-run --incognito` as one bundle,
   and incognito threw away cookies, `localStorage` and service worker caches
-  on every restart. The tempting fix - drop `kiosk-mode` and pass the two good
+  on every restart. The tempting fix - drop `kiosk-mode` and pass the good
   flags from the unit - costs a **full Chromium rebuild**: `PACKAGECONFIG` is a
   direct vardep of `do_configure` even for an option that expands to nothing,
   so removing it changes that basehash and everything downstream. Measured with
@@ -331,22 +353,24 @@ Things to know:
   `CHROMIUM_EXTRA_ARGS:pn-chromium-ozone-wayland` instead - that variable is
   only read by a `sed` in `do_install`, so the cost is do_install onward. The
   recipe's own `:append` of `--ozone-platform=wayland` still lands after our
-  value, which is why all three end up in the wrapper. **Run that printdiff
+  value, which is why it ends up in the wrapper next to ours. **Run that printdiff
   before touching either line.**
-* **Two flags are consequences of losing incognito, not preferences.**
+* **Some flags are consequences of losing incognito, not preferences.**
   `--hide-crash-restore-bubble`, or an unclean shutdown puts a "Restore pages?"
   bubble on a public screen; and `--disk-cache-size`, because the profile now
   grows on `/data`.
 * **Flags an operator may need are variables, not constants.**
   `KIOSK_CHROMIUM_ARGS_EXTRA` (unbraced `$VAR` in `ExecStart`, so systemd
-  splits it at whitespace), `KIOSK_TOUCH` and `KIOSK_ENABLE_FEATURES` all come
-  from the same two env files as everything else. Two rules worth keeping:
-  a flag only belongs in the unit's fixed set if `KIOSK_CHROMIUM_ARGS_EXTRA`
-  can *counter* it - `--disable-pinch` is not in it because Chromium 147 has no
-  `--enable-pinch` - and every `base::Feature` goes through
-  `KIOSK_ENABLE_FEATURES`, because duplicate `--enable-features` switches do
-  not merge and the last one silently wins. The two IME switches are the one
-  documented exception to the first rule - see **On-screen keyboard**.
+  splits it at whitespace), `KIOSK_TOUCH`, `KIOSK_ENABLE_FEATURES`,
+  `KIOSK_DISABLE_FEATURES` and `KIOSK_FPS_ARGS` (rendered from
+  `browser.fps_counter`) all come from the same env files as everything else.
+  Rules worth keeping: a flag only belongs in the unit's fixed set if
+  `KIOSK_CHROMIUM_ARGS_EXTRA` can *counter* it - `--disable-pinch` is not in
+  it because Chromium 147 has no `--enable-pinch` - and every `base::Feature`
+  goes through `KIOSK_ENABLE_FEATURES` or `KIOSK_DISABLE_FEATURES`, because
+  duplicate `--enable-features`/`--disable-features` switches do not merge
+  and the last one silently wins. The IME switches are the one documented
+  exception to the counter rule - see **On-screen keyboard**.
 * **`--disable-crash-reporter` was a no-op too.** It is defined only in
   chromecast and headless, never in the chrome binary. The switch that works is
   `--disable-breakpad`.
@@ -370,11 +394,13 @@ Things to know:
   will not play without it; it is enabled in `tessaro.conf`.
 * **Chromium has no D-Bus control interface at all.** Everything is CDP. The
   control-plane D-Bus policy that existed for cog is gone with it.
-* **The agent touches four paths**: the system bus socket
-  (`/run/dbus/system_bus_socket`, for RestartUnit), `/run/tessaro-kiosk`
+* **Supervising the browser needs only a handful of paths**: the system bus
+  socket (`/run/dbus/system_bus_socket`, for RestartUnit), `/run/tessaro-kiosk`
   (it stages the offline page there), and `/data/kiosk` plus
   `/usr/share/tessaro-kiosk` as page sources. These used to be bind mounts
-  into a container and are now just paths.
+  into a container and are now just paths. The control plane uses many more
+  (`/data/tessaro`, the policy, NetworkManager's `/run` keyfiles, `/root/.ssh`
+  and so on); `paths.rs` has them all.
 * **Diagnostics are journal-only** by design; nothing technical reaches the
   screen. Both halves log the same way now:
   `journalctl -fu tessaro-agent` and `journalctl -fu tessaro-kiosk`.
@@ -400,7 +426,10 @@ Things to know:
 * **The agent enforces the kiosk *origin*, not the kiosk URL.** Every healthy
   cycle reads the page's current URL - free, since the CDP session keeps it
   current from `Page.frameNavigated` - and navigates back if the scheme/host/port
-  differs from `KIOSK_URL`'s, logging where it had gone. Same-origin
+  differs from the origin the last navigation to `KIOSK_URL` landed on,
+  logging where it had gone. A redirect right after a navigation is adopted
+  as the kiosk origin (logged once, `drifted_origin` in `agent.rs`), never
+  treated as drift; a page with no origin, such as `about:blank`, is. Same-origin
   sub-pages, query strings and in-page routing are deliberately left alone:
   matching the whole URL would fight the site and loop on any redirect.
   `KIOSK_ENFORCE_ORIGIN=0` turns it off for a site that legitimately hands
@@ -415,7 +444,8 @@ Things to know:
   line per ten minutes.
 * **CDP failures are quiet until the browser has answered once.**
   `tessaro-kiosk.service` is `Type=exec`, so systemd calls it started the
-  moment `/usr/bin/chromium` is exec'd - seconds before Chromium opens its
+  moment `dbus-run-session` (which then starts `/usr/bin/chromium`) is
+  exec'd - seconds before Chromium opens its
   DevTools port. The agent's `After=` on it therefore guarantees nothing, and
   the first cycle after every boot finds port 9222 closed. Logging that at
   info put two lines that read like faults into every device's journal on
@@ -424,8 +454,9 @@ Things to know:
   logs its restart at info. Do not "fix" this by making them unconditional.
 * **A slow-starting browser gets restarted once.** A failed navigation bumps
   `ping_fails` as well as a failed liveness check, so the default
-  `KIOSK_PING_FAILS=3` is really reached after two cycles, not three - about
-  60s at the default probe interval. That is fine on x86; on the Pi, where a
+  `KIOSK_PING_FAILS=3` is really reached in the second cycle, not the third -
+  one `KIOSK_PROBE_INTERVAL` (30s) after the first failed one, plus the CDP
+  timeouts. That is fine on x86; on the Pi, where a
   cold first start could plausibly take longer, expect one spurious restart
   and raise `KIOSK_PING_FAILS` there rather than reworking the counter.
 * **The agent degrades gracefully without a system bus**: every `Units` method
@@ -458,8 +489,9 @@ agent itself.** Before this, no D-Bus call had a timeout at all (and
 timeout, so a wedged agent could keep its unit `active` while the kiosk went
 unsupervised.
 
-* **`deadline::within` is the only timeout in the program.** `agent/clippy.toml`
-  refuses `tokio::time::timeout` everywhere else, so every deadline names its
+* **`deadline::within` is the only timeout in the program.**
+  `agent/tessaro-agent/clippy.toml` refuses `tokio::time::timeout` and
+  `timeout_at` everywhere else, so every deadline names its
   call in the journal (`the system bus did not answer within 5s`). A
   source-grep test in `deadline.rs` requires every `.await` in the adapters to
   be under a `within(..)`, a method of the same adapter, or a
@@ -496,7 +528,8 @@ unsupervised.
   has no `resolve` module - adding nss-resolve would put an unbounded call
   behind it. A resolver that swallows queries is reported as
   `DNS did not answer within 5s`, not as a slow site.
-* **The CDP session reconnects on its own and logs only at debug.** Every
+* **The CDP session reconnects on its own and logs only at debug** (except a
+  failed `DeviceAccess.enable` when `agent.device_access` is on). Every
   command is under `KIOSK_CDP_TIMEOUT`, and a websocket ping every
   `KIOSK_CDP_PING` seconds tears down a half-open socket after two go
   unanswered - counted, not timed, so the agent's own stalls are not blamed on
@@ -517,7 +550,9 @@ unsupervised.
 
 `mise run agent-e2e` boots the qemux86-64 image and runs
 `test/e2e/agent_e2e.rb` against it: each case provokes one thing the agent
-exists to handle and asserts on the lines it writes to its journal - the site
+exists to handle and asserts on the lines it writes to its journal - the
+agent arming its watchdog and navigating at startup, systemd deriving
+`NotifyAccess=main` and receiving the pings, the site
 going down, the page wandering off the origin, a crashed renderer, a killed
 browser, a wedged browser, an operator-stopped unit, a DNS server that
 swallows queries, the agent itself wedging, a short agent stall, a parked
@@ -525,14 +560,14 @@ agent, SIGTERM - and the control plane: a `tessaro-ctl config set` that restarts
 agent onto the new value, the debug screen and maintenance mode each on and
 off with the browser left running, a claim and unclaim round trip, an ssh key
 authorized with a pinned host key, then revoked and cleared by unclaim, a resolution
-change that refuses an unoffered mode and reverts unconfirmed, the four
+change that refuses an unoffered mode and reverts unconfirmed, the
 managed network profiles as the boot renders them, a static Ethernet address
 that is committed and switched back to DHCP, one that cuts the VM off and is
 rolled back by the device alone, one whose agent is killed half way and is
 rolled back at its restart, the hotspot password following a claim and an
 unclaim, the hotspot's NAT table, and `device ping` and `network ping` with and without
 ping sockets. Last, because
-each reboots the VM, four image updates of the image it booted from:
+each reboots the VM, image updates of the image it booted from:
 damaged staging refused at boot with nothing written, an update that keeps
 the settings, one with `--wipe-data`, and one with `--repartition` that
 rewrites the whole disk from RAM. About twenty minutes; exits non-zero on any failure and prints
@@ -556,9 +591,11 @@ sees; through mise, `mise run agent-e2e -- -v`.
   container's network namespace, where `-p` publishing cannot reach it. The
   harness passes `--network=host` so that loopback is the host's. An
   unclaimed device's empty root password means no credential is involved -
-  which is why the suite never leaves the device claimed: its claim case
-  claims, checks and unclaims inside one SSH command, with a local-socket
-  unclaim in a `trap`.
+  which is why the suite never leaves the device claimed: the `claim` and
+  `hotspot-claim` cases claim, check and unclaim inside one SSH command, with
+  a local-socket unclaim in a `trap`; `ssh-key`, which has to log in by key
+  while claimed, first starts a guard on the guest that unclaims after a
+  timeout if no key gets in.
 * **It retunes the agent for the run** with `tessaro-ctl config set --no-apply` over
   the guest's local socket (5s probes, a 15s restart backoff, no periodic
   refresh) and unsets those keys afterwards. The VM runs with `snapshot`, so a
@@ -597,11 +634,12 @@ actually does something. To get back to it on a deployed device,
   trustworthy one, so the grants apply and the page is a secure context, which
   is itself a precondition for `navigator.serial` existing at all. The page
   still handles the `file://` case and says what is missing.
-* **The policy lists two origins, not one.** `TESSARO_DEVICE_ORIGINS` in
-  `tessaro-kiosk_1.0.bb` is `TESSARO_KIOSK_ORIGIN` plus
-  `TESSARO_SELFTEST_ORIGIN`, deduplicated - one entry on a factory image where
-  they are the same string, two on a customer image. That second entry is what
-  keeps the diagnostic page able to open a serial port on a *deployed* device.
+* **The policy lists the self-test's origin next to the kiosk's.**
+  `TESSARO_DEVICE_ORIGINS` in `tessaro-kiosk_1.0.bb` is `TESSARO_KIOSK_ORIGIN`
+  plus `TESSARO_SELFTEST_ORIGIN`, deduplicated - a single entry on a factory
+  image where they are the same string. On a customer image the self-test
+  entry is what keeps the diagnostic page able to open a serial port on a
+  *deployed* device.
   `TESSARO_SELFTEST_ORIGIN` must match the `listen` line in
   `tessaro-selftest`'s nginx conf.
 * **nginx serves from `/usr/lib/nginx/conf.d/`, not `/etc/nginx/conf.d/`**, for
@@ -632,7 +670,7 @@ actually does something. To get back to it on a deployed device,
 Fonts are part of this story. Until now nothing in the tree named a font
 package at all: `liberation-fonts` was the only TTF family in the image and it
 arrived as an `RRECOMMENDS` of `weston`, which meant every generic family
-resolved to the same three faces and every emoji anywhere on the kiosk was a
+resolved to the same Liberation faces and every emoji anywhere on the kiosk was a
 tofu box. `moonforge-image-base.bbappend` now installs `ttf-noto-emoji-color`
 (NotoColorEmoji, ~10 MB) and DejaVu sans/serif/mono (~2 MB) from meta-oe -
 which is why `layer.conf` names `openembedded-layer` in `LAYERDEPENDS`.
@@ -659,18 +697,20 @@ connector will be called, the config is generated per boot:
   bbappend), reads every connected connector out of `/sys/class/drm`, and
   writes `/etc/xdg/weston/weston.ini` plus an `[output]` section per connector
   to `/run/weston/weston.ini`. The drop-in then points `weston --config=` at it.
-  It writes the `[input-method]` section too - see **On-screen keyboard**.
+  It also writes `require-outputs=none` into `[core]` and a
+  connected-connectors comment (see **Display hotplug**), `[input-method]`
+  (see **On-screen keyboard**) and `[screen-share]` (see **Remote access**).
 * **Its log is `journalctl -t tessaro-weston-config`, not `-u weston`.** It runs
   as `ExecStartPre=`, and those lines do not come back under the unit even
   though the compositor's own do. Every decision it makes - connector, scale
   and why, keyboard and why - is one line there.
-* Scale is `screen.scale` (`KIOSK_SCALE`) if set, otherwise 2 above 3400px
-  wide and 1 below - measured on the mode being set, if one is. `none` writes
+* Scale is `screen.scale` (`KIOSK_SCALE`) if set, otherwise 2 at 3400px
+  wide or more and 1 below - measured on the mode being set, if one is. `none` writes
   no `scale=`.
 * **Resolution is `screen.resolution` (`KIOSK_RESOLUTION`)**: `preferred`, or
   a `WIDTHxHEIGHT` written as `mode=` into each connector's `[output]`. It is
-  the one setting that can leave nobody able to see the screen, so it has
-  three guards. The agent only accepts a mode some connected connector lists
+  the one setting that can leave nobody able to see the screen, so it is
+  guarded on every layer. The agent only accepts a mode some connected connector lists
   in `/sys/class/drm/*/modes` (`tessaro-ctl screen modes` prints them); the
   generator writes it only for connectors that list it and leaves the rest on
   their preferred mode; and the change is on **probation** - it reverts on its
@@ -680,7 +720,7 @@ connector will be called, the config is generated per boot:
   The timer is monotonic, never the wall clock.
 * **The technician-facing file is still `/etc/xdg/weston/weston.ini`**, which is
   on the `/etc` overlay and persists. It is the base the generator copies, and
-  any connector already named in an `[output]` section there is left alone - so
+  any connector already named there (any `name=` line) is left alone - so
   a hand-written scale always wins. `/run/weston/weston.ini` is generated and
   must never be edited.
 * The empty `ExecStart=` in the drop-in is required to clear oe-core's line
@@ -714,8 +754,10 @@ holds:
 
 A connector going away is never a reason. Weston copes with a head
 disappearing, and the running config keeps its section for when the screen
-comes back. So a monitor switched off and on restarts nothing. Every decision
-is one `display: ...` line in `journalctl -u tessaro-agent`.
+comes back. So a monitor switched off and on restarts nothing. Every restart,
+and every refusal to restart for the same hardware, is one `display: ...` line
+in `journalctl -u tessaro-agent`; "the config still fits" and an
+operator-stopped Weston are logged only with `agent.debug=1`.
 
 * **`screen.resolution` and `screen.scale` stay in charge.** The restart
   only re-runs the same generator with the same settings, so a late screen
@@ -759,7 +801,7 @@ default), and Weston launches it unprompted - `text_backend_configuration()`
 defaults `[input-method] path=` to `wet_get_libexec_path("weston-keyboard")`.
 It never drew anything because Chromium was not asking for it.
 
-Two halves, deliberately split:
+The browser and the compositor each own half of it, deliberately split:
 
 * **The browser is put in IME mode unconditionally**, by
   `--enable-wayland-ime --wayland-text-input-version=1` in
@@ -769,8 +811,8 @@ Two halves, deliberately split:
   input-method-v1, nothing newer) and logs `text-input-v3 not available`. The
   version switch is only read when `--enable-wayland-ime` is also present, and
   v3 would not help anyway: `wayland_input_method_context.cc` says outright
-  that it "does not support input panel show/hide yet". **These two are the
-  exception to the counterable-from-`KIOSK_CHROMIUM_ARGS_EXTRA` rule** -
+  that it "does not support input panel show/hide yet". **These switches are
+  the exception to the counterable-from-`KIOSK_CHROMIUM_ARGS_EXTRA` rule** -
   `--disable-wayland-ime` cannot undo them, because `IsImeEnabled()` tests for
   `--enable-wayland-ime` first.
 * **Whether a keyboard exists is a compositor decision**, made by
@@ -858,7 +900,7 @@ through a synthetic seat (`ss_seat_handle_motion` → `notify_motion_absolute`) 
 which is the half that does not reach the browser, see above.
 
 * **The `[screen-share]` section is generated**, by `tessaro-weston-config`,
-  under `KIOSK_VNC` (`on` by default, `off` to disable) - the same file, the
+  under `screen.vnc` (`KIOSK_VNC`, `on` by default, `off` to disable) - the same file, the
   same log (`journalctl -t tessaro-weston-config`) and the same "a section
   written by hand in `/etc/xdg/weston/weston.ini` wins" rule as `[output]` and
   `[input-method]`. The `weston-init` bbappend deletes the `[screen-share]`
@@ -880,7 +922,7 @@ which is the half that does not reach the browser, see above.
   NVNC_AUTH_REQUIRE_ENCRYPTION, ...)` and refuses to start without a cert and
   key. There is no unauthenticated mode and no VNC-standard password auth -
   neatvnc's only password mechanism is the "plain" sub-type inside VeNCrypt,
-  which *is* the TLS path. Hence two things that would otherwise look like
+  which *is* the TLS path. Hence what would otherwise look like
   over-engineering: `PACKAGECONFIG:append:pn-neatvnc = " tls"` in
   `tessaro.conf` (its own default is `""`, and without it Weston logs `Neat VNC
   built without TLS support` and dies), and a self-signed certificate generated
@@ -898,10 +940,15 @@ which is the half that does not reach the browser, see above.
   refused.
   So `weston_%.bbappend` replaces that PAM stack with `pam_exec` running
   `/usr/libexec/tessaro-vnc-auth`, which compares against `KIOSK_VNC_USER` and
-  `KIOSK_VNC_PASSWORD` from the same two environment files as every other
-  kiosk setting. No account, no `/etc/shadow`, no privilege - and the
-  credential can be changed on a running device with no restart, since PAM runs
-  the checker on every attempt. It needs `pam-plugin-exec`, which is not in the
+  `KIOSK_VNC_PASSWORD` from the image defaults
+  (`/usr/lib/tessaro-kiosk/tessaro-kiosk.env`) only. No account, no
+  `/etc/shadow`, no privilege. The credential is an image property on
+  purpose: there is no setting for it (a test in `keys.rs` keeps it that way),
+  `generated.env` is not read, and changing it takes a new image. The stack
+  alone was not enough: `vnc_handle_auth` in `vnc.c` also refused any username
+  that did not resolve to the compositor's own uid before PAM was ever called,
+  and `0001-vnc-let-the-PAM-stack-decide-which-user-may-log-in.patch`, applied
+  by the same bbappend, removes that check. It needs `pam-plugin-exec`, which is not in the
   image by default and is an `RDEPENDS` of weston for that reason; without it
   every login fails with a bare `PAM: authentication failed`.
 * **Client compatibility is narrow.** VeNCrypt with plain auth means TigerVNC
@@ -911,7 +958,7 @@ which is the half that does not reach the browser, see above.
 * **Sharing is not free while it is on.** `weston_output_disable_planes_incr()`
   takes the output off hardware overlay and cursor planes for as long as it is
   shared, and every damage rectangle goes through `read_pixels()`. A static
-  page is nearly free; full-screen video is a readback per frame. `KIOSK_VNC=off`
+  page is nearly free; full-screen video is a readback per frame. `screen.vnc=off`
   is the first thing to try on a Pi that feels slow.
 * **One client at a time** - a second connection disconnects the first - and
   **only outputs present when Weston starts are shared**. A monitor plugged
@@ -999,8 +1046,8 @@ kiosk origin, Weston restarts - taking the browser and agent with it - for a
   on it), the new content to `.tmp` and `fsync`, the current file hard-linked
   to `.prev`, `rename`, `fsync` of the directory. A read falls back from the
   file to `.prev` to the defaults and logs it; a torn file never stops the
-  kiosk. `auth.json` uses the same store. Nothing in either file is a
-  timestamp: device clocks drift, and `revision` is a counter
+  kiosk. `auth.json` and `secrets.json` use the same store. Nothing in these
+  files is a timestamp: device clocks drift, and `revision` is a counter
   (`config set --if-revision N` is compare-and-set).
 * **The CLI documents itself.** `tessaro-ctl config keys` prints every setting with
   its description, current value or default, what it accepts and what a
@@ -1026,29 +1073,32 @@ kiosk origin, Weston restarts - taking the browser and agent with it - for a
   `{browser.maintenance.url}` and `{browser.debug.template}` are refused, as no template may
   contain a template (the debug template alone takes `{browser.url}`).
   `browser.maintenance.url` and `browser.debug.template` are templates by the same rules, and
-  `config set` checks all three whichever one is on screen. Because any setting can move the URL, whether
+  `config set` checks every template whichever one is on screen. Because any setting can move the URL, whether
   the agent restarts is decided by comparing the expanded URL with the one the
   running agent started with, not by which key changed. `config set` refuses a
   template with an unset `data.*` or a name that is no setting, and a `config unset`
   of a `data.*` still in use; custom values and template can go in one command.
   Nothing is added implicitly - only what the template names.
-* **Read-only keys report the device.** `device.id` and `network.*` - `network.ip`,
-  `network.netmask`, `network.cidr`, `network.gateway`, `network.dns`, `network.interface`,
-  `network.mac`, `network.hostname`, and every address as `network.ipv4`/`network.ipv6`
-  (comma separated) - are listed by `config keys`, read by `config get`, usable as
+* **Read-only keys report the device.** `device.id` and the read-only
+  `network.*` keys - `network.ip`, `network.netmask`, `network.cidr`,
+  `network.gateway`, `network.dns`, `network.interface`, `network.interfaces`,
+  `network.mac`, `network.hostname`, `network.wifi.hotspot_ssid`, and every
+  address as `network.ipv4`/`network.ipv6` (comma separated) - are listed by `config keys`, read by `config get`, usable as
   placeholders, and refused by `config set`. They come straight from the kernel
   (`agent/tessaro-agent/src/net.rs`: `/sys/class/net`, `getifaddrs`,
   `/proc/net/route`, and resolved's own `/run/systemd/resolve/resolv.conf`,
   since `/etc/resolv.conf` is its 127.0.0.53 stub), not from NetworkManager,
   so they answer even when NM is the broken thing. The exception is
   `network.public_ip`, which only the outside world knows. **It is looked up only
-  while `browser.url` uses `{network.public_ip}`** - a link may be metered - and
+  while the template on screen uses `{network.public_ip}`** (`browser.url`,
+  `browser.maintenance.url` in maintenance mode, or the debug template while
+  the debug screen is up) - a link may be metered - and
   then the agent asks `https://1.1.1.1/cdn-cgi/trace` every 5 minutes (30s
   until it has an answer, and after a failure), keeps it in
   `/run/tessaro-kiosk/public-ip`, and keeps the last address when a request
   fails. So it is empty at the boot render and fills in shortly after.
   `tessaro-ctl network show` and `config get network.public_ip` look it up on the spot whatever
-  the URL uses - one request per ask, up to ~5s when offline - while `config keys`
+  the URL uses - one request per ask, up to ~10s when offline - while `config keys`
   and a plain `config get` only show the last address found this boot. "Primary"
   means the
   interface carrying the IPv4 default route. `tessaro-ctl network show` shows the same
@@ -1056,7 +1106,7 @@ kiosk origin, Weston restarts - taking the browser and agent with it - for a
   MAC, MTU, speed and addresses. Changing the network is the `network.ethernet.*` and
   `network.wifi.*` settings - see **Network control**.
   **A URL using one moves on its own**: the boot render runs before DHCP, and
-  leases change, so while `browser.url` uses a read-only key the agent checks
+  leases change, so while the template on screen uses a read-only key the agent checks
   every 15s and, when the expanded URL is no longer the one it drives,
   re-renders and restarts itself onto it (and the browser, if the origin moved).
 * **Values are validated once, at `config set`**: enums, ranges, URLs, modes - and no
@@ -1083,7 +1133,7 @@ kiosk origin, Weston restarts - taking the browser and agent with it - for a
   each move. A `config set` or `config get` of an old name is refused with
   the new one - there are no aliases.
 
-**Two transports, one protocol** (newline-delimited JSON,
+**One protocol over a local socket and TLS** (newline-delimited JSON,
 `agent/protocol/src/lib.rs`):
 
 * **`/run/tessaro-agent.sock`**, mode 0600 root: no auth, no TLS, full power.
@@ -1191,14 +1241,15 @@ env name is `KIOSK_DEBUG_SCREEN` because `KIOSK_DEBUG` was taken.
   `{browser.url}` itself, expanded. `config set` holds it to the same rules: an unset
   `data.*` or a name that is no setting is refused. Values go in as they are,
   not percent-encoded, and `debug.rs` escapes them for HTML
-  (`state::expand_text` next to `expand_url`, both on `keys::expand_with`).
+  (`state::expand_text` straight on `keys::expand_with`, next to `expand_url`,
+  which goes through `keys::expand`, its percent-encoding wrapper).
   The default shows the name, node id, hostname, the default route, IP, MAC,
   DNS, the public address, every interface (`network.interfaces`, read-only,
-  added for this) and IPv6.
+  added for this), IPv6 and the kiosk URL (`{browser.url}`).
 * **`\n` - a backslash and an n, as typed - is the line break**, and it is
   the one backslash any value may carry (`Kind::Template` in `keys.rs`). The
-  generic no-backslash rule exists because values end up in env files, so two
-  things keep that true here. `render::env_file` never writes the template
+  generic no-backslash rule exists because values end up in env files, and
+  this is how that stays true here. `render::env_file` never writes the template
   into `generated.env`, since only the agent reads it and it reads state.json.
   And the image default in `tessaro-kiosk.env.in` is **single-quoted**,
   because systemd keeps a backslash only inside single quotes. Measured:
@@ -1253,8 +1304,8 @@ on purpose: its only client is a closed binary.
 
 ### Device APIs: WebSerial, WebHID, WebUSB, Web Bluetooth
 
-**All four are already compiled in; nothing about the browser build needs to
-change.** `use_dbus`, `use_udev` (`build/config/features.gni`) and `use_bluez`
+**Every one of them is already compiled in; nothing about the browser build
+needs to change.** `use_dbus`, `use_udev` (`build/config/features.gni`) and `use_bluez`
 (`device/bluetooth/cast_bluetooth.gni`) all default to true on Linux and the
 recipe overrides none of them, so the BlueZ backend and the udev enumeration
 paths are there. `bluez5` and `bluetoothd` are in the image too, inherited from
@@ -1268,11 +1319,11 @@ What was actually missing was kernel drivers and file permissions.
   open a chooser dialog, and there is nobody in front of a kiosk to click it.
   This is a constraint on the web app and it is the thing that makes or breaks
   unattended device access.
-* **Serial and HID are pre-granted to two origins** by
+* **Serial and HID are pre-granted to the device origins** by
   `SerialAllowAllPortsForUrls` and `WebHidAllowAllDevicesForUrls` in the policy
   file: the kiosk's own and the self-test's `http://127.0.0.1`, plus any in
-  `browser.device_origins`. They collapse to one entry on a factory image,
-  where the first two are the same string. These match on *origin* only -
+  `browser.device_origins`. The kiosk's and the self-test's collapse to a
+  single entry on a factory image, where they are the same string. These match on *origin* only -
   scheme, host, port, no `[*.]host` wildcards. The image ships them
   substituted at build time (`TESSARO_DEVICE_ORIGINS` in the recipe), and on
   the device **tessaro-agent re-renders the policy from `browser.url` as set**,
@@ -1280,7 +1331,7 @@ What was actually missing was kernel drivers and file permissions.
   a new origin moves the grants with it. A change of origin therefore restarts
   the browser, not just the agent: Chromium reads the policy at start. The
   render goes through serde, because a syntax error would drop the whole file.
-* **WebUSB ships granted to nothing.** It is the only one of the three with no
+* **WebUSB ships granted to nothing.** Unlike serial and HID it has no
   "allow all" policy, and blanket raw USB is a bigger grant than blanket serial
   or HID, so `WebUsbAllowDevicesForUrls` is an empty list with a worked example
   in the comment. Its schema does not mark `vendor_id` required, so
@@ -1293,7 +1344,9 @@ What was actually missing was kernel drivers and file permissions.
   `getDevices()` returns it on later boots. The only non-interactive route is
   CDP's experimental `DeviceAccess.selectPrompt`, which happens to support
   Bluetooth and nothing else - `tessaro-agent` already holds a CDP connection,
-  so that is where it would go. It is on TODO.md, not built.
+  so that is where it would go. `agent.device_access` already sends
+  `DeviceAccess.enable`, but nothing answers a prompt yet; the rest is on
+  TODO.md, not built.
 * **Web Bluetooth is also experimental on Linux specifically.**
   `runtime_enabled_features.json5` marks it `stable` on Android, ChromeOS, iOS,
   macOS and Windows and leaves the `default` bucket - which is us - at
@@ -1330,7 +1383,7 @@ What was actually missing was kernel drivers and file permissions.
   `SupplementaryGroups=`. `TAG+="uaccess"` would *not* work here: logind grants
   those ACLs to the active seat session's user, and `tessaro-kiosk.service` is a
   plain system unit with no PAM session.
-* **The kernel needed four things it did not have**, all in
+* **The kernel was missing drivers**, now all in
   `recipes-kernel/linux/files/tessaro-devices.cfg` and all built in rather than
   `=m` so no `kernel-module-*` package has to be chased into the image:
   `HIDRAW` (there is no `/dev/hidraw*` without it), `HID_MULTITOUCH` (most touch
@@ -1349,8 +1402,8 @@ What was actually missing was kernel drivers and file permissions.
 ### Removing the container runtime
 
 Dropping podman was one deleted `includes:` entry in `kas/common/tessaro.yml` -
-`meta-moonforge-podman.yml` - but that fragment was carrying three things that
-had nothing to do with containers, and each of them had to be put back by hand.
+`meta-moonforge-podman.yml` - but that fragment was carrying things that had
+nothing to do with containers, and some of them had to be put back by hand.
 This is worth knowing before including or dropping any other upstream fragment.
 
 * **`ca-certificates`** was enabled in exactly one place in the tree: that
@@ -1362,7 +1415,7 @@ This is worth knowing before including or dropping any other upstream fragment.
   parsing without it. It is now listed next to `meta-networking` in
   `kas/common/tessaro.yml`. This one at least fails loudly.
 * **`seccomp`** rode along in `DISTRO_FEATURES:append = " virtualization seccomp"`
-  and looked like a third thing to rescue - systemd's `PACKAGECONFIG` keys off
+  and looked like another thing to rescue - systemd's `PACKAGECONFIG` keys off
   it, and losing it would silently turn every `SystemCallFilter=` into a no-op
   that still parses. It turned out to be redundant: oe-core's
   `DISTRO_FEATURES_DEFAULT` has carried `seccomp` since scarthgap, so the
@@ -1373,9 +1426,10 @@ This is worth knowing before including or dropping any other upstream fragment.
   than assuming either way. Only `virtualization` actually went.
 
 What left for free, with nothing to unwind: `meta-moonforge-podman` and
-`meta-virtualization`, `podman` and `podman-compose`, and `container-host-config`
+`meta-virtualization`, `podman` and `podman-compose`, `container-host-config`
 with its `storage.conf` (`graphroot = /data/containers/storage`) and its
-tmpfiles line. There was never an fstab entry, mount unit or wic partition for
+tmpfiles line, and the `meta-filesystems` layer, which nothing else enables.
+The fragment's `meta-oe` and `meta-networking` were already enabled elsewhere. There was never an fstab entry, mount unit or wic partition for
 `/data/containers` - it was a plain directory inside the `/data` filesystem.
 `IMAGE_DATA_MIN_SIZE` stays at 4096M: the Chromium profile is what dominates
 it, not the container storage.
@@ -1408,8 +1462,8 @@ disk** below.
    is kept but the kernel, copied out of a loop mount of the image's boot
    partition, staged sparse in `boot.img` for as long as that takes. The
    upload itself stays: it is what gets written. `/data` and swap in the
-   image are never decompressed. ~734 MB of a 1.19 GB root is mapped on qemu
-   today.
+   image are never decompressed. ~734 MB of the 4096M root partition was
+   mapped on qemu when last measured.
 3. **Commit** writes `pending` and reboots.
 4. **Apply**, in the initramfs (`/init.d/80-tessaro_update`, before
    `90-rootfs`, so nothing has the root partition mounted): `tessaro-flash`
@@ -1439,7 +1493,7 @@ Things to know:
   that is what makes decompressing it twice safe. The dry run proved the
   file decompresses to what the bmap says; the SHA-256 check in the
   initramfs proves it is still that file. Without it, a file damaged on
-  `/data` between the two would only show up at the chunk it hits, after
+  `/data` between the dry run and the apply would only show up at the chunk it hits, after
   root was half written, and every retry would hit it again.
 * **Every identifier the rootfs names is pinned in the x86 wks files, and
   that is load-bearing.** wic makes new ones on every build otherwise: the
@@ -1457,8 +1511,9 @@ Things to know:
 * **The root partition is a fixed `TESSARO_ROOTFS_SIZE` (4096M), the ESP a
   fixed `TESSARO_ESP_SIZE` (256M), the Pi's boot partition 512M.** A later
   image has to fit the partition already on the disk, and the ESP holds two
-  kernels during the swap. All three are sized well past today's ~900M
-  rootfs and 21M/51M kernels on purpose, since growing one costs a reflash. wic fails the build if the rootfs outgrows it.
+  kernels during the swap. Each is sized well past today's ~900M rootfs and
+  21M/51M kernels on purpose, since growing one costs a reflash. wic fails the
+  build if the rootfs outgrows it.
   Changing any partition is a new disk layout: every device needs one full
   reflash or one `--repartition`, which the updater says in so many words
   when it refuses.
@@ -1469,12 +1524,13 @@ Things to know:
   as `Image`, the name `boot.scr` loads. The price: any change to
   `tessaro-flash`, and so to the agent workspace, re-bundles the kernel, and
   every update then swaps it.
-* **The initramfs is `core-image-initramfs-boot` plus one module**
-  (`recipes-core/images/tessaro-initramfs.bb`): udev for `/dev/disk/by-*`,
+* **The initramfs is modelled on `core-image-initramfs-boot`, plus our
+  update module** (`recipes-core/images/tessaro-initramfs.bb`, its own
+  `inherit image` recipe): udev for `/dev/disk/by-*`,
   90-rootfs, finish. finish `switch_root`s to `/sbin/init`, which is still
   the overlayfs-etc preinit. It finds the ESP and `/data` as partitions 1 and
   3 of root's disk, which every Tessaro wks has. On an ordinary boot the cost
-  is two read-only mounts and an `ls`.
+  is a read-only mount of the ESP and of `/data`, and an `ls`.
 * **The `/etc` overlay keeps shadowing the image.** A file edited on the
   device stays edited across updates, exactly as it does today - an update
   replaces the lower layer only. `--wipe-data` is the way out.
@@ -1496,7 +1552,7 @@ root update's; what differs is the initramfs (`apply_disk` in
 `agent/update/src/flash.rs`).
 
 * **The upload goes into RAM, because the disk update overwrites the `/data`
-  it sits on.** tessaro-flash mounts a tmpfs of the upload's size on
+  it sits on.** tessaro-flash mounts a tmpfs of the upload's size plus 16 MiB on
   `/run/tessaro-update/ram`, copies it in and checks the copy's SHA-256 while
   `/data` is still there, so a refusal up to that point boots the old system
   like any other. The agent refuses at `update-begin` if MemTotal is short of
@@ -1543,8 +1599,8 @@ systemd-networkd outright: `PACKAGECONFIG:remove:pn-systemd = "networkd"` in
 `80-wired.network` that used to provide ethernet DHCP.
 
 The reason is WiFi. Under systemd-networkd, changing a network in the field
-means hand-writing a `.network` file and a `wpa_supplicant.conf` in two
-syntaxes with no feedback; `nmtui` makes it one screen. The reconfiguration
+means hand-writing a `.network` file and a `wpa_supplicant.conf`, each in its
+own syntax, with no feedback; `nmtui` makes it one screen. The reconfiguration
 story is a technician on `getty@tty1` (Ctrl-Alt-F1 - Weston is on tty7), on the
 serial console, or over SSH.
 
@@ -1585,7 +1641,7 @@ Things to know:
   `network-control` to `allow_active` and demands `auth_admin_keep` otherwise,
   so without this line `nmtui` saves a profile fine from a getty on tty1
   (logind gives it an active seat) and fails over dropbear with "Not authorized
-  to modify the system settings". Same command, two answers, depending on how
+  to modify the system settings". Same command, different answers, depending on how
   the technician got in. `nmcli general permissions` should read `yes`
   throughout.
 * **Split packages only.** The plain `networkmanager` package is `ALLOW_EMPTY`
@@ -1595,9 +1651,10 @@ Things to know:
   it is not in the recipe's default and pulls `libnewt` from oe-core.
 * **`networking-layer`, not `meta-networking`,** is what
   `LAYERDEPENDS_meta-tessaro-distro` names - the layer's `BBFILE_COLLECTIONS`
-  value, same trap as meta-webkit registering itself as `webkit`.
+  value, same trap as meta-chromium registering itself as
+  `chromium-browser-layer`.
 * **WiFi drivers and firmware are both per machine, and both already handled on
-  the two real targets.** They are separate things: drivers are
+  the hardware targets.** They are separate things: drivers are
   `kernel-module-*` packages, firmware is `linux-firmware*`. `linux-yocto`
   builds the wifi drivers as modules on every machine here - the qemu package
   feed has `kernel-module-brcmfmac`, `-ath9k` and the rest - but a module is
@@ -1606,16 +1663,15 @@ Things to know:
     module), and `raspberrypi3-64.conf` adds the bcm43430/43455 rpidistro
     firmware. Nothing to do.
   - `genericx86-64`: meta-yocto-bsp's `genericx86-common.inc` adds
-    `kernel-modules linux-firmware`. Drivers are complete. Firmware is **not**
-    "all firmware": oe-core splits that recipe into 138 packages and
-    `FILES:${PN}` is only the catch-all `${nonarch_base_libdir}/firmware/*`,
-    so anything a split package claims is absent and nothing pulls it back.
-    The line runs through Intel - `-iwlwifi-8265`, `-9260`, `-7260` and the
-    other legacy generations are split out, the AX200/AX210/BE200 blobs are
-    not and so land in the catch-all. Same for `-ath10k`/`-ath11k` (split,
-    missing) vs ath12k (an explicit `RDEPENDS` of the base). So a modern card
-    works out of the box and an 8265 or ath10k - common in exactly this class
-    of mini PC - binds its driver and finds no firmware. See its kas fragment.
+    `kernel-modules linux-firmware`. Drivers are complete, and so is firmware:
+    oe-core splits that recipe into a few hundred packages, but
+    `populate_packages:prepend` in `linux-firmware_*.bb` makes the base
+    package `RRECOMMENDS` every split one, and nothing here sets
+    `BAD_RECOMMENDATIONS` for them. So every blob lands in the image (a few
+    hundred MB); the newer Intel ones come through `-iwlwifi-misc`. To trim
+    it, `BAD_RECOMMENDATIONS` the split packages the board does not need, or
+    list only the ones it does. Not yet confirmed on a built genericx86-64
+    rootfs.
   - `qemux86-64`: neither, and the image ships 15 modules total. Correct -
     QEMU emulates no wireless NIC, so wifi cannot be exercised here at all.
     The first real wifi test has to be on the Pi.
@@ -1634,7 +1690,7 @@ Things to know:
 
 ### Network control
 
-**The device manages four NetworkManager profiles of its own and switches
+**The device manages NetworkManager profiles of its own and switches
 between them through ordinary settings**, over the pinned, token-checked
 control connection:
 
@@ -1677,7 +1733,7 @@ renders, `txn.rs` switches) and `ping.rs`.
   `autoconnect=true`, at priority 100, so it wins over a hand-made profile on
   the same device. The uuids are fixed, the same on every device.
   NetworkManager flags everything under `/run` as unsaved, so `network profiles list`
-  lists these four as `(managed)` instead; `(not saved)` on any other
+  lists these as `(managed)` instead; `(not saved)` on any other
   profile means it really is lost at reboot.
 * **One change is one transaction** (`nm/txn.rs`): write `txn.json`, take a
   NetworkManager **checkpoint** on the devices involved (with a 150s rollback
@@ -1704,9 +1760,11 @@ renders, `txn.rs` switches) and `ping.rs`.
 * **The transaction runs on a task of its own**, holding the one-at-a-time
   lock the way a speed test holds its own, so a client that is cut off does
   not stop it - the commit happens anyway. A network change is refused while
-  an update waits for its reboot, and `update commit` is refused during one.
+  an update waits for its reboot, and the `update-commit` step of `update
+  send` is refused during one.
   `device.name` is a network key too: it renames the hotspot.
-* **The hotspot is `tessaro-<node name>`, open while the device is unclaimed.**
+* **The hotspot is `tessaro-<node name>` (read-only
+  `network.wifi.hotspot_ssid`), open while the device is unclaimed.**
   `access claim` gives it a random 16-character WPA2 password, stored in
   `/data/tessaro/secrets.json` (0600, never in `state.json`, never shown by
   `config get` or `config keys`) and shown once with the root password; the profiles are
@@ -1742,8 +1800,9 @@ renders, `txn.rs` switches) and `ping.rs`.
 * **`network ping` falls back to a raw socket.** It prefers the kernel's ICMP
   datagram sockets, but `net.ipv4.ping_group_range` does not exempt root: the
   kernel's own `1 0` refuses even uid 0 (systemd's default opens it). Refused,
-  the agent opens a raw socket, which root may, and does the identifier, the
-  IPv4 checksum and the IP header itself. The e2e runs both.
+  the agent opens a raw socket, which root may, sets the identifier and the
+  IPv4 checksum itself and strips the IP header from replies. The e2e runs
+  both.
 * **qemu cannot exercise WiFi** - no emulated wireless NIC - so the e2e checks
   the hotspot's keyfile and NAT table, and joins, scans and the hotspot
   itself are tested on the Pi by hand.
@@ -1752,8 +1811,8 @@ renders, `txn.rs` switches) and `ping.rs`.
 
 * **`distro:` has to be set by the entry point of the kas chain.** kas resolves
   a plain scalar by include order, and a file's own value beats the ones its
-  includes set. Every machine fragment includes a `meta-moonforge-*` layer
-  fragment, which pulls `meta-moonforge-distro.yml`, which says
+  includes set. Every machine's chain includes a `meta-moonforge-*` layer
+  fragment, directly or through `kas/common/tessaro.yml`, which pulls `meta-moonforge-distro.yml`, which says
   `distro: moonforge` - so `distro: tessaro` sitting in `kas/common/tessaro.yml`
   gets silently undone and the whole image builds as Moonforge (no `tessaro`
   hostname, no Chromium `PACKAGECONFIG`, `DISTROOVERRIDES` flipped). It lives in each
@@ -1786,8 +1845,8 @@ renders, `txn.rs` switches) and `ping.rs`.
   So the preinit mounting `/data` by label is only half the job - without
   `--use-label` on that partition, fstab still says `/dev/sda3`, and on an NVMe
   board systemd fails `data.mount` after a perfectly good preinit. Our
-  genericx86-64 wks passes it. The upstream qemu and Pi wks files do not, which
-  is harmless there (`sda` under QEMU, `mmcblk0` on SD) right up until someone
+  genericx86-64 wks passes it. Our qemux86-64 and raspberrypi wks files
+  (copies of Moonforge's) do not, which is harmless there (`sda` under QEMU, `mmcblk0` on SD) right up until someone
   boots the Pi image off USB.
 * **The x86 hardware image is UEFI-only.**
   `meta-tessaro-distro/wic/tessaro-image-base-genericx86-64.wks.in` is GPT plus
@@ -1799,18 +1858,19 @@ renders, `txn.rs` switches) and `ping.rs`.
 * **The Pi target is `raspberrypi3-64` and covers the 3B and 3B+** - the B+
   device tree is in `RPI_KERNEL_DEVICETREE` and the firmware picks it at boot.
   `meta-moonforge-raspberrypi` advertises Pi 4/5 only, but contains nothing
-  board-specific (psplash framebuffer config, a udev rule, the mmcblk wic
-  layout). The 3B+ has 1GB of RAM shared with the GPU and Chromium is far
-  heavier than the WPE browser it replaced - expect OOM kills and plan the Pi
-  target around that. `GPU_MEM` and `VC4DTBO` (fake KMS by default on this
-  machine) are the first knobs; both are noted in the fragment and left at
-  meta-raspberrypi's defaults.
+  board-specific (psplash framebuffer config, a udev rule), and the disk
+  layout is our own `tessaro-image-base-raspberrypi.wks.in`. The 3B+ has 1GB
+  of RAM shared with the GPU and Chromium is far heavier than the WPE browser
+  it replaced, so memory is the constraint to plan the Pi target around.
+  `VC4DTBO` is set to `vc4-kms-v3d` (full KMS, see **Display hotplug**);
+  `GPU_MEM` is noted in the fragment and left at `rpi-base.inc`'s 64, since
+  under full KMS the GPU draws from the CMA pool instead.
 * **The Pi is no longer blocked by the agent.** It used to be: the agent
   shipped as an amd64 container archive built by `docker build` on the build
   host, and the task that produced it refused any non-x86_64 machine rather
   than ship something podman on the Pi could not start. `tessaro-agent` is
-  cross-compiled by bitbake like everything else, so `mise run build-rpi` now
-  gets as far as Chromium, which is where the real problem was all along.
+  cross-compiled by bitbake like everything else, and `mise run build-rpi`
+  builds the full image.
 * **runqemu needs a file path, not an image name.** `runqemu ... qemux86-64
   moonforge-image-base wic` fails with `IMAGE_LINK_NAME wasn't set`: the image
   name is treated as a lazy rootfs, and the machine argument makes runqemu run
@@ -1860,7 +1920,8 @@ renders, `txn.rs` switches) and `ping.rs`.
 * **Artifacts are named `tessaro-os-qemux86-64-0.*`**: the `tessaro-os` prefix
   is `IMAGE_BASENAME` in `moonforge-image-base.bbappend` (it defaults to `${PN}`,
   which would name the product after the upstream recipe), and the `-0` is
-  `IMAGE_VERSION: "0"` in the kas fragment. The stable symlink is
+  `IMAGE_VERSION: "0"` under `env:` in Moonforge's `meta-moonforge-distro.yml`
+  kas fragment. The stable symlink is
   `tessaro-os-qemux86-64.rootfs.*`, and the mise tasks depend on that `.rootfs`
   spelling. The bitbake target is still `moonforge-image-base` - only the
   output is renamed.
@@ -1872,7 +1933,7 @@ renders, `txn.rs` switches) and `ping.rs`.
 
 ## Status
 
-Three targets, one fragment each in `kas/machine/`. All three carry the same
+One fragment per target in `kas/machine/`. Every target carries the same
 image: read-only rootfs, overlayfs `/etc` on `/data`, Weston and the Chromium
 kiosk.
 
@@ -1880,12 +1941,12 @@ kiosk.
 | --- | --- | --- |
 | `qemux86-64` | development, boots through `mise run run-vnc` | builds and boots |
 | `genericx86-64` | shipping x86_64 hardware (UEFI) | configured, never built end to end |
-| `raspberrypi3-64` | Raspberry Pi 3 Model B+ | configured, never attempted - nothing blocks the build now, but Chromium will likely OOM on 1GB |
+| `raspberrypi3-64` | Raspberry Pi 3 Model B+ | builds, boots and runs the kiosk on a 3B+, rendering on the GPU (ES 2.0) |
 
 "Configured" means the kas chain resolves and bitbake parses it with the right
-`DISTRO`/`MACHINE`/`WKS_FILE`; neither image has been built or booted on real
-hardware yet. Expect the first build of each to surface fetch or packaging
-issues that parsing cannot.
+`DISTRO`/`MACHINE`/`WKS_FILE`; `genericx86-64` has not been built or booted on
+real hardware yet. Expect its first build to surface fetch or packaging issues
+that parsing cannot.
 
 Images are written from a workstation, not from the build host: `mise run
 image:pull` rsyncs the `$TESSARO_MACHINE` image and bmap from

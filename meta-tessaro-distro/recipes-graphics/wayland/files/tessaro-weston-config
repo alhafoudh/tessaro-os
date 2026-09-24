@@ -117,7 +117,7 @@ esac
 
 # Is a keyboard someone can actually type on attached right now?
 #
-# Two filters, and both are needed:
+# Both filters are needed:
 #
 #   * udev's ID_INPUT_KEYBOARD, set by systemd's input_id builtin
 #     (60-input-id.rules), which is the only thing here that knows a full
@@ -243,8 +243,8 @@ fi
 # it one end of a socketpair, and presents this output into it through
 # zwp_fullscreen_shell_v1; the child serves that surface over VNC and sends
 # pointer and key events back, which screen-share injects into this compositor
-# through a synthetic seat. That last part is what makes the session
-# interactive rather than a picture: a click in the viewer lands in Chromium.
+# through a synthetic seat. That seat is a second wl_seat, which Chromium never
+# binds, so the session is view only for now (TODO.md item 11).
 #
 # The cost is real and continuous: sharing an output makes Weston stop using
 # hardware overlay and cursor planes for it, and every damage rectangle is read
@@ -267,9 +267,9 @@ fi
 #                                and sharing itself, recursively.
 #   --vnc-tls-cert/-key          not optional: the backend refuses to start
 #                                without both, and clients must then log in
-#                                over the TLS channel. That login is PAM
-#                                against a real account - the weston user,
-#                                whose password the image sets.
+#                                over the TLS channel. That login is checked
+#                                by tessaro-vnc-auth through PAM, against the
+#                                image's KIOSK_VNC_USER/KIOSK_VNC_PASSWORD.
 #
 # Note what is *not* here: oe-core's stock command carries
 # --no-clients-resize, which is an RDP backend option. An unrecognised option

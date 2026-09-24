@@ -1,7 +1,7 @@
 //! `tessaro-ctl network ...` beyond the kernel's view: NetworkManager's
 //! profiles, WiFi, a ping from the device, and `tessaro-ctl device ping` to it.
 //!
-//! The device manages four profiles of its own and switches between them
+//! The device manages profiles of its own and switches between them
 //! through settings (`config set network.ethernet.mode=static ...`,
 //! `config set network.wifi.mode=...`); `network wifi join` is the one change
 //! made here, as sugar for those settings plus the password. Either way it is
@@ -86,7 +86,7 @@ pub enum NetworkCmd {
 
 #[derive(Subcommand)]
 pub enum ProfilesCmd {
-    /// The device's own tessaro-* four, and any made by hand - which is
+    /// The device's own tessaro-* profiles, and any made by hand - which is
     /// active where, and which come up on their own.
     List,
     /// One profile, by name or uuid: addressing, DNS, WiFi - never its

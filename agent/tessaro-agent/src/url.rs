@@ -1,4 +1,4 @@
-//! Just enough URL handling for the two questions this program asks:
+//! Just enough URL handling for the questions this program asks:
 //! "where does a redirect point" and "is the browser still on our site".
 //!
 //! Deliberately not a URL crate. Both callers work on absolute http(s) URLs

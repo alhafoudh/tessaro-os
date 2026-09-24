@@ -512,7 +512,7 @@ fn run(cli: Cli) -> Result<(), String> {
 
     let mut nodes = Nodes::load()?;
 
-    // The two that do not need a device conversation at all.
+    // The commands that do not need a device conversation at all.
     match &cli.command {
         Cmd::Nodes(NodesCmd::List { wait }) => return list_nodes(&nodes, *wait, cli.json),
         Cmd::Nodes(NodesCmd::Forget { node }) => return forget(&mut nodes, node),
@@ -898,7 +898,7 @@ fn run(cli: Cli) -> Result<(), String> {
                     let again =
                         rpassword::prompt_password("again: ").map_err(|err| err.to_string())?;
                     if first != again {
-                        return Err("the two do not match".to_string());
+                        return Err("the passwords do not match".to_string());
                     }
                     protocol::check_password(&first)?;
                     Some(first)
@@ -1016,8 +1016,8 @@ fn run(cli: Cli) -> Result<(), String> {
 ///
 /// clap_complete 4.6's bash script names the root `tessaro__ctl` when it
 /// walks the words typed, but `tessaro__subcmd__ctl` in the cases that list
-/// what comes next - it escapes the dash in the binary's name two ways - so
-/// nothing below the first word would ever complete. One spelling fixes it.
+/// what comes next - it escapes the dash in the binary's name inconsistently -
+/// so nothing below the first word would ever complete. One spelling fixes it.
 fn completion(shell: CompletionShell) -> String {
     let mut script = Vec::new();
     clap_complete::generate(

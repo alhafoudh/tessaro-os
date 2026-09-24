@@ -1,4 +1,4 @@
-//! The four NetworkManager profiles the device manages, rendered as
+//! The NetworkManager profiles the device manages, rendered as
 //! keyfiles from its settings.
 //!
 //! * `tessaro-ethernet-dhcp` and `tessaro-ethernet-static`: the managed
@@ -111,7 +111,7 @@ pub struct Wifi {
     pub client: Option<Client>,
 }
 
-/// Everything the four profiles are rendered from.
+/// Everything the managed profiles are rendered from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NetConfig {
     pub ethernet: Ethernet,
