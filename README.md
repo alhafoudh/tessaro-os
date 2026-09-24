@@ -101,7 +101,9 @@ written.
 `mise run tunnel` keeps an autossh tunnel to the build host up (needs
 `autossh`): `localhost:5901` is the build host's QEMU VNC from `run-vnc`,
 `localhost:5902` is VNC on port 5901 of `$TESSARO_BUILD_HOST_CONTAINER_IP`,
-and on the build host `localhost:5022` reaches SSH on `$TESSARO_DEVICE_IP`.
+`localhost:7400` and `localhost:2222` are that VM's tessaro-ctl port and SSH
+(`tessaro-ctl -n 127.0.0.1 device status`,
+`tessaro-ctl -n 127.0.0.1 ssh connect --port 2222`), and on the build host `localhost:5022` reaches SSH on `$TESSARO_DEVICE_IP`.
 
 ## Status
 

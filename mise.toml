@@ -494,6 +494,8 @@ set -eu
 
 # localhost:5901 - the build host's loopback VNC (mise run run-vnc)
 # localhost:5902 - VNC on 5901 of a docker container on the build host
+# localhost:7400 - the run/run-vnc VM's tessaro-ctl port (QB_SLIRP_OPT)
+# localhost:2222 - the same VM's SSH, for `ssh connect --port 2222`
 # build host's localhost:5022 - SSH on the device on this machine's network
 # -M 0 leaves dead-link detection to ServerAlive, which drops the connection
 # after 90s of silence so autossh can bring it back.
@@ -501,6 +503,8 @@ set -- autossh -N -M 0 -o "ServerAliveInterval 30" -o "ServerAliveCountMax 3" \
     "$TESSARO_BUILD_HOST" \
     -L 5901:127.0.0.1:5900 \
     -L "5902:$TESSARO_BUILD_HOST_CONTAINER_IP:5901" \
+    -L 7400:127.0.0.1:7400 \
+    -L 2222:127.0.0.1:2222 \
     -R "5022:$TESSARO_DEVICE_IP:22"
 echo "+ $*"
 exec "$@"
