@@ -303,7 +303,7 @@ fn join_password(
     Ok(Some(psk))
 }
 
-fn password(from_stdin: bool, prompt: &str) -> Result<String, String> {
+pub fn password(from_stdin: bool, prompt: &str) -> Result<String, String> {
     if from_stdin {
         let mut text = String::new();
         std::io::stdin()

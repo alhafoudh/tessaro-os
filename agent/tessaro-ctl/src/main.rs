@@ -449,8 +449,20 @@ enum UpdateCmd {
 
 #[derive(Subcommand)]
 enum PasswordCmd {
-    /// Set it: prompted, or generated with --random and shown once.
+    /// Set it: prompted, given as PASSWORD or on stdin, or generated with
+    /// --random and shown once. PASSWORD on the command line lands in shell
+    /// history and the process list; scripts should prefer --password-stdin.
+    ///
+    ///   tessaro-ctl access password set
+    ///   tessaro-ctl access password set 'correct horse battery'
+    ///   printf %s "$PW" | tessaro-ctl access password set --password-stdin
     Set {
+        /// The new password, instead of a prompt.
+        #[arg(conflicts_with_all = ["random", "password_stdin"])]
+        password: Option<String>,
+        /// Read the password from stdin instead of prompting.
+        #[arg(long, conflicts_with = "random")]
+        password_stdin: bool,
         #[arg(long)]
         random: bool,
     },
@@ -889,9 +901,20 @@ fn run(cli: Cli) -> Result<(), String> {
             TokenCmd::Revoke { id } => done(&mut session, Command::TokenRevoke { id }, json),
         },
         Cmd::Access(AccessCmd::Password(command)) => match command {
-            PasswordCmd::Set { random } => {
+            PasswordCmd::Set {
+                password,
+                password_stdin,
+                random,
+            } => {
                 let password = if random {
                     None
+                } else if password.is_some() || password_stdin {
+                    let password = match password {
+                        Some(password) => password,
+                        None => net::password(true, "")?,
+                    };
+                    protocol::check_password(&password)?;
+                    Some(password)
                 } else {
                     let first = rpassword::prompt_password("new root password: ")
                         .map_err(|err| err.to_string())?;
@@ -1764,6 +1787,24 @@ mod tests {
             }),
             "result    download 93.1 Mbit/s, upload n/a, latency 12.0 ms"
         );
+    }
+
+    #[test]
+    fn password_set_takes_one_source() {
+        let parse = |args: &[&str]| {
+            Cli::try_parse_from(
+                ["tessaro-ctl", "access", "password", "set"]
+                    .iter()
+                    .chain(args),
+            )
+        };
+        assert!(parse(&[]).is_ok());
+        assert!(parse(&["secret"]).is_ok());
+        assert!(parse(&["--password-stdin"]).is_ok());
+        assert!(parse(&["--random"]).is_ok());
+        assert!(parse(&["secret", "--password-stdin"]).is_err());
+        assert!(parse(&["secret", "--random"]).is_err());
+        assert!(parse(&["--password-stdin", "--random"]).is_err());
     }
 
     #[test]

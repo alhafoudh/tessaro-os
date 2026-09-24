@@ -1208,7 +1208,8 @@ kiosk origin, Weston restarts - taking the browser and agent with it - for a
 * **`access unclaim`** removes every token and ssh key and empties the root password;
   **`device factory-reset`** also wipes the settings. After either, the first client
   to claim wins again. The TLS key survives both, so pins stay valid.
-* `access password set` (prompted, or `--random`) changes the root password on a
+* `access password set` (prompted, a `PASSWORD` argument, `--password-stdin`,
+  or `--random`) changes the root password on a
   claimed device; an unclaimed one keeps it empty.
 * Failed tokens are rate-limited per address, but a valid token always gets
   in - the tokens are 256 bits, the limiter only keeps scans quiet.
