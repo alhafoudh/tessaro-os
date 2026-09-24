@@ -289,6 +289,7 @@ async fn start_control(
     control.arm_if_pending().await; // naked: a disk read under blocking()'s within()
     control.load_update().await; // naked: a disk read under blocking()'s within()
     control.recover_network().await; // naked: disk reads under blocking()'s within()
+    control.watch_wifi();
     control.watch_url();
     control.watch_public_ip();
     control.watch_display();

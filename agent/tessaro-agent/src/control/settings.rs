@@ -180,8 +180,13 @@ impl Control {
             |name| profiles::effective(&value, name),
             staged.wifi_psk.is_some(),
         )?;
-        let old = self.net_config_for(&current.settings, &secrets);
-        let new = self.net_config_for(&next.settings, &staged);
+        let (old, new, ends_fallback) = self
+            .with_fallback(
+                self.net_config_for(&current.settings, &secrets),
+                self.net_config_for(&next.settings, &staged),
+                wifi_psk.is_some(),
+            )
+            .await;
 
         let action = match &wifi_psk {
             Some(_) => format!(
@@ -210,8 +215,18 @@ impl Control {
             let log = Arc::clone(&self.log);
             let edit = edit.clone();
             let slot = Arc::clone(&slot);
+            let fallback_marker = self.paths.wifi_fallback_marker();
             Box::pin(async move {
                 let committed = blocking("saving the network settings", move || {
+                    if ends_fallback {
+                        match std::fs::remove_file(&fallback_marker) {
+                            Ok(()) => log.info("network: the WiFi fallback ends"),
+                            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                            Err(err) => {
+                                log.info(format!("network: {}: {err}", fallback_marker.display()))
+                            }
+                        }
+                    }
                     if let Some(psk) = wifi_psk {
                         secrets_store.update(&log, |secrets: &mut Secrets| {
                             secrets.wifi_psk = Some(psk);

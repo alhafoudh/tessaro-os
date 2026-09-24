@@ -248,6 +248,7 @@ impl Network {
             enabled,
             hardware_enabled,
             devices,
+            fallback: None,
         })
     }
 
@@ -507,6 +508,46 @@ impl Network {
             }
         }
         Ok(())
+    }
+
+    /// Whether the managed WiFi client is the connection up on `interface`,
+    /// and has finished coming up.
+    pub async fn client_up(&self, interface: &str) -> bool {
+        let Ok(live) = self.live().await else {
+            return false;
+        };
+        let Ok(device) = live.device_path(interface).await else {
+            return false;
+        };
+        let Some((active, uuid)) = live.active_on(device.as_str()).await else {
+            return false;
+        };
+        if uuid != profiles::WIFI_CLIENT.uuid {
+            return false;
+        }
+        let Ok(proxy) = live.active(active.as_str()).await else {
+            return false;
+        };
+        nm_call("an active connection's state", CALL, proxy.state()).await == Ok(proxy::ACTIVATED)
+    }
+
+    /// Give the WiFi device to the hotspot in place of a client that did not
+    /// connect: `config` is already `fallen_back()`. No checkpoint - the
+    /// client was not up, so there is nothing to lose - and nothing is
+    /// saved: the next boot renders the client again.
+    pub async fn fall_back(&self, config: &NetConfig) -> Result<(), String> {
+        // naked: the lock is only ever held by a change, which bounds itself
+        let _lock = self.changing.lock().await;
+        let live = self.live().await?;
+        let interface = config.wifi.interface.clone();
+        live.write_profiles(&profiles::render(config)).await?;
+        live.set_nat(config.wifi.nat, &interface).await?;
+        let hotspot = Up {
+            profile: profiles::WIFI_HOTSPOT,
+            device: Some(interface),
+        };
+        let up = live.activate(&hotspot).await?;
+        live.activated(&up.active, txn::ACTIVATE).await
     }
 
     /// Roll back a change the previous agent left unfinished, onto

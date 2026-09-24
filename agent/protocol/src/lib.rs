@@ -935,6 +935,10 @@ pub struct WifiStatus {
     /// A hardware kill switch, if the device has one.
     pub hardware_enabled: bool,
     pub devices: Vec<WifiDeviceInfo>,
+    /// The client network the hotspot stands in for, when the client did not
+    /// connect after boot (`network.wifi.fallback_after`). Until the next boot.
+    #[serde(default)]
+    pub fallback: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

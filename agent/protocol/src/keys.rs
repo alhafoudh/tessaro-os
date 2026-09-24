@@ -309,7 +309,7 @@ pub static KEYS: &[Key] = &[
     key("network.wifi.interface", "KIOSK_WIFI_INTERFACE", Kind::Interface, NETWORK,
         "The WiFi device the device manages; auto is wlan0. Without it, nothing WiFi ever comes up."),
     key("network.wifi.mode", "KIOSK_WIFI_MODE", Kind::Choice(&["hotspot", "client", "off"]), NETWORK,
-        "hotspot (tessaro-NAME, for installation and management), client (joins network.wifi.ssid; `tessaro-ctl network wifi join`), or off."),
+        "hotspot (tessaro-NAME, for installation and management), client (joins network.wifi.ssid; `tessaro-ctl network wifi join`; falls back to the hotspot when it does not connect after boot, see network.wifi.fallback_after), or off."),
     key("network.wifi.nat", "KIOSK_WIFI_NAT", Kind::Flag, NETWORK,
         "Let hotspot clients reach the internet and the LAN through the device; 0 lets them reach the device only."),
     key("network.wifi.ssid", "KIOSK_WIFI_SSID", Kind::Ssid, NETWORK,
@@ -326,6 +326,10 @@ pub static KEYS: &[Key] = &[
         "The default gateway with network.wifi.ipv4=static; inside network.wifi.address. Empty for none."),
     key("network.wifi.dns", "KIOSK_WIFI_DNS", Kind::Addresses, NETWORK,
         "DNS servers with network.wifi.ipv4=static, comma separated."),
+    // Read by the agent's watcher, not rendered into a profile: the
+    // fallback is runtime state in /run, so the saved mode stays client.
+    seconds(WIFI_FALLBACK_AFTER, "KIOSK_WIFI_FALLBACK_AFTER", 0, 86400,
+        "Seconds network.wifi.mode=client may go without connecting after boot before the device falls back to its hotspot until the next boot; 0 never."),
     // Read-only: what the device reports right now. `tessaro-ctl network
     // show` shows the same in full, per interface.
     live(ID, "The node id: systemd's app-specific machine id, never the machine id itself."),
@@ -364,6 +368,7 @@ pub const RESOLUTION: &str = "screen.resolution";
 pub const NAME: &str = "device.name";
 pub const ID: &str = "device.id";
 pub const PUBLIC_IP: &str = "network.public_ip";
+pub const WIFI_FALLBACK_AFTER: &str = "network.wifi.fallback_after";
 pub const AUDIO_OUTPUT: &str = "audio.output";
 pub const AUDIO_VOLUME: &str = "audio.volume";
 pub const AUDIO_MUTE: &str = "audio.mute";
@@ -1460,6 +1465,18 @@ mod tests {
         ] {
             assert_eq!(find(name).unwrap().consumers, [Consumer::Audio], "{name}");
         }
+    }
+
+    #[test]
+    fn the_wifi_fallback_is_seconds_the_agent_reads_not_a_network_change() {
+        assert_eq!(check(WIFI_FALLBACK_AFTER, "120").unwrap(), "120");
+        assert_eq!(check(WIFI_FALLBACK_AFTER, "0").unwrap(), "0");
+        assert!(check(WIFI_FALLBACK_AFTER, "-1").is_err());
+        assert!(check(WIFI_FALLBACK_AFTER, "86401").is_err());
+        assert_eq!(
+            find(WIFI_FALLBACK_AFTER).unwrap().consumers,
+            [Consumer::Agent]
+        );
     }
 
     #[test]

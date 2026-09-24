@@ -180,6 +180,19 @@ impl Paths {
         self.run_dir.join("display-reconciled")
     }
 
+    /// The WiFi client gave way to the hotspot, until the next boot; holds
+    /// the SSID it stands in for. In `/run`, so every boot tries the client
+    /// again, and an agent restart keeps it.
+    pub fn wifi_fallback_marker(&self) -> PathBuf {
+        self.run_dir.join("wifi-fallback")
+    }
+
+    /// The WiFi client was up once this boot, which disarms the fallback
+    /// until the next one.
+    pub fn wifi_client_seen_marker(&self) -> PathBuf {
+        self.run_dir.join("wifi-client-seen")
+    }
+
     /// Image updates: the upload, the staging, the marker, the last result.
     pub fn update_dir(&self) -> PathBuf {
         self.state_dir.join("update")

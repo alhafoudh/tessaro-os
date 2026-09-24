@@ -1,8 +1,10 @@
-//! The network glue: joining a WiFi network, the hotspot's password, and the
-//! profiles as `state.json` and `secrets.json` say they are. The profiles and
-//! the transaction that switches them are `nm`.
+//! The network glue: joining a WiFi network, the hotspot's password, the
+//! profiles as `state.json` and `secrets.json` say they are, and the WiFi
+//! fallback's markers. The profiles and the transaction that switches them
+//! are `nm`; the fallback's watcher is in `watchers`.
 
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use protocol::keys;
@@ -12,6 +14,7 @@ use super::{Caller, Control, Reply};
 use crate::deadline::blocking;
 use crate::nm::profiles::{self, NetConfig};
 use crate::secrets::{self, Secrets};
+use crate::store;
 
 impl Control {
     /// `net wifi join`: client mode on `ssid`, as one change of the network
@@ -161,11 +164,56 @@ impl Control {
         )
     }
 
-    /// The network as `state.json` and `secrets.json` say it is.
+    /// The network as `state.json` and `secrets.json` say it is, with the
+    /// hotspot in place of a client that fell back this boot.
     pub(super) async fn net_config(&self) -> Result<NetConfig, String> {
         let state = self.read_state().await?;
         let secrets = self.read_secrets().await;
-        Ok(self.net_config_for(&state.settings, &secrets))
+        let config = self.net_config_for(&state.settings, &secrets);
+        Ok(match self.wifi_fallback().await {
+            Some(_) => config.fallen_back(),
+            None => config,
+        })
+    }
+
+    /// What a network change switches between while the client has fallen
+    /// back: the hotspot on both sides of a change that leaves the client
+    /// alone - an Ethernet change or a new name must not try it again - and
+    /// the new config as it is for one that does not, which ends the
+    /// fallback once it commits. The last value says whether it ends.
+    pub(super) async fn with_fallback(
+        &self,
+        old: NetConfig,
+        new: NetConfig,
+        joining: bool,
+    ) -> (NetConfig, NetConfig, bool) {
+        if self.wifi_fallback().await.is_none() {
+            return (old, new, false);
+        }
+        if !joining && old.same_client(&new) {
+            (old.fallen_back(), new.fallen_back(), false)
+        } else {
+            (old.fallen_back(), new, true)
+        }
+    }
+
+    /// The client network the hotspot stands in for, if the client fell back
+    /// this boot.
+    pub(super) async fn wifi_fallback(&self) -> Option<String> {
+        self.read_marker(self.paths.wifi_fallback_marker()).await
+    }
+
+    /// Whether the WiFi client was up once this boot.
+    pub(super) async fn wifi_client_seen(&self) -> bool {
+        self.read_marker(self.paths.wifi_client_seen_marker())
+            .await
+            .is_some()
+    }
+
+    pub(super) async fn wifi_status(&self) -> Result<protocol::WifiStatus, String> {
+        let mut status = self.network.wifi().await?;
+        status.fallback = self.wifi_fallback().await;
+        Ok(status)
     }
 
     /// Roll back a network change the previous agent never finished, onto
@@ -191,5 +239,24 @@ impl Control {
             self.log
                 .info(format!("network: re-rendering the profiles: {err}"));
         }
+    }
+
+    /// A WiFi fallback marker in `/run`: gone at boot, kept across agent
+    /// restarts. Its text, if it is there.
+    async fn read_marker(&self, path: PathBuf) -> Option<String> {
+        blocking("reading the WiFi fallback", move || {
+            Ok(std::fs::read_to_string(&path).ok())
+        })
+        .await
+        .ok()
+        .flatten()
+    }
+
+    pub(super) async fn write_marker(&self, path: PathBuf, text: String) -> Result<(), String> {
+        blocking("marking the WiFi fallback", move || {
+            store::replace(&path, text.as_bytes(), 0o644, None)
+                .map_err(|err| format!("{}: {err}", path.display()))
+        })
+        .await
     }
 }

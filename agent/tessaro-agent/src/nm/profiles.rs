@@ -139,6 +139,7 @@ fn fallback(name: &str) -> &'static str {
         "network.wifi.nat" => "1",
         "network.wifi.security" => "psk",
         "network.wifi.hidden" => "0",
+        keys::WIFI_FALLBACK_AFTER => "120",
         _ => "",
     }
 }
@@ -231,6 +232,25 @@ impl NetConfig {
         }
     }
 
+    /// This config as it runs while the client has given way to the hotspot
+    /// until the next boot: the hotspot autoconnects in its place. Anything
+    /// but a client is left as it is.
+    pub fn fallen_back(mut self) -> Self {
+        if self.wifi.mode == WifiMode::Client {
+            self.wifi.mode = WifiMode::Hotspot;
+        }
+        self
+    }
+
+    /// Whether the WiFi client is the same in both: mode, interface and
+    /// network. The hotspot's name and password, the NAT and Ethernet may
+    /// differ - a change to them keeps a fallback.
+    pub fn same_client(&self, other: &NetConfig) -> bool {
+        self.wifi.mode == other.wifi.mode
+            && self.wifi.interface == other.wifi.interface
+            && self.wifi.client == other.wifi.client
+    }
+
     /// The WiFi profile that should be up, if any.
     pub fn wifi_profile(&self) -> Option<Profile> {
         match self.wifi.mode {
@@ -239,6 +259,32 @@ impl NetConfig {
             _ => None,
         }
     }
+}
+
+/// The client the WiFi fallback waits on after boot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FallbackWatch {
+    pub interface: String,
+    pub ssid: String,
+    /// How long the client may go without connecting.
+    pub after: std::time::Duration,
+}
+
+/// What the fallback watches for these settings: `None` unless WiFi is a
+/// client with a network to join and `network.wifi.fallback_after` is not 0.
+pub fn fallback_watch(value: &dyn Fn(&str) -> String) -> Option<FallbackWatch> {
+    let config = NetConfig::from_settings(value, None, None, "");
+    let seconds: u64 = effective(value, keys::WIFI_FALLBACK_AFTER)
+        .parse()
+        .unwrap_or(0);
+    if config.wifi_profile() != Some(WIFI_CLIENT) || seconds == 0 {
+        return None;
+    }
+    Some(FallbackWatch {
+        ssid: config.wifi.client?.ssid,
+        interface: config.wifi.interface,
+        after: std::time::Duration::from_secs(seconds),
+    })
 }
 
 /// A key's value as `settings` has it, else the image default for its env
@@ -558,6 +604,91 @@ mod tests {
         assert!(fixed.contains("dns=192.168.1.1;1.1.1.1;\nignore-auto-dns=true\n"));
         assert!(file(&files, ETHERNET_DHCP).contains("autoconnect=false\n"));
         assert_eq!(config.ethernet_profile(), ETHERNET_STATIC);
+    }
+
+    #[test]
+    fn a_fallen_back_client_autoconnects_the_hotspot_and_keeps_its_profile() {
+        let client = config(
+            &[
+                ("network.wifi.mode", "client"),
+                ("network.wifi.ssid", "Office"),
+            ],
+            Some("abcdefgh23456789"),
+            Some("password1"),
+        );
+        let fallen = client.clone().fallen_back();
+        assert_eq!(fallen.wifi_profile(), Some(WIFI_HOTSPOT));
+        let files = render(&fallen);
+        assert!(file(&files, WIFI_HOTSPOT).contains("autoconnect=true\n"));
+        assert!(file(&files, WIFI_CLIENT).contains("autoconnect=false\n"));
+        assert!(file(&files, WIFI_HOTSPOT).contains("psk=abcdefgh23456789\n"));
+
+        let off = config(&[("network.wifi.mode", "off")], None, None);
+        assert_eq!(off.clone().fallen_back(), off, "only a client falls back");
+    }
+
+    #[test]
+    fn only_a_change_to_the_client_ends_a_fallback() {
+        let client = [
+            ("network.wifi.mode", "client"),
+            ("network.wifi.ssid", "Office"),
+        ];
+        let base = config(&client, None, Some("password1"));
+        let with = |extra: (&str, &str)| {
+            let mut pairs = client.to_vec();
+            pairs.push(extra);
+            config(&pairs, None, Some("password1"))
+        };
+        assert!(base.same_client(&with(("network.ethernet.mode", "static"))));
+        assert!(base.same_client(&with(("network.wifi.nat", "0"))));
+        assert!(!base.same_client(&with(("network.wifi.ssid", "Home"))));
+        assert!(!base.same_client(&with(("network.wifi.interface", "wlan1"))));
+        assert!(!base.same_client(&with(("network.wifi.mode", "hotspot"))));
+        assert!(!base.same_client(&config(&client, None, Some("password2"))));
+    }
+
+    fn watch(pairs: &[(&str, &str)]) -> Option<FallbackWatch> {
+        let pairs: HashMap<String, String> = pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        fallback_watch(&move |name: &str| pairs.get(name).cloned().unwrap_or_default())
+    }
+
+    #[test]
+    fn only_a_client_with_a_network_is_watched_for_the_fallback() {
+        let client = [
+            ("network.wifi.mode", "client"),
+            ("network.wifi.ssid", "Office"),
+        ];
+        assert_eq!(
+            watch(&client),
+            Some(FallbackWatch {
+                interface: "wlan0".to_string(),
+                ssid: "Office".to_string(),
+                after: std::time::Duration::from_secs(120),
+            }),
+            "on by default, on the auto interface"
+        );
+        let mut later = client.to_vec();
+        later.push((keys::WIFI_FALLBACK_AFTER, "600"));
+        assert_eq!(watch(&later).unwrap().after.as_secs(), 600);
+        let mut never = client.to_vec();
+        never.push((keys::WIFI_FALLBACK_AFTER, "0"));
+        assert_eq!(watch(&never), None);
+        assert_eq!(
+            watch(&[("network.wifi.mode", "client")]),
+            None,
+            "no network yet"
+        );
+        assert_eq!(watch(&[]), None, "the hotspot");
+        assert_eq!(
+            watch(&[
+                ("network.wifi.mode", "off"),
+                ("network.wifi.ssid", "Office")
+            ]),
+            None
+        );
     }
 
     #[test]

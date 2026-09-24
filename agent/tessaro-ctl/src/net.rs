@@ -989,6 +989,18 @@ fn show_wifi(status: &WifiStatus) {
             pad(state_style, &device.state, 13)
         );
     }
+    if let Some(ssid) = &status.fallback {
+        row(
+            "fallback",
+            &format!(
+                "{} {} did not connect after boot, so the hotspot is up until the next \
+                 boot; {} tries it again now",
+                paint(style::WARN, "on"),
+                paint(style::HEADING, ssid),
+                paint(style::CMD, "tessaro-ctl network wifi join"),
+            ),
+        );
+    }
 }
 
 fn show_networks(networks: &[WifiNetwork]) {

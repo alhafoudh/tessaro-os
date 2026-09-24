@@ -422,7 +422,7 @@ impl Control {
             Command::NetProfiles => self.network.profiles().await.into(),
             Command::NetShow { profile } => self.network.show(&profile).await.into(),
             Command::NetLast => self.network.last().await.into(),
-            Command::Wifi => self.network.wifi().await.into(),
+            Command::Wifi => self.wifi_status().await.into(),
             Command::WifiScan { interface, rescan } => {
                 self.network.scan(interface, rescan).await.into()
             }

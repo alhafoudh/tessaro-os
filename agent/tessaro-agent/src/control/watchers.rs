@@ -1,7 +1,7 @@
 //! What the control plane keeps true on its own, with nobody asking: the
 //! URL a read-only key moves, the public address, Weston's config against
-//! the screens and keyboards plugged in, and the sound server against the
-//! audio.* settings.
+//! the screens and keyboards plugged in, the WiFi client's fallback to the
+//! hotspot after boot, and the sound server against the audio.* settings.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -15,6 +15,7 @@ use super::{After, Control};
 use crate::audio;
 use crate::deadline::blocking;
 use crate::hotplug;
+use crate::nm::profiles;
 use crate::state;
 use crate::sync::lock;
 
@@ -315,6 +316,105 @@ impl Control {
         ));
         self.run_after(After::Restart(self.paths.weston_unit.clone()))
             .await;
+    }
+
+    // --- WiFi fallback -----------------------------------------------------
+
+    /// Gives the WiFi device to the hotspot when the client has not connected
+    /// within `network.wifi.fallback_after` of this agent first seeing it
+    /// armed, so a device moved away from its network can still be reached.
+    /// Boot only: once the client has been up, or has fallen back, this is
+    /// over until the next boot, which renders the client again (the markers
+    /// are in `/run`). A network that drops later is NetworkManager's to
+    /// retry. The clock starts again while a network change runs, and while
+    /// WiFi is not a client with a network to join.
+    pub fn watch_wifi(self: &Arc<Self>) {
+        const POLL: Duration = Duration::from_secs(5);
+
+        let control = Arc::clone(self);
+        let mut shutdown = self.shutdown.clone();
+        tokio::spawn(async move {
+            let mut since: Option<Instant> = None;
+            loop {
+                // naked: a timer and the shutdown signal, not the outside world
+                tokio::select! {
+                    _ = tokio::time::sleep(POLL) => {}
+                    _ = shutdown.changed() => return,
+                }
+                // naked: marker reads under blocking()'s within()
+                if control.wifi_client_seen().await || control.wifi_fallback().await.is_some() {
+                    return;
+                }
+                // naked: a disk read under blocking(), NetworkManager under nm_call()
+                let Some(watch) = control.wifi_watched().await else {
+                    since = None;
+                    continue;
+                };
+                // naked: Network bounds every NetworkManager call with within()
+                if control.network.client_up(&watch.interface).await {
+                    // naked: a marker write under blocking()'s within()
+                    control.wifi_client_up(&watch).await;
+                    return;
+                }
+                let started = *since.get_or_insert_with(Instant::now);
+                if started.elapsed() >= watch.after {
+                    // naked: blocking() and Network, every wait under within()
+                    control.fall_back_wifi(&watch).await;
+                    return;
+                }
+            }
+        });
+    }
+
+    /// The client the fallback waits on right now, if it is armed.
+    async fn wifi_watched(&self) -> Option<profiles::FallbackWatch> {
+        let state = self.read_state().await.ok()?;
+        let value = profiles::value_of(&state.settings, &self.defaults);
+        let watch = profiles::fallback_watch(&value)?;
+        if self.network.busy() || !self.network.has_wifi(&watch.interface).await {
+            return None;
+        }
+        Some(watch)
+    }
+
+    async fn wifi_client_up(&self, watch: &profiles::FallbackWatch) {
+        let marker = self.paths.wifi_client_seen_marker();
+        if let Err(err) = self.write_marker(marker, String::new()).await {
+            self.log.info(format!("network: {err}"));
+        }
+        self.log.info(format!(
+            "network: WiFi client {} is up; no fallback until the next boot",
+            watch.ssid
+        ));
+    }
+
+    /// The marker goes first, so a re-render meanwhile - a claim, an agent
+    /// restart - already renders the hotspot.
+    async fn fall_back_wifi(&self, watch: &profiles::FallbackWatch) {
+        let marker = self.paths.wifi_fallback_marker();
+        if let Err(err) = self.write_marker(marker, watch.ssid.clone()).await {
+            self.log
+                .info(format!("network: not falling back to the hotspot: {err}"));
+            return;
+        }
+        let config = match self.net_config().await {
+            Ok(config) => config,
+            Err(err) => {
+                self.log.info(format!("network: {err}"));
+                return;
+            }
+        };
+        self.log.info(format!(
+            "network: WiFi client {} did not connect within {}s; falling back to the \
+             hotspot {} until the next boot",
+            watch.ssid,
+            watch.after.as_secs(),
+            config.wifi.hotspot_ssid
+        ));
+        if let Err(err) = self.network.fall_back(&config).await {
+            self.log
+                .info(format!("network: bringing up the hotspot: {err}"));
+        }
     }
 
     // --- audio -------------------------------------------------------------

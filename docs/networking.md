@@ -145,6 +145,25 @@ renders, `txn.rs` switches) and `ping.rs`.
   `none`. About 90s at most; the client waits 180s. Leaving client mode for
   the hotspot or `off` gives up WiFi's route on purpose, so that one change
   does not require the route.
+* **A WiFi client that does not connect after boot falls back to the
+  hotspot until the next boot**, so a device moved away from its network,
+  or whose network changed its password, can still be reached without
+  Ethernet. The agent's `watch_wifi` (`control/watchers.rs`) arms while
+  `network.wifi.mode=client` has a network, the WiFi interface exists and no
+  change runs; if the client is not ACTIVATED within
+  `network.wifi.fallback_after` seconds (0 never), it writes
+  `/run/tessaro-kiosk/wifi-fallback` (the SSID) and brings up the hotspot
+  (`Network::fall_back`, no checkpoint: there was no connection to lose).
+  `state.json` still says client. Everything that renders the profiles in
+  the agent renders the hotspot while the marker is there, so a claim or an
+  agent restart keeps it; the boot oneshot never sees it, since `/run` is
+  gone at boot, so every boot tries the client again. Boot only, on
+  purpose: once the client has been up (`/run/tessaro-kiosk/wifi-client-seen`)
+  the watcher is done, because a kiosk whose router reboots must not end up
+  on its hotspot for the rest of the day. A change that leaves the client
+  alone (Ethernet, `device.name`) keeps the fallback; `network wifi join` or
+  a change to the mode, the interface or the client network ends it once it
+  commits. `network wifi status` shows it.
 * **An agent that dies half way is rolled back at its next start** (`recover`,
   from `start_control`, retrying for a minute while NetworkManager comes up),
   onto what `state.json` renders. That covers SIGTERM too: the transaction is
