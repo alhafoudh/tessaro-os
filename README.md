@@ -184,6 +184,50 @@ mise run agent-integration   # the agent against a real headless Chromium in com
 mise run agent-e2e           # boot the qemu image and exercise the agent on it
 ```
 
+### End-to-end tests
+
+`mise run agent-e2e` boots the qemux86-64 image and provokes what the agent
+exists to handle - the site going down, the browser crashing or wedging, the
+agent itself wedging, settings, claiming, network changes, image updates -
+asserting on what the agent writes to its journal. It is an RSpec suite in
+`test/e2e/spec/`: each spec file is a lane, whose cases run in order on a VM
+of its own, and the lanes run in parallel.
+
+It tests the image as built and never builds one, so build first. It needs
+Ruby with Bundler on the host, and KVM to be quick; each VM takes 4 GB of RAM.
+
+```sh
+mise run build              # the image under test (qemux86-64)
+mise run agent-e2e:setup    # once: installs rspec and parallel_tests
+mise run agent-e2e          # every lane, three VMs at a time
+```
+
+The suite warns when the image is older than the agent's sources, since an
+old agent passes and proves nothing.
+
+Running part of it, and watching it:
+
+```sh
+E2E_JOBS=1 mise run agent-e2e                                 # one VM at a time
+mise run agent-e2e -- -o '--tag ~reboot'                      # leave out the image updates
+mise run agent-e2e:one -- spec/network_spec.rb                # one lane, plain rspec
+mise run agent-e2e:one -- spec/agent_spec.rb -e 'dns:'        # one case, by its name
+mise run agent-e2e:one -- --only-failures                     # what failed last time
+E2E_VERBOSE=1 mise run agent-e2e:one -- spec/agent_spec.rb    # each step as it happens
+```
+
+`agent-e2e:one` paths are relative to `test/e2e`. `E2E_VERBOSE=2` adds every
+agent journal line a case sees, `E2E_KEEP=1` leaves the VM up after its lane,
+and `E2E_REUSE=1` runs against a VM left up that way. Output is live, with an
+overall `== progress 12/30, 6:03 elapsed, ~9 min left` line after each case.
+A failure prints the agent's journal lines since the case began.
+
+Everything a run leaves is in `build/e2e/`: `<lane>.log` holds every step of a
+lane whatever the verbosity, `<lane>.qemu.log` its VM's console. Exit status 1
+means a case failed, 2 that the suite could not start (no image). How the
+lanes, ports and VMs fit together is in [CLAUDE.md](CLAUDE.md), under "The
+agent's end-to-end checks".
+
 ## Structure
 
 `kas/common/tessaro.yml` pins every upstream repo and selects the layers shared

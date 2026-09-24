@@ -580,7 +580,8 @@ Running it: `mise run agent-e2e:setup` once (rspec and parallel_tests, in
 `test/e2e/Gemfile`), then `mise run agent-e2e`. `E2E_JOBS=N` is how many VMs
 run at once (3 by default, 1 for one at a time); `mise run agent-e2e:one --
 spec/network_spec.rb -e ping` runs one lane or case with plain rspec, with
-paths relative to `test/e2e`. `E2E_VERBOSE=1` prints each step of a case as it
+paths relative to `test/e2e`, and `mise run agent-e2e:one -- --only-failures`
+reruns what failed last time (from `build/e2e/rspec-status.txt`). `E2E_VERBOSE=1` prints each step of a case as it
 starts - guest commands, journal waits and what matched, CDP calls,
 deliberate sleeps - and `2` adds every agent journal line a wait sees. Every
 lane's steps go to `build/e2e/<lane>.log` whatever the verbosity, and its
