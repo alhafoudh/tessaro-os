@@ -36,3 +36,5 @@
 # Images pulled from the build host by `mise run pull`
 /*.wic
 /*.wic.*
+
+/.claude/worktrees
