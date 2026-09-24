@@ -74,44 +74,51 @@ Use the mise tasks rather than calling `kas-container` directly:
 
 | Task | Purpose |
 | --- | --- |
-| `mise run build` | Build the image for `$TESSARO_MACHINE` (plus OVMF on qemu) |
-| `mise run build-qemu` | Same, forced to `qemux86-64` |
-| `mise run build-x86` | Same, forced to `genericx86-64` |
-| `mise run build-rpi` | Same, forced to `raspberrypi3-64` |
-| `mise run shell` | Interactive kas shell (cwd is the build dir) |
-| `mise run unpack` | Decompress the `.wic` for runqemu |
-| `mise run run` | Boot in QEMU, serial console on the terminal |
-| `mise run run-vnc` | Boot in QEMU with VNC on localhost:5900 |
-| `mise run image-sizes` | Size of every built `.wic`, all machines at once |
-| `mise run clean` | Drop build artifacts, keep sstate and downloads |
-| `mise run agent-test` | `cargo test` for the whole agent workspace |
-| `mise run agent-lint` | `cargo fmt --check` plus clippy for the workspace |
-| `mise run agent-integration` | The agent against a real headless Chromium (`agent/compose.yaml`, needs docker compose), control plane in a sandbox |
-| `mise run build-ctl` | Release `tessaro-ctl` for this host, to manage devices remotely |
-| `mise run gui-run` | Run `tessaro-gui`, the desktop client, from this checkout |
-| `mise run gui-build` | Release `tessaro-gui` for this host |
-| `mise run gui-test` / `gui-lint` | Its unit tests; `cargo fmt --check` plus clippy |
-| `mise run agent-e2e` | Boot qemu VMs (E2E_JOBS at a time), provoke each agent behaviour, assert on its journal |
-| `mise run agent-e2e:one` | One lane or case of that suite, with plain rspec |
-| `mise run agent-e2e:setup` | `bundle install` for the suite's gems |
+| `mise run image:build` | Build the image for `$TESSARO_MACHINE` (plus OVMF on qemu) |
+| `mise run image:build:qemu` | Same, forced to `qemux86-64` |
+| `mise run image:build:x86` | Same, forced to `genericx86-64` |
+| `mise run image:build:rpi` | Same, forced to `raspberrypi3-64` |
+| `mise run image:shell` | Interactive kas shell (cwd is the build dir) |
+| `mise run image:clean` | Drop build artifacts, keep sstate and downloads |
+| `mise run image:sizes` | Size of every built `.wic`, all machines at once |
 | `mise run image:pull` | Workstation: fetch the image and bmap from the build host |
 | `mise run image:update` | Workstation: pull the image and update a running device over the network (the normal path) |
 | `mise run image:flash` | Workstation, manual: write the pulled image to a card or disk (first install, recovery) |
-| `mise run tunnel` | Workstation: autossh VNC/SSH forwards to the build host |
+| `mise run qemu:unpack` | Decompress the `.wic` for runqemu |
+| `mise run qemu:run` | Boot in QEMU, serial console on the terminal |
+| `mise run qemu:vnc` | Boot in QEMU with VNC on localhost:5900 |
+| `mise run agent:test` | `cargo test` for the whole agent workspace |
+| `mise run agent:lint` | `cargo fmt --check` plus clippy for the workspace |
+| `mise run agent:integration` | The agent against a real headless Chromium (`agent/compose.yaml`, needs docker compose), control plane in a sandbox |
+| `mise run e2e:run` | Boot qemu VMs (E2E_JOBS at a time), provoke each agent behaviour, assert on its journal |
+| `mise run e2e:one` | One lane or case of that suite, with plain rspec |
+| `mise run e2e:setup` | `bundle install` for the suite's gems |
+| `mise run ctl:build` | Release `tessaro-ctl` for this host, to manage devices remotely |
+| `mise run ctl:run -- ARGS` | Run that built `tessaro-ctl` (never builds) |
+| `mise run gui:run` | Run `tessaro-gui`, the desktop client, from this checkout |
+| `mise run gui:build` | Release `tessaro-gui` for this host |
+| `mise run gui:test` / `gui:lint` | Its unit tests; `cargo fmt --check` plus clippy |
+| `mise run dev:tunnel` | Workstation: autossh VNC/SSH forwards to the build host |
 
 Exit the QEMU serial console with `Ctrl-a x`.
 
+**Task names are `<artifact>:<action>[:<variant>]`**, and an action means the
+same thing in every group (`build`, `run`, `test`, `lint`). A new task goes
+into the group of the artifact it acts on; `dev:*` holds workstation plumbing
+that belongs to no artifact. Renaming a task means a `git grep` over the whole
+repo, docs, comments and error messages included.
+
 **Every task acts on one machine**, `$TESSARO_MACHINE`, defaulting to
-`qemux86-64` (`image-sizes` excepted). The `build-*` tasks set it; anything
-else takes it from the environment (`TESSARO_MACHINE=raspberrypi3-64 mise run
-shell`). Valid values are the basenames in `kas/machine/`. Each machine gets
-its own TOPDIR under `build/<machine>/`; `cache/` (`DL_DIR` + `SSTATE_DIR`) is
-shared. `run`, `run-vnc` and `agent-e2e` are qemux86-64 only.
+`qemux86-64` (`image:sizes` excepted). The `image:build:*` tasks set it;
+anything else takes it from the environment (`TESSARO_MACHINE=raspberrypi3-64
+mise run image:shell`). Valid values are the basenames in `kas/machine/`. Each
+machine gets its own TOPDIR under `build/<machine>/`; `cache/` (`DL_DIR` +
+`SSTATE_DIR`) is shared. `qemu:*` and `e2e:*` are qemux86-64 only.
 
 For Yocto work on a single recipe, go through the kas shell:
 
 ```sh
-mise run shell                          # then, inside (cwd is /build):
+mise run image:shell                    # then, inside (cwd is /build):
 bitbake -e <recipe> | grep '^VAR='      # resolved value of a variable
 bitbake -c cleansstate <recipe>         # force a rebuild of one recipe
 bitbake -c devshell <recipe>            # shell in the recipe's build dir
@@ -123,7 +130,7 @@ regenerate the crate list and commit it with the change - `do_compile` runs
 `cargo build --frozen` with no network, so the two must agree:
 
 ```sh
-mise run shell                          # then, inside:
+mise run image:shell                    # then, inside:
 bitbake -c update_crates tessaro-kiosk  # writes tessaro-kiosk-crates.inc
 ```
 
@@ -132,7 +139,7 @@ bitbake -c update_crates tessaro-kiosk  # writes tessaro-kiosk-crates.inc
 Builds are long. Run them in a Herdr pane, not the Bash tool.
 
 * **One build at a time, across every checkout.** Before starting any
-  `mise run build*` (or `shell` with bitbake, or `agent-e2e`), check nothing
+  `mise run image:build*` (or `image:shell` with bitbake, or `e2e:*`), check nothing
   else is building: `pgrep -af 'kas-container|bitbake'` must come back empty,
   worktrees included. If something is running, say what and wait, or ask -
   never start a second one next to it.
@@ -152,7 +159,7 @@ Builds are long. Run them in a Herdr pane, not the Bash tool.
   the link a worktree starts from an empty cache.
 * **Never start a build from a worktree on your own.** Prepare the changes,
   then ask; the user decides whether and where it builds. Host-side cargo
-  (`agent-test`, `agent-lint`) is fine.
+  (`agent:*`, `ctl:build`, `gui:*`) is fine.
 
 ## The Yocto side
 

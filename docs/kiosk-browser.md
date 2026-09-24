@@ -136,7 +136,7 @@ Things to know:
   `KIOSK_PING_FAILS` rather than reworking the counter.
 * **The agent degrades gracefully without a system bus**: every `Units` method
   answers as if the unit were stopped and `restart` returns an error, so the
-  same binary runs under `mise run agent-integration`. A browser restart is
+  same binary runs under `mise run agent:integration`. A browser restart is
   still noticed: the CDP session bumps a generation counter when it comes up on
   a new page target (or the same one after a crash), treated exactly like a
   changed `MainPID`. A reconnect to the *same* live page deliberately does not

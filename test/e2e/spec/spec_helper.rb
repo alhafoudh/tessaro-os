@@ -6,18 +6,18 @@
 # down, the browser dying, wedging or wandering off, DNS swallowing queries,
 # the agent itself wedging - and asserts on what the agent writes to its
 # journal, which is the interface a technician actually has. Host-level tests
-# against a bare Chromium stay in `mise run agent-integration`; this is the
+# against a bare Chromium stay in `mise run agent:integration`; this is the
 # layer that covers the image: systemd, the watchdog, the bus, nginx, the
 # real units and the real env files.
 #
 # Each spec file is a lane: its cases run in order on a VM of their own.
 # parallel_tests spreads the lanes over E2E_JOBS workers, each with its own
-# ports (support/ports.rb). The image is never built here - `mise run build`
-# does that - and the suite refuses to start without one.
+# ports (support/ports.rb). The image is never built here - `mise run
+# image:build` does that - and the suite refuses to start without one.
 #
-#   mise run agent-e2e                           every lane, E2E_JOBS (3) VMs at a time
-#   E2E_JOBS=1 mise run agent-e2e                one VM at a time
-#   mise run agent-e2e:one -- spec/agent_spec.rb -e dns    one lane or case
+#   mise run e2e:run                             every lane, E2E_JOBS (3) VMs at a time
+#   E2E_JOBS=1 mise run e2e:run                  one VM at a time
+#   mise run e2e:one -- spec/agent_spec.rb -e dns    one lane or case
 #   E2E_VERBOSE=1 / 2                            each step on stdout / plus the journal
 #   E2E_KEEP=1, E2E_REUSE=1                      leave the VM up / run against it
 #
@@ -59,7 +59,7 @@ RSpec.configure do |config|
       # Raised, not abort: RSpec reports an error in before(:suite) with
       # error_exit_code, where abort would exit 1 like a failing case.
       raise AgentE2E::Failure, "#{AgentE2E::IMAGE.delete_prefix("#{AgentE2E::ROOT}/")} not found - " \
-                               "run `mise run build` and `mise run unpack` first"
+                               "run `mise run image:build` and `mise run qemu:unpack` first"
     end
 
     # Testing an old agent after changing the code passes and proves

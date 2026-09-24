@@ -158,8 +158,8 @@ keyboard attached", and how that is decided matters:
 * **Under QEMU the answer is "keyboard attached", and that is right.** runqemu
   boots x86 with `-machine q35,i8042=off -usb -device usb-kbd`, so the guest
   has a real USB keyboard (`QEMU QEMU USB Keyboard`) and `auto` hides the
-  panel. Exercising the keyboard under `mise run run-vnc` therefore needs
-  `tessaro-ctl config set screen.osk=always`; note `run`/`run-vnc` pass
+  panel. Exercising the keyboard under `mise run qemu:vnc` therefore needs
+  `tessaro-ctl config set screen.osk=always`; note `qemu:run`/`qemu:vnc` pass
   `-snapshot`, so that does not survive a reboot of the VM.
 * **Keyboard-shaped peripherals will fool it.** A barcode scanner, an RFID
   reader or a KVM dongle enumerates as a USB HID keyboard. `screen.osk=always`

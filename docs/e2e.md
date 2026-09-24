@@ -1,6 +1,6 @@
 # The agent's end-to-end checks
 
-`mise run agent-e2e` boots the qemux86-64 image and runs the RSpec suite in
+`mise run e2e:run` boots the qemux86-64 image and runs the RSpec suite in
 `test/e2e/spec/` against it. Each case provokes one thing the agent exists to
 handle - a site going down, a crashed or wedged browser, a config change, a
 claim, a network change that has to roll back, an image update - and asserts
@@ -8,11 +8,11 @@ on the lines it writes to its journal. The spec files are the list. Exits 1
 on a failing case, printing the journal lines it saw under the failure, and 2
 when it cannot start at all (no image).
 
-Running it: `mise run agent-e2e:setup` once (rspec and parallel_tests, in
-`test/e2e/Gemfile`), then `mise run agent-e2e`. `E2E_JOBS=N` is how many VMs
-run at once (3 by default, 1 for one at a time); `mise run agent-e2e:one --
+Running it: `mise run e2e:setup` once (rspec and parallel_tests, in
+`test/e2e/Gemfile`), then `mise run e2e:run`. `E2E_JOBS=N` is how many VMs
+run at once (3 by default, 1 for one at a time); `mise run e2e:one --
 spec/network_spec.rb -e ping` runs one lane or case with plain rspec, with
-paths relative to `test/e2e`, and `mise run agent-e2e:one -- --only-failures`
+paths relative to `test/e2e`, and `mise run e2e:one -- --only-failures`
 reruns what failed last time (from `build/e2e/rspec-status.txt`).
 `E2E_VERBOSE=1` prints each step of a case as it starts - guest commands,
 journal waits and what matched, CDP calls, deliberate sleeps - and `2` adds
@@ -23,7 +23,7 @@ every agent journal line a wait sees. Every lane's steps go to
 `-o '--tag ~reboot'` leaves out the update lanes. Output is live, each line
 prefixed with its worker, and after every case one `== progress ...` line
 covers the whole run: the workers meet in `build/e2e/progress/`
-(`spec/support/progress.rb`), which `mise run agent-e2e` empties before they
+(`spec/support/progress.rb`), which `mise run e2e:run` empties before they
 start.
 
 * **The suite never builds the image.** It refuses to start without a `.wic`
@@ -59,14 +59,14 @@ start.
   reads, unit properties) and every polling loop run inside `quietly`, with
   one `step` naming the wait before it, or the log would get a line per poll.
   A sleep that is part of what a case proves is `pause SECONDS, "why"`.
-* **The VM has sound cards `mise run run` does not.** `support/vm.rb` passes
+* **The VM has sound cards `mise run qemu:run` does not.** `support/vm.rb` passes
   runqemu `qemuparams=` for an Intel HDA line out and a USB audio device,
   each on a `-audiodev wav` recording to
   `build/qemux86-64/e2e-worker-N.{jack,usb}.wav`, so the audio lane reads
   which card a sound came out of from the host. They are not in the kas
-  fragment, or every `mise run run` would write WAV files. QEMU's wav backend
+  fragment, or every `mise run qemu:run` would write WAV files. QEMU's wav backend
   cannot capture, so the mic case only proves the grant.
-* **It boots its own VM, not through `mise run run`.** The guest is driven over
+* **It boots its own VM, not through `mise run qemu:run`.** The guest is driven over
   SSH, and runqemu's slirp forwards the loopback inside the kas container's
   network namespace, where `-p` publishing cannot reach it, so the harness
   passes `--network=host`. The unclaimed device's empty root password is the

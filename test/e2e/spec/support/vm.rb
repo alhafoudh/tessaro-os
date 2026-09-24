@@ -4,7 +4,7 @@ module AgentE2E
   ROOT = File.expand_path("../../../..", __dir__)
   LOG_DIR = File.join(ROOT, "build", "e2e")
 
-  # The image the suite boots, as `mise run build` and `mise run unpack` leave
+  # The image the suite boots, as `mise run image:build` and `mise run qemu:unpack` leave
   # it. The suite never builds: a missing image is an error, a stale one a
   # warning (see spec_helper.rb).
   DEPLOY_DIR = File.join(ROOT, "build", "qemux86-64", "tmp", "deploy", "images", "qemux86-64")
@@ -176,7 +176,7 @@ module AgentE2E
 
     # Two sound cards, each recorded to a WAV file on the host: an Intel HDA
     # controller with a line out, and a USB audio device. Here and not in the
-    # kas fragment, so `mise run run` does not write WAV files forever. Both
+    # kas fragment, so `mise run qemu:run` does not write WAV files forever. Both
     # are output only - QEMU's wav backend cannot capture - so the VM has no
     # microphone, which the audio lane allows for.
     def sound_cards

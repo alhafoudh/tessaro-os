@@ -153,7 +153,7 @@ answering at that address is a mismatch, never a silent switch.
 `tessaro-ctl nodes list` lists what answers.
 Wiping `/data` or the `/etc` overlay re-identifies a device.
 
-`tessaro-ctl` on a laptop: `mise run build-ctl`, then
+`tessaro-ctl` on a laptop: `mise run ctl:build`, then
 `tessaro-ctl --node NAME access claim` (or `access login --token` with a token someone
 issued). Pins and tokens are kept in `~/.config/tessaro/nodes.json`, 0600.
 

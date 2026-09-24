@@ -137,14 +137,14 @@ is how Chromium's `PACKAGECONFIG` and `CHROMIUM_EXTRA_ARGS` are set.
   name is treated as a lazy rootfs, and the machine argument makes runqemu run
   `bitbake -e` with no recipe target, where `IMAGE_LINK_NAME` (set by the
   recipe-scope `image-artifact-names.bbclass`) does not exist. Pass the
-  `.rootfs.wic` path instead - that is what the `run` tasks do.
+  `.rootfs.wic` path instead - that is what the `qemu:*` tasks do.
 * **KVM inside the kas container** needs `-e GROUP_ID=$(stat -c %g /dev/kvm)`,
   not `--group-add`: the entrypoint's `gosu builder` rebuilds supplementary
   groups from the container's `/etc/group`, so only the primary gid survives.
-* **The build host is headless.** `nographic` is the default for `run`; use
-  `run-vnc` plus an SSH tunnel if you need the framebuffer. With the kiosk
-  enabled, `run` shows nothing but the serial console - the browser needs
-  `run-vnc`.
+* **The build host is headless.** `nographic` is the default for `qemu:run`;
+  use `qemu:vnc` plus an SSH tunnel if you need the framebuffer. With the
+  kiosk enabled, `qemu:run` shows nothing but the serial console - the browser
+  needs `qemu:vnc`.
 * **The kiosk needs a real GPU on the build host to render under QEMU.** Only
   the DRM master may allocate KMS dumb buffers, which is how Mesa's
   `kms_swrast` backs GBM when there is no GPU. Weston holds master so Weston
@@ -202,7 +202,7 @@ kiosk.
 
 | Machine | Purpose | State |
 | --- | --- | --- |
-| `qemux86-64` | development, boots through `mise run run-vnc` | builds and boots |
+| `qemux86-64` | development, boots through `mise run qemu:vnc` | builds and boots |
 | `genericx86-64` | shipping x86_64 hardware (UEFI) | configured, never built end to end |
 | `raspberrypi3-64` | Raspberry Pi 3 Model B+ | builds, boots and runs the kiosk on a 3B+, rendering on the GPU (ES 2.0) |
 
@@ -215,7 +215,7 @@ Images are written from a workstation, not from the build host: `mise run
 image:pull` rsyncs the `$TESSARO_MACHINE` image and bmap from
 `$TESSARO_BUILD_HOST` into the repo root (gitignored), `mise run image:flash`
 writes it with bmaptool, and
-`mise run tunnel` holds the VNC/SSH port forwards. Their settings live in the
+`mise run dev:tunnel` holds the VNC/SSH port forwards. Their settings live in the
 gitignored `mise.local.toml`; see README.md. Flashing is the manual path: a
 device on the update layout is updated over the network with `mise run
 image:update NAME` - see [updates.md](updates.md).

@@ -4,7 +4,7 @@
 does to a device, it does from windows and tables: the devices on the network
 and the ones this machine knows, and per device the settings, the tools of
 every command group, the live journal, a screenshot and a live VNC view. It
-is built with [iced](https://iced.rs) on the workstation (`mise run gui-run`)
+is built with [iced](https://iced.rs) on the workstation (`mise run gui:run`)
 and is never part of the image.
 
 ## Where it lives

@@ -5,7 +5,7 @@
 # builds linux-raspberrypi instead, which this bbappend does not touch - check
 # meta-raspberrypi's defconfig with
 #
-#     TESSARO_MACHINE=raspberrypi3-64 mise run shell
+#     TESSARO_MACHINE=raspberrypi3-64 mise run image:shell
 #     bitbake -e linux-raspberrypi | grep '^KERNEL_FEATURES='
 #
 # before assuming the Pi is covered. It usually is, on-board Bluetooth being a

@@ -1,5 +1,5 @@
 # A real Chromium with a real DevTools endpoint, for `mise run
-# agent-integration`. The agent itself runs on the host as a plain cargo
+# agent:integration`. The agent itself runs on the host as a plain cargo
 # binary - it is a native binary on the device too, so there is nothing a
 # container would be reproducing here.
 #

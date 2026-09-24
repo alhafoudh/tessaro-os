@@ -56,7 +56,7 @@ and [mise](https://mise.jdx.dev/):
 ```sh
 git clone git@github.com:alhafoudh/tessaro-os.git && cd tessaro-os
 mise trust && mise install
-mise run build-rpi      # Raspberry Pi 3B/3B+; build-x86 for a UEFI PC
+mise run image:build:rpi      # Raspberry Pi 3B/3B+; image:build:x86 for a UEFI PC
 ```
 
 The first build fetches and compiles everything, Chromium included, and takes
@@ -74,7 +74,7 @@ announces itself on the local network. Build the client, find the device and
 claim it:
 
 ```sh
-mise run build-ctl                  # build/cargo-target/release/tessaro-ctl; put it on your PATH
+mise run ctl:build                  # build/cargo-target/release/tessaro-ctl; put it on your PATH
 tessaro-ctl nodes list              # devices answering on this network
 tessaro-ctl -n golden-thistle-5731 access claim
 ```
@@ -304,7 +304,7 @@ the command line's device list, pins and tokens (`~/.config/tessaro/nodes.json`)
 so a device claimed with one is open in the other.
 
 ```sh
-mise run gui-build              # build/gui-target/release/tessaro-gui, for this machine
+mise run gui:build              # build/gui-target/release/tessaro-gui, for this machine
 ```
 
 - The device list shows every device answering on the network next to the

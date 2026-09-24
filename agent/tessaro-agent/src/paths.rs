@@ -3,7 +3,7 @@
 //! None of these are settings - `tessaro-ctl` cannot change them and they are
 //! not in the key registry. They are environment variables only so the same
 //! binary runs on a development host, where `/data`, `/etc/shadow` and
-//! `/run` are not ours to write (`mise run agent-integration` points them all
+//! `/run` are not ours to write (`mise run agent:integration` points them all
 //! into a temporary directory).
 
 use std::path::PathBuf;

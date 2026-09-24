@@ -201,7 +201,7 @@ impl<'a> Agent<'a> {
         // session means a new browser, a new page target, or a crashed tab -
         // never merely a reconnect to the same live page. The
         // MainPID check catches a restart over the bus - but only when
-        // there IS a bus: in `mise run agent-integration`, or on a device
+        // there IS a bus: in `mise run agent:integration`, or on a device
         // whose systemd1 is unreachable, main_pid() is 0 and a browser that
         // died and came back used to be invisible. One `if`, so both firing
         // in the same cycle log once.
@@ -1033,7 +1033,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_new_cdp_session_forces_a_re_navigation_even_without_a_bus() {
-        // No bus, as in agent-integration: main_pid() is 0 throughout, so the
+        // No bus, as in agent:integration: main_pid() is 0 throughout, so the
         // session generation is the only thing that can see this restart.
         let world = World::new(&[]);
         world.units.main_pid.set(0);

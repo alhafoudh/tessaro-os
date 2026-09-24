@@ -7,7 +7,7 @@
 //! systemd.rs makes for talking to the bus directly.
 //!
 //! Everything here is optional. `NOTIFY_SOCKET` unset means systemd did not
-//! start us - `cargo test`, `mise run agent-integration`, someone running the
+//! start us - `cargo test`, `mise run agent:integration`, someone running the
 //! binary by hand - and there is simply no notifier.
 //!
 //! `WatchdogSec=` alone is enough on a `Type=simple` unit: systemd 255
@@ -174,7 +174,7 @@ mod tests {
 
         assert!(Notifier::from_env(&env(&[]), &log).is_none());
         assert!(Notifier::from_env(&env(&[("NOTIFY_SOCKET", "")]), &log).is_none());
-        // Nothing to say about it: this is `cargo test` and agent-integration.
+        // Nothing to say about it: this is `cargo test` and agent:integration.
         assert!(log.lines().is_empty());
     }
 

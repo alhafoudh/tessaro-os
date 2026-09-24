@@ -1,4 +1,4 @@
-# Enforced by `mise run agent-lint` (clippy --all-targets -D warnings).
+# Enforced by `mise run agent:lint` (clippy --all-targets -D warnings).
 #
 # The halves of one rule: every wait on the outside world has a deadline, and
 # nothing blocks the one runtime thread.

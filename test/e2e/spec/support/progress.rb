@@ -6,7 +6,7 @@ module AgentE2E
   # cases it will run (worker-N.total) and appends a line per finished case
   # (worker-N.done), and after every case the finishing worker prints one line
   # summing all of them. With one worker the run is that worker's, so it
-  # empties the directory itself; with several, `mise run agent-e2e` empties
+  # empties the directory itself; with several, `mise run e2e:run` empties
   # it before they start, since none of them can tell it is the first.
   module Progress
     DIR = File.join(LOG_DIR, "progress")

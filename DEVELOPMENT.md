@@ -18,14 +18,14 @@ workstation, and test the agent. How each subsystem works is in
 ## Building
 
 ```sh
-mise run build        # the image for $TESSARO_MACHINE (plus OVMF on qemu)
-mise run build-qemu   # qemux86-64      - development, boots under QEMU
-mise run build-x86    # genericx86-64   - x86_64 PCs and mini PCs, UEFI
-mise run build-rpi    # raspberrypi3-64 - Raspberry Pi 3 Model B and B+
+mise run image:build        # the image for $TESSARO_MACHINE (plus OVMF on qemu)
+mise run image:build:qemu   # qemux86-64      - development, boots under QEMU
+mise run image:build:x86    # genericx86-64   - x86_64 PCs and mini PCs, UEFI
+mise run image:build:rpi    # raspberrypi3-64 - Raspberry Pi 3 Model B and B+
 
-TESSARO_MACHINE=raspberrypi3-64 mise run shell   # any task, any target
-mise run image-sizes                             # every built image, side by side
-mise run clean                                   # drop build output, keep the caches
+TESSARO_MACHINE=raspberrypi3-64 mise run image:shell   # any task, any target
+mise run image:sizes                                   # every built image, side by side
+mise run image:clean                                   # drop build output, keep the caches
 ```
 
 Every task acts on one machine, `$TESSARO_MACHINE`, which defaults to
@@ -34,18 +34,18 @@ and images land in `build/<machine>/tmp/deploy/images/<machine>/`. The
 download and sstate caches in `cache/` are shared, so the second target reuses
 most of the first one's work.
 
-For work on one recipe, `mise run shell` opens a kas shell where `bitbake`
+For work on one recipe, `mise run image:shell` opens a kas shell where `bitbake`
 sees the right environment (`bitbake -e <recipe>`, `bitbake -c devshell
 <recipe>`, `bitbake -n moonforge-image-base`).
 
 ## Running in QEMU
 
 ```sh
-mise run run-vnc   # boot it, framebuffer on localhost:5900
-mise run run       # serial console only (Ctrl-a x to exit)
+mise run qemu:vnc   # boot it, framebuffer on localhost:5900
+mise run qemu:run   # serial console only (Ctrl-a x to exit)
 ```
 
-Use `run-vnc` to see the kiosk: `run` boots with `nographic`, so there is no
+Use `qemu:vnc` to see the kiosk: `qemu:run` boots with `nographic`, so there is no
 display for the browser. Both boot with `-snapshot`, so nothing a session
 changes survives it.
 
@@ -104,8 +104,8 @@ build host and skips what is already up to date; pass a remote path in single
 quotes to pull something else. `image:flash` unmounts the device, writes it
 with bmaptool (through `/dev/rdiskN` on macOS), syncs and ejects it.
 
-`mise run tunnel` keeps an autossh tunnel to the build host up (needs
-`autossh`): `localhost:5901` is the build host's QEMU VNC from `run-vnc`,
+`mise run dev:tunnel` keeps an autossh tunnel to the build host up (needs
+`autossh`): `localhost:5901` is the build host's QEMU VNC from `qemu:vnc`,
 `localhost:5902` is VNC on port 5901 of `$TESSARO_BUILD_HOST_CONTAINER_IP`,
 `localhost:7400` and `localhost:2222` are that VM's tessaro-ctl port and SSH
 (`tessaro-ctl -n 127.0.0.1 device status`,
@@ -118,17 +118,18 @@ The agent, the client and the updater are a Rust workspace in `agent/`,
 tested on the host:
 
 ```sh
-mise run agent-test          # cargo test for the workspace
-mise run agent-lint          # cargo fmt --check plus clippy
-mise run agent-integration   # the agent against a real headless Chromium in docker compose
-mise run build-ctl           # a release tessaro-ctl for this machine
+mise run agent:test          # cargo test for the workspace
+mise run agent:lint          # cargo fmt --check plus clippy
+mise run agent:integration   # the agent against a real headless Chromium in docker compose
+mise run ctl:build           # a release tessaro-ctl for this machine
+mise run ctl:run -- nodes list   # run that build, arguments after --; it never builds
 ```
 
 After changing any `Cargo.toml` or `agent/Cargo.lock`, regenerate the crate
 list the recipe builds from, or the image build fails:
 
 ```sh
-mise run shell                          # then, inside:
+mise run image:shell                    # then, inside:
 bitbake -c update_crates tessaro-kiosk  # writes tessaro-kiosk-crates.inc
 ```
 
@@ -142,17 +143,17 @@ workstation and never part of the image. It uses `agent/protocol` and
 `agent/client` by path, so it speaks what `tessaro-ctl` speaks.
 
 ```sh
-mise run gui-run             # run it from this checkout
-mise run gui-test            # its unit tests
-mise run gui-lint            # cargo fmt --check plus clippy
-mise run gui-build           # a release build for this machine
+mise run gui:run             # run it from this checkout
+mise run gui:test            # its unit tests
+mise run gui:lint            # cargo fmt --check plus clippy
+mise run gui:build           # a release build for this machine
 ```
 
 How it works is in [docs/gui.md](docs/gui.md).
 
 ## End-to-end tests
 
-`mise run agent-e2e` boots the qemux86-64 image and provokes what the agent
+`mise run e2e:run` boots the qemux86-64 image and provokes what the agent
 exists to handle - the site going down, the browser crashing or wedging, the
 agent itself wedging, settings, claiming, network changes, image updates -
 asserting on what the agent writes to its journal. It is an RSpec suite in
@@ -163,23 +164,23 @@ It tests the image as built and never builds one, so build first. It needs
 Ruby with Bundler on the host, and KVM to be quick; each VM takes 4 GB of RAM.
 
 ```sh
-mise run build              # the image under test (qemux86-64)
-mise run agent-e2e:setup    # once: installs rspec and parallel_tests
-mise run agent-e2e          # every lane, three VMs at a time
+mise run image:build        # the image under test (qemux86-64)
+mise run e2e:setup          # once: installs rspec and parallel_tests
+mise run e2e:run            # every lane, three VMs at a time
 ```
 
 Running part of it, and watching it:
 
 ```sh
-E2E_JOBS=1 mise run agent-e2e                                 # one VM at a time
-mise run agent-e2e -- -o '--tag ~reboot'                      # leave out the image updates
-mise run agent-e2e:one -- spec/network_spec.rb                # one lane, plain rspec
-mise run agent-e2e:one -- spec/agent_spec.rb -e 'dns:'        # one case, by its name
-mise run agent-e2e:one -- --only-failures                     # what failed last time
-E2E_VERBOSE=1 mise run agent-e2e:one -- spec/agent_spec.rb    # each step as it happens
+E2E_JOBS=1 mise run e2e:run                             # one VM at a time
+mise run e2e:run -- -o '--tag ~reboot'                  # leave out the image updates
+mise run e2e:one -- spec/network_spec.rb                # one lane, plain rspec
+mise run e2e:one -- spec/agent_spec.rb -e 'dns:'        # one case, by its name
+mise run e2e:one -- --only-failures                     # what failed last time
+E2E_VERBOSE=1 mise run e2e:one -- spec/agent_spec.rb    # each step as it happens
 ```
 
-`agent-e2e:one` paths are relative to `test/e2e`. `E2E_VERBOSE=2` adds every
+`e2e:one` paths are relative to `test/e2e`. `E2E_VERBOSE=2` adds every
 agent journal line a case sees, `E2E_KEEP=1` leaves the VM up after its lane,
 and `E2E_REUSE=1` runs against a VM left up that way. Everything a run leaves
 is in `build/e2e/`. Lanes, ports and the harness are explained in
