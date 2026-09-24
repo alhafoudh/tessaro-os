@@ -54,11 +54,13 @@ local_conf_header:
     # The root partition's size is part of the disk layout, so it is fixed
     # here instead of following each build's rootfs: a later image has to fit
     # into the partition already on the disk, and wic fails the build when one
-    # does not. The image is ~870M today. The ESP has room for two kernels,
-    # which is what the updater needs while it swaps them. Changing either is
-    # a new disk layout - devices need one full reflash to take updates again.
-    TESSARO_ROOTFS_SIZE = "2048M"
-    TESSARO_ESP_SIZE = "128M"
+    # does not. The image is ~900M today; 4096M leaves room for years of
+    # Chromium growth, because every change here costs a reflash. The ESP has
+    # room for two kernels (~21M each on x86), which is what the updater needs
+    # while it swaps them, with the same margin. Changing either is a new disk
+    # layout - devices need one full reflash to take updates again.
+    TESSARO_ROOTFS_SIZE = "4096M"
+    TESSARO_ESP_SIZE = "256M"
     # The initramfs lives inside the kernel, so the kernel on the boot
     # partition stays one file - the one the updater swaps - and bootimg-efi
     # picks the bundled image up without any change to its config. The cost

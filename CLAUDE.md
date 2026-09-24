@@ -1281,10 +1281,11 @@ Things to know:
   derives it from `SOURCE_DATE_EPOCH` - but nothing there names a PARTUUID
   (`root=/dev/mmcblk0p2`, device nodes in fstab), so for MBR images the
   layout check compares partition geometry instead.
-* **The root partition is a fixed `TESSARO_ROOTFS_SIZE` (2048M), the ESP a
-  fixed `TESSARO_ESP_SIZE` (128M), the Pi's boot partition 256M.** A later
+* **The root partition is a fixed `TESSARO_ROOTFS_SIZE` (4096M), the ESP a
+  fixed `TESSARO_ESP_SIZE` (256M), the Pi's boot partition 512M.** A later
   image has to fit the partition already on the disk, and the ESP holds two
-  kernels during the swap. wic fails the build if the rootfs outgrows it.
+  kernels during the swap. All three are sized well past today's ~900M
+  rootfs and 21M/51M kernels on purpose, since growing one costs a reflash. wic fails the build if the rootfs outgrows it.
   Changing any partition is a new disk layout: every device needs one full
   reflash, which the updater says in so many words when it refuses.
 * **The initramfs is bundled into the kernel** (`INITRAMFS_IMAGE_BUNDLE`), so
