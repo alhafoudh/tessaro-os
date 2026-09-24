@@ -604,6 +604,54 @@ connector will be called, the config is generated per boot:
   `tessaro-ctl set` restarts Weston for them - and with it the browser and the
   agent - rather than just the browser.
 
+### Display hotplug
+
+**The generated config is kept true to what is plugged in, by the agent.**
+`tessaro-weston-config` only sees the screens and keyboards attached when
+Weston starts. So `watch_display` in `control.rs` reads `/sys/class/drm/*/`
+`status`/`modes` and `/sys/class/input/input*` every 2s. Once a change has
+held still for 5s, it runs the generator again, as root, into
+`/run/tessaro-kiosk/weston-candidate.ini`, and compares that with
+`/run/weston/weston.ini` (`agent/tessaro-agent/src/hotplug.rs`). Weston is
+restarted, taking the browser and the agent with it, only if one of these
+holds:
+
+* a connector is connected now that was not when Weston started. The
+  generator records that set in a `# tessaro-weston-config: connected ...`
+  comment line, and the agent matches that exact prefix. This is what brings a
+  device booted with no screen onto a screen plugged in later, whatever the
+  scale and resolution settings are;
+* an `[output]` section would now be written differently: a different panel
+  on the same connector;
+* the `[input-method]` section changed: `display.osk=auto` saw a keyboard come
+  or go.
+
+A connector going away is never a reason. Weston copes with a head
+disappearing, and the running config keeps its section for when the screen
+comes back. So a monitor switched off and on restarts nothing. Every decision
+is one `display: ...` line in `journalctl -u tessaro-agent`.
+
+* **`display.resolution` and `display.scale` stay in charge.** The restart
+  only re-runs the same generator with the same settings, so a late screen
+  gets the configured mode (if it offers it) and the right scale. The check is
+  paused while a change is on probation: that change restarted Weston itself,
+  and a monitor re-syncing to the new mode must not be taken for a new one.
+* **It cannot loop.** The hardware snapshot a restart was made for is written
+  to `/run/tessaro-kiosk/display-reconciled`. If Weston comes back from that
+  restart and the config still differs for the same hardware, the agent logs
+  it and leaves it alone. It also leaves an operator-stopped `weston.service`
+  alone.
+* **The generator's output must depend on the settings and the hardware
+  only.** A timestamp or anything random in it would make every hotplug
+  restart the compositor.
+* **On the Pi this only works on full KMS** (`VC4DTBO = "vc4-kms-v3d"` in its
+  kas fragment). meta-raspberrypi defaults `raspberrypi3-64` to fake KMS, where
+  the firmware owns HDMI. A screen missing at boot then never came up, and a
+  monitor switched off and on came back with the firmware scaling Weston's old
+  framebuffer into a new mode, which looked like squashed text. Under full KMS
+  the kernel owns HDMI and sends real hotplug uevents. `config.txt`'s `hdmi_*`
+  options are ignored there; `video=` on the kernel command line replaces them.
+
 ### On-screen keyboard
 
 **It was always in the image; nothing was speaking to it.**
@@ -662,11 +710,11 @@ keyboard attached", and how that is decided matters:
   database, anything unexpected: the verdict is "no keyboard" and the panel is
   offered. A superfluous keyboard on screen is a nuisance; a touch-only device
   with no way to type is a brick.
-* **The decision is made once, at compositor start.** Hotplug does nothing
-  until `tessaro-ctl restart weston`, which takes the browser and the agent with
-  it. A udev rule that recomputes and restarts on change is the obvious
-  follow-up and is deliberately not built yet - the detection wants proving
-  against real peripherals first.
+* **It follows hotplug, at the cost of a Weston restart.** The agent re-runs
+  the decision when an input device comes or goes, and restarts Weston, taking
+  the browser with it, if the verdict changed - see **Display hotplug**. So on
+  a device with `auto`, plugging in a keyboard, or a scanner that looks like
+  one, costs a page reload. `display.osk=always`/`never` never restart for it.
 * An `[input-method]` section written by hand in `/etc/xdg/weston/weston.ini`
   wins over all of it, the same courtesy `[output]` sections get.
 
@@ -768,9 +816,9 @@ which is the half that does not reach the browser, see above.
   page is nearly free; full-screen video is a readback per frame. `KIOSK_VNC=off`
   is the first thing to try on a Pi that feels slow.
 * **One client at a time** - a second connection disconnects the first - and
-  **only outputs present when Weston starts are shared**, so a monitor plugged
-  in later needs `tessaro-ctl restart weston`, the same limitation
-  `display.osk` has.
+  **only outputs present when Weston starts are shared**. A monitor plugged
+  in later is picked up by the agent's hotplug restart (see **Display
+  hotplug**), and the share with it.
 * **SSH now ships in every image**, not only debug ones:
   `ssh-server-dropbear empty-root-password allow-empty-password` in
   `moonforge-image-base.bbappend`. `allow-empty-password` is the one that

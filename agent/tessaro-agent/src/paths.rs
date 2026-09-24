@@ -27,6 +27,14 @@ pub struct Paths {
     /// The runtime override file this replaced; imported once, then renamed.
     pub legacy_override: PathBuf,
     pub drm: PathBuf,
+    /// `/sys/class/input`: what the on-screen keyboard's `auto` looks at.
+    pub input: PathBuf,
+    /// The config Weston is running with, as `tessaro-weston-config` wrote it
+    /// at the compositor's start.
+    pub weston_config: PathBuf,
+    /// The generator itself, which the agent runs again after a hotplug to
+    /// see whether that config still holds.
+    pub weston_generator: PathBuf,
     pub cmdline: PathBuf,
     /// `/sys/class/net`: every interface, its MAC, state, MTU and kind.
     pub sys_net: PathBuf,
@@ -88,6 +96,12 @@ impl Paths {
             machine_id: path("KIOSK_MACHINE_ID", "/etc/machine-id"),
             legacy_override: path("KIOSK_LEGACY_OVERRIDE", "/etc/default/tessaro-kiosk"),
             drm: path("KIOSK_DRM", "/sys/class/drm"),
+            input: path("KIOSK_INPUT", "/sys/class/input"),
+            weston_config: path("KIOSK_WESTON_CONFIG", "/run/weston/weston.ini"),
+            weston_generator: path(
+                "KIOSK_WESTON_GENERATOR",
+                "/usr/libexec/tessaro-weston-config",
+            ),
             cmdline: path("KIOSK_CMDLINE", "/proc/cmdline"),
             sys_net: path("KIOSK_SYS_NET", "/sys/class/net"),
             proc_route: path("KIOSK_PROC_ROUTE", "/proc/net/route"),
@@ -127,6 +141,18 @@ impl Paths {
 
     pub fn factory_reset_marker(&self) -> PathBuf {
         self.state_dir.join("factory-reset")
+    }
+
+    /// Where the agent has the Weston config generator write its answer after
+    /// a hotplug, to compare with the running config.
+    pub fn weston_candidate(&self) -> PathBuf {
+        self.run_dir.join("weston-candidate.ini")
+    }
+
+    /// The hardware snapshot Weston was last restarted for by a hotplug, so
+    /// a config that still differs afterwards is not restarted again.
+    pub fn display_reconciled(&self) -> PathBuf {
+        self.run_dir.join("display-reconciled")
     }
 
     /// Image updates: the upload, the staging, the marker, the last result.

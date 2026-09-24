@@ -45,12 +45,22 @@ local_conf_header:
     # update swaps.
     RPI_EXTRA_IMAGE_BOOT_FILES = "${KERNEL_IMAGETYPE}-initramfs-${MACHINE}.bin;${KERNEL_IMAGETYPE} u-boot.bin;${SDIMG_KERNELIMAGE} boot.scr"
     TESSARO_KERNEL_FILE = "${KERNEL_IMAGETYPE}"
+    # Full KMS, not the fake KMS raspberrypi3-64 defaults to. Under fake KMS
+    # the firmware owns HDMI: a screen missing at power-on is never brought up,
+    # and a monitor switched off and on comes back with the firmware scaling
+    # Weston's old framebuffer into whatever mode it picked, which looks like
+    # squashed text. Under full KMS the kernel's vc4 driver owns it, reads the
+    # EDID again and sends real hotplug uevents, which Weston and the agent's
+    # hotplug watcher (CLAUDE.md, "Display hotplug") act on. config.txt's
+    # hdmi_* options are ignored from here on; video= on the kernel command
+    # line replaces them.
+    VC4DTBO = "vc4-kms-v3d"
     # The 3B+ has 1GB of RAM shared with the GPU, and Chromium is the heaviest
-    # thing in the image. Two knobs to reach for if the kiosk gets OOM-killed
-    # or renders slowly, both defaulted by meta-raspberrypi and left alone here
-    # because either one trades against the other:
+    # thing in the image. If the kiosk gets OOM-killed or renders slowly:
     #   GPU_MEM = "128"            # rpi-base.inc defaults to 64
-    #   VC4DTBO = "vc4-kms-v3d"    # raspberrypi3-64 defaults to fake KMS
+    # Under full KMS the GPU draws from the kernel's CMA pool (the overlay's
+    # default, 256M) rather than from GPU_MEM, which now only feeds the
+    # firmware's own needs.
 
 # Both keys belong in the entry point of the config chain: an include cannot
 # set them, because meta-moonforge-distro.yml sets distro too and wins by

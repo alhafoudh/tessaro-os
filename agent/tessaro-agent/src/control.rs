@@ -35,6 +35,7 @@ use tokio::time::Instant;
 use crate::auth::{self, Auth};
 use crate::cdp::session::SessionHandle;
 use crate::display;
+use crate::hotplug;
 use crate::log::Log;
 use crate::mdns::Mdns;
 use crate::nm::profiles::{self, NetConfig};
@@ -1168,6 +1169,150 @@ impl Control {
         if let Some(after) = reply.after {
             self.run_after(after).await;
         }
+    }
+
+    /// Screens and keyboards plugged in or out after Weston started - see
+    /// `hotplug.rs`. Every 2s the connector and input device state is read;
+    /// once it has held still for 5s the generator runs again, and Weston is
+    /// restarted if its answer differs from the config Weston is running.
+    /// The first check runs once the state has settled at startup, which
+    /// catches a screen plugged in while Weston and this agent were starting.
+    ///
+    /// Paused while a change is on probation: that change restarted Weston
+    /// itself, and a monitor re-syncing to the new mode must not be taken for
+    /// a new one. The check runs once the probation is over.
+    pub fn watch_display(self: &Arc<Self>) {
+        const POLL: Duration = Duration::from_secs(2);
+        const SETTLE: Duration = Duration::from_secs(5);
+
+        let control = Arc::clone(self);
+        let mut shutdown = self.shutdown.clone();
+        tokio::spawn(async move {
+            let mut seen: Option<String> = None;
+            let mut since = Instant::now();
+            let mut checked = false;
+            loop {
+                // naked: a timer and the shutdown signal, not the outside world
+                tokio::select! {
+                    _ = tokio::time::sleep(POLL) => {}
+                    _ = shutdown.changed() => return,
+                }
+                let paths = control.paths.clone();
+                let Ok(now) = blocking("reading the displays and input devices", move || {
+                    Ok(hotplug::snapshot(&hotplug::Sources {
+                        drm: &paths.drm,
+                        input: &paths.input,
+                    }))
+                })
+                .await
+                else {
+                    continue;
+                };
+                if seen.as_deref() != Some(now.as_str()) {
+                    seen = Some(now);
+                    since = Instant::now();
+                    checked = false;
+                    continue;
+                }
+                if checked || since.elapsed() < SETTLE || lock(&control.probation).is_some() {
+                    continue;
+                }
+                checked = true;
+                // naked: every wait in it is blocking()/Bus, under within()
+                control.reconcile_display(&now).await;
+            }
+        });
+    }
+
+    async fn reconcile_display(&self, snapshot: &str) {
+        let paths = self.paths.clone();
+        let compared = blocking("regenerating the Weston config", move || {
+            // A device whose Weston is not started through the drop-in, or a
+            // host run: nothing to keep true.
+            let Ok(running) = std::fs::read_to_string(&paths.weston_config) else {
+                return Ok(None);
+            };
+            let candidate = hotplug::generate(
+                &paths.weston_generator,
+                &paths.weston_candidate(),
+                &hotplug::Sources {
+                    drm: &paths.drm,
+                    input: &paths.input,
+                },
+                &paths.generated_env(),
+            )?;
+            let restarted_for = std::fs::read_to_string(paths.display_reconciled()).ok();
+            Ok(Some((
+                hotplug::verdict(&running, &candidate),
+                restarted_for,
+            )))
+        })
+        .await;
+
+        let (reason, restarted_for) = match compared {
+            Ok(Some((Some(reason), restarted_for))) => (reason, restarted_for),
+            Ok(Some((None, _))) => {
+                self.log
+                    .debug("display: the hardware changed, Weston's config still fits");
+                return;
+            }
+            Ok(None) => {
+                self.log.debug(format!(
+                    "display: no {}, not watching hotplug",
+                    self.paths.weston_config.display()
+                ));
+                return;
+            }
+            Err(err) => {
+                self.log.info(format!("display: {err}"));
+                return;
+            }
+        };
+
+        // Weston was restarted for exactly this hardware and still came up
+        // with a config the generator would not write. Another restart would
+        // end the same way, on a public screen, every few seconds.
+        if restarted_for.as_deref() == Some(snapshot) {
+            self.log.info(format!(
+                "display: {reason}, but Weston was already restarted for this hardware; leaving it"
+            ));
+            return;
+        }
+
+        // An operator who stopped the compositor meant it.
+        let state = self.bus.active_state(&self.paths.weston_unit).await;
+        if state != "active" {
+            self.log.debug(format!(
+                "display: {reason}, but {} is {state}",
+                self.paths.weston_unit
+            ));
+            return;
+        }
+
+        // Not in the middle of a `set`: its restart would race this one.
+        let _writes = self.writes.lock().await;
+        let paths = self.paths.clone();
+        let body = snapshot.to_string();
+        if let Err(err) = blocking("recording the display restart", move || {
+            let file = paths.display_reconciled();
+            crate::store::replace_if_changed(&file, body.as_bytes(), 0o644)
+                .map(|_| ())
+                .map_err(|err| format!("{}: {err}", file.display()))
+        })
+        .await
+        {
+            // Without the record there is no loop guard; better not restart.
+            self.log
+                .info(format!("display: {reason}, not restarting: {err}"));
+            return;
+        }
+
+        self.log.info(format!(
+            "display: {reason}; restarting {}",
+            self.paths.weston_unit
+        ));
+        self.run_after(After::Restart(self.paths.weston_unit.clone()))
+            .await;
     }
 
     /// Render, then restart what reads the changed keys. The reply is built

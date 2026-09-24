@@ -27,6 +27,13 @@
 # as User=weston. /sys/class/drm, /sys/class/input and the udev database are
 # world readable and $RUNTIME_DIRECTORY is ours, so no privilege is needed.
 #
+# tessaro-agent also runs it, as root, whenever a screen or keyboard is
+# plugged in or out after Weston started: into a scratch file
+# (TESSARO_WESTON_CONFIG), which it compares with the config Weston is
+# running, and restarts Weston only if they differ. So everything this script
+# writes must depend on the settings and the hardware only - no timestamps,
+# nothing random - or every hotplug would restart the compositor.
+#
 # The technician-facing file is still /etc/xdg/weston/weston.ini, which is on
 # the /etc overlay and therefore persists. It is used as the base below, and an
 # [output] or [input-method] section written there by hand always wins over
@@ -164,6 +171,22 @@ else
     echo "tessaro-weston-config: $BASE is missing, generating from nothing" >&2
     : > "$OUT"
 fi
+
+# Which connectors were connected when this ran, as a comment Weston ignores.
+# tessaro-agent runs this script again after a hotplug and compares
+# (agent/tessaro-agent/src/hotplug.rs): a connector that is connected now but
+# is not on this line was plugged in after Weston started, and Weston is
+# restarted onto it - even when nothing below would write an [output] for it,
+# as on a device booted with no screen at all. Keep the exact prefix; the
+# agent matches it.
+connected=
+for dev in "$DRM_ROOT"/card*-*; do
+    [ -r "$dev/status" ] || continue
+    [ "$(cat "$dev/status")" = connected ] || continue
+    name=${dev##*/}
+    connected="$connected ${name#*-}"
+done
+printf '\n# tessaro-weston-config: connected%s\n' "${connected:- (none)}" >> "$OUT"
 
 # The on-screen keyboard, before the scale, so that KIOSK_SCALE=none below
 # still leaves it configured.

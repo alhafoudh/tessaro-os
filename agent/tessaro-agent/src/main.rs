@@ -28,6 +28,7 @@ mod deadline;
 mod debug;
 mod display;
 mod error;
+mod hotplug;
 mod http;
 mod identity;
 mod log;
@@ -285,6 +286,7 @@ async fn start_control(
     control.recover_network().await; // naked: two disk reads under blocking()'s within()
     control.watch_url();
     control.watch_public_ip();
+    control.watch_display();
 }
 
 async fn run(
