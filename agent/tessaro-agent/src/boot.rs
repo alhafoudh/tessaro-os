@@ -12,7 +12,9 @@
 //!    in the journal once (`updates::report`).
 //! 1. **Factory reset**, if `/data/tessaro/factory-reset` exists or the
 //!    kernel command line says `tessaro.factory_reset`: settings, tokens, ssh
-//!    keys and root password cleared - the fresh-install state. The marker is removed
+//!    keys, root password and stored files cleared - the fresh-install state.
+//!    What a reset left of the file store to delete is finished every boot.
+//!    The marker is removed
 //!    afterwards; the command-line flag is meant to be typed at the boot
 //!    loader for one boot, not written into its config.
 //! 2. **Migration** of a leftover `/etc/default/tessaro-kiosk`, once, and of
@@ -38,6 +40,7 @@ use std::fs;
 
 use crate::auth::{self, Auth};
 use crate::config::Env;
+use crate::files;
 use crate::identity;
 use crate::log::Log;
 use crate::nm::{nat, profiles};
@@ -61,6 +64,11 @@ pub fn run(env: &dyn Env, log: &Log) {
 
     if factory_reset_requested(&paths) {
         factory_reset(&paths, &state_store, &auth_store, &secrets_store, log);
+    }
+    if let Err(err) = files::clean(&paths) {
+        log.info(format!(
+            "could not finish removing the old file store: {err}"
+        ));
     }
 
     migrate(&paths, &state_store, log);
@@ -185,12 +193,17 @@ fn factory_reset(
     if let Err(err) = secrets_store.remove() {
         log.info(format!("factory reset: secrets.json: {err}"));
     }
+    if let Err(err) = files::wipe(paths) {
+        log.info(format!("factory reset: the file store: {err}"));
+    }
     match fs::remove_file(paths.factory_reset_marker()) {
         Ok(()) => {}
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
         Err(err) => log.info(format!("factory reset: cannot remove the marker: {err}")),
     }
-    log.info("factory reset: settings, tokens, ssh keys, root and network passwords cleared");
+    log.info(
+        "factory reset: settings, tokens, ssh keys, root and network passwords, stored files cleared",
+    );
 }
 
 /// Import the old runtime override file into `state.json`, once. Only the
@@ -346,6 +359,7 @@ mod tests {
             let at = |name: &str| dir.path().join(name).display().to_string();
             let env: HashMap<String, String> = [
                 ("KIOSK_STATE_DIR", at("data")),
+                ("KIOSK_FILES_DIR", at("files")),
                 ("KIOSK_RUN_DIR", at("run")),
                 ("KIOSK_POLICY", at("policy.json")),
                 ("KIOSK_POLICY_BASE", at("policy-base.json")),
@@ -466,6 +480,8 @@ mod tests {
             })
             .unwrap();
         shadow::set_root(&paths.shadow, Some(&shadow::hash("x").unwrap())).unwrap();
+        fs::create_dir_all(paths.files_dir.join("media")).unwrap();
+        fs::write(paths.files_dir.join("media/clip.mp4"), "video").unwrap();
         fs::write(paths.factory_reset_marker(), "").unwrap();
 
         run(&device.env, &log);
@@ -475,6 +491,7 @@ mod tests {
         assert!(!auth.claimed());
         assert!(root_is_empty(&paths.shadow));
         assert!(!paths.factory_reset_marker().exists());
+        assert_eq!(fs::read_dir(&paths.files_dir).unwrap().count(), 0);
     }
 
     #[test]

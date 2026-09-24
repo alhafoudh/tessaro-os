@@ -2,7 +2,7 @@
 
 module AgentE2E
   # The control plane: settings, the debug screen, maintenance mode, the
-  # claim model, ssh keys and the resolution probation.
+  # claim model, ssh keys, the resolution probation and the file store.
   RSpec.describe "the control plane" do
     include_context "a booted VM"
 
@@ -185,6 +185,46 @@ module AgentE2E
     ensure
       guest.run("tessaro-ctl config unset screen.resolution", allow_failure: true)
       pause 5, "let Weston settle"
+    end
+
+    # The store as the page sees it: fetched by the browser from nginx, not
+    # read off the disk. The kiosk page is http://127.0.0.1/ itself, so the
+    # fetch is same-origin; the CORS header is checked all the same, since
+    # a site on another origin depends on it.
+    it "files: sync sends what changed and removes what is gone, and the page reads the store at /files/" do
+      local = "/tmp/e2e-files"
+      sync = ->(extra = "") { JSON.parse(guest.run("tessaro-ctl --json files sync #{local} -y #{extra}")) }
+      guest.run("rm -rf #{local} && mkdir -p #{local}/media && echo hello > #{local}/a.txt && " \
+                "echo '{\"x\":1}' > #{local}/media/menu.json && echo gone > #{local}/b.txt")
+
+      first = sync.call
+      expect(first["sent"]).to contain_exactly("a.txt", "b.txt", "media/menu.json")
+
+      fetched = cdp.command(
+        "Runtime.evaluate",
+        expression: "fetch('/files/media/menu.json').then(async r => " \
+                    "r.status + ' ' + r.headers.get('access-control-allow-origin') + ' ' + (await r.text()).trim())",
+        awaitPromise: true, returnByValue: true
+      ).dig("result", "value")
+      expect(fetched).to eq('200 * {"x":1}')
+
+      guest.run("touch -d '2024-01-01 00:00:00' #{local}/a.txt && rm #{local}/b.txt")
+      second = sync.call
+      expect(second["sent"]).to eq(["a.txt"])
+      expect(second["removed"]).to eq(["b.txt"])
+      expect(second["unchanged"]).to eq(["media/menu.json"])
+      expect(guest.run("stat -c %Y /data/files/a.txt").strip).to eq(guest.run("stat -c %Y #{local}/a.txt").strip)
+
+      guest.run("rm -rf /tmp/e2e-back && tessaro-ctl files download media /tmp/e2e-back")
+      expect(guest.run("cat /tmp/e2e-back/menu.json")).to include('{"x":1}')
+
+      guest.run("tessaro-ctl files rm -r -y media a.txt")
+      expect(guest.run("tessaro-ctl --json files list")).to include('"entries": []')
+    ensure
+      # One at a time: rm refuses the lot when any of them is missing.
+      guest.run("rm -rf #{local} /tmp/e2e-back; " \
+                "for path in media a.txt b.txt; do tessaro-ctl files rm -r -y $path 2>/dev/null; done",
+                allow_failure: true)
     end
   end
 end

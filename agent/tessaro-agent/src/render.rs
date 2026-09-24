@@ -27,9 +27,14 @@ use crate::paths::Paths;
 use crate::state;
 use crate::store;
 
-/// The device-API grants that follow the kiosk origin. Everything else in the
-/// policy is the image's.
-const ORIGIN_POLICIES: [&str; 2] = ["SerialAllowAllPortsForUrls", "WebHidAllowAllDevicesForUrls"];
+/// The grants that follow the kiosk origin: the device APIs, and reaching
+/// `http://127.0.0.1` (the file store) from an https site without a Local
+/// Network Access prompt. Everything else in the policy is the image's.
+const ORIGIN_POLICIES: [&str; 3] = [
+    "SerialAllowAllPortsForUrls",
+    "WebHidAllowAllDevicesForUrls",
+    "LocalNetworkAccessAllowedForUrls",
+];
 
 pub fn env_file(
     settings: &BTreeMap<String, String>,
@@ -428,6 +433,10 @@ mod tests {
         );
         assert_eq!(
             parsed["WebHidAllowAllDevicesForUrls"],
+            parsed["SerialAllowAllPortsForUrls"]
+        );
+        assert_eq!(
+            parsed["LocalNetworkAccessAllowedForUrls"],
             parsed["SerialAllowAllPortsForUrls"]
         );
         assert_eq!(parsed["TranslateEnabled"], Value::Bool(false));

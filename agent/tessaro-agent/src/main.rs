@@ -28,6 +28,7 @@ mod deadline;
 mod debug;
 mod display;
 mod error;
+mod files;
 mod hotplug;
 mod http;
 mod identity;

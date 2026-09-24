@@ -113,6 +113,7 @@ echo "sandbox: $sandbox"
 # The CDP server doubles as the probe target - it is the one HTTP endpoint
 # guaranteed to be up here, and /json/version is cheap.
 KIOSK_STATE_DIR="$sandbox/data" \
+KIOSK_FILES_DIR="$sandbox/files" \
 KIOSK_RUN_DIR="$sandbox/run" \
 KIOSK_POLICY="$sandbox/policy.json" \
 KIOSK_POLICY_BASE=/nonexistent \

@@ -211,6 +211,7 @@ mod tests {
             "src/control.rs",
             "src/server.rs",
             "src/updates.rs",
+            "src/files.rs",
             "src/speedtest.rs",
             "src/net.rs",
             "src/ping.rs",
@@ -238,6 +239,9 @@ mod tests {
             // which the scan of updates.rs checks. Preparing an image runs on
             // a thread of its own and is never awaited.
             "self.updates.",
+            // files::Files - the same: blocking() and its own write lock,
+            // checked by the scan of files.rs.
+            "self.files.",
             // nm::Network - every NetworkManager call goes through nm_call,
             // which is within(); the scan of nm/mod.rs checks that.
             "self.network.",

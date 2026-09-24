@@ -10,6 +10,7 @@
 //! new root password - once.
 
 mod connect;
+mod files;
 mod net;
 mod nodes;
 mod ssh;
@@ -88,6 +89,11 @@ const HELP_STYLES: Styles = Styles::styled()
         \x20 tessaro-ctl config unset browser.url           back to the image default\n\
         \x20 tessaro-ctl device logs -f -u tessaro-agent.service\n\
         \x20 tessaro-ctl update send tessaro-os-qemux86-64.rootfs.wic.bz2   a new image; settings are kept\n\
+        \x20 tessaro-ctl files sync ./site-assets           the store now holds exactly that directory\n\
+        \x20                                                the page reads it at http://127.0.0.1/files/...\n\
+        \x20 tessaro-ctl files upload promo.mp4 media/      one file, keeping its name\n\
+        \x20 tessaro-ctl files list /media                  like ls -l; -R for the whole tree\n\
+        \x20 tessaro-ctl files move /promo.mp4 /media/      like mv\n\
         \x20 tessaro-ctl access token create phone          a token for a second client\n\
         \x20 tessaro-ctl -n brave-otter-3fa2 ssh connect    a root shell, by your ~/.ssh key\n\
         \x20 tessaro-ctl -n brave-otter-3fa2 ssh connect -- journalctl -fu tessaro-agent\n\
@@ -149,6 +155,10 @@ enum Cmd {
     /// Put a new image on the device, keeping its settings and claim.
     #[command(subcommand)]
     Update(UpdateCmd),
+    /// The device's file store, served to the kiosk at
+    /// http://127.0.0.1/files/: upload, download, sync, list, remove.
+    #[command(subcommand)]
+    Files(files::FilesCmd),
     /// The devices this client knows or finds. Needs no device.
     #[command(subcommand)]
     Nodes(NodesCmd),
@@ -1032,6 +1042,7 @@ fn run(cli: Cli) -> Result<(), String> {
             UpdateCmd::Status => update::status(&mut session, json),
             UpdateCmd::Cancel => update::cancel(&mut session, json),
         },
+        Cmd::Files(command) => files::run(&mut session, command, json),
     }
 }
 

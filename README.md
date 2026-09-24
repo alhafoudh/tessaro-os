@@ -134,6 +134,21 @@ tessaro-ctl config set browser.url=https://example.com/
 Settings live in `/data/tessaro/state.json` on the persistent `/data`
 partition, so the change survives a reboot and image updates.
 
+A site can keep its media on the device, so it plays with the network down.
+Files go into `/data/files`, which the device serves at
+`http://127.0.0.1/files/` to any origin:
+
+```sh
+tessaro-ctl files sync ./site-assets    # mirror a directory: send what changed, remove the rest
+tessaro-ctl files upload promo.mp4 /media/
+tessaro-ctl files list /media           # like ls -l (alias ls, dir); -R for the whole tree
+tessaro-ctl files move /media/promo.mp4 /archive/   # like mv (alias mv)
+```
+
+`sync` compares size and modification time only, like rsync without
+`--checksum`, and asks before it removes anything. A factory reset empties
+the store.
+
 ## Checking a device
 
 A factory image boots into a static self-test page, served by nginx on the

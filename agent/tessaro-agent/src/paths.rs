@@ -14,6 +14,10 @@ use crate::config::Env;
 pub struct Paths {
     /// `state.json`, `auth.json`, the TLS identity, the factory-reset marker.
     pub state_dir: PathBuf,
+    /// The file store `tessaro-ctl files` fills, served by nginx at
+    /// `http://127.0.0.1/files/`. On the same filesystem as `state_dir`,
+    /// where uploads are staged, so putting one in place is a rename.
+    pub files_dir: PathBuf,
     /// Where `generated.env` is rendered. Shared with the offline page.
     pub run_dir: PathBuf,
     /// The Chromium policy file the agent renders. Its path is compiled into
@@ -87,6 +91,7 @@ impl Paths {
 
         Self {
             state_dir: path("KIOSK_STATE_DIR", "/data/tessaro"),
+            files_dir: path("KIOSK_FILES_DIR", "/data/files"),
             run_dir: path("KIOSK_RUN_DIR", "/run/tessaro-kiosk"),
             policy: path(
                 "KIOSK_POLICY",
@@ -161,6 +166,16 @@ impl Paths {
     /// Image updates: the upload, the staging, the marker, the last result.
     pub fn update_dir(&self) -> PathBuf {
         self.state_dir.join("update")
+    }
+
+    /// The file being uploaded into the store, until it is complete.
+    pub fn files_upload_dir(&self) -> PathBuf {
+        self.state_dir.join("files-upload")
+    }
+
+    /// Where a factory reset moves the store to delete it.
+    pub fn files_trash_dir(&self) -> PathBuf {
+        self.state_dir.join("files-trash")
     }
 
     /// Network changes: the one in progress, and what the last one did. No

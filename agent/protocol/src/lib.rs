@@ -19,6 +19,7 @@
 //! `token` is only looked at over TCP; the local socket is root-only and
 //! needs none.
 
+pub mod files;
 pub mod keys;
 pub mod sshkey;
 
@@ -364,6 +365,54 @@ pub enum Command {
         timeout_ms: Option<u64>,
         #[serde(default)]
         interface: Option<String>,
+    },
+    /// What is stored in `path` in `/data/files`, like `ls`: a directory's
+    /// own entries, or with `recursive` everything under it. A
+    /// `FilesListing`; a file lists itself.
+    FilesList {
+        #[serde(default)]
+        path: String,
+        #[serde(default)]
+        recursive: bool,
+    },
+    /// Start, or resume, storing one file: described here, sent in
+    /// `FilesChunk`s, put in place with `mtime` once the last byte is in.
+    /// The answer says where to resume.
+    FilesBegin {
+        path: String,
+        size: u64,
+        mtime: i64,
+    },
+    /// The next piece of the file begun for `path`, starting at `offset`,
+    /// base64. At most `UPDATE_CHUNK` bytes before encoding.
+    FilesChunk {
+        path: String,
+        offset: u64,
+        data: String,
+    },
+    /// Up to `len` bytes of a stored file from `offset`: a `FileData`.
+    FilesRead {
+        path: String,
+        #[serde(default)]
+        offset: u64,
+        len: u64,
+    },
+    /// Make a directory, and any missing above it.
+    FilesMkdir {
+        path: String,
+    },
+    /// Move or rename a file or a directory, like `mv`: into `to` if that is
+    /// a directory already, otherwise to `to` itself, replacing a file there
+    /// and making any missing directory above it.
+    FilesMove {
+        from: String,
+        to: String,
+    },
+    /// Remove files, or directories with everything in them if `recursive`.
+    FilesDelete {
+        paths: Vec<String>,
+        #[serde(default)]
+        recursive: bool,
     },
 }
 
@@ -975,6 +1024,16 @@ mod tests {
         assert!(!Command::SshAuthorize { key: "x".into() }.is_public());
         assert!(!Command::SshKeyList.is_public());
         assert!(!Command::NetProfiles.is_public());
+        assert!(!Command::FilesList {
+            path: "".into(),
+            recursive: false
+        }
+        .is_public());
+        assert!(!Command::FilesDelete {
+            paths: vec!["a".into()],
+            recursive: true
+        }
+        .is_public());
         assert!(!Command::WifiScan {
             interface: None,
             rescan: true

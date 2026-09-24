@@ -101,6 +101,18 @@
   "SerialAllowAllPortsForUrls": [@device-origins@],
   "WebHidAllowAllDevicesForUrls": [@device-origins@],
 
+  // --- the file store -----------------------------------------------------
+  //
+  // tessaro-ctl files puts files in /data/files, which nginx serves at
+  // http://127.0.0.1/files/ with CORS open to any origin. An https kiosk
+  // site reaching that address is a request from a public site to the
+  // loopback, which Local Network Access (Chromium 139 on) holds behind a
+  // permission prompt nobody is there to answer. This lets the device
+  // origins through without one. It takes URL patterns; plain origins are
+  // what the agent writes, like the grants above, and it rewrites this
+  // list with them.
+  "LocalNetworkAccessAllowedForUrls": [@device-origins@],
+
   // WebUSB has no "allow all" policy, and blanket raw USB is a bigger grant
   // than blanket serial or HID, so this ships empty. Add explicit IDs to
   // commission a device:

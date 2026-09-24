@@ -35,6 +35,7 @@ use tokio::time::Instant;
 use crate::auth::{self, Auth};
 use crate::cdp::session::SessionHandle;
 use crate::display;
+use crate::files::{self, Files};
 use crate::hotplug;
 use crate::log::Log;
 use crate::mdns::Mdns;
@@ -165,6 +166,7 @@ pub struct Control {
     /// driving the browser to. It never changes: a new one needs a restart.
     agent_url: String,
     updates: Arc<Updates>,
+    files: Arc<Files>,
     /// Held by the thread running a speed test, for as long as it runs.
     speedtest: Arc<tokio::sync::Mutex<()>>,
     network: Arc<Network>,
@@ -186,6 +188,7 @@ impl Control {
         Arc::new(Self {
             agent_url,
             updates: Updates::new(Arc::clone(&log), paths.clone()),
+            files: Files::new(Arc::clone(&log), paths.clone()),
             network: Network::new(Arc::clone(&log), paths.clone()),
             state: Store::new(&paths.state_dir, state::FILE),
             auth_store: Store::new(&paths.state_dir, auth::FILE),
@@ -380,6 +383,31 @@ impl Control {
             Command::HotspotPassword => {
                 let reply: Reply = self.hotspot_password(caller).await.into();
                 reply.then(Some(After::Network))
+            }
+            Command::FilesList { path, recursive } => {
+                self.files.list(&path, recursive).await.into()
+            }
+            Command::FilesBegin { path, size, mtime } => {
+                let who = caller.describe();
+                self.files.begin(&who, &path, size, mtime).await.into()
+            }
+            Command::FilesChunk { path, offset, data } => {
+                let who = caller.describe();
+                self.files.chunk(&who, &path, offset, data).await.into()
+            }
+            Command::FilesRead { path, offset, len } => {
+                self.files.read(&path, offset, len).await.into()
+            }
+            Command::FilesMkdir { path } => {
+                self.files.mkdir(&caller.describe(), &path).await.into()
+            }
+            Command::FilesMove { from, to } => {
+                let who = caller.describe();
+                self.files.rename(&who, &from, &to).await.into()
+            }
+            Command::FilesDelete { paths, recursive } => {
+                let who = caller.describe();
+                self.files.delete(&who, paths, recursive).await.into()
             }
         }
     }
@@ -1946,6 +1974,17 @@ impl Control {
         {
             return Reply::err(err);
         }
+        let paths = self.paths.clone();
+        if let Err(err) = blocking("emptying the file store", move || {
+            files::wipe(&paths).map_err(|err| err.to_string())
+        })
+        .await
+        {
+            // The store is renamed away first, so what is left is only the
+            // deleting, which the next boot finishes.
+            self.log
+                .info(format!("factory reset: the file store: {err}"));
+        }
 
         if let Err(err) = self.render(&BTreeMap::new()).await {
             return Reply::err(format!("reset, but rendering failed: {err}"));
@@ -1955,13 +1994,14 @@ impl Control {
         self.refresh_network().await;
 
         self.log.info(format!(
-            "factory reset by {}: settings, tokens, ssh keys, passwords and the network cleared",
+            "factory reset by {}: settings, tokens, ssh keys, passwords, the network and stored files cleared",
             caller.describe()
         ));
         // Weston takes the browser and the agent with it (PartOf=), so every
         // consumer comes back up on the defaults.
         Reply::ok(Done {
-            message: "factory reset: defaults restored, unclaimed, restarting the display; \
+            message: "factory reset: defaults restored, unclaimed, stored files removed, \
+                      restarting the display; \
                       the network is DHCP and an open hotspot from the next boot"
                 .to_string(),
         })
@@ -2239,6 +2279,7 @@ mod tests {
         let at = |name: &str| dir.path().join(name).display().to_string();
         let env: HashMap<String, String> = [
             ("KIOSK_STATE_DIR", at("data")),
+            ("KIOSK_FILES_DIR", at("files")),
             ("KIOSK_RUN_DIR", at("run")),
             ("KIOSK_POLICY", at("policy.json")),
             ("KIOSK_POLICY_BASE", at("policy-base.json")),

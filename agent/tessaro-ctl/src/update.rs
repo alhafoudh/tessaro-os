@@ -271,7 +271,11 @@ fn show(status: &UpdateStatus) {
 }
 
 /// A progress line: the step's verb in its own column, then the details.
-fn step_line(verb_style: anstyle::Style, verb: &str, rest: impl std::fmt::Display) -> String {
+pub(crate) fn step_line(
+    verb_style: anstyle::Style,
+    verb: &str,
+    rest: impl std::fmt::Display,
+) -> String {
     format!("{} {rest}", pad(verb_style, verb, 10))
 }
 
@@ -492,20 +496,20 @@ fn call<T: serde::de::DeserializeOwned>(
 /// The text goes through anstream, which drops its colors when they are
 /// off; the `\r` and clear-to-end-of-line around it go straight to stderr,
 /// since the redraw needs them even under `--color never`.
-struct Progress {
+pub(crate) struct Progress {
     redraw: bool,
     shown: Option<u64>,
 }
 
 impl Progress {
-    fn new(json: bool) -> Self {
+    pub(crate) fn new(json: bool) -> Self {
         Self {
             redraw: !json && std::io::stderr().is_terminal(),
             shown: None,
         }
     }
 
-    fn show(&mut self, line: &str, done: u64, total: u64) {
+    pub(crate) fn show(&mut self, line: &str, done: u64, total: u64) {
         if self.redraw {
             Self::redraw(line, "");
             return;
@@ -518,7 +522,7 @@ impl Progress {
     }
 
     /// A step is over: its last line stays.
-    fn done(&mut self, line: &str) {
+    pub(crate) fn done(&mut self, line: &str) {
         if self.redraw {
             Self::redraw(line, "\n");
         } else {
@@ -538,15 +542,15 @@ impl Progress {
 }
 
 /// Upload speed over the last few seconds, and what it means for the rest.
-struct Rate {
-    started: Instant,
+pub(crate) struct Rate {
+    pub(crate) started: Instant,
     samples: VecDeque<(Instant, u64)>,
 }
 
 impl Rate {
     const WINDOW: Duration = Duration::from_secs(5);
 
-    fn new(from: u64) -> Self {
+    pub(crate) fn new(from: u64) -> Self {
         let now = Instant::now();
         Self {
             started: now,
@@ -555,7 +559,7 @@ impl Rate {
     }
 
     /// Bytes per second, and the time left as text.
-    fn update(&mut self, done: u64, total: u64) -> (f64, String) {
+    pub(crate) fn update(&mut self, done: u64, total: u64) -> (f64, String) {
         let now = Instant::now();
         self.samples.push_back((now, done));
         while self.samples.len() > 2 && now.duration_since(self.samples[0].0) > Self::WINDOW {
@@ -572,7 +576,7 @@ impl Rate {
     }
 }
 
-fn clock(duration: Duration) -> String {
+pub(crate) fn clock(duration: Duration) -> String {
     let seconds = duration.as_secs();
     if seconds >= 3600 {
         format!(
@@ -586,11 +590,11 @@ fn clock(duration: Duration) -> String {
     }
 }
 
-fn mb(bytes: u64) -> String {
+pub(crate) fn mb(bytes: u64) -> String {
     format!("{:.1} MB", bytes as f64 / 1_000_000.0)
 }
 
-fn percent(done: u64, total: u64) -> u64 {
+pub(crate) fn percent(done: u64, total: u64) -> u64 {
     done * 100 / total.max(1)
 }
 
