@@ -26,7 +26,9 @@ pub fn connectors(drm: &Path) -> Vec<Connector> {
             // card0-HDMI-A-1 -> HDMI-A-1; plain card0 and renderD128 are not
             // connectors.
             let (card, name) = file_name.split_once('-')?;
-            if !card.starts_with("card") {
+            // A writeback connector is always "connected" with no modes; it
+            // captures to memory and is not a display.
+            if !card.starts_with("card") || name.starts_with("Writeback-") {
                 return None;
             }
 
@@ -81,6 +83,7 @@ mod tests {
             "1920x1080\n1920x1080\n1920x1080i\n1280x720\n",
         );
         connector(dir.path(), "card0-DP-1", "disconnected", "3840x2160\n");
+        connector(dir.path(), "card0-Writeback-1", "connected", "");
         fs::create_dir_all(dir.path().join("card0")).unwrap();
         fs::create_dir_all(dir.path().join("renderD128")).unwrap();
 

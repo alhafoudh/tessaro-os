@@ -172,6 +172,23 @@ else
     : > "$OUT"
 fi
 
+# Start with no screen at all, and keep running. Weston 13's [core]
+# require-outputs defaults to "any": with no output it can enable, the
+# compositor exits with status 1 and not one line saying why - its log stops
+# at "Color manager: no-op". So a device booted with nothing plugged in, which
+# under full KMS on the Pi is a real disconnected HDMI-A-1, never ran Weston,
+# the browser or anything else on screen, and there was nothing for a screen
+# plugged in later to appear on. With "none" Weston comes up headless, lights
+# the screen when it is plugged in, and tessaro-agent's hotplug check then
+# restarts it onto the proper config. A value set by hand in the base wins.
+if grep -q '^[[:space:]]*require-outputs[[:space:]]*=' "$OUT"; then
+    :
+elif grep -q '^[[:space:]]*\[core\][[:space:]]*$' "$OUT"; then
+    sed -i '/^[[:space:]]*\[core\][[:space:]]*$/a require-outputs=none' "$OUT"
+else
+    printf '\n[core]\nrequire-outputs=none\n' >> "$OUT"
+fi
+
 # Which connectors were connected when this ran, as a comment Weston ignores.
 # tessaro-agent runs this script again after a hotplug and compares
 # (agent/tessaro-agent/src/hotplug.rs): a connector that is connected now but
@@ -184,6 +201,7 @@ for dev in "$DRM_ROOT"/card*-*; do
     [ -r "$dev/status" ] || continue
     [ "$(cat "$dev/status")" = connected ] || continue
     name=${dev##*/}
+    case $name in *-Writeback-*) continue ;; esac
     connected="$connected ${name#*-}"
 done
 printf '\n# tessaro-weston-config: connected%s\n' "${connected:- (none)}" >> "$OUT"
@@ -284,6 +302,11 @@ for dev in "$DRM_ROOT"/card*-*; do
     # without the card prefix.
     name=${dev##*/}
     name=${name#*-}
+
+    # A writeback connector (vc4 under full KMS has Writeback-1) is always
+    # "connected" and has no modes: it captures a CRTC to memory, it is not a
+    # screen, and Weston does not make a head of it.
+    case $name in Writeback-*) continue ;; esac
 
     # An [output] section in the base file wins, including one a technician
     # added. Two cards can also expose the same connector name; the first

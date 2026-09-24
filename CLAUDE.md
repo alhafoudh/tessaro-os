@@ -641,6 +641,18 @@ is one `display: ...` line in `journalctl -u tessaro-agent`.
   restart and the config still differs for the same hardware, the agent logs
   it and leaves it alone. It also leaves an operator-stopped `weston.service`
   alone.
+* **Weston has to be allowed to start with no screen.** Weston 13's `[core]
+  require-outputs` defaults to `any`: with no output to enable, it exits with
+  status 1, and its log just stops at `Color manager: no-op`. On the Pi under
+  full KMS, booting without HDMI therefore meant no Weston and no browser at
+  all. The generator adds `require-outputs=none` to `[core]` unless the base
+  sets it. Measured on the Pi: Weston then starts with no screen, and lights
+  the screen by itself when HDMI is plugged in. Chromium started with no
+  output does not answer DevTools, so the agent restarts it once meanwhile.
+  That is harmless; the hotplug restart gives it a fresh start anyway.
+* **Writeback connectors are not screens.** vc4 under full KMS exposes
+  `Writeback-1`, always `connected` with no modes. The generator and
+  `tessaro-ctl modes` skip it.
 * **The generator's output must depend on the settings and the hardware
   only.** A timestamp or anything random in it would make every hotplug
   restart the compositor.
