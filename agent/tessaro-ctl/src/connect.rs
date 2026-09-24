@@ -334,7 +334,7 @@ fn open_remote(
                 "{label} ({address}) presented certificate {fingerprint},\n\
                  but {} is pinned to {}.\n\
                  This is either a different device or someone in the middle. If the device\n\
-                 was reinstalled or its /data wiped, `tessaro-ctl forget {}` and pin it again.",
+                 was reinstalled or its /data wiped, `tessaro-ctl nodes forget {}` and pin it again.",
                 node.name, node.fingerprint, node.name
             )));
         }
@@ -342,7 +342,7 @@ fn open_remote(
         None => match trust {
             Trust::KnownOnly => {
                 return Err(Failure::Refused(format!(
-                    "{label} ({address}) is not a known node; `tessaro-ctl claim` or `tessaro-ctl login` it first"
+                    "{label} ({address}) is not a known node; `tessaro-ctl access claim` or `tessaro-ctl access login` it first"
                 )))
             }
             Trust::Peek => {}

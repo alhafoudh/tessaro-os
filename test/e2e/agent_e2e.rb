@@ -24,7 +24,7 @@
 # what lets the suite log in with no credential - so the suite never claims
 # the device.
 #
-# The agent is retuned for the run with `tessaro-ctl set --no-apply` on the
+# The agent is retuned for the run with `tessaro-ctl config set --no-apply` on the
 # guest (short probe intervals, a short restart backoff, no periodic
 # refresh), and those keys are unset afterwards. The VM runs with `snapshot`,
 # so nothing survives a power-off anyway.
@@ -64,7 +64,7 @@ module AgentE2E
   }.freeze
 
   # Keys a case may add on top, unset again before the next case configures.
-  CASE_SETTINGS = %w[kiosk.probe_url agent.enable maintenance.enable debug.enable debug.template].freeze
+  CASE_SETTINGS = %w[browser.probe_url agent.enable browser.maintenance.enable browser.debug.enable browser.debug.template].freeze
 
   class Failure < StandardError; end
 
@@ -198,8 +198,8 @@ module AgentE2E
       AgentE2E.step(extra.empty? ? "configure the test settings" : "configure the test settings plus #{extra}")
       pairs = TEST_SETTINGS.merge(extra).map { |key, value| "'#{key}=#{value}'" }.join(" ")
       AgentE2E.quietly do
-        run("tessaro-ctl unset #{CASE_SETTINGS.join(" ")} --no-apply")
-        run("tessaro-ctl set #{pairs} --no-apply")
+        run("tessaro-ctl config unset #{CASE_SETTINGS.join(" ")} --no-apply")
+        run("tessaro-ctl config set #{pairs} --no-apply")
       end
     end
 
@@ -213,7 +213,7 @@ module AgentE2E
       run(<<~SH, allow_failure: true)
         pids=$(pgrep -f /usr/lib/chromium/chromium-bi[n]); test -n "$pids" && kill -CONT $pids
         kill -CONT $(systemctl show -p MainPID --value tessaro-agent) 2>/dev/null
-        tessaro-ctl unset #{(TEST_SETTINGS.keys + CASE_SETTINGS).join(" ")} --no-apply
+        tessaro-ctl config unset #{(TEST_SETTINGS.keys + CASE_SETTINGS).join(" ")} --no-apply
         test -L /etc/resolv.conf || { rm -f /etc/resolv.conf; ln -s ../run/systemd/resolve/stub-resolv.conf /etc/resolv.conf; }
         systemctl start nginx tessaro-kiosk
         systemctl restart tessaro-agent
@@ -451,7 +451,7 @@ module AgentE2E
   end
 
   check "dns", "names a swallowed DNS query as DNS, and does not leak threads" do |guest, journal|
-    guest.configure("kiosk.probe_url" => "https://kiosk.example.com/")
+    guest.configure("browser.probe_url" => "https://kiosk.example.com/")
     guest.run("rm /etc/resolv.conf && echo 'nameserver 203.0.113.1' > /etc/resolv.conf")
     guest.run("systemctl restart tessaro-agent")
     journal.wait_for(%r{^https://kiosk\.example\.com/ unreachable: DNS did not answer within 5s$}, timeout: 40)
@@ -528,8 +528,8 @@ module AgentE2E
     guest.run("systemctl start tessaro-agent", allow_failure: true)
   end
 
-  check "settings", "tessaro-ctl set restarts the agent, which comes back on the new value" do |guest, journal|
-    out = guest.run("tessaro-ctl set agent.probe_interval=7")
+  check "settings", "tessaro-ctl config set restarts the agent, which comes back on the new value" do |guest, journal|
+    out = guest.run("tessaro-ctl config set agent.probe_interval=7")
     raise Failure, "set did not restart the agent:\n#{out}" unless out.include?("restarting tessaro-agent.service")
 
     journal.wait_for(/^watching #{Regexp.escape(KIOSK_URL)} \(probe every 7s/, timeout: 30)
@@ -545,7 +545,7 @@ module AgentE2E
   check "debug-screen", "debug on swaps the site for the filled-in debug text without restarting the browser; off returns" do |guest, journal, cdp|
     hostname = guest.run("cat /proc/sys/kernel/hostname").strip
     browser = guest.kiosk_pid
-    out = guest.run("tessaro-ctl debug on --template 'e2e {net.hostname}\\nurl {kiosk.url}'")
+    out = guest.run("tessaro-ctl browser debug on --template 'e2e {network.hostname}\\nurl {browser.url}'")
     raise Failure, "debug on did not restart the agent:\n#{out}" unless out.include?("restarting tessaro-agent.service")
 
     journal.wait_for(/^debug screen on: showing debug\.template instead of /, timeout: 15)
@@ -560,10 +560,10 @@ module AgentE2E
                 .dig("result", "value").to_s
     end
     raise Failure, "the debug screen reads #{text.inspect}" unless text.include?(want)
-    status = guest.run("tessaro-ctl status")
+    status = guest.run("tessaro-ctl device status")
     raise Failure, "status does not say so:\n#{status}" unless status.include?("debug screen on")
 
-    guest.run("tessaro-ctl debug off")
+    guest.run("tessaro-ctl browser debug off")
     journal.wait_for(/^navigated to #{Regexp.escape(KIOSK_URL)}$/, timeout: 30)
     raise Failure, "the browser was restarted (#{browser} -> #{guest.kiosk_pid})" unless guest.kiosk_pid == browser
   ensure
@@ -572,28 +572,28 @@ module AgentE2E
   end
 
   # The probe URL points at something that does not answer, so the case also
-  # proves maintenance mode probes the maintenance page, not kiosk.probe_url:
+  # proves maintenance mode probes the maintenance page, not browser.probe_url:
   # otherwise the offline page would replace the maintenance page.
   check "maintenance", "maintenance on shows the maintenance page without restarting the browser; off returns" do |guest, journal, cdp|
     maintenance = "http://127.0.0.1/maintenance.html"
     browser = guest.kiosk_pid
-    guest.run("tessaro-ctl set kiosk.probe_url=http://127.0.0.1:1/ --no-apply")
+    guest.run("tessaro-ctl config set browser.probe_url=http://127.0.0.1:1/ --no-apply")
 
-    out = guest.run("tessaro-ctl maintenance on")
+    out = guest.run("tessaro-ctl browser maintenance on")
     raise Failure, "maintenance on did not restart the agent:\n#{out}" unless out.include?("restarting tessaro-agent.service")
 
     journal.wait_for(/^navigated to #{Regexp.escape(maintenance)}$/, timeout: 30)
     raise Failure, "the browser is on #{cdp.current_url}" unless cdp.current_url == maintenance
-    status = guest.run("tessaro-ctl status")
+    status = guest.run("tessaro-ctl device status")
     raise Failure, "status does not say so:\n#{status}" unless status.include?("maintenance  on")
-    # Three probe intervals: a probe of kiosk.probe_url would have failed by now.
+    # Three probe intervals: a probe of browser.probe_url would have failed by now.
     pause 16, "three probe intervals"
     raise Failure, "the offline page replaced it: #{cdp.current_url}" unless cdp.current_url == maintenance
 
     # The dead probe URL has to go first: out of maintenance it is probed
     # again, and the agent would rightly put the offline page up instead.
-    guest.run("tessaro-ctl unset kiosk.probe_url --no-apply")
-    guest.run("tessaro-ctl maintenance off")
+    guest.run("tessaro-ctl config unset browser.probe_url --no-apply")
+    guest.run("tessaro-ctl browser maintenance off")
     journal.wait_for(/^navigated to #{Regexp.escape(KIOSK_URL)}$/, timeout: 30)
     raise Failure, "the browser was restarted (#{browser} -> #{guest.kiosk_pid})" unless guest.kiosk_pid == browser
   ensure
@@ -607,19 +607,19 @@ module AgentE2E
   check "claim", "claim sets a root password and issues a token; unclaim empties it" do |guest, _journal|
     guest.run(<<~SH)
       set -e
-      trap 'tessaro-ctl unclaim --yes >/dev/null 2>&1 || true' EXIT
+      trap 'tessaro-ctl access unclaim --yes >/dev/null 2>&1 || true' EXIT
       export TESSARO_CONFIG_DIR=/tmp/e2e-ctl
       rm -rf "$TESSARO_CONFIG_DIR"
       grep -q '^root::' /etc/shadow
-      tessaro-ctl -n 127.0.0.1 id | grep -q 'claimed      no'
-      tessaro-ctl -n 127.0.0.1 --json claim --yes --name e2e > /tmp/e2e-claim.json
+      tessaro-ctl -n 127.0.0.1 device id | grep -q 'claimed      no'
+      tessaro-ctl -n 127.0.0.1 --json access claim --yes --name e2e > /tmp/e2e-claim.json
       grep -q '"root_password"' /tmp/e2e-claim.json
       grep -q '^root:[$]6[$]' /etc/shadow
-      ! TESSARO_CONFIG_DIR=/tmp/e2e-other tessaro-ctl -n 127.0.0.1 claim --yes 2>/dev/null
-      tessaro-ctl -n 127.0.0.1 token list | grep -q 'e2e'
-      tessaro-ctl -n 127.0.0.1 unclaim --yes
+      ! TESSARO_CONFIG_DIR=/tmp/e2e-other tessaro-ctl -n 127.0.0.1 access claim --yes 2>/dev/null
+      tessaro-ctl -n 127.0.0.1 access token list | grep -q 'e2e'
+      tessaro-ctl -n 127.0.0.1 access unclaim --yes
       grep -q '^root::' /etc/shadow
-      tessaro-ctl -n 127.0.0.1 id | grep -q 'claimed      no'
+      tessaro-ctl -n 127.0.0.1 device id | grep -q 'claimed      no'
     SH
   end
 
@@ -632,7 +632,7 @@ module AgentE2E
   # guard once it has unclaimed, and `ensure` waits for it otherwise.
   SSH_KEY_GUARD = 90
 
-  check "ssh-key", "tessaro-ctl ssh authorizes a key with a pinned host key; revoke and unclaim remove it" do |guest, _journal|
+  check "ssh-key", "tessaro-ctl ssh connect authorizes a key with a pinned host key; revoke and unclaim remove it" do |guest, _journal|
     Dir.mktmpdir("e2e-ssh") do |dir|
       keys = %w[e2e-key e2e-keep].to_h do |name|
         path = File.join(dir, name)
@@ -653,11 +653,11 @@ module AgentE2E
           read -r line; printf '%s\\n' "$line" > /tmp/e2e-keep.pub
           export TESSARO_CONFIG_DIR=/tmp/e2e-ctl
           rm -rf "$TESSARO_CONFIG_DIR"
-          tessaro-ctl -n 127.0.0.1 claim --yes --name e2e >/dev/null
-          setsid sh -c 'sleep #{SSH_KEY_GUARD}; tessaro-ctl unclaim --yes' </dev/null >/dev/null 2>&1 &
+          tessaro-ctl -n 127.0.0.1 access claim --yes --name e2e >/dev/null
+          setsid sh -c 'sleep #{SSH_KEY_GUARD}; tessaro-ctl access unclaim --yes' </dev/null >/dev/null 2>&1 &
           echo $! > /tmp/e2e-guard.pid
-          tessaro-ctl -n 127.0.0.1 ssh --key /tmp/e2e-keep.pub --print >/dev/null 2>&1
-          tessaro-ctl -n 127.0.0.1 --json ssh --key /tmp/e2e-key.pub
+          tessaro-ctl -n 127.0.0.1 ssh connect --key /tmp/e2e-keep.pub --print >/dev/null 2>&1
+          tessaro-ctl -n 127.0.0.1 --json ssh connect --key /tmp/e2e-key.pub
         SH
         access = JSON.parse(out)["access"]
         raise Failure, "the key was reported as already there" unless access["added"]
@@ -669,22 +669,22 @@ module AgentE2E
         File.write(known, access["host_keys"].map { "e2e-node #{_1}\n" }.join)
         pinned = ["-o", "HostKeyAlias=e2e-node", "-o", "UserKnownHostsFile=#{known}",
                   "-o", "StrictHostKeyChecking=yes"]
-        listed = by_key.("e2e-key", *pinned).run("tessaro-ctl ssh-key list")
+        listed = by_key.("e2e-key", *pinned).run("tessaro-ctl ssh keys list")
         %w[e2e-key e2e-keep].each do |name|
           raise Failure, "ssh-key list does not show #{name}:\n#{listed}" unless listed.include?(name)
         end
         raise Failure, "the password still works while claimed" if guest.reachable?
 
-        left = by_key.("e2e-keep").run("tessaro-ctl ssh-key revoke e2e-key && tessaro-ctl ssh-key list")
+        left = by_key.("e2e-keep").run("tessaro-ctl ssh keys revoke e2e-key && tessaro-ctl ssh keys list")
         raise Failure, "e2e-key is still listed after revoke:\n#{left}" if left.include?("e2e-key")
         raise Failure, "a revoked key still logs in" if by_key.("e2e-key").reachable?
 
-        by_key.("e2e-keep").run("tessaro-ctl unclaim --yes")
+        by_key.("e2e-keep").run("tessaro-ctl access unclaim --yes")
         remaining = guest.run("kill $(cat /tmp/e2e-guard.pid) 2>/dev/null; cat /root/.ssh/authorized_keys")
         raise Failure, "unclaim left keys behind:\n#{remaining}" unless remaining.strip.empty?
       ensure
         unless guest.reachable?
-          by_key.("e2e-keep").run("tessaro-ctl unclaim --yes", allow_failure: true)
+          by_key.("e2e-keep").run("tessaro-ctl access unclaim --yes", allow_failure: true)
           # No key got in: the guard unclaims on its own, so wait for it.
           step "wait up to #{SSH_KEY_GUARD + 30}s for the guard to unclaim and the password login to work again"
           deadline = Time.now + SSH_KEY_GUARD + 30
@@ -695,27 +695,27 @@ module AgentE2E
   end
 
   check "resolution", "only an offered mode is accepted, it waits for confirm, and reverts without it" do |guest, _journal|
-    modes = JSON.parse(guest.run("tessaro-ctl --json modes")).flat_map { _1["modes"] }
+    modes = JSON.parse(guest.run("tessaro-ctl --json screen modes")).flat_map { _1["modes"] }
     raise Failure, "no display reports its modes" if modes.empty?
 
-    refused = guest.run("tessaro-ctl set display.resolution=16000x9000 2>&1", allow_failure: true)
+    refused = guest.run("tessaro-ctl config set screen.resolution=16000x9000 2>&1", allow_failure: true)
     raise Failure, "an unoffered mode was accepted" unless refused.include?("no connected display offers")
 
     target = modes[1] || modes[0]
-    guest.run("tessaro-ctl set display.resolution=#{target}")
+    guest.run("tessaro-ctl config set screen.resolution=#{target}")
     # Weston - and with it the agent - restarts; the new agent arms the timer.
-    step "wait up to 60s for tessaro-ctl status to say on probation"
+    step "wait up to 60s for tessaro-ctl device status to say on probation"
     deadline = Time.now + 60
-    sleep 2 until quietly { guest.run("tessaro-ctl status 2>/dev/null", allow_failure: true) }.include?("on probation") ||
+    sleep 2 until quietly { guest.run("tessaro-ctl device status 2>/dev/null", allow_failure: true) }.include?("on probation") ||
                   Time.now > deadline
     ini = guest.run("cat /run/weston/weston.ini")
     raise Failure, "weston.ini has no mode=#{target}:\n#{ini}" unless ini.include?("mode=#{target}")
 
     pause protocol_confirm_seconds + 10, "no confirm, so the probation runs out"
-    value = guest.run("tessaro-ctl get display.resolution")
+    value = guest.run("tessaro-ctl config get screen.resolution")
     raise Failure, "an unconfirmed mode stuck: #{value}" unless value.include?("(default)")
   ensure
-    guest.run("tessaro-ctl unset display.resolution", allow_failure: true)
+    guest.run("tessaro-ctl config unset screen.resolution", allow_failure: true)
     pause 5, "let Weston settle"
     guest.configure
     guest.restart_agent
@@ -729,7 +729,7 @@ module AgentE2E
   # that NIC. So a change that breaks it takes the case's own session away -
   # which is the point: the change is started detached (run_detached), and
   # what the device decided is read back once SSH answers again. Network keys
-  # are always applied, so every case puts ethernet.mode back itself rather
+  # are always applied, so every case puts network.ethernet.mode back itself rather
   # than through CASE_SETTINGS, whose unset is --no-apply.
 
   PROFILES_DIR = "/run/NetworkManager/system-connections"
@@ -737,8 +737,8 @@ module AgentE2E
   # The profile active on the interface with the default route, and that
   # interface's IPv4 address.
   def self.uplink(guest)
-    net = JSON.parse(guest.run("tessaro-ctl --json net"))
-    profiles = JSON.parse(guest.run("tessaro-ctl --json net profiles"))
+    net = JSON.parse(guest.run("tessaro-ctl --json network show"))
+    profiles = JSON.parse(guest.run("tessaro-ctl --json network profiles list"))
     profile = profiles.find { _1["active"] && _1["device"] == net["interface"] } or
       raise Failure, "no active profile on #{net["interface"]}:\n#{profiles}"
     address = net["interfaces"].find { _1["name"] == net["interface"] }["addresses"]
@@ -752,16 +752,16 @@ module AgentE2E
 
   # A static address on a subnet with nobody in it: the gateway can never
   # answer, so the device must put DHCP back by itself.
-  BAD_ADDRESS = "ethernet.mode=static ethernet.address=10.99.0.5/24 ethernet.gateway=10.99.0.1"
+  BAD_ADDRESS = "network.ethernet.mode=static network.ethernet.address=10.99.0.5/24 network.ethernet.gateway=10.99.0.1"
 
   def self.back_to_dhcp(guest)
-    guest.run("tessaro-ctl set ethernet.mode=dhcp", allow_failure: true, timeout: 200)
-    guest.run("tessaro-ctl unset ethernet.address ethernet.gateway ethernet.dns",
+    guest.run("tessaro-ctl config set network.ethernet.mode=dhcp", allow_failure: true, timeout: 200)
+    guest.run("tessaro-ctl config unset network.ethernet.address network.ethernet.gateway network.ethernet.dns",
               allow_failure: true, timeout: 200)
   end
 
   def self.last_change(guest)
-    out = guest.run("tessaro-ctl --json net last", allow_failure: true).strip
+    out = guest.run("tessaro-ctl --json network last", allow_failure: true).strip
     out.empty? ? nil : JSON.parse(out)
   end
 
@@ -794,7 +794,7 @@ module AgentE2E
   check "net-profiles", "the four managed profiles are rendered at boot, DHCP is up, the hotspot waits for wlan0" do |guest, _journal|
     profile, = uplink(guest)
     raise Failure, "the uplink is #{profile["name"]}, not tessaro-ethernet-dhcp" unless profile["name"] == "tessaro-ethernet-dhcp"
-    names = JSON.parse(guest.run("tessaro-ctl --json net profiles")).map { _1["name"] }
+    names = JSON.parse(guest.run("tessaro-ctl --json network profiles list")).map { _1["name"] }
     raise Failure, "NetworkManager made its own profile: #{names}" if names.include?("Wired connection 1")
 
     listing = guest.run("stat -c '%a %n' #{PROFILES_DIR}/tessaro-*.nmconnection")
@@ -806,9 +806,9 @@ module AgentE2E
     raise Failure, "an unclaimed hotspot has a password:\n#{hotspot}" if hotspot.include?("[wifi-security]")
     raise Failure, "the hotspot is not tessaro-NAME:\n#{hotspot}" unless hotspot.match?(/^ssid=tessaro-/)
 
-    shown = JSON.parse(guest.run("tessaro-ctl --json net show tessaro-ethernet-dhcp"))
+    shown = JSON.parse(guest.run("tessaro-ctl --json network profiles show tessaro-ethernet-dhcp"))
     raise Failure, "net show has no live address" if shown["addresses"].empty?
-    typo = guest.run("tessaro-ctl set ethernet.mode=stati 2>&1", allow_failure: true)
+    typo = guest.run("tessaro-ctl config set network.ethernet.mode=stati 2>&1", allow_failure: true)
     raise Failure, "a typo was accepted:\n#{typo}" unless typo.include?("must be one of")
 
     # dnsmasq is only NetworkManager's, for the hotspot: its own unit off,
@@ -818,20 +818,20 @@ module AgentE2E
     raise Failure, "resolved's stub is gone" unless guest.run("cat /etc/resolv.conf").include?("127.0.0.53")
   end
 
-  check "ethernet-static", "set ethernet.mode=static is verified and committed; dhcp brings it back" do |guest, _journal|
+  check "ethernet-static", "set network.ethernet.mode=static is verified and committed; dhcp brings it back" do |guest, _journal|
     _, address = uplink(guest)
-    out = guest.run("tessaro-ctl --json set ethernet.mode=static ethernet.address=#{address}/24 " \
-                    "ethernet.gateway=10.0.2.2 ethernet.dns=10.0.2.3", timeout: 200)
+    out = guest.run("tessaro-ctl --json config set network.ethernet.mode=static network.ethernet.address=#{address}/24 " \
+                    "network.ethernet.gateway=10.0.2.2 network.ethernet.dns=10.0.2.3", timeout: 200)
     applied = JSON.parse(out)
     change = applied["network"] or raise Failure, "no network change in the answer:\n#{out}"
     raise Failure, "not committed:\n#{out}" unless change["outcome"] == "committed"
     raise Failure, "the gateway was not checked:\n#{out}" unless change["checks"].any? { _1["name"] == "reach" && _1["passed"] }
     profile, = uplink(guest)
     raise Failure, "#{profile["name"]} is up, not tessaro-ethernet-static" unless profile["name"] == "tessaro-ethernet-static"
-    raise Failure, "not saved" unless guest.run("tessaro-ctl get ethernet.mode").include?("static")
+    raise Failure, "not saved" unless guest.run("tessaro-ctl config get network.ethernet.mode").include?("static")
     raise Failure, "the static keyfile has no address" unless keyfile(guest, "tessaro-ethernet-static").include?("address1=#{address}/24")
 
-    applied = JSON.parse(guest.run("tessaro-ctl --json set ethernet.mode=dhcp", timeout: 200))
+    applied = JSON.parse(guest.run("tessaro-ctl --json config set network.ethernet.mode=dhcp", timeout: 200))
     raise Failure, "back to dhcp was not committed: #{applied}" unless applied.dig("network", "outcome") == "committed"
     profile, = uplink(guest)
     raise Failure, "#{profile["name"]} is up, not tessaro-ethernet-dhcp" unless profile["name"] == "tessaro-ethernet-dhcp"
@@ -842,12 +842,12 @@ module AgentE2E
   check "ethernet-rollback", "a static address that cuts the device off is rolled back by the device alone" do |guest, journal|
     _, before = uplink(guest)
     previous = last_change(guest)
-    guest.run_detached("net-rollback", "tessaro-ctl set #{BAD_ADDRESS}")
+    guest.run_detached("net-rollback", "tessaro-ctl config set #{BAD_ADDRESS}")
     last = wait_for_rollback(guest, before, previous)
 
     raise Failure, "net last says #{last}" unless last["outcome"] == "rolled-back"
     raise Failure, "rolled back for the wrong reason: #{last["reason"]}" unless last["reason"].to_s.include?("did not hold")
-    raise Failure, "the static mode was saved" if guest.run("tessaro-ctl get ethernet.mode").include?("static")
+    raise Failure, "the static mode was saved" if guest.run("tessaro-ctl config get network.ethernet.mode").include?("static")
     raise Failure, "the bad address is in the keyfile" if keyfile(guest, "tessaro-ethernet-static").include?("10.99.0.5")
     journal.wait_for(/^network: set .* rolled back: /, timeout: 5)
   ensure
@@ -864,13 +864,13 @@ module AgentE2E
       sleep 2
       systemctl kill -s KILL tessaro-agent
     SH
-    guest.run_detached("net-recovery", "tessaro-ctl set #{BAD_ADDRESS}")
+    guest.run_detached("net-recovery", "tessaro-ctl config set #{BAD_ADDRESS}")
     last = wait_for_rollback(guest, before, previous)
 
     raise Failure, "net last says #{last}" unless last["outcome"] == "rolled-back"
     raise Failure, "not rolled back by recovery: #{last["reason"]}" unless last["reason"].to_s.include?("stopped")
     journal.wait_for(/^network: rolled back an unfinished network change \(set /, timeout: 30)
-    raise Failure, "the static mode was saved" if guest.run("tessaro-ctl get ethernet.mode").include?("static")
+    raise Failure, "the static mode was saved" if guest.run("tessaro-ctl config get network.ethernet.mode").include?("static")
   ensure
     guest.run("systemctl reset-failed e2e-net-kill e2e-net-recovery", allow_failure: true)
     guest.restart_agent
@@ -882,22 +882,22 @@ module AgentE2E
   check "hotspot-claim", "claim gives the hotspot a WPA2 password, hotspot-password rotates it, unclaim opens it" do |guest, _journal|
     out = guest.run(<<~SH, timeout: 120)
       set -e
-      trap 'tessaro-ctl unclaim --yes >/dev/null 2>&1 || true' EXIT
+      trap 'tessaro-ctl access unclaim --yes >/dev/null 2>&1 || true' EXIT
       export TESSARO_CONFIG_DIR=/tmp/e2e-hotspot
       rm -rf "$TESSARO_CONFIG_DIR"
       hotspot=#{PROFILES_DIR}/tessaro-wifi-hotspot.nmconnection
-      tessaro-ctl -n 127.0.0.1 --json claim --yes --name e2e > /tmp/e2e-hotspot-claim.json
+      tessaro-ctl -n 127.0.0.1 --json access claim --yes --name e2e > /tmp/e2e-hotspot-claim.json
       sleep 3
       grep -q '^key-mgmt=wpa-psk$' "$hotspot"
       grep -q '^pmf=1$' "$hotspot"
       first=$(grep '^psk=' "$hotspot")
-      tessaro-ctl --json net wifi hotspot-password > /tmp/e2e-hotspot-rotated.json
+      tessaro-ctl --json network wifi hotspot-password > /tmp/e2e-hotspot-rotated.json
       sleep 3
       second=$(grep '^psk=' "$hotspot")
       test "$first" != "$second"
       grep -q "\\"password\\": *\\"${second#psk=}\\"" /tmp/e2e-hotspot-rotated.json
-      ! tessaro-ctl get 2>/dev/null | grep -q "${second#psk=}"
-      tessaro-ctl -n 127.0.0.1 unclaim --yes
+      ! tessaro-ctl config get 2>/dev/null | grep -q "${second#psk=}"
+      tessaro-ctl -n 127.0.0.1 access unclaim --yes
       sleep 3
       ! grep -q 'wifi-security' "$hotspot"
       echo hotspot-ok
@@ -905,33 +905,33 @@ module AgentE2E
     raise Failure, "the hotspot did not follow the claim:\n#{out}" unless out.include?("hotspot-ok")
   end
 
-  check "hotspot-nat", "wifi.nat=0 keeps hotspot clients to the device with a table of its own; 1 removes it" do |guest, _journal|
-    applied = JSON.parse(guest.run("tessaro-ctl --json set wifi.nat=0", timeout: 200))
+  check "hotspot-nat", "network.wifi.nat=0 keeps hotspot clients to the device with a table of its own; 1 removes it" do |guest, _journal|
+    applied = JSON.parse(guest.run("tessaro-ctl --json config set network.wifi.nat=0", timeout: 200))
     raise Failure, "not committed: #{applied}" unless applied.dig("network", "outcome") == "committed"
     tables = guest.run("nft list tables")
     raise Failure, "no inet tessaro-hotspot table:\n#{tables}" unless tables.include?("inet tessaro-hotspot")
     raise Failure, "the drop rule is not there" unless guest.run("nft list table inet tessaro-hotspot").include?('iifname "wlan0" drop')
 
-    applied = JSON.parse(guest.run("tessaro-ctl --json set wifi.nat=1", timeout: 200))
+    applied = JSON.parse(guest.run("tessaro-ctl --json config set network.wifi.nat=1", timeout: 200))
     raise Failure, "not committed: #{applied}" unless applied.dig("network", "outcome") == "committed"
     raise Failure, "the table stayed" if guest.run("nft list tables").include?("tessaro-hotspot")
   ensure
-    guest.run("tessaro-ctl unset wifi.nat", allow_failure: true, timeout: 200)
+    guest.run("tessaro-ctl config unset network.wifi.nat", allow_failure: true, timeout: 200)
   end
 
   # `ping` needs no token, so it works on this unclaimed device over TLS. The
   # device pings twice: over a ping socket, and - with ping sockets closed to
   # everyone, root included - over the raw socket it falls back to.
   check "ping", "ping measures the control connection, net ping works with and without ping sockets" do |guest, _journal|
-    out = guest.run("TESSARO_CONFIG_DIR=/tmp/e2e-ping tessaro-ctl -n 127.0.0.1 ping -c 3 -i 0.2")
-    raise Failure, "tessaro-ctl ping:\n#{out}" unless out.include?("3/3 answered")
+    out = guest.run("TESSARO_CONFIG_DIR=/tmp/e2e-ping tessaro-ctl -n 127.0.0.1 device ping -c 3 -i 0.2")
+    raise Failure, "tessaro-ctl device ping:\n#{out}" unless out.include?("3/3 answered")
     raise Failure, "no TLS timing:\n#{out}" unless out.match?(/^tls\s+\d/)
 
     range = guest.run("cat /proc/sys/net/ipv4/ping_group_range").strip
     begin
       [range, "1\t0"].each do |sockets|
         guest.run("echo '#{sockets}' > /proc/sys/net/ipv4/ping_group_range")
-        out = guest.run("tessaro-ctl net ping 127.0.0.1 -c 2 -i 0.2")
+        out = guest.run("tessaro-ctl network ping 127.0.0.1 -c 2 -i 0.2")
         raise Failure, "net ping with ping_group_range #{sockets.inspect}:\n#{out}" unless out.include?("2/2 received")
       end
     ensure
@@ -1014,31 +1014,31 @@ module AgentE2E
   end
 
   check "update", "an update is written at boot and keeps the settings" do |guest, _journal|
-    guest.run("tessaro-ctl set data.e2e=kept --no-apply")
+    guest.run("tessaro-ctl config set data.e2e=kept --no-apply")
     send_update(guest)
     wait_for_reboot(guest)
 
     log = boot_log(guest)
     raise Failure, "no applied update in the boot log:\n#{log}" unless log.include?("update applied: e2e.wic.bz2")
-    kept = guest.run("tessaro-ctl get data.e2e")
+    kept = guest.run("tessaro-ctl config get data.e2e")
     raise Failure, "a setting did not survive the update: #{kept}" unless kept.include?("kept")
     raise Failure, "the staging was left behind" if guest.run("ls /data/tessaro/update").include?("upload.part")
   ensure
     guest.run("tessaro-ctl update cancel", allow_failure: true)
-    guest.run("tessaro-ctl unset data.e2e --no-apply", allow_failure: true)
+    guest.run("tessaro-ctl config unset data.e2e --no-apply", allow_failure: true)
   end
 
   check "update-wipe", "--wipe-data comes back with fresh settings and a new identity" do |guest, _journal|
-    before = guest.run("tessaro-ctl --json id")
-    guest.run("tessaro-ctl set data.e2e=gone --no-apply")
+    before = guest.run("tessaro-ctl --json device id")
+    guest.run("tessaro-ctl config set data.e2e=gone --no-apply")
     send_update(guest, "--wipe-data")
     wait_for_reboot(guest)
 
     log = boot_log(guest)
     raise Failure, "no wiped update in the boot log:\n#{log}" unless log.include?("/data re-created")
-    after = guest.run("tessaro-ctl --json id")
+    after = guest.run("tessaro-ctl --json device id")
     raise Failure, "the node id survived a wipe" if JSON.parse(after)["id"] == JSON.parse(before)["id"]
-    raise Failure, "a setting survived a wipe" if guest.run("tessaro-ctl get data.e2e", allow_failure: true).include?("gone")
+    raise Failure, "a setting survived a wipe" if guest.run("tessaro-ctl config get data.e2e", allow_failure: true).include?("gone")
   ensure
     guest.run("tessaro-ctl update cancel", allow_failure: true)
     # The wipe took the test settings too.
@@ -1052,17 +1052,17 @@ module AgentE2E
   # the RAM copy, letting go of /data and the ESP, the write, the re-read
   # partition table and the result landing on the new /data.
   check "update-repartition", "--repartition rewrites the whole disk and comes back as new" do |guest, _journal|
-    before = guest.run("tessaro-ctl --json id")
-    guest.run("tessaro-ctl set data.e2e=gone --no-apply")
+    before = guest.run("tessaro-ctl --json device id")
+    guest.run("tessaro-ctl config set data.e2e=gone --no-apply")
     send_update(guest, "--repartition")
     wait_for_reboot(guest)
 
     log = boot_log(guest)
     raise Failure, "no rewritten disk in the boot log:\n#{log}" unless log.include?("disk rewritten: e2e.wic.bz2")
     raise Failure, "the boot log does not say /data is new:\n#{log}" unless log.include?("/data re-created")
-    after = guest.run("tessaro-ctl --json id")
+    after = guest.run("tessaro-ctl --json device id")
     raise Failure, "the node id survived a rewritten disk" if JSON.parse(after)["id"] == JSON.parse(before)["id"]
-    raise Failure, "a setting survived a rewritten disk" if guest.run("tessaro-ctl get data.e2e", allow_failure: true).include?("gone")
+    raise Failure, "a setting survived a rewritten disk" if guest.run("tessaro-ctl config get data.e2e", allow_failure: true).include?("gone")
     raise Failure, "the pushed image survived a rewritten disk" if guest.run("ls /data").include?("e2e.wic")
   ensure
     guest.run("tessaro-ctl update cancel", allow_failure: true)

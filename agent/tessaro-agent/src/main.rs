@@ -112,7 +112,7 @@ fn main() -> ExitCode {
     let defaults = state::defaults(&SystemEnv);
     let settings: state::State = store::Store::new(&paths.state_dir, state::FILE).read(&bootstrap);
     // What the device reports too - derived name, node id, addresses - so a
-    // placeholder in kiosk.url means here exactly what the renderer made of it.
+    // placeholder in browser.url means here exactly what the renderer made of it.
     let effective = state::Effective::new(&SystemEnv, &settings.settings, &bootstrap)
         .with_live(render::live(&paths));
 

@@ -57,7 +57,7 @@ pub struct Config {
     pub agent_enable: bool,
     pub enforce_origin: bool,
     pub debug: bool,
-    /// Show the debug screen instead of the kiosk page (`debug.enable`).
+    /// Show the debug screen instead of the kiosk page (`browser.debug.enable`).
     pub debug_screen: bool,
 
     pub cdp_url: String,

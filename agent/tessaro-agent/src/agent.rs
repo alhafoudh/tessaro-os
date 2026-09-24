@@ -28,7 +28,7 @@ pub enum NavState {
     Unknown,
     Live,
     Offline,
-    /// The debug screen, which `debug.enable` puts up instead of the site.
+    /// The debug screen, which `browser.debug.enable` puts up instead of the site.
     Debug,
 }
 
@@ -124,7 +124,7 @@ impl<'a> Agent<'a> {
 
         if self.config.debug_screen {
             self.log.info(format!(
-                "debug screen on: showing debug.template instead of {}",
+                "debug screen on: showing browser.debug.template instead of {}",
                 self.config.kiosk_url
             ));
         } else if self.config.probe_enabled() {

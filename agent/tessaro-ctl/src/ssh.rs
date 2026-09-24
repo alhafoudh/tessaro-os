@@ -1,4 +1,4 @@
-//! `tessaro-ctl ssh`: a root shell on a device, by key.
+//! `tessaro-ctl ssh connect`: a root shell on a device, by key.
 //!
 //! The public key goes to the device over the conversation that is already
 //! pinned and authenticated, the agent adds it to root's `authorized_keys`,

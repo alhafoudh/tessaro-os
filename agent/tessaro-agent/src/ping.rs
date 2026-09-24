@@ -1,4 +1,4 @@
-//! ICMP echo from the device: `tessaro-ctl net ping`, and the gateway check
+//! ICMP echo from the device: `tessaro-ctl network ping`, and the gateway check
 //! a network change must pass before it is kept.
 //!
 //! Over the kernel's "ping" datagram sockets (`SOCK_DGRAM`,

@@ -1,6 +1,6 @@
 //! Every setting a device has, in one table.
 //!
-//! A key is what a technician types (`kiosk.url`); its `env` name is what the
+//! A key is what a technician types (`browser.url`); its `env` name is what the
 //! units, `tessaro-weston-config` and the agent itself read (`KIOSK_URL`).
 //! Defaults are not in here: they stay in `/usr/lib/tessaro-kiosk/tessaro-kiosk.env`,
 //! where a later image can still move them. `state.json` only ever holds the
@@ -12,6 +12,11 @@
 //! quotes, no backslash and no `$`. A newline would let a value write a second
 //! variable into the env file, and systemd's env-file parser gives quotes,
 //! backslashes and `${...}` meanings of their own.
+//!
+//! A key starts with the `tessaro-ctl` group that acts on the same thing
+//! (`browser.*`, `screen.*`, `network.*`, `device.*`, `access.*`); a key no
+//! group acts on is named after the component it tunes (`agent.*`). A key
+//! that is renamed goes into `RENAMED`, so devices in the field follow.
 
 use std::net::{Ipv4Addr, SocketAddr};
 
@@ -63,9 +68,9 @@ pub enum Kind {
     Name,
     /// `off`, or an `address:port` to listen on.
     Listen,
-    /// A free-form custom value, used in kiosk.url as `{data.<name>}`.
+    /// A free-form custom value, used in browser.url as `{data.<name>}`.
     Param,
-    /// Text for the debug screen: `{key}` placeholders like kiosk.url, and
+    /// Text for the debug screen: `{key}` placeholders like browser.url, and
     /// `\n` - a literal backslash and `n` - for a line break, the one
     /// backslash any value may carry.
     Template,
@@ -80,17 +85,17 @@ pub enum Kind {
     /// A WiFi network name: 1 to 32 bytes.
     Ssid,
     /// Not a setting: something the device reports - its address, its id.
-    /// Listed with `keys`, readable with `get`, usable in kiosk.url, and
-    /// refused by `set`.
+    /// Listed with `config keys`, readable with `config get`, usable in
+    /// browser.url, and refused by `config set`.
     ReadOnly,
 }
 
 impl Kind {
-    /// What a value of this kind may be, for `tessaro-ctl keys`.
+    /// What a value of this kind may be, for `tessaro-ctl config keys`.
     pub fn describe(&self) -> String {
         match self {
             Kind::Url => {
-                "an http, https, file or data URL; may contain {key} placeholders - any setting's key, e.g. {data.table} or {node.name}"
+                "an http, https, file or data URL; may contain {key} placeholders - any setting's key, e.g. {data.table} or {device.name}"
                     .to_string()
             }
             Kind::OptionalUrl => "an http, https, file or data URL, or empty".to_string(),
@@ -102,12 +107,14 @@ impl Kind {
             Kind::Features => "Chromium feature names, comma separated, no spaces".to_string(),
             Kind::Origins => "origins (scheme://host[:port]), space or comma separated".to_string(),
             Kind::Scale => "auto, none, or 1 to 4".to_string(),
-            Kind::Resolution => "preferred, or WIDTHxHEIGHT from `tessaro-ctl modes`".to_string(),
+            Kind::Resolution => {
+                "preferred, or WIDTHxHEIGHT from `tessaro-ctl screen modes`".to_string()
+            }
             Kind::Name => "letters, digits and dashes, up to 40; empty derives one".to_string(),
             Kind::Listen => "address:port, or off".to_string(),
-            Kind::Param => "any text; percent-encoded where kiosk.url uses it".to_string(),
+            Kind::Param => "any text; percent-encoded where browser.url uses it".to_string(),
             Kind::Template => {
-                "text; \\n breaks a line; {key} placeholders as in kiosk.url, plus {kiosk.url}"
+                "text; \\n breaks a line; {key} placeholders as in browser.url, plus {browser.url}"
                     .to_string()
             }
             Kind::Interface => "an interface name (eth0, enp1s0, wlan0), or auto".to_string(),
@@ -176,18 +183,22 @@ const fn seconds(
 /// The registry. The VNC credential (`KIOSK_VNC_USER`/`KIOSK_VNC_PASSWORD`) is
 /// deliberately absent: it is static, an image property, not a setting.
 pub static KEYS: &[Key] = &[
-    key("kiosk.url", "KIOSK_URL", Kind::Url, AGENT,
+    key(URL, "KIOSK_URL", Kind::Url, AGENT,
         "The page the kiosk shows (default: the self-test page, http://127.0.0.1/). A new origin also re-grants the device APIs to it."),
-    key("kiosk.probe_url", "KIOSK_PROBE_URL", Kind::OptionalUrl, AGENT,
-        "Health endpoint to probe instead of kiosk.url; empty probes kiosk.url. Needed for a file: or data: kiosk."),
-    key("kiosk.offline_url", "KIOSK_OFFLINE_URL", Kind::OfflineUrl, AGENT,
+    key(PROBE_URL, "KIOSK_PROBE_URL", Kind::OptionalUrl, AGENT,
+        "Health endpoint to probe instead of browser.url; empty probes browser.url. Needed for a file: or data: kiosk."),
+    key("browser.offline_url", "KIOSK_OFFLINE_URL", Kind::OfflineUrl, AGENT,
         "Page shown while the site is down; empty stages /data/kiosk/offline.html or the shipped page; none stays on the site."),
-    key("kiosk.enforce_origin", "KIOSK_ENFORCE_ORIGIN", Kind::Flag, AGENT,
+    key("browser.enforce_origin", "KIOSK_ENFORCE_ORIGIN", Kind::Flag, AGENT,
         "Bring the browser back when it leaves the kiosk origin. 0 for a site that hands visitors to another host."),
-    key("maintenance.enable", "KIOSK_MAINTENANCE", Kind::Flag, AGENT,
-        "Maintenance mode: show maintenance.url instead of kiosk.url, which is kept as it is. `tessaro-ctl maintenance on|off`."),
-    key("maintenance.url", "KIOSK_MAINTENANCE_URL", Kind::Url, AGENT,
+    key(MAINTENANCE_ENABLE, "KIOSK_MAINTENANCE", Kind::Flag, AGENT,
+        "Maintenance mode: show browser.maintenance.url instead of browser.url, which is kept as it is. `tessaro-ctl browser maintenance on|off`."),
+    key(MAINTENANCE_URL, "KIOSK_MAINTENANCE_URL", Kind::Url, AGENT,
         "The page shown in maintenance mode (default: http://127.0.0.1/maintenance.html, which takes ?title= and ?message=)."),
+    key(DEBUG_ENABLE, "KIOSK_DEBUG_SCREEN", Kind::Flag, AGENT,
+        "Show browser.debug.template full screen instead of the kiosk page. Not agent.debug, which is journal verbosity. `tessaro-ctl browser debug on|off`."),
+    key(DEBUG_TEMPLATE, "KIOSK_DEBUG_TEMPLATE", Kind::Template, AGENT,
+        "What the debug screen shows: text with {key} placeholders, \\n for a new line, e.g. IP {network.ip}\\nGW {network.gateway}."),
     key("browser.args_extra", "KIOSK_CHROMIUM_ARGS_EXTRA", Kind::Args, BROWSER,
         "Extra Chromium flags after the fixed set, e.g. --disable-pinch. Features go in browser.*_features."),
     key("browser.touch", "KIOSK_TOUCH", Kind::Choice(&["auto", "enabled", "disabled"]), BROWSER,
@@ -200,16 +211,16 @@ pub static KEYS: &[Key] = &[
         "Show Chromium's FPS counter in the corner of the screen (--show-fps-counter)."),
     key("browser.device_origins", "KIOSK_DEVICE_ORIGINS", Kind::Origins, BROWSER,
         "Origins granted WebSerial and WebHID besides the kiosk and self-test origins."),
-    key("display.scale", "KIOSK_SCALE", Kind::Scale, WESTON,
+    key("screen.scale", "KIOSK_SCALE", Kind::Scale, WESTON,
         "Weston output scale: auto (2 above 3400px wide), none, or 1-4."),
     Key {
         guarded: true,
-        ..key("display.resolution", "KIOSK_RESOLUTION", Kind::Resolution, WESTON,
-            "Output mode, WIDTHxHEIGHT from `tessaro-ctl modes`, or preferred. Reverts unless confirmed.")
+        ..key(RESOLUTION, "KIOSK_RESOLUTION", Kind::Resolution, WESTON,
+            "Output mode, WIDTHxHEIGHT from `tessaro-ctl screen modes`, or preferred. Reverts unless confirmed with `tessaro-ctl screen confirm`.")
     },
-    key("display.osk", "KIOSK_OSK", Kind::Choice(&["auto", "always", "never"]), WESTON,
+    key("screen.osk", "KIOSK_OSK", Kind::Choice(&["auto", "always", "never"]), WESTON,
         "On-screen keyboard: auto shows it only without a USB/Bluetooth keyboard."),
-    key("display.vnc", "KIOSK_VNC", Kind::Choice(&["on", "off"]), WESTON,
+    key("screen.vnc", "KIOSK_VNC", Kind::Choice(&["on", "off"]), WESTON,
         "Mirror the screen to VNC on 127.0.0.1:5900."),
     key("agent.enable", "KIOSK_AGENT_ENABLE", Kind::Flag, AGENT,
         "Supervise the browser at all; 0 parks the agent."),
@@ -245,84 +256,181 @@ pub static KEYS: &[Key] = &[
         "DevTools websocket keepalive, seconds."),
     seconds("agent.cdp_reconnect_max", "KIOSK_CDP_RECONNECT_MAX", 1, 3600,
         "Ceiling on the DevTools reconnect backoff, seconds."),
-    key("node.name", "KIOSK_NODE_NAME", Kind::Name, AGENT_AND_NETWORK,
+    key(NAME, "KIOSK_NODE_NAME", Kind::Name, AGENT_AND_NETWORK,
         "The device's name on the network (NAME.local, and the hotspot tessaro-NAME); empty derives one from the node id."),
+    key("access.listen", "KIOSK_API_LISTEN", Kind::Listen, AGENT,
+        "Where the TLS control API listens, address:port, or off."),
+    key("access.mdns", "KIOSK_MDNS", Kind::Choice(&["on", "off"]), AGENT,
+        "Advertise the device as NAME.local and _tessaro._tcp."),
     // The device's own network: four NetworkManager profiles the agent
     // generates (tessaro-ethernet-dhcp/-static, tessaro-wifi-hotspot/-client)
     // and switches between. A change is kept only if the device still
-    // reaches the network afterwards; see `tessaro-ctl set --verify`.
-    key("ethernet.interface", "KIOSK_ETHERNET_INTERFACE", Kind::Interface, NETWORK,
+    // reaches the network afterwards; see `tessaro-ctl config set --verify`.
+    key("network.ethernet.interface", "KIOSK_ETHERNET_INTERFACE", Kind::Interface, NETWORK,
         "The Ethernet port the device manages; auto is the first one that comes up. Other ports are left to hand-made profiles."),
-    key("ethernet.mode", "KIOSK_ETHERNET_MODE", Kind::Choice(&["dhcp", "static"]), NETWORK,
-        "dhcp, or static with ethernet.address, ethernet.gateway and ethernet.dns."),
-    key("ethernet.address", "KIOSK_ETHERNET_ADDRESS", Kind::Cidr, NETWORK,
-        "The static address with ethernet.mode=static, e.g. 192.168.1.50/24."),
-    key("ethernet.gateway", "KIOSK_ETHERNET_GATEWAY", Kind::Address, NETWORK,
-        "The default gateway with ethernet.mode=static; inside ethernet.address. Empty for none."),
-    key("ethernet.dns", "KIOSK_ETHERNET_DNS", Kind::Addresses, NETWORK,
-        "DNS servers with ethernet.mode=static, comma separated."),
-    key("wifi.interface", "KIOSK_WIFI_INTERFACE", Kind::Interface, NETWORK,
+    key("network.ethernet.mode", "KIOSK_ETHERNET_MODE", Kind::Choice(&["dhcp", "static"]), NETWORK,
+        "dhcp, or static with network.ethernet.address, .gateway and .dns."),
+    key("network.ethernet.address", "KIOSK_ETHERNET_ADDRESS", Kind::Cidr, NETWORK,
+        "The static address with network.ethernet.mode=static, e.g. 192.168.1.50/24."),
+    key("network.ethernet.gateway", "KIOSK_ETHERNET_GATEWAY", Kind::Address, NETWORK,
+        "The default gateway with network.ethernet.mode=static; inside network.ethernet.address. Empty for none."),
+    key("network.ethernet.dns", "KIOSK_ETHERNET_DNS", Kind::Addresses, NETWORK,
+        "DNS servers with network.ethernet.mode=static, comma separated."),
+    key("network.wifi.interface", "KIOSK_WIFI_INTERFACE", Kind::Interface, NETWORK,
         "The WiFi device the device manages; auto is wlan0. Without it, nothing WiFi ever comes up."),
-    key("wifi.mode", "KIOSK_WIFI_MODE", Kind::Choice(&["hotspot", "client", "off"]), NETWORK,
-        "hotspot (tessaro-NAME, for installation and management), client (joins wifi.ssid; `tessaro-ctl net wifi join`), or off."),
-    key("wifi.nat", "KIOSK_WIFI_NAT", Kind::Flag, NETWORK,
+    key("network.wifi.mode", "KIOSK_WIFI_MODE", Kind::Choice(&["hotspot", "client", "off"]), NETWORK,
+        "hotspot (tessaro-NAME, for installation and management), client (joins network.wifi.ssid; `tessaro-ctl network wifi join`), or off."),
+    key("network.wifi.nat", "KIOSK_WIFI_NAT", Kind::Flag, NETWORK,
         "Let hotspot clients reach the internet and the LAN through the device; 0 lets them reach the device only."),
-    key("wifi.ssid", "KIOSK_WIFI_SSID", Kind::Ssid, NETWORK,
-        "The network wifi.mode=client joins. Its password is set by `tessaro-ctl net wifi join` and never shown."),
-    key("wifi.security", "KIOSK_WIFI_SECURITY", Kind::Choice(&["psk", "sae", "open"]), NETWORK,
-        "The client network's security: psk (WPA2), sae (WPA3) or open. `net wifi join` finds it by scanning."),
-    key("wifi.hidden", "KIOSK_WIFI_HIDDEN", Kind::Flag, NETWORK,
+    key("network.wifi.ssid", "KIOSK_WIFI_SSID", Kind::Ssid, NETWORK,
+        "The network network.wifi.mode=client joins. Its password is set by `tessaro-ctl network wifi join` and never shown."),
+    key("network.wifi.security", "KIOSK_WIFI_SECURITY", Kind::Choice(&["psk", "sae", "open"]), NETWORK,
+        "The client network's security: psk (WPA2), sae (WPA3) or open. `network wifi join` finds it by scanning."),
+    key("network.wifi.hidden", "KIOSK_WIFI_HIDDEN", Kind::Flag, NETWORK,
         "The client network does not broadcast its name."),
-    key("wifi.ipv4", "KIOSK_WIFI_IPV4", Kind::Choice(&["dhcp", "static"]), NETWORK,
-        "Client addressing: dhcp, or static with wifi.address, wifi.gateway and wifi.dns."),
-    key("wifi.address", "KIOSK_WIFI_ADDRESS", Kind::Cidr, NETWORK,
-        "The static client address with wifi.ipv4=static, e.g. 192.168.1.51/24."),
-    key("wifi.gateway", "KIOSK_WIFI_GATEWAY", Kind::Address, NETWORK,
-        "The default gateway with wifi.ipv4=static; inside wifi.address. Empty for none."),
-    key("wifi.dns", "KIOSK_WIFI_DNS", Kind::Addresses, NETWORK,
-        "DNS servers with wifi.ipv4=static, comma separated."),
-    key("api.listen", "KIOSK_API_LISTEN", Kind::Listen, AGENT,
-        "Where the TLS control API listens, address:port, or off."),
-    key("api.mdns", "KIOSK_MDNS", Kind::Choice(&["on", "off"]), AGENT,
-        "Advertise the device as NAME.local and _tessaro._tcp."),
-    key("debug.enable", "KIOSK_DEBUG_SCREEN", Kind::Flag, AGENT,
-        "Show debug.template full screen instead of the kiosk page. Not agent.debug, which is journal verbosity."),
-    key("debug.template", "KIOSK_DEBUG_TEMPLATE", Kind::Template, AGENT,
-        "What the debug screen shows: text with {key} placeholders, \\n for a new line, e.g. IP {net.ip}\\nGW {net.gateway}."),
-    // Read-only: what the device reports right now. `tessaro-ctl net` shows
-    // the same in full, per interface.
-    live("node.id", "The node id: systemd's app-specific machine id, never the machine id itself."),
-    live("net.hostname", "The kernel hostname."),
-    live("net.interface", "The interface carrying the IPv4 default route."),
-    live("net.mac", "MAC address of net.interface."),
-    live("net.ip", "The first IPv4 address of net.interface."),
-    live("net.netmask", "Netmask of net.ip, dotted (255.255.255.0)."),
-    live("net.cidr", "net.ip with its prefix length (192.168.1.20/24)."),
-    live("net.gateway", "The IPv4 default gateway."),
-    live("net.dns", "DNS servers in use, comma separated."),
-    live("net.ipv4", "Every IPv4 address on every interface but loopback, comma separated."),
-    live("net.ipv6", "Every IPv6 address on every interface but loopback, comma separated."),
-    live("net.public_ip", "The address the internet sees, from Cloudflare's trace; looked up by `net` and `get net.public_ip`, and every 5 minutes while kiosk.url uses it."),
-    live("net.interfaces", "Every interface but loopback with its state and addresses, as eth0 up 10.0.0.20/24; wlan0 down."),
-    live("wifi.hotspot_ssid", "The hotspot's network name, tessaro-NAME. Open while the device is unclaimed; claiming it sets a password, shown once."),
+    key("network.wifi.ipv4", "KIOSK_WIFI_IPV4", Kind::Choice(&["dhcp", "static"]), NETWORK,
+        "Client addressing: dhcp, or static with network.wifi.address, .gateway and .dns."),
+    key("network.wifi.address", "KIOSK_WIFI_ADDRESS", Kind::Cidr, NETWORK,
+        "The static client address with network.wifi.ipv4=static, e.g. 192.168.1.51/24."),
+    key("network.wifi.gateway", "KIOSK_WIFI_GATEWAY", Kind::Address, NETWORK,
+        "The default gateway with network.wifi.ipv4=static; inside network.wifi.address. Empty for none."),
+    key("network.wifi.dns", "KIOSK_WIFI_DNS", Kind::Addresses, NETWORK,
+        "DNS servers with network.wifi.ipv4=static, comma separated."),
+    // Read-only: what the device reports right now. `tessaro-ctl network
+    // show` shows the same in full, per interface.
+    live(ID, "The node id: systemd's app-specific machine id, never the machine id itself."),
+    live("network.hostname", "The kernel hostname."),
+    live("network.interface", "The interface carrying the IPv4 default route."),
+    live("network.mac", "MAC address of network.interface."),
+    live("network.ip", "The first IPv4 address of network.interface."),
+    live("network.netmask", "Netmask of network.ip, dotted (255.255.255.0)."),
+    live("network.cidr", "network.ip with its prefix length (192.168.1.20/24)."),
+    live("network.gateway", "The IPv4 default gateway."),
+    live("network.dns", "DNS servers in use, comma separated."),
+    live("network.ipv4", "Every IPv4 address on every interface but loopback, comma separated."),
+    live("network.ipv6", "Every IPv6 address on every interface but loopback, comma separated."),
+    live(PUBLIC_IP, "The address the internet sees, from Cloudflare's trace; looked up by `network show` and `config get network.public_ip`, and every 5 minutes while browser.url uses it."),
+    live("network.interfaces", "Every interface but loopback with its state and addresses, as eth0 up 10.0.0.20/24; wlan0 down."),
+    live("network.wifi.hotspot_ssid", "The hotspot's network name, tessaro-NAME. Open while the device is unclaimed; claiming it sets a password, shown once."),
 ];
 
+// The names code refers to on its own, not only through the table.
+pub const URL: &str = "browser.url";
+pub const PROBE_URL: &str = "browser.probe_url";
+pub const MAINTENANCE_ENABLE: &str = "browser.maintenance.enable";
+pub const MAINTENANCE_URL: &str = "browser.maintenance.url";
+pub const DEBUG_ENABLE: &str = "browser.debug.enable";
+pub const DEBUG_TEMPLATE: &str = "browser.debug.template";
+pub const RESOLUTION: &str = "screen.resolution";
+pub const NAME: &str = "device.name";
+pub const ID: &str = "device.id";
+pub const PUBLIC_IP: &str = "network.public_ip";
+
+/// Every key that was renamed, old name first. Only for devices that still
+/// carry the old names in state.json: the boot oneshot rewrites them once
+/// (`tessaro-agent boot`), and a `set` or `get` of an old name is refused
+/// with the new one. Nothing else accepts them - one spelling per setting.
+pub static RENAMED: &[(&str, &str)] = &[
+    ("kiosk.url", URL),
+    ("kiosk.probe_url", PROBE_URL),
+    ("kiosk.offline_url", "browser.offline_url"),
+    ("kiosk.enforce_origin", "browser.enforce_origin"),
+    ("maintenance.enable", MAINTENANCE_ENABLE),
+    ("maintenance.url", MAINTENANCE_URL),
+    ("debug.enable", DEBUG_ENABLE),
+    ("debug.template", DEBUG_TEMPLATE),
+    ("display.scale", "screen.scale"),
+    ("display.resolution", RESOLUTION),
+    ("display.osk", "screen.osk"),
+    ("display.vnc", "screen.vnc"),
+    ("node.name", NAME),
+    ("node.id", ID),
+    ("api.listen", "access.listen"),
+    ("api.mdns", "access.mdns"),
+    ("ethernet.interface", "network.ethernet.interface"),
+    ("ethernet.mode", "network.ethernet.mode"),
+    ("ethernet.address", "network.ethernet.address"),
+    ("ethernet.gateway", "network.ethernet.gateway"),
+    ("ethernet.dns", "network.ethernet.dns"),
+    ("wifi.interface", "network.wifi.interface"),
+    ("wifi.mode", "network.wifi.mode"),
+    ("wifi.nat", "network.wifi.nat"),
+    ("wifi.ssid", "network.wifi.ssid"),
+    ("wifi.security", "network.wifi.security"),
+    ("wifi.hidden", "network.wifi.hidden"),
+    ("wifi.ipv4", "network.wifi.ipv4"),
+    ("wifi.address", "network.wifi.address"),
+    ("wifi.gateway", "network.wifi.gateway"),
+    ("wifi.dns", "network.wifi.dns"),
+    ("wifi.hotspot_ssid", "network.wifi.hotspot_ssid"),
+    ("net.hostname", "network.hostname"),
+    ("net.interface", "network.interface"),
+    ("net.mac", "network.mac"),
+    ("net.ip", "network.ip"),
+    ("net.netmask", "network.netmask"),
+    ("net.cidr", "network.cidr"),
+    ("net.gateway", "network.gateway"),
+    ("net.dns", "network.dns"),
+    ("net.ipv4", "network.ipv4"),
+    ("net.ipv6", "network.ipv6"),
+    ("net.public_ip", PUBLIC_IP),
+    ("net.interfaces", "network.interfaces"),
+];
+
+/// The current name of a key that was renamed.
+pub fn renamed(old: &str) -> Option<&'static str> {
+    RENAMED
+        .iter()
+        .find(|(from, _)| *from == old)
+        .map(|(_, to)| *to)
+}
+
+/// `name is not a setting`, or - for an old name - what it is called now.
+pub fn unknown(name: &str) -> String {
+    match renamed(name) {
+        Some(new) => format!("{name} is now {new}"),
+        None => format!("{name} is not a setting; `tessaro-ctl config keys` lists them"),
+    }
+}
+
+/// `template` with every placeholder that names a renamed key rewritten to
+/// the new name; anything else is left exactly as it was.
+pub fn rename_placeholders(template: &str) -> String {
+    let mut out = String::with_capacity(template.len());
+    let mut rest = template;
+    while let Some(open) = rest.find('{') {
+        out.push_str(&rest[..open + 1]);
+        let after = &rest[open + 1..];
+        match after.find('}') {
+            Some(close) if is_placeholder(&after[..close]) => {
+                let name = &after[..close];
+                out.push_str(renamed(name).unwrap_or(name));
+                out.push('}');
+                rest = &after[close + 1..];
+            }
+            _ => rest = after,
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 /// Custom values: `data.<name>`, named by whoever sets them. The kiosk gives
-/// them no meaning; they exist to be put into kiosk.url as `{<name>}`.
+/// them no meaning; they exist to be put into browser.url as `{data.<name>}`.
 pub const DATA_PREFIX: &str = "data.";
 
 /// Every custom `data.<name>` setting shares this entry. It has no env
-/// variable of its own: its value only exists inside the expanded kiosk.url.
+/// variable of its own: its value only exists inside the expanded browser.url.
 pub static DATA: Key = Key {
     name: "data.<name>",
     env: "",
     kind: Kind::Param,
     consumers: AGENT,
     guarded: false,
-    doc: "Custom values with names you choose, for kiosk.url: data.table=12 fills {data.table}, as in \
+    doc: "Custom values with names you choose, for browser.url: data.table=12 fills {data.table}, as in \
           https://menu.test/?table={data.table}. The kiosk gives them no meaning of its own. Set them \
-          before or together with a kiosk.url that uses them. A placeholder is always a full key, so \
-          built-in settings work the same way: {node.name}, {display.scale}, ...",
+          before or together with a browser.url that uses them. A placeholder is always a full key, so \
+          built-in settings work the same way: {device.name}, {screen.scale}, ...",
 };
 
 pub fn find(name: &str) -> Option<&'static Key> {
@@ -345,16 +453,16 @@ pub fn is_param(name: &str) -> bool {
             .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_')
 }
 
-/// What a `{name}` in kiosk.url stands for.
+/// What a `{name}` in browser.url stands for.
 #[derive(Debug, Clone, Copy)]
 pub enum Placeholder<'a> {
     /// `{data.table}`: the custom value `data.table`; holds `table`.
     Param(&'a str),
-    /// `{node.name}`: the effective value of a registry key.
+    /// `{device.name}`: the effective value of a registry key.
     Key(&'static Key),
-    /// Neither - including `{kiosk.url}`, `{maintenance.url}` and
-    /// `{debug.template}`: a template cannot contain itself or another one.
-    /// The debug template resolves `{kiosk.url}` on its own.
+    /// Neither - including `{browser.url}`, `{browser.maintenance.url}` and
+    /// `{browser.debug.template}`: a template cannot contain itself or
+    /// another one. The debug template resolves `{browser.url}` on its own.
     Unknown,
 }
 
@@ -371,10 +479,10 @@ impl PartialEq for Placeholder<'_> {
 }
 
 /// The keys whose values are URL templates, expanded before anyone sees them.
-pub const TEMPLATES: [&str; 2] = ["kiosk.url", "maintenance.url"];
+pub const TEMPLATES: [&str; 2] = [URL, MAINTENANCE_URL];
 
 /// A placeholder is always a setting's full key: `{data.table}` for the
-/// custom `data.table`, `{node.name}` for `node.name`. One rule, no short
+/// custom `data.table`, `{device.name}` for `device.name`. One rule, no short
 /// forms, so a template reads exactly like the `set` that fills it.
 pub fn placeholder(name: &str) -> Placeholder<'_> {
     if let Some(custom) = param_name(name) {
@@ -725,8 +833,8 @@ pub fn check_psk(psk: &str) -> Result<(), String> {
 /// password is stored.
 pub fn check_network(value: impl Fn(&str) -> String, has_psk: bool) -> Result<(), String> {
     for (mode_key, static_word, prefix) in [
-        ("ethernet.mode", "static", "ethernet"),
-        ("wifi.ipv4", "static", "wifi"),
+        ("network.ethernet.mode", "static", "network.ethernet"),
+        ("network.wifi.ipv4", "static", "network.wifi"),
     ] {
         if value(mode_key) != static_word {
             continue;
@@ -747,18 +855,17 @@ pub fn check_network(value: impl Fn(&str) -> String, has_psk: bool) -> Result<()
             }
         }
     }
-    if value("wifi.mode") == "client" {
-        if value("wifi.ssid").is_empty() {
-            return Err(
-                "wifi.mode=client needs wifi.ssid; `tessaro-ctl net wifi join SSID` sets both"
-                    .to_string(),
-            );
+    if value("network.wifi.mode") == "client" {
+        if value("network.wifi.ssid").is_empty() {
+            return Err("network.wifi.mode=client needs network.wifi.ssid; \
+                 `tessaro-ctl network wifi join SSID` sets both"
+                .to_string());
         }
-        if value("wifi.security") != "open" && !has_psk {
+        if value("network.wifi.security") != "open" && !has_psk {
             return Err(format!(
-                "{} needs a password; join it with `tessaro-ctl net wifi join {}`",
-                value("wifi.ssid"),
-                value("wifi.ssid")
+                "{} needs a password; join it with `tessaro-ctl network wifi join {}`",
+                value("network.wifi.ssid"),
+                value("network.wifi.ssid")
             ));
         }
     }
@@ -856,17 +963,17 @@ mod tests {
     #[test]
     fn urls() {
         assert_eq!(
-            check("kiosk.url", " https://example.com/x ").unwrap(),
+            check("browser.url", " https://example.com/x ").unwrap(),
             "https://example.com/x"
         );
-        assert!(check("kiosk.url", "").is_err());
-        assert!(check("kiosk.url", "ftp://example.com/").is_err());
-        assert!(check("kiosk.url", "https:///nohost").is_err());
-        assert!(check("kiosk.url", "https://a.test/a b").is_err());
-        assert_eq!(check("kiosk.probe_url", "").unwrap(), "");
-        assert!(check("kiosk.probe_url", "none").is_err());
-        assert_eq!(check("kiosk.offline_url", "none").unwrap(), "none");
-        assert!(check("kiosk.url", "data:text/html,<h1>hi</h1>").is_ok());
+        assert!(check("browser.url", "").is_err());
+        assert!(check("browser.url", "ftp://example.com/").is_err());
+        assert!(check("browser.url", "https:///nohost").is_err());
+        assert!(check("browser.url", "https://a.test/a b").is_err());
+        assert_eq!(check("browser.probe_url", "").unwrap(), "");
+        assert!(check("browser.probe_url", "none").is_err());
+        assert_eq!(check("browser.offline_url", "none").unwrap(), "none");
+        assert!(check("browser.url", "data:text/html,<h1>hi</h1>").is_ok());
     }
 
     #[test]
@@ -901,17 +1008,17 @@ mod tests {
 
     #[test]
     fn scale_and_resolution() {
-        assert_eq!(check("display.scale", "auto").unwrap(), "");
-        assert_eq!(check("display.scale", "2").unwrap(), "2");
-        assert!(check("display.scale", "1.5").is_err());
+        assert_eq!(check("screen.scale", "auto").unwrap(), "");
+        assert_eq!(check("screen.scale", "2").unwrap(), "2");
+        assert!(check("screen.scale", "1.5").is_err());
         assert_eq!(
-            check("display.resolution", "1920X1080").unwrap(),
+            check("screen.resolution", "1920X1080").unwrap(),
             "1920x1080"
         );
-        assert_eq!(check("display.resolution", "").unwrap(), "preferred");
-        assert!(check("display.resolution", "1920x1080@60").is_err());
-        assert!(check("display.resolution", "10x10").is_err());
-        assert!(find("display.resolution").unwrap().guarded);
+        assert_eq!(check("screen.resolution", "").unwrap(), "preferred");
+        assert!(check("screen.resolution", "1920x1080@60").is_err());
+        assert!(check("screen.resolution", "10x10").is_err());
+        assert!(find("screen.resolution").unwrap().guarded);
     }
 
     #[test]
@@ -925,13 +1032,16 @@ mod tests {
 
     #[test]
     fn names_and_listen_addresses() {
-        assert_eq!(check("node.name", "Lobby-1").unwrap(), "lobby-1");
-        assert!(check("node.name", "-x").is_err());
-        assert!(check("node.name", "a.b").is_err());
-        assert_eq!(check("node.name", "").unwrap(), "");
-        assert_eq!(check("api.listen", "0.0.0.0:7400").unwrap(), "0.0.0.0:7400");
-        assert_eq!(check("api.listen", "OFF").unwrap(), "off");
-        assert!(check("api.listen", "7400").is_err());
+        assert_eq!(check("device.name", "Lobby-1").unwrap(), "lobby-1");
+        assert!(check("device.name", "-x").is_err());
+        assert!(check("device.name", "a.b").is_err());
+        assert_eq!(check("device.name", "").unwrap(), "");
+        assert_eq!(
+            check("access.listen", "0.0.0.0:7400").unwrap(),
+            "0.0.0.0:7400"
+        );
+        assert_eq!(check("access.listen", "OFF").unwrap(), "off");
+        assert!(check("access.listen", "7400").is_err());
     }
 
     #[test]
@@ -964,9 +1074,9 @@ mod tests {
     fn placeholders_are_found_once_and_odd_braces_left_alone() {
         assert_eq!(
             placeholders(
-                "https://{data.shop}.test/{data.lang}/x?s={data.shop}&j={not-one}&k={}&n={node.name}&z={.x}"
+                "https://{data.shop}.test/{data.lang}/x?s={data.shop}&j={not-one}&k={}&n={device.name}&z={.x}"
             ),
-            ["data.shop", "data.lang", "node.name"]
+            ["data.shop", "data.lang", "device.name"]
         );
     }
 
@@ -976,19 +1086,21 @@ mod tests {
         // No short form: {store} is not data.store.
         assert_eq!(placeholder("store"), Placeholder::Unknown);
         assert_eq!(
-            placeholder("node.name"),
-            Placeholder::Key(find("node.name").unwrap())
+            placeholder("device.name"),
+            Placeholder::Key(find("device.name").unwrap())
         );
         assert_eq!(
-            placeholder("display.scale"),
-            Placeholder::Key(find("display.scale").unwrap())
+            placeholder("screen.scale"),
+            Placeholder::Key(find("screen.scale").unwrap())
         );
-        assert_eq!(placeholder("kiosk.url"), Placeholder::Unknown);
-        assert_eq!(placeholder("maintenance.url"), Placeholder::Unknown);
+        assert_eq!(placeholder("browser.url"), Placeholder::Unknown);
+        assert_eq!(placeholder("browser.maintenance.url"), Placeholder::Unknown);
         assert_eq!(
-            placeholder("maintenance.enable"),
-            Placeholder::Key(find("maintenance.enable").unwrap())
+            placeholder("browser.maintenance.enable"),
+            Placeholder::Key(find("browser.maintenance.enable").unwrap())
         );
+        // An old name is no placeholder; the boot migration rewrites it.
+        assert_eq!(placeholder("node.name"), Placeholder::Unknown);
         assert_eq!(placeholder("no.such"), Placeholder::Unknown);
     }
 
@@ -1014,15 +1126,15 @@ mod tests {
     #[test]
     fn a_url_template_is_validated_as_the_url_it_becomes() {
         assert_eq!(
-            check("kiosk.url", "https://{data.shop}.test/?lang={data.lang}").unwrap(),
+            check("browser.url", "https://{data.shop}.test/?lang={data.lang}").unwrap(),
             "https://{data.shop}.test/?lang={data.lang}"
         );
-        assert!(check("kiosk.url", "{data.scheme}://x.test/").is_err());
+        assert!(check("browser.url", "{data.scheme}://x.test/").is_err());
     }
 
     #[test]
     fn read_only_keys_are_placeholders_but_not_settings() {
-        for name in ["node.id", "net.ip", "net.gateway", "net.ipv4"] {
+        for name in ["device.id", "network.ip", "network.gateway", "network.ipv4"] {
             let key = find(name).expect(name);
             assert_eq!(key.kind, Kind::ReadOnly);
             assert!(key.env.is_empty() && key.consumers.is_empty(), "{name}");
@@ -1034,11 +1146,15 @@ mod tests {
     #[test]
     fn the_debug_template_allows_backslash_n_and_no_other_backslash() {
         assert_eq!(
-            check("debug.template", "IP {net.ip}\\nGW {net.gateway}").unwrap(),
-            "IP {net.ip}\\nGW {net.gateway}"
+            check(
+                "browser.debug.template",
+                "IP {network.ip}\\nGW {network.gateway}"
+            )
+            .unwrap(),
+            "IP {network.ip}\\nGW {network.gateway}"
         );
         for bad in ["a\\tb", "a\\\\b", "a\\", "it's", "a\"b", "${HOME}", "a\nb"] {
-            assert!(check("debug.template", bad).is_err(), "{bad}");
+            assert!(check("browser.debug.template", bad).is_err(), "{bad}");
         }
         // Everywhere else a backslash is still refused.
         assert!(check("data.x", "a\\nb").is_err());
@@ -1046,19 +1162,41 @@ mod tests {
 
     #[test]
     fn templates_cannot_contain_themselves() {
-        assert_eq!(placeholder("debug.template"), Placeholder::Unknown);
-        assert_eq!(placeholder("kiosk.url"), Placeholder::Unknown);
+        assert_eq!(placeholder("browser.debug.template"), Placeholder::Unknown);
+        assert_eq!(placeholder("browser.url"), Placeholder::Unknown);
         assert_eq!(
-            placeholder("debug.enable"),
-            Placeholder::Key(find("debug.enable").unwrap())
+            placeholder("browser.debug.enable"),
+            Placeholder::Key(find("browser.debug.enable").unwrap())
         );
+    }
+
+    #[test]
+    fn every_old_name_leads_to_a_key_that_exists() {
+        for (old, new) in RENAMED {
+            assert!(find(old).is_none(), "{old} is still a key");
+            assert!(find(new).is_some(), "{old} -> {new}, which is no key");
+        }
+        assert_eq!(unknown("kiosk.url"), "kiosk.url is now browser.url");
+        assert!(unknown("no.such").contains("not a setting"));
+    }
+
+    #[test]
+    fn old_placeholders_are_renamed_and_nothing_else_moves() {
+        assert_eq!(
+            rename_placeholders(
+                "https://{node.name}.test/?ip={net.ip}&t={data.table}&j={\"a\":1}&x={kiosk.url"
+            ),
+            "https://{device.name}.test/?ip={network.ip}&t={data.table}&j={\"a\":1}&x={kiosk.url"
+        );
+        let current = "IP {network.ip}\\n{browser.url}";
+        assert_eq!(rename_placeholders(current), current);
     }
 
     #[test]
     fn expansion_can_leave_values_raw() {
         let (text, missing) = expand_with(
-            "ip {net.ip} q {data.q}",
-            |name| (name == "net.ip").then(|| "10.0.0.2/24 x&y".to_string()),
+            "ip {network.ip} q {data.q}",
+            |name| (name == "network.ip").then(|| "10.0.0.2/24 x&y".to_string()),
             str::to_string,
         );
         assert_eq!(text, "ip 10.0.0.2/24 x&y q ");
@@ -1074,25 +1212,28 @@ mod tests {
 
     #[test]
     fn network_values_are_normalized() {
-        assert_eq!(check("ethernet.interface", "").unwrap(), "auto");
-        assert_eq!(check("ethernet.interface", "enp1s0").unwrap(), "enp1s0");
-        assert!(check("ethernet.interface", "eth 0").is_err());
+        assert_eq!(check("network.ethernet.interface", "").unwrap(), "auto");
         assert_eq!(
-            check("ethernet.address", "192.168.1.50/24").unwrap(),
+            check("network.ethernet.interface", "enp1s0").unwrap(),
+            "enp1s0"
+        );
+        assert!(check("network.ethernet.interface", "eth 0").is_err());
+        assert_eq!(
+            check("network.ethernet.address", "192.168.1.50/24").unwrap(),
             "192.168.1.50/24"
         );
-        assert!(check("ethernet.address", "192.168.1.50").is_err());
-        assert!(check("ethernet.address", "192.168.1.50/33").is_err());
-        assert_eq!(check("ethernet.gateway", "").unwrap(), "");
-        assert!(check("ethernet.gateway", "2001:db8::1").is_err());
+        assert!(check("network.ethernet.address", "192.168.1.50").is_err());
+        assert!(check("network.ethernet.address", "192.168.1.50/33").is_err());
+        assert_eq!(check("network.ethernet.gateway", "").unwrap(), "");
+        assert!(check("network.ethernet.gateway", "2001:db8::1").is_err());
         assert_eq!(
-            check("ethernet.dns", "1.1.1.1, 9.9.9.9").unwrap(),
+            check("network.ethernet.dns", "1.1.1.1, 9.9.9.9").unwrap(),
             "1.1.1.1,9.9.9.9"
         );
-        assert_eq!(check("wifi.mode", "Hotspot").unwrap(), "hotspot");
-        assert!(check("wifi.ssid", "").is_err());
-        assert!(check("wifi.ssid", &"x".repeat(33)).is_err());
-        assert_eq!(check("wifi.ssid", "Office 2").unwrap(), "Office 2");
+        assert_eq!(check("network.wifi.mode", "Hotspot").unwrap(), "hotspot");
+        assert!(check("network.wifi.ssid", "").is_err());
+        assert!(check("network.wifi.ssid", &"x".repeat(33)).is_err());
+        assert_eq!(check("network.wifi.ssid", "Office 2").unwrap(), "Office 2");
     }
 
     #[test]
@@ -1110,44 +1251,46 @@ mod tests {
                     .unwrap_or_default()
             }
         };
-        assert!(check_network(with(&[("ethernet.mode", "dhcp")]), false).is_ok());
-        let alone = check_network(with(&[("ethernet.mode", "static")]), false);
-        assert!(alone.unwrap_err().contains("needs ethernet.address"));
+        assert!(check_network(with(&[("network.ethernet.mode", "dhcp")]), false).is_ok());
+        let alone = check_network(with(&[("network.ethernet.mode", "static")]), false);
+        assert!(alone
+            .unwrap_err()
+            .contains("needs network.ethernet.address"));
         let outside = check_network(
             with(&[
-                ("ethernet.mode", "static"),
-                ("ethernet.address", "10.99.0.5/24"),
-                ("ethernet.gateway", "192.168.1.1"),
+                ("network.ethernet.mode", "static"),
+                ("network.ethernet.address", "10.99.0.5/24"),
+                ("network.ethernet.gateway", "192.168.1.1"),
             ]),
             false,
         );
         assert!(outside.unwrap_err().contains("outside"));
         assert!(check_network(
             with(&[
-                ("ethernet.mode", "static"),
-                ("ethernet.address", "192.168.1.50/24"),
-                ("ethernet.gateway", "192.168.1.1"),
+                ("network.ethernet.mode", "static"),
+                ("network.ethernet.address", "192.168.1.50/24"),
+                ("network.ethernet.gateway", "192.168.1.1"),
             ]),
             false
         )
         .is_ok());
 
         let client = [
-            ("wifi.mode", "client"),
-            ("wifi.ssid", "Office"),
-            ("wifi.security", "psk"),
+            ("network.wifi.mode", "client"),
+            ("network.wifi.ssid", "Office"),
+            ("network.wifi.security", "psk"),
         ];
         assert!(check_network(with(&client), false)
             .unwrap_err()
-            .contains("net wifi join Office"));
+            .contains("network wifi join Office"));
         assert!(check_network(with(&client), true).is_ok());
         let open = [
-            ("wifi.mode", "client"),
-            ("wifi.ssid", "Cafe"),
-            ("wifi.security", "open"),
+            ("network.wifi.mode", "client"),
+            ("network.wifi.ssid", "Cafe"),
+            ("network.wifi.security", "open"),
         ];
         assert!(check_network(with(&open), false).is_ok());
-        assert!(check_network(with(&[("wifi.mode", "client")]), true).is_err());
+        assert!(check_network(with(&[("network.wifi.mode", "client")]), true).is_err());
     }
 
     #[test]

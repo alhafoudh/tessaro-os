@@ -2105,6 +2105,7 @@ dependencies = [
  "anstream",
  "anstyle",
  "clap",
+ "clap_complete",
  "data-encoding",
  "mdns-sd",
  "native-tls",

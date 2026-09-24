@@ -143,7 +143,7 @@ pub fn send(
     if !reboot {
         progress.done(&format!(
             "{} applies it; {} drops it",
-            paint(style::CMD, "`tessaro-ctl reboot`"),
+            paint(style::CMD, "`tessaro-ctl device reboot`"),
             paint(style::CMD, "`tessaro-ctl update cancel`")
         ));
         return Ok(if options.wipe_data {
@@ -164,7 +164,7 @@ pub fn send(
                 style::WARN,
                 format!("{node} comes back unclaimed, with a new name and certificate:")
             ),
-            paint(style::CMD, "`tessaro-ctl nodes`")
+            paint(style::CMD, "`tessaro-ctl nodes list`")
         ));
         return Ok(Sent::Wiped);
     }

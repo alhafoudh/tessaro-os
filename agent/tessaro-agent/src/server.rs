@@ -7,7 +7,7 @@
 //!   whoever can open it is already root on the device. Deliberately not
 //!   group accessible: Chromium runs as `weston`, and a compromised browser
 //!   must not be one `connect()` away from the control plane.
-//! * **TCP** (`api.listen`, default `0.0.0.0:7400`) is TLS with the device's
+//! * **TCP** (`access.listen`, default `0.0.0.0:7400`) is TLS with the device's
 //!   own self-signed identity, which clients pin. Every request needs a
 //!   valid token except `id`, `claim` and `ping`. Failed tokens are counted per
 //!   address, and an address that keeps failing is refused for a minute.
@@ -390,9 +390,9 @@ fn authenticate(
         },
         None if request.command.is_public() => Ok(Caller::Anonymous { peer }),
         None if !control.claimed() => {
-            Err("this device is unclaimed; `tessaro-ctl claim` it first".to_string())
+            Err("this device is unclaimed; `tessaro-ctl access claim` it first".to_string())
         }
-        None => Err("a token is required; `tessaro-ctl login` with one".to_string()),
+        None => Err("a token is required; `tessaro-ctl access login` with one".to_string()),
     }
 }
 

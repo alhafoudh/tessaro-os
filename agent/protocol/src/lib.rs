@@ -37,7 +37,7 @@ pub const DEFAULT_SOCKET: &str = "/run/tessaro-agent.sock";
 /// mDNS service type, in the fully qualified form mdns-sd expects.
 pub const SERVICE_TYPE: &str = "_tessaro._tcp.local.";
 
-/// How long a guarded change (`display.resolution`) waits for `confirm`
+/// How long a guarded change (`screen.resolution`) waits for `confirm`
 /// before it reverts itself.
 pub const CONFIRM_SECONDS: u64 = 60;
 
@@ -313,7 +313,7 @@ pub enum Command {
         #[serde(default)]
         tests: Option<u32>,
     },
-    /// One round trip and nothing else, for `tessaro-ctl ping`. Public, like
+    /// One round trip and nothing else, for `tessaro-ctl device ping`. Public, like
     /// `id`: it says no more than that the agent is answering.
     Ping,
     /// NetworkManager's profiles: the four the device manages, and any made
@@ -335,8 +335,8 @@ pub enum Command {
         #[serde(default = "yes")]
         rescan: bool,
     },
-    /// Join a network in client mode: `wifi.mode=client`, `wifi.ssid`,
-    /// `wifi.security` and `wifi.hidden` in one change, with the password
+    /// Join a network in client mode: `network.wifi.mode=client`, `network.wifi.ssid`,
+    /// `network.wifi.security` and `network.wifi.hidden` in one change, with the password
     /// stored where `get` never shows it. The hotspot goes down.
     WifiJoin {
         ssid: String,
@@ -828,7 +828,7 @@ pub const SPEEDTEST_DEFAULT_TESTS: u32 = 10;
 /// 100 MB of RAM on a device that may have 1 GB for Chromium as well.
 pub const SPEEDTEST_UPLOAD_MAX: u64 = 25_000_000;
 
-/// `100k`, `1m`, ... the way `tessaro-ctl speedtest --max-size` spells them.
+/// `100k`, `1m`, ... the way `tessaro-ctl network speedtest --max-size` spells them.
 pub fn speedtest_size_label(size: u64) -> String {
     if size >= 1_000_000 {
         format!("{}m", size / 1_000_000)
@@ -922,7 +922,7 @@ mod tests {
             id: 7,
             token: Some("tsr_x".to_string()),
             command: Command::Set {
-                values: [("kiosk.url".to_string(), "https://a.test/".to_string())].into(),
+                values: [("browser.url".to_string(), "https://a.test/".to_string())].into(),
                 if_revision: Some(3),
                 apply: false,
                 verify: Verify::None,
@@ -997,9 +997,10 @@ mod tests {
 
     #[test]
     fn a_network_change_verifies_the_gateway_unless_told() {
-        let request: Request =
-            from_line(r#"{"id":1,"command":{"cmd":"set","values":{"ethernet.mode":"dhcp"}}}"#)
-                .unwrap();
+        let request: Request = from_line(
+            r#"{"id":1,"command":{"cmd":"set","values":{"network.ethernet.mode":"dhcp"}}}"#,
+        )
+        .unwrap();
         assert!(matches!(
             request.command,
             Command::Set {

@@ -2,9 +2,9 @@
 //! keyfiles from its settings.
 //!
 //! * `tessaro-ethernet-dhcp` and `tessaro-ethernet-static`: the managed
-//!   Ethernet port (`ethernet.interface`, or the first one up for `auto`).
+//!   Ethernet port (`network.ethernet.interface`, or the first one up for `auto`).
 //! * `tessaro-wifi-hotspot` (`tessaro-NAME`, open until claimed) and
-//!   `tessaro-wifi-client` (`wifi.ssid`): the managed WiFi device.
+//!   `tessaro-wifi-client` (`network.wifi.ssid`): the managed WiFi device.
 //!
 //! Only the selected mode of each pair autoconnects, at priority 100, so it
 //! wins over anything made by hand. The files go to
@@ -122,12 +122,12 @@ pub struct NetConfig {
 /// file says: what an image without these keys in its defaults behaves as.
 fn fallback(name: &str) -> &'static str {
     match name {
-        "ethernet.interface" | "wifi.interface" => "auto",
-        "ethernet.mode" | "wifi.ipv4" => "dhcp",
-        "wifi.mode" => "hotspot",
-        "wifi.nat" => "1",
-        "wifi.security" => "psk",
-        "wifi.hidden" => "0",
+        "network.ethernet.interface" | "network.wifi.interface" => "auto",
+        "network.ethernet.mode" | "network.wifi.ipv4" => "dhcp",
+        "network.wifi.mode" => "hotspot",
+        "network.wifi.nat" => "1",
+        "network.wifi.security" => "psk",
+        "network.wifi.hidden" => "0",
         _ => "",
     }
 }
@@ -172,41 +172,41 @@ impl NetConfig {
                 .collect(),
         };
 
-        let interface = get("ethernet.interface");
+        let interface = get("network.ethernet.interface");
         let ethernet = Ethernet {
             interface: (interface != "auto").then_some(interface),
-            fixed: (get("ethernet.mode") == "static").then(|| fixed("ethernet")),
+            fixed: (get("network.ethernet.mode") == "static").then(|| fixed("network.ethernet")),
         };
 
-        let ssid = get("wifi.ssid");
+        let ssid = get("network.wifi.ssid");
         let client = (!ssid.is_empty()).then(|| Client {
-            key_mgmt: match get("wifi.security").as_str() {
+            key_mgmt: match get("network.wifi.security").as_str() {
                 "sae" => "sae",
                 "open" => "open",
                 _ => "wpa-psk",
             }
             .to_string(),
-            hidden: get("wifi.hidden") == "1",
+            hidden: get("network.wifi.hidden") == "1",
             psk: wifi_psk.filter(|psk| !psk.is_empty()),
-            fixed: (get("wifi.ipv4") == "static").then(|| fixed("wifi")),
+            fixed: (get("network.wifi.ipv4") == "static").then(|| fixed("network.wifi")),
             ssid,
         });
 
-        let interface = get("wifi.interface");
+        let interface = get("network.wifi.interface");
         let wifi = Wifi {
             interface: if interface == "auto" {
                 "wlan0".to_string()
             } else {
                 interface
             },
-            mode: match get("wifi.mode").as_str() {
+            mode: match get("network.wifi.mode").as_str() {
                 "client" => WifiMode::Client,
                 "off" => WifiMode::Off,
                 _ => WifiMode::Hotspot,
             },
             hotspot_ssid: hotspot_ssid(node_name),
             hotspot_psk: hotspot_psk.filter(|psk| !psk.is_empty()),
-            nat: get("wifi.nat") != "0",
+            nat: get("network.wifi.nat") != "0",
             client,
         };
         NetConfig { ethernet, wifi }
@@ -249,10 +249,10 @@ pub fn value_of<'a>(
     }
 }
 
-/// The node name these settings give: `node.name` as set or defaulted, else
+/// The node name these settings give: `device.name` as set or defaulted, else
 /// the name derived from the node id.
 pub fn node_name(value: &dyn Fn(&str) -> String, derived: &str) -> String {
-    let name = value("node.name");
+    let name = value("device.name");
     if name.is_empty() {
         derived.to_string()
     } else {
@@ -404,7 +404,7 @@ fn hotspot(wifi: &Wifi) -> Keyfile {
         ));
     }
     // `shared`: NetworkManager's dnsmasq hands out 10.42.0.x and forwards
-    // DNS; the NAT, when wifi.nat allows it, is its nftables table.
+    // DNS; the NAT, when network.wifi.nat allows it, is its nftables table.
     body.push_str("\n[ipv4]\nmethod=shared\n\n[ipv6]\nmethod=disabled\n");
     Keyfile {
         name: WIFI_HOTSPOT.file_name(),
@@ -514,11 +514,11 @@ mod tests {
     fn static_ethernet_on_a_named_port() {
         let config = config(
             &[
-                ("ethernet.interface", "enp2s0"),
-                ("ethernet.mode", "static"),
-                ("ethernet.address", "192.168.1.50/24"),
-                ("ethernet.gateway", "192.168.1.1"),
-                ("ethernet.dns", "192.168.1.1,1.1.1.1"),
+                ("network.ethernet.interface", "enp2s0"),
+                ("network.ethernet.mode", "static"),
+                ("network.ethernet.address", "192.168.1.50/24"),
+                ("network.ethernet.gateway", "192.168.1.1"),
+                ("network.ethernet.dns", "192.168.1.1,1.1.1.1"),
             ],
             None,
             None,
@@ -537,10 +537,10 @@ mod tests {
     fn a_client_takes_over_from_the_hotspot() {
         let config = config(
             &[
-                ("wifi.mode", "client"),
-                ("wifi.ssid", "Office; 2"),
-                ("wifi.security", "sae"),
-                ("wifi.hidden", "1"),
+                ("network.wifi.mode", "client"),
+                ("network.wifi.ssid", "Office; 2"),
+                ("network.wifi.security", "sae"),
+                ("network.wifi.hidden", "1"),
             ],
             Some("abcdefgh23456789"),
             Some("pa\\ss word!"),
@@ -565,11 +565,11 @@ mod tests {
     fn an_open_client_and_a_static_client() {
         let files = render(&config(
             &[
-                ("wifi.mode", "client"),
-                ("wifi.ssid", "Cafe"),
-                ("wifi.security", "open"),
-                ("wifi.ipv4", "static"),
-                ("wifi.address", "10.1.0.9/24"),
+                ("network.wifi.mode", "client"),
+                ("network.wifi.ssid", "Cafe"),
+                ("network.wifi.security", "open"),
+                ("network.wifi.ipv4", "static"),
+                ("network.wifi.address", "10.1.0.9/24"),
             ],
             None,
             None,
@@ -581,7 +581,7 @@ mod tests {
 
     #[test]
     fn off_brings_up_neither() {
-        let config = config(&[("wifi.mode", "off")], None, None);
+        let config = config(&[("network.wifi.mode", "off")], None, None);
         assert_eq!(config.wifi_profile(), None);
         assert!(file(&render(&config), WIFI_HOTSPOT).contains("autoconnect=false\n"));
     }

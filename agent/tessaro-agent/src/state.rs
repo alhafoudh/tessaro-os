@@ -3,7 +3,7 @@
 //! Sparse on purpose. A key that was never set is not in the file, so it
 //! follows the image's default in `/usr/lib/tessaro-kiosk/tessaro-kiosk.env`,
 //! and a later image can still move that default. Keys are the registry's
-//! dotted names (`kiosk.url`), never env names, so a rename of an env
+//! dotted names (`browser.url`), never env names, so a rename of an env
 //! variable is a registry change and not a migration.
 //!
 //! There is no clock anywhere in here. `revision` is a counter, which is all
@@ -11,6 +11,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
+use protocol::keys;
 use serde::{Deserialize, Serialize};
 
 use crate::config::Env;
@@ -50,6 +51,48 @@ impl State {
         self.revision += 1;
         Some(pending)
     }
+
+    /// Move settings an older image saved under names that have changed
+    /// since (`keys::RENAMED`) to their new names, and rewrite the
+    /// placeholders in URL and template values that name them. No value
+    /// changes meaning, so nothing needs re-applying. Returns one line per
+    /// change for the journal; empty when there was nothing to do.
+    pub fn rename_keys(&mut self) -> Vec<String> {
+        let mut done = Vec::new();
+        for (old, new) in keys::RENAMED {
+            let Some(value) = self.settings.remove(*old) else {
+                continue;
+            };
+            if self.settings.contains_key(*new) {
+                done.push(format!("{old} dropped: {new} is set already"));
+            } else {
+                self.settings.insert(new.to_string(), value);
+                done.push(format!("{old} is now {new}"));
+            }
+        }
+        for (name, value) in self.settings.iter_mut() {
+            let template = keys::find(name)
+                .is_some_and(|key| matches!(key.kind, keys::Kind::Url | keys::Kind::Template));
+            if !template {
+                continue;
+            }
+            let renamed = keys::rename_placeholders(value);
+            if renamed != *value {
+                done.push(format!("{name}: {value} is now {renamed}"));
+                *value = renamed;
+            }
+        }
+        if let Some(pending) = &mut self.pending {
+            if let Some(new) = keys::renamed(&pending.key) {
+                done.push(format!("{} on probation is now {new}", pending.key));
+                pending.key = new.to_string();
+            }
+        }
+        if !done.is_empty() {
+            self.revision += 1;
+        }
+        done
+    }
 }
 
 /// The settings as env variables, for the keys the registry knows. A key it
@@ -60,7 +103,7 @@ pub fn overrides(settings: &BTreeMap<String, String>, log: &Log) -> Vec<(&'stati
     for (name, value) in settings {
         match protocol::keys::find(name) {
             // A custom data.* has no variable of its own; it only exists
-            // inside the expanded kiosk.url.
+            // inside the expanded browser.url.
             Some(key) if key.env.is_empty() => {}
             Some(key) => out.push((key.env, value.clone())),
             None => log.info(format!("state.json: ignoring unknown key {name}")),
@@ -69,13 +112,13 @@ pub fn overrides(settings: &BTreeMap<String, String>, log: &Log) -> Vec<(&'stati
     out
 }
 
-/// A kiosk.url template filled in, and the placeholders nothing could fill.
+/// A browser.url template filled in, and the placeholders nothing could fill.
 ///
 /// A placeholder is a setting's full key. `{data.name}` is that custom value;
 /// `{any.key}` is that setting's effective value - what is set, else the
-/// image default, else empty - and `{node.name}` falls back to
+/// image default, else empty - and `{device.name}` falls back to
 /// `derived_name`, the name the device actually answers to when none was
-/// set. A read-only key (`{net.ip}`, `{node.id}`) is whatever `live` says,
+/// set. A read-only key (`{network.ip}`, `{device.id}`) is whatever `live` says,
 /// or empty. Only a `data.*` nobody set, or a name that is no setting at all
 /// (a bare `{name}` included), counts as missing.
 pub fn expand_url(
@@ -87,9 +130,9 @@ pub fn expand_url(
     protocol::keys::expand(template, |name| resolve(name, settings, defaults, live))
 }
 
-/// The debug screen's template filled in: the same placeholders as kiosk.url,
+/// The debug screen's template filled in: the same placeholders as browser.url,
 /// with values left raw rather than percent-encoded - the page escapes them
-/// for HTML - and `{kiosk.url}` too, as the URL it expands to.
+/// for HTML - and `{browser.url}` too, as the URL it expands to.
 pub fn expand_text(
     template: &str,
     settings: &BTreeMap<String, String>,
@@ -98,7 +141,7 @@ pub fn expand_text(
 ) -> (String, Vec<String>) {
     let kiosk_url = || {
         let url = settings
-            .get("kiosk.url")
+            .get("browser.url")
             .cloned()
             .or_else(|| defaults.get("KIOSK_URL"))
             .unwrap_or_default();
@@ -107,7 +150,7 @@ pub fn expand_text(
     protocol::keys::expand_with(
         template,
         |name| match name {
-            "kiosk.url" => Some(kiosk_url()),
+            "browser.url" => Some(kiosk_url()),
             _ => resolve(name, settings, defaults, live),
         },
         str::to_string,
@@ -135,7 +178,7 @@ fn resolve(
                 .cloned()
                 .or_else(|| defaults.get(key.env))
                 .unwrap_or_default();
-            if key.name == "node.name" && value.is_empty() {
+            if key.name == "device.name" && value.is_empty() {
                 return Some(live.derived_name.clone().unwrap_or_default());
             }
             Some(value)
@@ -145,7 +188,7 @@ fn resolve(
 }
 
 /// What the device reports rather than stores: the name derived from its
-/// node id, and the read-only keys (`node.id`, `net.*`) as they are now.
+/// node id, and the read-only keys (`device.id`, `network.*`) as they are now.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Live {
     pub derived_name: Option<String>,
@@ -176,26 +219,26 @@ fn setting(settings: &BTreeMap<String, String>, defaults: &dyn Env, name: &str) 
 
 /// Is the device in maintenance mode?
 pub fn maintenance(settings: &BTreeMap<String, String>, defaults: &dyn Env) -> bool {
-    setting(settings, defaults, "maintenance.enable").as_deref() == Some("1")
+    setting(settings, defaults, "browser.maintenance.enable").as_deref() == Some("1")
 }
 
 /// Is the debug screen up? It wins over maintenance mode: the agent shows it
 /// instead of whatever `KIOSK_URL` is.
 pub fn debug_screen(settings: &BTreeMap<String, String>, defaults: &dyn Env) -> bool {
-    setting(settings, defaults, "debug.enable").as_deref() == Some("1")
+    setting(settings, defaults, "browser.debug.enable").as_deref() == Some("1")
 }
 
 /// The URL template the screen follows, and the key it came from:
-/// maintenance.url in maintenance mode, else kiosk.url - each as set, else
+/// browser.maintenance.url in maintenance mode, else browser.url - each as set, else
 /// the image default.
 pub fn shown_template(
     settings: &BTreeMap<String, String>,
     defaults: &dyn Env,
 ) -> (&'static str, String) {
     let name = if maintenance(settings, defaults) {
-        "maintenance.url"
+        "browser.maintenance.url"
     } else {
-        "kiosk.url"
+        "browser.url"
     };
     (name, setting(settings, defaults, name).unwrap_or_default())
 }
@@ -228,7 +271,7 @@ impl<'a> Effective<'a> {
         }
     }
 
-    /// The name derived from the node id, for `{node.name}` when none is set.
+    /// The name derived from the node id, for `{device.name}` when none is set.
     #[cfg(test)]
     pub fn with_derived_name(mut self, name: Option<String>) -> Self {
         self.live.derived_name = name;
@@ -259,7 +302,7 @@ impl<'a> Effective<'a> {
         maintenance(&self.settings, self.base)
     }
 
-    /// kiosk.url expanded, maintenance mode or not. The device-API grants
+    /// browser.url expanded, maintenance mode or not. The device-API grants
     /// follow this one: toggling maintenance must not rewrite the policy,
     /// which would restart the browser and take the site's grants away.
     pub fn kiosk_url(&self) -> Option<String> {
@@ -310,7 +353,7 @@ mod tests {
         ]
         .into();
 
-        let set = settings(&[("kiosk.url", "https://a.test/")]);
+        let set = settings(&[("browser.url", "https://a.test/")]);
         let effective = Effective::new(&base, &set, &log);
 
         assert_eq!(effective.get("KIOSK_URL").unwrap(), "https://a.test/");
@@ -324,7 +367,7 @@ mod tests {
         let base: HashMap<String, String> =
             [("KIOSK_URL".to_string(), "http://127.0.0.1/".to_string())].into();
         let set = settings(&[
-            ("kiosk.url", "https://{data.shop}.test/?lang={data.lang}"),
+            ("browser.url", "https://{data.shop}.test/?lang={data.lang}"),
             ("data.shop", "north"),
             ("data.lang", "sk"),
         ]);
@@ -350,8 +393,8 @@ mod tests {
         .into();
         let set = settings(&[
             (
-                "kiosk.url",
-                "https://{node.name}.test/?osk={display.osk}&scale={display.scale}&s={browser.fps_counter}",
+                "browser.url",
+                "https://{device.name}.test/?osk={screen.osk}&scale={screen.scale}&s={browser.fps_counter}",
             ),
             ("browser.fps_counter", "1"),
         ]);
@@ -365,8 +408,8 @@ mod tests {
         );
 
         let named = settings(&[
-            ("kiosk.url", "https://{node.name}.test/"),
-            ("node.name", "lobby"),
+            ("browser.url", "https://{device.name}.test/"),
+            ("device.name", "lobby"),
         ]);
         let effective =
             Effective::new(&base, &named, &log).with_derived_name(Some("brave-otter-3fa2".into()));
@@ -377,7 +420,7 @@ mod tests {
     fn only_unset_parameters_and_non_settings_are_missing() {
         let base: HashMap<String, String> = HashMap::new();
         let (_, missing) = expand_url(
-            "https://x.test/{data.store}/{store}/{no.such}/{kiosk.url}/{display.scale}/{net.ip}/{maintenance.url}",
+            "https://x.test/{data.store}/{store}/{no.such}/{browser.url}/{screen.scale}/{network.ip}/{browser.maintenance.url}",
             &BTreeMap::new(),
             &base,
             &Live::default(),
@@ -388,8 +431,8 @@ mod tests {
                 "data.store",
                 "store",
                 "no.such",
-                "kiosk.url",
-                "maintenance.url"
+                "browser.url",
+                "browser.maintenance.url"
             ]
         );
     }
@@ -407,8 +450,8 @@ mod tests {
         ]
         .into();
         let deployed = [
-            ("kiosk.url", "https://shop.test/"),
-            ("kiosk.probe_url", "https://shop.test/health"),
+            ("browser.url", "https://shop.test/"),
+            ("browser.probe_url", "https://shop.test/health"),
         ];
 
         let off = settings(&deployed);
@@ -421,7 +464,7 @@ mod tests {
         );
 
         let mut on = off.clone();
-        on.insert("maintenance.enable".into(), "1".into());
+        on.insert("browser.maintenance.enable".into(), "1".into());
         let effective = Effective::new(&base, &on, &log);
         assert!(effective.maintenance());
         assert_eq!(
@@ -432,8 +475,8 @@ mod tests {
         assert_eq!(effective.get("KIOSK_PROBE_URL").unwrap(), "");
         // What the device-API grants follow does not move.
         assert_eq!(effective.kiosk_url().unwrap(), "https://shop.test/");
-        assert_eq!(shown_template(&on, &base).0, "maintenance.url");
-        assert_eq!(shown_template(&off, &base).0, "kiosk.url");
+        assert_eq!(shown_template(&on, &base).0, "browser.maintenance.url");
+        assert_eq!(shown_template(&off, &base).0, "browser.url");
     }
 
     #[test]
@@ -442,13 +485,13 @@ mod tests {
         let base: HashMap<String, String> =
             [("KIOSK_URL".to_string(), "http://127.0.0.1/".to_string())].into();
         let set = settings(&[
-            ("maintenance.enable", "1"),
+            ("browser.maintenance.enable", "1"),
             (
-                "maintenance.url",
-                "http://127.0.0.1/maintenance.html?title={data.title}&n={node.name}",
+                "browser.maintenance.url",
+                "http://127.0.0.1/maintenance.html?title={data.title}&n={device.name}",
             ),
             ("data.title", "Back at 14:00"),
-            ("node.name", "lobby"),
+            ("device.name", "lobby"),
         ]);
 
         let effective = Effective::new(&base, &set, &log);
@@ -465,14 +508,14 @@ mod tests {
         let base: HashMap<String, String> =
             [("KIOSK_URL".to_string(), "http://127.0.0.1/".to_string())].into();
         let set = settings(&[(
-            "kiosk.url",
-            "https://menu.test/?ip={net.ip}&gw={net.gateway}&id={node.id}",
+            "browser.url",
+            "https://menu.test/?ip={network.ip}&gw={network.gateway}&id={device.id}",
         )]);
         let live = Live {
             derived_name: None,
             values: [
-                ("net.ip".to_string(), "10.0.0.20".to_string()),
-                ("node.id".to_string(), "abc".to_string()),
+                ("network.ip".to_string(), "10.0.0.20".to_string()),
+                ("device.id".to_string(), "abc".to_string()),
             ]
             .into(),
         };
@@ -484,8 +527,8 @@ mod tests {
             effective.get("KIOSK_URL").unwrap(),
             "https://menu.test/?ip=10.0.0.20&gw=&id=abc"
         );
-        assert!(Live::moves("https://x.test/?ip={net.ip}"));
-        assert!(!Live::moves("https://x.test/?n={node.name}&t={data.t}"));
+        assert!(Live::moves("https://x.test/?ip={network.ip}"));
+        assert!(!Live::moves("https://x.test/?n={device.name}&t={data.t}"));
     }
 
     #[test]
@@ -493,16 +536,16 @@ mod tests {
         let base: HashMap<String, String> =
             [("KIOSK_URL".to_string(), "http://127.0.0.1/".to_string())].into();
         let set = settings(&[
-            ("kiosk.url", "https://menu.test/?t={data.table}"),
+            ("browser.url", "https://menu.test/?t={data.table}"),
             ("data.table", "a b"),
         ]);
         let live = Live {
             derived_name: Some("brave-otter-3fa2".into()),
-            values: [("net.cidr".to_string(), "10.0.0.20/24".to_string())].into(),
+            values: [("network.cidr".to_string(), "10.0.0.20/24".to_string())].into(),
         };
 
         let (text, missing) = expand_text(
-            "{node.name}\\nip {net.cidr}\\nurl {kiosk.url}\\nt {data.table}\\n{debug.template}",
+            "{device.name}\\nip {network.cidr}\\nurl {browser.url}\\nt {data.table}\\n{browser.debug.template}",
             &set,
             &base,
             &live,
@@ -512,13 +555,13 @@ mod tests {
             text,
             "brave-otter-3fa2\\nip 10.0.0.20/24\\nurl https://menu.test/?t=a%20b\\nt a b\\n"
         );
-        assert_eq!(missing, ["debug.template"]);
+        assert_eq!(missing, ["browser.debug.template"]);
     }
 
     #[test]
     fn unknown_keys_are_named_not_fatal() {
         let log = Log::buffered(true);
-        let set = settings(&[("kiosk.url", "https://a.test/"), ("future.thing", "x")]);
+        let set = settings(&[("browser.url", "https://a.test/"), ("future.thing", "x")]);
 
         let env = overrides(&set, &log);
 
@@ -530,9 +573,9 @@ mod tests {
     fn reverting_restores_or_removes() {
         let mut state = State {
             revision: 4,
-            settings: settings(&[("display.resolution", "1280x720")]),
+            settings: settings(&[("screen.resolution", "1280x720")]),
             pending: Some(PendingChange {
-                key: "display.resolution".to_string(),
+                key: "screen.resolution".to_string(),
                 value: "1280x720".to_string(),
                 previous: None,
             }),
@@ -544,19 +587,19 @@ mod tests {
 
         state
             .settings
-            .insert("display.resolution".to_string(), "800x600".to_string());
+            .insert("screen.resolution".to_string(), "800x600".to_string());
         state.pending = Some(PendingChange {
-            key: "display.resolution".to_string(),
+            key: "screen.resolution".to_string(),
             value: "800x600".to_string(),
             previous: Some("1920x1080".to_string()),
         });
         state.revert_pending();
-        assert_eq!(state.settings["display.resolution"], "1920x1080");
+        assert_eq!(state.settings["screen.resolution"], "1920x1080");
     }
 
     #[test]
     fn an_old_file_without_newer_fields_still_parses() {
-        let state: State = serde_json::from_str(r#"{"settings":{"kiosk.url":"x"}}"#).unwrap();
+        let state: State = serde_json::from_str(r#"{"settings":{"browser.url":"x"}}"#).unwrap();
         assert_eq!(state.revision, 0);
         assert!(state.pending.is_none());
     }

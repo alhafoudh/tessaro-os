@@ -2,11 +2,11 @@
 <!--
   Shown while the device is in maintenance mode:
 
-      tessaro-ctl maintenance on        (or: set maintenance.enable=1)
-      tessaro-ctl maintenance off
+      tessaro-ctl browser maintenance on        (or: config set browser.maintenance.enable=1)
+      tessaro-ctl browser maintenance off
 
-  maintenance.url points here by default, http://127.0.0.1/maintenance.html,
-  served by the self-test's loopback nginx. kiosk.url is left as it is, so
+  browser.maintenance.url points here by default, http://127.0.0.1/maintenance.html,
+  served by the self-test's loopback nginx. browser.url is left as it is, so
   turning maintenance off goes straight back to the site.
 
   Everything is inline on purpose: maintenance is often exactly when the site
@@ -18,7 +18,7 @@
 
   From a device, with a custom value so the text is easy to change later:
 
-      tessaro-ctl set 'maintenance.url=http://127.0.0.1/maintenance.html?message={data.maintenance_message}' \
+      tessaro-ctl config set 'browser.maintenance.url=http://127.0.0.1/maintenance.html?message={data.maintenance_message}' \
           'data.maintenance_message=Back at 14:00'
 
   The placeholder is percent-encoded by the agent, so spaces and punctuation

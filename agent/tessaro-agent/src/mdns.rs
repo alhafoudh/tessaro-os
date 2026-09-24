@@ -10,7 +10,7 @@
 //! `claimed`. A client uses `fp` only as a hint: the pin is checked against
 //! the certificate on the connection, never against what a broadcast says.
 //! `claimed=0` tells the whole segment which devices can be taken - accepted
-//! and documented, with `api.mdns=off` as the answer where that matters.
+//! and documented, with `access.mdns=off` as the answer where that matters.
 
 use mdns_sd::{ServiceDaemon, ServiceInfo};
 

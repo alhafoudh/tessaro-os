@@ -37,7 +37,7 @@ openssl = "0.10"
 # up and down.
 mdns-sd = { version = "0.21", default-features = false }
 
-# Interface addresses for `tessaro-ctl net` and the read-only net.* keys:
+# Interface addresses for `tessaro-ctl network show` and the read-only network.* keys:
 # getifaddrs, which std has no wrapper for. Already in the lock through
 # mdns-sd, which uses it for the same thing.
 if-addrs = "0.15"
@@ -88,7 +88,7 @@ tokio-tungstenite = { version = "0.30", default-features = false, features = ["h
 # and polling from the lock, along with the blocking API we no longer use.
 zbus = { version = "5", default-features = false, features = ["tokio"] }
 
-# `tessaro-ctl speedtest`, against speed.cloudflare.com. The one exception to
+# `tessaro-ctl network speedtest`, against speed.cloudflare.com. The one exception to
 # "not reqwest, not rustls" above, and a deliberate one: cfspeedtest is
 # blocking reqwest on rustls/ring with webpki-roots, about 100 crates, and a
 # root store compiled in rather than the device's /etc/ssl/certs. It is fenced
@@ -99,7 +99,7 @@ zbus = { version = "5", default-features = false, features = ["tokio"] }
 cfspeedtest = "2.2.2"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 
-# NetworkManager, for `tessaro-ctl net profiles|show|wifi`: the typed reads
+# NetworkManager, for `tessaro-ctl network profiles` and `network wifi`: the typed reads
 # (devices, access points, saved profiles) and the WiFi settings builder.
 # Its writes are not used - they persist at once and know no checkpoints, so
 # nm/proxy.rs does those. The cost is that nmrs asks for zbus's default
@@ -111,7 +111,7 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 # helpers, which nothing here calls.
 nmrs = "3.5"
 
-# ICMP echo for `tessaro-ctl net ping` and the gateway check after a network
+# ICMP echo for `tessaro-ctl network ping` and the gateway check after a network
 # change, over unprivileged datagram sockets. Already in the lock.
 socket2 = { version = "0.6", features = ["all"] }
 

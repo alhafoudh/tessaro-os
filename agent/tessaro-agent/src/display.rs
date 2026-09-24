@@ -3,7 +3,7 @@
 //! `/sys/class/drm/card0-HDMI-A-1/modes` lists every mode the connector's
 //! EDID offers, one `WIDTHxHEIGHT` per line (repeated once per refresh rate),
 //! preferred first. That list is what makes a resolution change safe to
-//! offer at all: `display.resolution` only accepts a mode some connected
+//! offer at all: `screen.resolution` only accepts a mode some connected
 //! display actually listed, so a typo cannot drive a panel out of range.
 //! `tessaro-weston-config` checks the same list again before it writes a
 //! `mode=` line, and the change still reverts unless confirmed.

@@ -1,9 +1,9 @@
 //! NetworkManager: the four profiles the device manages, and what
-//! `tessaro-ctl net profiles|show|wifi|wifi scan` read.
+//! `tessaro-ctl network profiles list|show` and `network wifi status|scan` read.
 //!
 //! * **The profiles** are rendered from the settings (`profiles.rs`) as
 //!   keyfiles under `/run/NetworkManager/system-connections`, and a change to
-//!   `ethernet.*`, `wifi.*` or `node.name` switches them as one transaction
+//!   `network.ethernet.*`, `network.wifi.*` or `device.name` switches them as one transaction
 //!   (`txn.rs`) the device keeps or rolls back by itself, before the setting
 //!   is saved at all. Profiles made by hand are listed and never touched.
 //! * **Reading** goes through nmrs: saved profiles, access points, WiFi
@@ -191,7 +191,7 @@ impl Network {
         match named.as_slice() {
             [one] => Ok((*one).clone()),
             [] => Err(format!(
-                "no profile named {wanted}; `tessaro-ctl net profiles` lists them"
+                "no profile named {wanted}; `tessaro-ctl network profiles list` lists them"
             )),
             several => Err(format!(
                 "{} profiles are named {wanted}; name one by uuid: {}",
@@ -319,7 +319,7 @@ impl Network {
 
     /// The security of `ssid` as a scan of `interface` sees it, scanning
     /// again once when it is not in the last results: what `net wifi join`
-    /// stores as `wifi.security` when it is not given.
+    /// stores as `network.wifi.security` when it is not given.
     pub async fn security_of_ssid(
         &self,
         interface: &str,

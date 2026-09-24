@@ -15,7 +15,8 @@
 //!    keys and root password cleared - the fresh-install state. The marker is removed
 //!    afterwards; the command-line flag is meant to be typed at the boot
 //!    loader for one boot, not written into its config.
-//! 2. **Migration** of a leftover `/etc/default/tessaro-kiosk`, once.
+//! 2. **Migration** of a leftover `/etc/default/tessaro-kiosk`, once, and of
+//!    settings saved under a key's old name (`keys::RENAMED`).
 //! 3. **Probation**: a guarded change still pending at boot was never
 //!    confirmed - the device was rebooted instead - so it reverts.
 //! 4. **The claim invariant**: unclaimed means an empty root password, no
@@ -63,6 +64,7 @@ pub fn run(env: &dyn Env, log: &Log) {
     }
 
     migrate(&paths, &state_store, log);
+    rename_keys(&state_store, log);
 
     match state_store.update(log, |state: &mut State| Ok(state.revert_pending())) {
         Ok(Some(pending)) => log.info(format!(
@@ -238,6 +240,23 @@ fn migrate(paths: &Paths, state_store: &Store, log: &Log) {
             "cannot rename {}: {err}",
             paths.legacy_override.display()
         ));
+    }
+}
+
+/// Settings saved under a key's old name, moved to the new one. Read first,
+/// so a device with nothing to rename never rewrites its state.json.
+fn rename_keys(state_store: &Store, log: &Log) {
+    let mut state: State = state_store.read(log);
+    if state.rename_keys().is_empty() {
+        return;
+    }
+    match state_store.update(log, |state: &mut State| Ok(state.rename_keys())) {
+        Ok(done) => {
+            for line in done {
+                log.info(format!("renamed setting: {line}"));
+            }
+        }
+        Err(err) => log.info(format!("could not rename old settings: {err}")),
     }
 }
 
@@ -437,7 +456,7 @@ mod tests {
             .update(&log, |state: &mut State| {
                 state
                     .settings
-                    .insert("kiosk.url".into(), "https://a.test/".into());
+                    .insert("browser.url".into(), "https://a.test/".into());
                 Ok(())
             })
             .unwrap();
@@ -465,7 +484,7 @@ mod tests {
         let log = Log::buffered(true);
         Store::new(&paths.state_dir, state::FILE)
             .update(&log, |state: &mut State| {
-                state.settings.insert("display.osk".into(), "never".into());
+                state.settings.insert("screen.osk".into(), "never".into());
                 Ok(())
             })
             .unwrap();
@@ -485,9 +504,9 @@ mod tests {
             .update(&log, |state: &mut State| {
                 state
                     .settings
-                    .insert("display.resolution".into(), "640x480".into());
+                    .insert("screen.resolution".into(), "640x480".into());
                 state.pending = Some(state::PendingChange {
-                    key: "display.resolution".into(),
+                    key: "screen.resolution".into(),
                     value: "640x480".into(),
                     previous: None,
                 });
@@ -499,7 +518,7 @@ mod tests {
 
         let state = device.state();
         assert!(state.pending.is_none());
-        assert!(!state.settings.contains_key("display.resolution"));
+        assert!(!state.settings.contains_key("screen.resolution"));
     }
 
     #[test]
@@ -517,12 +536,123 @@ mod tests {
         run(&device.env, &log);
 
         let state = device.state();
-        assert_eq!(state.settings["kiosk.url"], "https://shop.test/");
-        assert_eq!(state.settings["display.scale"], "2");
-        assert!(!state.settings.contains_key("display.osk"));
+        assert_eq!(state.settings["browser.url"], "https://shop.test/");
+        assert_eq!(state.settings["screen.scale"], "2");
+        assert!(!state.settings.contains_key("screen.osk"));
         assert!(!paths.legacy_override.exists());
         assert!(paths.legacy_override.with_extension("migrated").exists());
         assert!(log.lines().iter().any(|line| line.contains("KIOSK_NOPE")));
-        assert!(log.lines().iter().any(|line| line.contains("display.osk")));
+        assert!(log.lines().iter().any(|line| line.contains("screen.osk")));
+    }
+
+    #[test]
+    fn settings_saved_under_old_names_move_to_the_new_ones_once() {
+        let mut device = Device::new();
+        let nm = device._dir.path().join("nm");
+        device
+            .env
+            .insert("KIOSK_NM_RUN_DIR".into(), nm.display().to_string());
+        let paths = device.paths();
+        let log = Log::buffered(true);
+        Store::new(&paths.state_dir, state::FILE)
+            .update(&log, |state: &mut State| {
+                for (key, value) in [
+                    ("kiosk.url", "https://{node.name}.shop.test/?ip={net.ip}"),
+                    ("debug.template", "{node.name}\\n{kiosk.url}"),
+                    ("display.osk", "never"),
+                    ("ethernet.mode", "static"),
+                    ("ethernet.address", "192.168.1.50/24"),
+                    ("ethernet.gateway", "192.168.1.1"),
+                    ("node.name", "lobby"),
+                    ("screen.scale", "2"),
+                    ("display.scale", "1"),
+                    ("data.table", "{node.name}"),
+                ] {
+                    state.settings.insert(key.into(), value.into());
+                }
+                Ok(())
+            })
+            .unwrap();
+
+        run(&device.env, &log);
+
+        let state = device.state();
+        let settings: Vec<(&str, &str)> = state
+            .settings
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+        assert_eq!(
+            settings,
+            [
+                ("browser.debug.template", "{device.name}\\n{browser.url}"),
+                (
+                    "browser.url",
+                    "https://{device.name}.shop.test/?ip={network.ip}"
+                ),
+                // A custom value is not a template: its text is its own.
+                ("data.table", "{node.name}"),
+                ("device.name", "lobby"),
+                ("network.ethernet.address", "192.168.1.50/24"),
+                ("network.ethernet.gateway", "192.168.1.1"),
+                ("network.ethernet.mode", "static"),
+                ("screen.osk", "never"),
+                // Set under both names: the new one wins.
+                ("screen.scale", "2"),
+            ]
+        );
+        let lines = log.lines();
+        assert!(lines
+            .iter()
+            .any(|line| line.contains("renamed setting: kiosk.url is now browser.url")));
+        assert!(lines
+            .iter()
+            .any(|line| line.contains("display.scale dropped: screen.scale is set already")));
+        // The same static profile as before the rename.
+        assert!(lines
+            .iter()
+            .any(|line| line.contains("ethernet tessaro-ethernet-static")));
+        let keyfiles: String = fs::read_dir(&nm)
+            .unwrap()
+            .map(|entry| fs::read_to_string(entry.unwrap().path()).unwrap())
+            .collect();
+        assert!(keyfiles.contains("192.168.1.50/24"), "{keyfiles}");
+
+        // Nothing left to do: the second boot does not touch the file.
+        let revision = state.revision;
+        let again = Log::buffered(true);
+        run(&device.env, &again);
+        assert_eq!(device.state().revision, revision);
+        assert!(!again
+            .lines()
+            .iter()
+            .any(|line| line.contains("renamed setting")));
+    }
+
+    #[test]
+    fn a_pending_change_under_an_old_name_still_reverts() {
+        let device = Device::new();
+        let paths = device.paths();
+        let log = Log::buffered(true);
+        Store::new(&paths.state_dir, state::FILE)
+            .update(&log, |state: &mut State| {
+                state
+                    .settings
+                    .insert("display.resolution".into(), "640x480".into());
+                state.pending = Some(state::PendingChange {
+                    key: "display.resolution".into(),
+                    value: "640x480".into(),
+                    previous: Some("1920x1080".into()),
+                });
+                Ok(())
+            })
+            .unwrap();
+
+        run(&device.env, &log);
+
+        let state = device.state();
+        assert_eq!(state.settings["screen.resolution"], "1920x1080");
+        assert!(!state.settings.contains_key("display.resolution"));
+        assert!(state.pending.is_none());
     }
 }
