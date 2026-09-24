@@ -50,6 +50,7 @@ mod shadow;
 mod speedtest;
 mod ssh;
 mod state;
+mod storage;
 mod store;
 mod systemd;
 mod updates;

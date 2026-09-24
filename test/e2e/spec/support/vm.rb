@@ -36,8 +36,14 @@ module AgentE2E
   # Boots the image with runqemu inside the kas container, sharing the host's
   # network namespace so runqemu's slirp forwards are the host's ports too.
   class Vm
-    def initialize(lane)
+    # `extra_disk` bytes past the end of the image, for a lane that needs a
+    # disk larger than the image (`extra_disk:` on its describe). The VM then
+    # boots a sparse copy of the image, grown by that much, instead of the
+    # image itself: the update lanes send that image, so it must stay as
+    # built.
+    def initialize(lane, extra_disk: nil)
       @lane = lane
+      @extra_disk = extra_disk
       @log = File.join(LOG_DIR, "#{lane}.qemu.log")
     end
 
@@ -53,7 +59,7 @@ module AgentE2E
       accel = File.exist?("/dev/kvm") ? "kvm" : ""
       # The conf comes after the image: runqemu derives a conf from the image
       # name, and only a later .qemuboot.conf argument replaces that.
-      inner = %(runqemu $WIC #{worker_qemuboot} ovmf slirp snapshot #{accel} #{display} serialstdio ) +
+      inner = %(runqemu #{disk} #{worker_qemuboot} ovmf slirp snapshot #{accel} #{display} serialstdio ) +
               %(qemuparams='#{sound_cards}')
       command = %(kas-container --runtime-args "#{kvm} #{gpu} --network=host" shell $KAS_CONFIG -c "#{inner}")
       root = AgentE2E.vm_root
@@ -98,9 +104,29 @@ module AgentE2E
       Process.wait(@pid)
     rescue Errno::ESRCH, Errno::ECHILD
       nil
+    ensure
+      FileUtils.rm_f(@grown) if @grown
     end
 
     private
+
+    # The disk runqemu boots, relative to the build dir like $WIC: the image,
+    # or this worker's grown copy of it. runqemu only takes an image whose
+    # name has `.rootfs.` or `-image-` in it, and derives its conf from the
+    # name with `.rootfs` dropped, which here is this worker's own.
+    def disk
+      return "$WIC" unless @extra_disk
+
+      name = "tessaro-os-qemux86-64.e2e-worker-#{Ports.worker}.rootfs.wic"
+      @grown = File.join(DEPLOY_DIR, name)
+      AgentE2E.step("copy the image with #{@extra_disk >> 20} MiB more disk after it")
+      unless system("cp", "--sparse=always", IMAGE, @grown)
+        raise Failure, "copying #{IMAGE} to #{@grown} failed"
+      end
+
+      File.truncate(@grown, File.size(IMAGE) + @extra_disk)
+      "tmp/deploy/images/qemux86-64/#{name}"
+    end
 
     # Reaps the process once, and remembers that it did.
     def exited?

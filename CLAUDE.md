@@ -115,6 +115,8 @@ same thing. Keep to these rules when adding a command or a setting:
   * `config`: the settings registry. `keys`, `get`, `set`, `unset`.
   * `network`: the device's network link. Addresses, interfaces, profiles,
     WiFi, `ping` from the device, speed test.
+  * `storage`: the disk the device runs from. Partitions, free space,
+    growing `/data`.
   * `screen`: the physical display. Screenshot, modes, confirming a mode.
   * `browser`: what the browser shows. Navigate, maintenance, debug screen.
   * `audio`: sound. Which output plays and which input records, volume,
@@ -585,10 +587,15 @@ the host: the sound server running as weston, the test tone moving between
 the cards with nothing restarted, volume and mute reaching PipeWire and put
 back after an agent restart, a kind that is not plugged in falling back to
 auto, Chromium's Web Audio playing through PipeWire, and the microphone
-granted to the self-test page. And, each on a VM of its own because each reboots it, image
+granted to the self-test page. On a VM whose disk is larger than the image,
+`storage show` reporting the space past `/data` and `storage grow` giving it
+to `/data` online. And, each on a VM of its own because each reboots it, image
 updates of the image it booted from: damaged staging refused at boot with
 nothing written, an update that keeps the settings, one with `--wipe-data`,
-and one with `--repartition` that rewrites the whole disk from RAM. About
+and one with `--repartition` that rewrites the whole disk from RAM; and a
+grown `/data` that mounts again at the next boot. A lane gets the larger
+disk with `extra_disk:` on its describe (`spec/support/vm.rb`), which boots
+a grown sparse copy of the image and leaves the image itself as built. About
 twelve minutes with three VMs at a time, twenty with one. Exits 1 on a
 failing case, printing the journal lines it saw under the failure, and 2
 when it cannot start at all (no image).
@@ -1151,8 +1158,9 @@ kiosk origin, Weston restarts - taking the browser and agent with it - for a
   `network.*` keys - `network.ip`, `network.netmask`, `network.cidr`,
   `network.gateway`, `network.dns`, `network.interface`, `network.interfaces`,
   `network.mac`, `network.hostname`, `network.wifi.hotspot_ssid`, and every
-  address as `network.ipv4`/`network.ipv6` (comma separated) - are listed by `config keys`, read by `config get`, usable as
-  placeholders, and refused by `config set`. They come straight from the kernel
+  address as `network.ipv4`/`network.ipv6` (comma separated) - and the
+  `storage.*` keys (see **Storage**) are listed by `config keys`, read by `config get`, usable as
+  placeholders, and refused by `config set`. The network ones come straight from the kernel
   (`agent/tessaro-agent/src/net.rs`: `/sys/class/net`, `getifaddrs`,
   `/proc/net/route`, and resolved's own `/run/systemd/resolve/resolv.conf`,
   since `/etc/resolv.conf` is its 127.0.0.53 stub), not from NetworkManager,
@@ -1669,8 +1677,8 @@ disk** below.
    own (`manifest.json`, with the upload's own SHA-256). Nothing of the image
    is kept but the kernel, copied out of a loop mount of the image's boot
    partition, staged sparse in `boot.img` for as long as that takes. The
-   upload itself stays: it is what gets written. `/data` and swap in the
-   image are never decompressed. ~734 MB of the 4096M root partition was
+   upload itself stays: it is what gets written. `/data` in the image is
+   never decompressed. ~734 MB of the 4096M root partition was
    mapped on qemu when last measured.
 3. **Commit** writes `pending` and reboots.
 4. **Apply**, in the initramfs (`/init.d/80-tessaro_update`, before
@@ -1706,8 +1714,8 @@ Things to know:
 * **Every identifier the rootfs names is pinned in the x86 wks files, and
   that is load-bearing.** wic makes new ones on every build otherwise: the
   PARTUUIDs (`--uuid`) go into grub.cfg's `root=`, and the `/boot` vfat
-  serial and the swap UUID (`--fsuuid`) into the rootfs's `/etc/fstab` as
-  `UUID=` lines. The partition table and the ESP's filesystem are never
+  serial (`--fsuuid`) into the rootfs's `/etc/fstab` as a `UUID=` line. The
+  partition table and the ESP's filesystem are never
   rewritten, so an unpinned new rootfs would name another build's `/boot` and
   fail `local-fs.target`. The pins differ per machine, which makes the layout
   check a machine check too. qemux86-64 now uses our own copy of Moonforge's
@@ -1751,7 +1759,7 @@ Things to know:
 **`update send --repartition` (`mise run image:update --repartition NAME`) is
 `image:flash` over the network**, for a device whose disk layout is not the
 image's - the partition sizes changed, or the pins did. The whole image is
-written from the partition table on: boot, root, an empty `/data` and swap,
+written from the partition table on: boot, root and an empty `/data`,
 the bmap's mapped blocks only, like bmaptool. It implies `--wipe-data`, so the
 device comes back unclaimed with a new identity, and `tessaro-ctl` forgets
 it. The upload, the dry run (over the whole image this time, `/data`
@@ -1793,9 +1801,61 @@ root update's; what differs is the initramfs (`apply_disk` in
   the disk**, and `/data` stays at `IMAGE_DATA_MIN_SIZE` - both exactly as
   after `image:flash` with bmaptool, which does not relocate or grow anything
   either. The kernel logs a GPT warning about the backup header and boots.
+  `tessaro-ctl storage grow` fixes both afterwards - see **Storage**. A
+  device whose `/data` was grown gets the image's size back, empty.
 * **It needs the new code on the device first.** The initramfs doing the
   work is the running image's. A device on an image older than this refuses
   `--repartition` as a layout mismatch, and needs one physical reflash.
+
+## Storage
+
+**`/data` is the last partition on every machine, and it gets the rest of
+the disk only on command.** Every image carries it at `IMAGE_DATA_MIN_SIZE`,
+and `image:flash` and `update send --repartition` leave it at that size
+whatever the card or disk holds. `tessaro-ctl storage show` reports the
+space past it as unallocated (in `WARN`, with the command to run), and
+`tessaro-ctl storage grow` gives it to `/data` on the running device: no
+reboot, `/data` stays mounted, the kiosk keeps running. `storage grow
+--check` prints the plan and changes nothing; `--yes` skips the question.
+`storage partitions` and `storage usage` list the partitions and every
+mounted filesystem. The logic is `agent/tessaro-agent/src/storage.rs`; the
+client is `agent/tessaro-ctl/src/storage.rs`.
+
+* **The grow is online, and each step is safe to cut.** GPT only, `sfdisk
+  --relocate gpt-bak-std` moves the backup header to the real end of the disk.
+  `sfdisk -N 3` with `,+` moves the end of partition 3 there (clamped at 2 TiB
+  on MBR). `partx -u -n 3` hands the kernel the new size through BLKPG, and
+  `resize2fs` grows ext4 online. `BLKRRPART` (`fsutil::reread_partitions`,
+  what the initramfs uses) is refused on a disk with a mounted partition, which
+  is why the kernel is told through `partx` instead. The partition write is
+  one table write, and the kernel journals an online resize, so a power cut
+  or an agent restart in between leaves a consistent disk.
+* **The plan is made from the disk every time**, from sysfs and the ext4
+  superblock, never remembered. The partition step runs when the space after
+  `/data` is at least `GROW_MIN` (64 MiB), and the filesystem step when the
+  filesystem is that much smaller than its partition. So a grow cut short
+  after the partition step is finished by running it again, and a second grow
+  on a grown disk says there is nothing to do.
+* **Swap is gone from the x86 layouts** so that `/data` is last. It was a
+  44M partition after `/data`, useless next to Chromium, and it is what made
+  a grow impossible. A device still on that layout is refused with the
+  reason; one reflash or `--repartition` gets it onto the new one.
+* **A grown `/data` changes nothing for updates.** The root update's layout
+  check compares partitions 1 and 2 only, and `--wipe-data` re-creates the
+  filesystem on the partition that is there, so it keeps the grown size.
+* **It runs like the speed test**: on a `spawn_blocking` thread that streams
+  a `StorageGrowEvent` per step, under a 10 minute deadline, one at a time.
+  The start, each step and `storage: grew /data from A to B` go to the
+  journal at info.
+* **`sfdisk`, `partx` and `resize2fs` are `RDEPENDS` of `tessaro-kiosk`.**
+  Nothing else in the image carried them.
+* **The `storage.*` read-only keys never move a template.** `storage.size`,
+  `.unallocated`, `.data_size`, `.data_free`, `.data_used` and `.root_free`
+  work as placeholders, and the default debug template shows `/data`'s free
+  space. `state::Live::moves` skips them: free space changes with every write
+  to `/data`, and following it would re-render and restart onto each change.
+  The debug screen re-renders every 5s anyway. `device status` has a `data`
+  row with the same numbers.
 
 ## Networking
 

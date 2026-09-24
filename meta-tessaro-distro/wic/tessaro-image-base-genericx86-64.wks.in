@@ -4,6 +4,10 @@
 # qemux86-64 one, so /data is the third partition on both x86 targets; it is
 # mounted by its "data" label (OVERLAYFS_ETC_DEVICE in kas/common/tessaro.yml).
 #
+# /data is also the last partition. There is no swap partition after it, so
+# `tessaro-ctl storage grow` can extend it over whatever the disk has past
+# the image.
+#
 # GPT plus an ESP, so this boots on UEFI firmware only. genericx86-64 declares
 # the pcbios MACHINE_FEATURE, but no legacy boot sector is installed here.
 #
@@ -26,8 +30,8 @@
 # In-place updates (tessaro-ctl update) also need:
 #
 # * Every identifier the root filesystem names is fixed: the PARTUUIDs with
-#   --uuid (grub.cfg's root=), and the /boot vfat serial and the swap UUID
-#   with --fsuuid (the UUID= lines in fstab). Without them wic makes new ones
+#   --uuid (grub.cfg's root=), and the /boot vfat serial with --fsuuid (the
+#   UUID= line in fstab). Without them wic makes new ones
 #   on every build, and an update replaces the root filesystem - fstab
 #   included - but never the partition table or the ESP's filesystem, so a
 #   new rootfs would name another build's /boot and fail to mount it. They are
@@ -45,6 +49,5 @@
 part /boot --source bootimg-efi --sourceparams="loader=${EFI_PROVIDER}" --ondisk sda --label boot --part-type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B --active --align 1024 --use-uuid --uuid b3d3f14e-50a1-4e40-8f3a-923193673604 --fsuuid 0x37CBDAD6 --fixed-size ${TESSARO_ESP_SIZE}
 part / --source rootfs --ondisk sda --fstype=ext4 --label platform --align 1024 --use-uuid --uuid 1522c8e6-a2fd-49a9-a9c5-4f3a5e7c5eaf --fixed-size ${TESSARO_ROOTFS_SIZE}
 part /data --ondisk sda --fstype=ext4 --size "${IMAGE_DATA_MIN_SIZE}" --label data --use-label --align 1024 --uuid 5ae264f5-44ea-4f3b-a2d9-f8817aaebd8f
-part swap --ondisk sda --size 44 --label swap1 --fstype=swap --use-uuid --uuid 547f4b7d-3dec-4189-b3aa-af0627ffc768 --fsuuid abd3a775-91f9-4fdd-b7a6-315aa7891cdb
 
 bootloader --ptable gpt --timeout=5 --append="rootwait rootfstype=ext4 console=ttyS0,115200 console=tty0"

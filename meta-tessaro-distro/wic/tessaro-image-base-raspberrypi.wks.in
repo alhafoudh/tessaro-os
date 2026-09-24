@@ -18,6 +18,9 @@
 # one: cmdline.txt says root=/dev/mmcblk0p2 and the fstab wic writes uses
 # device nodes. The updater compares the partitions' geometry instead.
 #
+# /data is the last partition, so `tessaro-ctl storage grow` can extend it
+# over the rest of a larger card.
+#
 # Changing the partitions is a new disk layout: every card needs one full
 # reflash before it can take updates again, and the updater says so.
 

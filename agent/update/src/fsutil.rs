@@ -57,6 +57,22 @@ pub fn remove_if_exists(path: &Path) -> io::Result<()> {
 
 /// Bytes a non-root writer could still put on the filesystem holding `path`.
 pub fn available(path: &Path) -> io::Result<u64> {
+    usage(path).map(|usage| usage.available)
+}
+
+/// The filesystem holding `path`, in bytes, as `df` reports it: `size` is
+/// what it holds after its own metadata, `free` includes root's reserve,
+/// `available` does not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Usage {
+    pub size: u64,
+    pub free: u64,
+    pub available: u64,
+}
+
+// The statvfs fields are u64 on the 64-bit targets, 32-bit on others.
+#[allow(clippy::unnecessary_cast)]
+pub fn usage(path: &Path) -> io::Result<Usage> {
     use std::ffi::CString;
     use std::os::unix::ffi::OsStrExt;
 
@@ -70,9 +86,12 @@ pub fn available(path: &Path) -> io::Result<u64> {
     }
     // SAFETY: statvfs succeeded, so it filled the struct.
     let stat = unsafe { stat.assume_init() };
-    // Both are u64 on the 64-bit targets, 32-bit on others.
-    #[allow(clippy::unnecessary_cast)]
-    Ok(stat.f_bavail as u64 * stat.f_frsize as u64)
+    let block = stat.f_frsize as u64;
+    Ok(Usage {
+        size: stat.f_blocks as u64 * block,
+        free: stat.f_bfree as u64 * block,
+        available: stat.f_bavail as u64 * block,
+    })
 }
 
 /// `BLKRRPART` on `disk`: the kernel drops its partitions and reads the

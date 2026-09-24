@@ -304,6 +304,32 @@ async fn serve<S>(
             continue;
         }
 
+        if let Command::StorageGrow { check } = &request.command {
+            let steps = match control.storage_grow(&caller, *check) {
+                Ok(steps) => steps,
+                Err(error) => {
+                    if send(&mut write, &Frame::Error { id, error }).await.is_err() {
+                        return;
+                    }
+                    continue;
+                }
+            };
+            if stream_steps(
+                &mut write,
+                id,
+                steps,
+                "growing /data",
+                crate::storage::TOTAL,
+                shutdown.clone(),
+            )
+            .await // naked: stream_steps bounds the whole grow with storage::TOTAL
+            .is_err()
+            {
+                return;
+            }
+            continue;
+        }
+
         if let Command::NetPing {
             host,
             count,

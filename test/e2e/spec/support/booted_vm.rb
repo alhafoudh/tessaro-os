@@ -50,7 +50,7 @@ module AgentE2E
         raise Failure, "E2E_REUSE=1 needs a single worker (E2E_JOBS=1)" if Ports.parallel?
         raise Failure, "no guest on 127.0.0.1:#{Ports.ssh} to reuse" unless @guest.reachable?
       else
-        @vm = Vm.new(@lane)
+        @vm = Vm.new(@lane, extra_disk: self.class.metadata[:extra_disk])
         @vm.start
         @vm.wait_until_up(@guest)
       end

@@ -59,6 +59,15 @@ pub fn link_state(state: &str) -> Style {
     }
 }
 
+/// How full a filesystem is, in percent.
+pub fn usage_level(percent: u64) -> Style {
+    match percent {
+        0..80 => OK,
+        80..95 => WARN,
+        _ => BAD,
+    }
+}
+
 pub fn yes_no(yes: bool) -> String {
     if yes {
         paint(OK, "yes")
@@ -79,6 +88,13 @@ mod tests {
             "not answering"
         );
         assert_eq!(strip_str(&paint(SECRET, "hunter2")).to_string(), "hunter2");
+    }
+
+    #[test]
+    fn fuller_is_louder() {
+        assert_eq!(usage_level(10), OK);
+        assert_eq!(usage_level(85), WARN);
+        assert_eq!(usage_level(99), BAD);
     }
 
     #[test]

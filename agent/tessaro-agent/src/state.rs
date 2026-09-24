@@ -197,12 +197,16 @@ pub struct Live {
 
 impl Live {
     /// Does this template use anything that can change without a `set` -
-    /// an address, a gateway?
+    /// an address, a gateway? Not `storage.*`: free space changes all the
+    /// time, and following it would re-render and restart onto every write
+    /// to `/data`. A URL that shows it is filled in at the next restart; the
+    /// debug screen re-renders on its own anyway.
     pub fn moves(template: &str) -> bool {
         protocol::keys::placeholders(template).iter().any(|name| {
             matches!(
                 protocol::keys::placeholder(name),
-                protocol::keys::Placeholder::Key(key) if key.kind == protocol::keys::Kind::ReadOnly
+                protocol::keys::Placeholder::Key(key)
+                    if key.kind == protocol::keys::Kind::ReadOnly && !key.name.starts_with("storage.")
             )
         })
     }
@@ -529,6 +533,7 @@ mod tests {
         );
         assert!(Live::moves("https://x.test/?ip={network.ip}"));
         assert!(!Live::moves("https://x.test/?n={device.name}&t={data.t}"));
+        assert!(!Live::moves("https://x.test/?free={storage.data_free}"));
     }
 
     #[test]

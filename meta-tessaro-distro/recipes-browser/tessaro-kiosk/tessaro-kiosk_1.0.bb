@@ -194,8 +194,14 @@ CONFFILES:${PN} += " \
 # the Moonforge podman layer, which this image no longer includes, and without
 # it every https probe fails certificate verification and the device sits on
 # the offline page forever.
+#
+# sfdisk, partx and resize2fs are what `tessaro-ctl storage grow` runs to give
+# /data the rest of the disk; none of them is in the image otherwise.
 RDEPENDS:${PN} = " \
     chromium-ozone-wayland \
     ca-certificates \
     dbus \
+    util-linux-sfdisk \
+    util-linux-partx \
+    e2fsprogs-resize2fs \
 "

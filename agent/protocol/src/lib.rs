@@ -423,6 +423,16 @@ pub enum Command {
         #[serde(default)]
         input: bool,
     },
+    /// The disk the device runs from: its partitions and how full each
+    /// filesystem is. Read-only.
+    Storage,
+    /// Grow `/data` over the unallocated space at the end of the disk, while
+    /// it stays mounted. A stream of `StorageGrowEvent`s: the plan first,
+    /// then, unless `check`, one per step and the result.
+    StorageGrow {
+        #[serde(default)]
+        check: bool,
+    },
 }
 
 impl Command {
@@ -478,6 +488,9 @@ pub struct Status {
     /// predates audio.
     #[serde(default)]
     pub audio: Option<AudioStatus>,
+    /// How full `/data` is. Defaulted the same way.
+    #[serde(default)]
+    pub data: Option<FsUsage>,
 }
 
 /// One output or input as PipeWire has it.
@@ -730,6 +743,64 @@ pub struct Net {
     pub public_ip: Option<String>,
 }
 
+/// One partition of the disk the device runs from. Sizes and offsets in
+/// bytes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Partition {
+    pub number: u32,
+    /// The kernel's name, `sda3` or `mmcblk0p3`.
+    pub name: String,
+    pub start: u64,
+    pub size: u64,
+    /// The filesystem label, `data` for /data.
+    pub label: Option<String>,
+    /// Only for filesystems that are mounted.
+    pub fstype: Option<String>,
+    pub mountpoint: Option<String>,
+}
+
+/// How full one mounted filesystem is, in bytes. `available` is what a
+/// process that is not root can still write.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FsUsage {
+    pub mountpoint: String,
+    pub source: String,
+    pub fstype: String,
+    pub size: u64,
+    pub used: u64,
+    pub available: u64,
+}
+
+impl FsUsage {
+    /// Percent of the space a writer can see that is used, as `df` counts it.
+    pub fn used_percent(&self) -> u64 {
+        let seen = self.used + self.available;
+        if seen == 0 {
+            0
+        } else {
+            (self.used * 100).div_ceil(seen)
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Storage {
+    /// The disk holding root, `sda` or `mmcblk0`.
+    pub device: String,
+    pub size: u64,
+    /// `gpt` or `dos`.
+    pub table: String,
+    pub model: Option<String>,
+    /// Space after the last partition that `storage-grow` would give to
+    /// `/data`; 0 when there is too little to bother (`GROW_MIN`).
+    pub unallocated: u64,
+    pub partitions: Vec<Partition>,
+    pub filesystems: Vec<FsUsage>,
+}
+
+/// Less unallocated space than this is not worth growing into.
+pub const GROW_MIN: u64 = 64 << 20;
+
 /// A NetworkManager profile, as `net profiles` lists it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NetProfile {
@@ -952,6 +1023,20 @@ pub const SPEEDTEST_DEFAULT_TESTS: u32 = 10;
 /// 100 MB of RAM on a device that may have 1 GB for Chromium as well.
 pub const SPEEDTEST_UPLOAD_MAX: u64 = 25_000_000;
 
+/// `7.8 GB`, `512.0 MB`, `4.0 kB`: decimal units, one decimal, like `df -H`.
+pub fn size_label(bytes: u64) -> String {
+    let value = bytes as f64;
+    if bytes >= 1_000_000_000 {
+        format!("{:.1} GB", value / 1e9)
+    } else if bytes >= 1_000_000 {
+        format!("{:.1} MB", value / 1e6)
+    } else if bytes >= 1_000 {
+        format!("{:.1} kB", value / 1e3)
+    } else {
+        format!("{bytes} B")
+    }
+}
+
 /// `100k`, `1m`, ... the way `tessaro-ctl network speedtest --max-size` spells them.
 pub fn speedtest_size_label(size: u64) -> String {
     if size >= 1_000_000 {
@@ -1003,6 +1088,26 @@ pub enum SpeedtestEvent {
         upload_mbit: Option<f64>,
         latency_ms: Option<f64>,
     },
+}
+
+/// One step of `storage-grow`, in the order they arrive. Sizes in bytes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "phase", rename_all = "kebab-case")]
+pub enum StorageGrowEvent {
+    /// What would change. Equal sizes mean that part is already done; both
+    /// equal, that there is nothing to grow.
+    Plan {
+        /// The partition, `/dev/sda3`.
+        partition: String,
+        partition_from: u64,
+        partition_to: u64,
+        filesystem_from: u64,
+        filesystem_to: u64,
+    },
+    /// About to run `command`.
+    Step { what: String, command: String },
+    /// The sizes afterwards, read back from the kernel and the filesystem.
+    Grown { partition: u64, filesystem: u64 },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1226,6 +1331,29 @@ mod tests {
                 tests: None
             }
         );
+    }
+
+    #[test]
+    fn sizes_are_labelled_in_decimal_units() {
+        assert_eq!(size_label(512), "512 B");
+        assert_eq!(size_label(4_096), "4.1 kB");
+        assert_eq!(size_label(4_294_967_296), "4.3 GB");
+        assert_eq!(size_label(0), "0 B");
+    }
+
+    #[test]
+    fn used_percent_rounds_up_like_df() {
+        let fs = |used, available| FsUsage {
+            mountpoint: "/data".into(),
+            source: "/dev/sda3".into(),
+            fstype: "ext4".into(),
+            size: used + available,
+            used,
+            available,
+        };
+        assert_eq!(fs(1, 99).used_percent(), 1);
+        assert_eq!(fs(1, 998).used_percent(), 1);
+        assert_eq!(fs(0, 0).used_percent(), 0);
     }
 
     #[test]

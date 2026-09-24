@@ -342,6 +342,15 @@ pub static KEYS: &[Key] = &[
     live(PUBLIC_IP, "The address the internet sees, from Cloudflare's trace; looked up by `network show` and `config get network.public_ip`, and every 5 minutes while browser.url uses it."),
     live("network.interfaces", "Every interface but loopback with its state and addresses, as eth0 up 10.0.0.20/24; wlan0 down."),
     live("network.wifi.hotspot_ssid", "The hotspot's network name, tessaro-NAME. Open while the device is unclaimed; claiming it sets a password, shown once."),
+    // Read-only, and deliberately never a reason to re-render: free space
+    // changes all the time (`state::Live::moves`). `tessaro-ctl storage
+    // show` shows the same.
+    live("storage.size", "The size of the disk the device runs from, as 64.0 GB."),
+    live("storage.unallocated", "Space after the last partition, which `storage grow` gives to /data; 0 B once it has."),
+    live("storage.data_size", "The size of the /data filesystem."),
+    live("storage.data_free", "Space still free on /data."),
+    live("storage.data_used", "How full /data is, in percent (42%)."),
+    live("storage.root_free", "Space free on the root filesystem, which is read-only and changes only with an update."),
 ];
 
 // The names code refers to on its own, not only through the table.

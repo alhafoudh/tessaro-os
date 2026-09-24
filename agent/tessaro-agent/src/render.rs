@@ -136,7 +136,7 @@ pub fn policy(base: &str, origins: &[String]) -> Result<String, String> {
     let mut document: Map<String, Value> = serde_json::from_str(&strict_json(base))
         .map_err(|err| format!("the base policy: {err}"))?;
 
-    for name in ORIGIN_POLICIES.iter().copied() {
+    for name in ORIGIN_POLICIES {
         document.insert(
             name.to_string(),
             Value::Array(origins.iter().cloned().map(Value::String).collect()),
@@ -267,6 +267,9 @@ pub fn derived_name(paths: &Paths) -> Option<String> {
 /// see it right now. Blocking: sysfs, /proc and one getifaddrs.
 pub fn live(paths: &Paths) -> state::Live {
     let mut values = crate::net::values(&crate::net::snapshot(paths));
+    if let Ok(storage) = crate::storage::snapshot(paths) {
+        values.extend(crate::storage::values(&storage));
+    }
     if let Ok(id) = crate::identity::read_node_id(&paths.machine_id) {
         values.insert("device.id".to_string(), id);
     }

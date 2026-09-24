@@ -15,6 +15,7 @@ mod files;
 mod net;
 mod nodes;
 mod ssh;
+mod storage;
 mod style;
 mod update;
 
@@ -82,6 +83,8 @@ const HELP_STYLES: Styles = Styles::styled()
         \x20 tessaro-ctl network last                       what the last change did, if the answer never came\n\
         \x20 tessaro-ctl network ping 192.168.1.1           from the device\n\
         \x20 tessaro-ctl -n brave-otter-3fa2 device ping    from here to the device\n\
+        \x20 tessaro-ctl storage show                       disk size, unallocated space, how full /data is\n\
+        \x20 tessaro-ctl storage grow                       give /data the rest of the disk, no reboot\n\
         \x20 tessaro-ctl config get network.ip              one read-only value\n\
         \x20 tessaro-ctl config set 'browser.url=https://menu.test/?ip={network.ip}'  read-only keys are placeholders too\n\
         \x20 tessaro-ctl config set browser.fps_counter=on\n\
@@ -149,6 +152,9 @@ enum Cmd {
     /// The device's network: addresses, profiles, WiFi, ping, speed test.
     #[command(subcommand)]
     Network(net::NetworkCmd),
+    /// The device's disk: partitions, free space, growing /data.
+    #[command(subcommand)]
+    Storage(storage::StorageCmd),
     /// The physical display: what is on it, and its modes.
     #[command(subcommand)]
     Screen(ScreenCmd),
@@ -561,6 +567,7 @@ fn run(cli: Cli) -> Result<(), String> {
     let follow = match &cli.command {
         Cmd::Device(DeviceCmd::Logs { follow: true, .. }) => true,
         Cmd::Network(what) => net::streams(what),
+        Cmd::Storage(what) => storage::streams(what),
         _ => false,
     };
     let mut session = connect::open(&target, &nodes, trust, follow)?;
@@ -646,6 +653,7 @@ fn run(cli: Cli) -> Result<(), String> {
             )
         }
         Cmd::Network(what) => net::run(&mut session, what, json),
+        Cmd::Storage(what) => storage::run(&mut session, what, json),
         Cmd::Device(DeviceCmd::Ping { count, interval }) => {
             net::ping(&mut session, json, count, interval)
         }
@@ -1370,6 +1378,9 @@ fn show_status(status: &Status) {
         }
     }
     node_row("revision", &status.revision.to_string());
+    if let Some(data) = &status.data {
+        node_row("data", &storage::usage_line(data));
+    }
     if status.maintenance {
         node_row(
             "maintenance",

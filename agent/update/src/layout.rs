@@ -185,7 +185,7 @@ pub fn check(layout: &Layout, image: &[Partition]) -> Result<(), String> {
 }
 
 /// `1234abcd-02`, as opposed to a GPT GUID.
-fn is_mbr(partuuid: &str) -> bool {
+pub fn is_mbr(partuuid: &str) -> bool {
     partuuid.len() == 11 && partuuid.as_bytes()[8] == b'-'
 }
 

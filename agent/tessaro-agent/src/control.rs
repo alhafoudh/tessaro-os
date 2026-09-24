@@ -49,6 +49,7 @@ use crate::shadow;
 use crate::speedtest;
 use crate::ssh;
 use crate::state::{self, PendingChange, State};
+use crate::storage;
 use crate::store::Store;
 use crate::systemd::Bus;
 use crate::updates::Updates;
@@ -170,6 +171,8 @@ pub struct Control {
     files: Arc<Files>,
     /// Held by the thread running a speed test, for as long as it runs.
     speedtest: Arc<tokio::sync::Mutex<()>>,
+    /// Held by the thread growing /data, the same way.
+    storage_grow: Arc<tokio::sync::Mutex<()>>,
     network: Arc<Network>,
     audio: Arc<Audio>,
 }
@@ -208,7 +211,30 @@ impl Control {
             probation: Mutex::new(None),
             shutdown,
             speedtest: Arc::new(tokio::sync::Mutex::new(())),
+            storage_grow: Arc::new(tokio::sync::Mutex::new(())),
         })
+    }
+
+    /// Grow /data, or with `check` only say how; the server streams what it
+    /// sends. Refused while another grow is still running.
+    pub fn storage_grow(
+        &self,
+        caller: &Caller,
+        check: bool,
+    ) -> Result<tokio::sync::mpsc::Receiver<storage::Step>, String> {
+        let lock = Arc::clone(&self.storage_grow)
+            .try_lock_owned()
+            .map_err(|_| "/data is already being grown on this device".to_string())?;
+        if !check {
+            self.log
+                .info(format!("storage grow requested by {}", caller.describe()));
+        }
+        Ok(storage::start(
+            storage::Sources::new(&self.paths),
+            check,
+            lock,
+            Arc::clone(&self.log),
+        ))
     }
 
     /// Start a speed test; the server streams what it sends. Refused while
@@ -366,6 +392,10 @@ impl Control {
                 message: "pong".to_string(),
             }),
             Command::NetPing { .. } => Reply::err("net-ping is a stream; the server handles it"),
+            Command::Storage => self.storage().await.into(),
+            Command::StorageGrow { .. } => {
+                Reply::err("storage-grow is a stream; the server handles it")
+            }
             Command::NetProfiles => self.network.profiles().await.into(),
             Command::NetShow { profile } => self.network.show(&profile).await.into(),
             Command::NetLast => self.network.last().await.into(),
@@ -616,6 +646,11 @@ impl Control {
         .await
     }
 
+    async fn storage(&self) -> Result<protocol::Storage, String> {
+        let paths = self.paths.clone();
+        blocking("reading the storage", move || storage::snapshot(&paths)).await
+    }
+
     async fn status(&self) -> Result<Status, String> {
         let state = self.read_state().await?;
         let kiosk_url = self.expanded_url(&state.settings).await;
@@ -635,6 +670,11 @@ impl Control {
         })
         .await
         .unwrap_or_default();
+        let data = self
+            .storage()
+            .await
+            .ok()
+            .and_then(|storage| storage::data(&storage));
 
         let wanted = self.audio_wanted_from(&state.settings);
         let audio = self.audio.status(&wanted).await;
@@ -642,6 +682,7 @@ impl Control {
         Ok(Status {
             os,
             image_version,
+            data,
             node: self.node(),
             revision: state.revision,
             kiosk_url,
