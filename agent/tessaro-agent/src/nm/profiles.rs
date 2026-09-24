@@ -37,6 +37,11 @@ pub const WIFI_CLIENT: Profile = Profile {
 };
 pub const ALL: [Profile; 4] = [ETHERNET_DHCP, ETHERNET_STATIC, WIFI_HOTSPOT, WIFI_CLIENT];
 
+/// Whether a NetworkManager profile is one of ours.
+pub fn is_managed(uuid: &str) -> bool {
+    ALL.iter().any(|profile| profile.uuid == uuid)
+}
+
 /// Wins over a hand-made profile on the same device.
 const PRIORITY: i32 = 100;
 
@@ -440,6 +445,15 @@ fn wifi_client(wifi: &Wifi, client: &Client) -> Keyfile {
 mod tests {
     use super::*;
     use std::collections::HashMap;
+
+    #[test]
+    fn the_four_profiles_are_managed_and_nothing_else() {
+        for profile in ALL {
+            assert!(is_managed(profile.uuid), "{}", profile.id);
+        }
+        assert!(!is_managed("0b7f6d3e-1c2a-4e5f-8a9b-0c1d2e3f4a5b"));
+        assert!(!is_managed(""));
+    }
 
     fn config(pairs: &[(&str, &str)], hotspot: Option<&str>, wifi: Option<&str>) -> NetConfig {
         let pairs: HashMap<String, String> = pairs

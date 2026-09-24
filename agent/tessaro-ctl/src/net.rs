@@ -578,7 +578,7 @@ fn ping_line(step: &PingEvent) -> String {
 
 fn show_profiles(profiles: &[NetProfile]) {
     if profiles.is_empty() {
-        println!("{}", paint(style::MUTED, "no saved profiles"));
+        println!("{}", paint(style::MUTED, "no profiles"));
     }
     for profile in profiles {
         let device = match (&profile.device, profile.active) {
@@ -591,7 +591,9 @@ fn show_profiles(profiles: &[NetProfile]) {
         } else {
             pad(style::MUTED, "", 7)
         };
-        let saved = if profile.saved {
+        let saved = if profile.managed {
+            format!("  {}", paint(style::MUTED, "(managed)"))
+        } else if profile.saved {
             String::new()
         } else {
             format!("  {}", paint(style::MUTED, "(not saved)"))
@@ -637,13 +639,19 @@ fn show_detail(detail: &NetProfileDetail) {
     );
     row(
         "saved",
-        &if profile.saved {
+        &if profile.managed {
+            format!(
+                "{}  {}",
+                paint(style::OK, "managed"),
+                paint(style::MUTED, "(rendered from settings every boot)")
+            )
+        } else if profile.saved {
             paint(style::OK, "yes")
         } else {
             format!(
                 "{}  {}",
                 paint(style::WARN, "no"),
-                paint(style::MUTED, "(in memory until something changes it)")
+                paint(style::MUTED, "(lost at reboot)")
             )
         },
     );

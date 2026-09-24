@@ -168,6 +168,7 @@ impl Network {
                         settings::WIFI => "wifi".to_string(),
                         other => other.to_string(),
                     },
+                    managed: profiles::is_managed(&profile.uuid),
                     name: profile.id,
                     uuid: profile.uuid,
                     autoconnect: profile.autoconnect,

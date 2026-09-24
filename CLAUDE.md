@@ -1597,6 +1597,9 @@ renders, `txn.rs` switches) and `ping.rs`.
   ever written to `/etc`. Only the selected profile of each pair has
   `autoconnect=true`, at priority 100, so it wins over a hand-made profile on
   the same device. The uuids are fixed, the same on every device.
+  NetworkManager flags everything under `/run` as unsaved, so `net profiles`
+  lists these four as `(managed)` instead; `(not saved)` on any other
+  profile means it really is lost at reboot.
 * **One change is one transaction** (`nm/txn.rs`): write `txn.json`, take a
   NetworkManager **checkpoint** on the devices involved (with a 150s rollback
   timer of NetworkManager's own, the backstop if the agent dies), write the

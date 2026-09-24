@@ -620,9 +620,13 @@ pub struct NetProfile {
     pub active: bool,
     pub autoconnect: bool,
     pub priority: i32,
-    /// Written to disk. NetworkManager's own `Wired connection 1` is not
-    /// until someone changes it.
+    /// Written to disk. A profile under `/run` counts as unsaved, the
+    /// managed ones included.
     pub saved: bool,
+    /// One of the four fixed profiles the agent renders from settings on
+    /// every boot, so unsaved but never lost.
+    #[serde(default)]
+    pub managed: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
