@@ -31,9 +31,9 @@ RequiresMountsFor=/data
 Type=oneshot
 # Once per boot, and that is load-bearing. weston.service and both kiosk units
 # Want= this one; without RemainAfterExit it goes inactive when it exits, so
-# every `tessaro-ctl restart weston` - and every display.* change - would run
+# every `tessaro-ctl device restart weston` - and every screen.* change - would run
 # it again, and its "a change still pending at boot was never confirmed" step
-# would revert display.resolution the moment it was applied.
+# would revert screen.resolution the moment it was applied.
 RemainAfterExit=yes
 # The image defaults, the same file every other kiosk unit reads first.
 EnvironmentFile=/usr/lib/tessaro-kiosk/tessaro-kiosk.env

@@ -1,9 +1,9 @@
-//! Whether hotspot clients reach past the device: `wifi.nat`.
+//! Whether hotspot clients reach past the device: `network.wifi.nat`.
 //!
 //! The hotspot is `ipv4.method=shared`, and with `firewall-backend=nftables`
 //! NetworkManager masquerades it and turns on `ip_forward` by itself (table
 //! `ip nm-shared-<iface>`). There is no per-connection switch for that in
-//! 1.46, so `wifi.nat=0` is a table of our own, `inet tessaro-hotspot`,
+//! 1.46, so `network.wifi.nat=0` is a table of our own, `inet tessaro-hotspot`,
 //! whose forward-hook chain drops anything coming in on the WiFi interface.
 //! A drop in any base chain ends the packet, whatever NetworkManager's
 //! chain on the same hook accepts, so clients still get DHCP, DNS and the

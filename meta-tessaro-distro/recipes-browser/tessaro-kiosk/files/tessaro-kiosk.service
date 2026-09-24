@@ -182,7 +182,7 @@ WorkingDirectory=/home/weston
 #   is no argument at all.
 # $KIOSK_CHROMIUM_ARGS_EXTRA is deliberately *unbraced*. systemd splits $VAR at
 #   whitespace and passes ${VAR} as one argument, so this is what lets an
-#   operator add several flags (`tessaro-ctl set browser.args_extra=...`).
+#   operator add several flags (`tessaro-ctl config set browser.args_extra=...`).
 #   Empty expands to no arguments at all. Anything put in the fixed set above has to be
 #   counterable from here - which is why --disable-pinch is not in it, since
 #   Chromium 147 has no --enable-pinch to undo it with.

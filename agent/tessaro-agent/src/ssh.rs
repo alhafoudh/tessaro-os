@@ -1,7 +1,7 @@
 //! Root's `authorized_keys`, and the host keys a client should expect.
 //!
 //! The claim model owns this file the way it owns root's password: keys are
-//! added by `tessaro-ctl ssh` (a token or the local socket), listed and
+//! added by `tessaro-ctl ssh connect` (a token or the local socket), listed and
 //! revoked the same way, and every one of them goes when the device is
 //! unclaimed or reset. An unclaimed device has no credential at all.
 //!
@@ -119,7 +119,7 @@ fn select<'a>(keys: &'a [PublicKey], query: &str) -> Result<&'a PublicKey, Strin
         }
     }
     Err(format!(
-        "no key matches {query}; `tessaro-ctl ssh-key list` shows them"
+        "no key matches {query}; `tessaro-ctl ssh keys list` shows them"
     ))
 }
 
@@ -158,7 +158,7 @@ fn write(path: &Path, lines: &[String]) -> io::Result<()> {
 /// `dropbearkey.service` would. That unit only runs on the first connection
 /// (dropbear is socket-activated), so on a device nobody has logged in to yet
 /// there is no key for `host_keys` to report - and the whole point is that
-/// the first `tessaro-ctl ssh` already gets one.
+/// the first `tessaro-ctl ssh connect` already gets one.
 pub fn ensure_host_key(dirs: &[PathBuf]) -> Result<(), String> {
     let Some(dir) = dirs.first() else {
         return Ok(());

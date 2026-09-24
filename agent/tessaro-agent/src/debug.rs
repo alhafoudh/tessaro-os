@@ -1,7 +1,7 @@
-//! The debug screen: `debug.template`, filled in with the device as it is
+//! The debug screen: `browser.debug.template`, filled in with the device as it is
 //! now, in large monospaced text over the whole screen.
 //!
-//! The template is a setting like `kiosk.url` - any `{key}` placeholder, set
+//! The template is a setting like `browser.url` - any `{key}` placeholder, set
 //! or read-only - with `\n` typed as a line break. Values go in raw and the
 //! page escapes them for HTML. It is rendered afresh every time it is staged,
 //! so an address that moves shows up without anything being set; the page is
@@ -55,7 +55,7 @@ impl<'a> Debug<'a> {
     fn text(&self, live: &state::Live) -> String {
         let template = self
             .settings
-            .get("debug.template")
+            .get("browser.debug.template")
             .cloned()
             .or_else(|| self.defaults.get("KIOSK_DEBUG_TEMPLATE").cloned())
             .unwrap_or_default();
@@ -125,7 +125,7 @@ html, body {{ margin: 0; height: 100%; background: #000; color: #e8e8e8; overflo
       font: 14px "DejaVu Sans Mono", monospace; }}
 </style></head>
 <body><div id="t">{body}</div>
-<div id="f">debug screen - tessaro-ctl unset debug.enable</div>
+<div id="f">debug screen - tessaro-ctl config unset browser.debug.enable</div>
 <script>
 const t = document.getElementById("t");
 const fits = () => t.scrollWidth <= innerWidth && t.scrollHeight <= innerHeight * 0.94;
@@ -196,7 +196,7 @@ ip 10.0.0.2 &lt;x&gt; &amp; y</div>"#
         let written = fs::read_to_string(dir.join(FILE)).unwrap();
         assert!(written.contains("hello\nworld"), "{written}");
 
-        settings.insert("debug.template".to_string(), "set here".to_string());
+        settings.insert("browser.debug.template".to_string(), "set here".to_string());
         let screen = Debug::new(&log, &config, &paths, &defaults, &settings);
         assert!(screen.stage().unwrap().changed);
         assert!(!screen.stage().unwrap().changed);

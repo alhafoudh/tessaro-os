@@ -10,7 +10,7 @@
 // It is also generated. This file ships twice: here, as what Chromium reads on
 // the very first boot, and as /usr/lib/tessaro-kiosk/policy.json, which
 // tessaro-agent renders the /etc copy from on every boot and after every
-// change, rewriting the two device-API origin lists below for kiosk.url and
+// change, rewriting the two device-API origin lists below for browser.url and
 // browser.device_origins as set on the device. Edit neither on a device: the
 // agent puts /etc back, and /usr/lib is the image. Settings go through
 // tessaro-ctl.
@@ -91,7 +91,7 @@
   //
   // The lists below are what the image was built with: TESSARO_KIOSK_URL's
   // origin and the self-test page's. On a device they are rewritten by
-  // tessaro-agent from kiosk.url as set there, plus browser.device_origins,
+  // tessaro-agent from browser.url as set there, plus browser.device_origins,
   // so pointing a shipped device at a new site moves the grants with it.
   //
   // Note the Serial and HID blocklists are consulted *before* policy, so a
@@ -118,6 +118,6 @@
   // policy exists for it in Chromium 147, and the guard cannot go past "Ask".
   // A Bluetooth peripheral therefore needs one real chooser interaction by a
   // technician, once per device. With WebBluetoothNewPermissionsBackend (see
-  // `tessaro-ctl set browser.enable_features=...`) that grant persists
+  // `tessaro-ctl config set browser.enable_features=...`) that grant persists
   // and navigator.bluetooth.getDevices() returns it on later boots.
 }

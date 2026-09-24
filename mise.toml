@@ -103,8 +103,8 @@ curl -sf -X PUT "http://127.0.0.1:9222/json/new?about:blank" >/dev/null
 # socket, a shadow file to set a root password in, the rendered files - goes
 # into one sandbox here, so the control plane runs for real without touching
 # the host. Drive it from another terminal with
-#   TESSARO_SOCKET=<sandbox>/agent.sock tessaro-ctl status
-#   tessaro-ctl --node 127.0.0.1:17400 claim
+#   TESSARO_SOCKET=<sandbox>/agent.sock tessaro-ctl device status
+#   tessaro-ctl --node 127.0.0.1:17400 access claim
 sandbox="$(mktemp -d)"
 mkdir -p "$sandbox/etc"
 printf 'root::19000:0:99999:7:::\n' > "$sandbox/etc/shadow"

@@ -395,7 +395,7 @@ impl Control {
         hidden: bool,
         verify: protocol::Verify,
     ) -> Reply {
-        let key = keys::find("wifi.ssid").expect("wifi.ssid is a key");
+        let key = keys::find("network.wifi.ssid").expect("network.wifi.ssid is a key");
         if let Err(err) = keys::validate(key, &ssid) {
             return Reply::err(err);
         }
@@ -409,7 +409,7 @@ impl Control {
             Err(err) => return Reply::err(err),
         };
         let value = profiles::value_of(&state.settings, &self.defaults);
-        let interface = match profiles::effective(&value, "wifi.interface").as_str() {
+        let interface = match profiles::effective(&value, "network.wifi.interface").as_str() {
             "auto" => "wlan0".to_string(),
             name => name.to_string(),
         };
@@ -430,17 +430,17 @@ impl Control {
         };
         // Without a new password, only the network whose password is stored
         // can be joined: another one would try it with the wrong one.
-        let same_network = profiles::effective(&value, "wifi.ssid") == ssid;
+        let same_network = profiles::effective(&value, "network.wifi.ssid") == ssid;
         if psk.is_none() && word != "open" && !same_network {
             return Reply::err(format!("{ssid} needs a password"));
         }
 
         let changes = BTreeMap::from([
-            ("wifi.mode".to_string(), Some("client".to_string())),
-            ("wifi.ssid".to_string(), Some(ssid)),
-            ("wifi.security".to_string(), Some(word.to_string())),
+            ("network.wifi.mode".to_string(), Some("client".to_string())),
+            ("network.wifi.ssid".to_string(), Some(ssid)),
+            ("network.wifi.security".to_string(), Some(word.to_string())),
             (
-                "wifi.hidden".to_string(),
+                "network.wifi.hidden".to_string(),
                 Some(if hidden { "1" } else { "0" }.to_string()),
             ),
         ]);
@@ -558,7 +558,7 @@ impl Control {
     }
 
     /// What the device reports now: derived name, node id, addresses, and
-    /// the hotspot's name, which follows `node.name`.
+    /// the hotspot's name, which follows `device.name`.
     async fn live(&self) -> state::Live {
         let paths = self.paths.clone();
         let mut live = blocking("reading the network", move || Ok(render::live(&paths)))
@@ -566,7 +566,7 @@ impl Control {
             .unwrap_or_default();
         if let Ok(state) = self.read_state().await {
             live.values.insert(
-                "wifi.hotspot_ssid".to_string(),
+                "network.wifi.hotspot_ssid".to_string(),
                 profiles::hotspot_ssid(&self.node_name_for(&state.settings)),
             );
         }
@@ -618,7 +618,7 @@ impl Control {
         })
     }
 
-    /// A template (`keys::TEMPLATES`, or debug.template) as set, else the
+    /// A template (`keys::TEMPLATES`, or browser.debug.template) as set, else the
     /// image default.
     fn template(&self, settings: &BTreeMap<String, String>, name: &str) -> String {
         settings
@@ -634,7 +634,7 @@ impl Control {
     /// The registry, documented: what each key accepts, the image default,
     /// and what this device has set. `data.<name>` appears once as the
     /// template entry, saying which custom values exist, then once per
-    /// custom value, saying whether kiosk.url uses it.
+    /// custom value, saying whether browser.url uses it.
     async fn keys(&self) -> Result<Vec<KeyInfo>, String> {
         let state = self.read_state().await?;
         let live = self.live().await;
@@ -654,7 +654,7 @@ impl Control {
 
         let templates: Vec<(&str, String)> = keys::TEMPLATES
             .iter()
-            .chain([&"debug.template"])
+            .chain([&"browser.debug.template"])
             .map(|name| (*name, self.template(&state.settings, name)))
             .collect();
         let custom: Vec<(&String, &String)> = state
@@ -688,7 +688,7 @@ impl Control {
                 .map(|(key, _)| *key)
                 .collect();
             let usage = if users.is_empty() {
-                format!("No template uses it; add {{{name}}} to kiosk.url or another template to use it.")
+                format!("No template uses it; add {{{name}}} to browser.url or another template to use it.")
             } else {
                 format!("{} uses it as {{{name}}}.", users.join(" and "))
             };
@@ -724,7 +724,7 @@ impl Control {
     }
 
     async fn get(&self, key: Option<String>) -> Result<Settings, String> {
-        if key.as_deref() == Some("net.public_ip") {
+        if key.as_deref() == Some("network.public_ip") {
             // naked: the lookup's every phase is under its own within()
             self.refresh_public_ip_now().await;
         }
@@ -843,7 +843,7 @@ impl Control {
                 .iter()
                 .map(|name| (*name, self.template(&BTreeMap::new(), name)))
                 .collect(),
-            default_debug: self.template(&BTreeMap::new(), "debug.template"),
+            default_debug: self.template(&BTreeMap::new(), "browser.debug.template"),
             defaults: self.defaults.clone(),
         };
 
@@ -1000,14 +1000,14 @@ impl Control {
         Ok((committed, Some(change)))
     }
 
-    /// kiosk.url as these settings, and the device as it is now, expand it.
+    /// browser.url as these settings, and the device as it is now, expand it.
     async fn expanded_url(&self, settings: &BTreeMap<String, String>) -> String {
         let live = self.live().await;
         let effective = state::Effective::new(&self.defaults, settings, &self.log).with_live(live);
         crate::config::Env::get(&effective, "KIOSK_URL").unwrap_or_default()
     }
 
-    /// A kiosk.url that uses a read-only key - `{net.ip}` - can move with no
+    /// A browser.url that uses a read-only key - `{network.ip}` - can move with no
     /// `set` at all: DHCP renews, the link changes, and at boot the render
     /// ran before there was any address. So while the template uses one,
     /// this checks every 15s and, when the URL no longer matches the one the
@@ -1031,9 +1031,9 @@ impl Control {
         });
     }
 
-    /// Keeps `net.public_ip` current while kiosk.url uses it - or the debug
+    /// Keeps `network.public_ip` current while browser.url uses it - or the debug
     /// screen is on and its template does - and only then: a link may be
-    /// metered, so a device that shows no `{net.public_ip}` never asks.
+    /// metered, so a device that shows no `{network.public_ip}` never asks.
     /// While one does, Cloudflare's trace is
     /// asked every 5 minutes (every 30s until the first answer, and after a
     /// failure), and the answer goes to `/run/tessaro-kiosk/public-ip`, which
@@ -1054,7 +1054,7 @@ impl Control {
             let mut due: Option<Instant> = None;
             loop {
                 // naked: a disk read under blocking()'s within()
-                let wanted = control.url_uses("net.public_ip").await;
+                let wanted = control.url_uses("network.public_ip").await;
                 if !wanted {
                     // Asked afresh the moment the URL uses it again.
                     due = None;
@@ -1075,7 +1075,7 @@ impl Control {
         });
     }
 
-    /// Does the template on screen - kiosk.url, or maintenance.url in
+    /// Does the template on screen - browser.url, or browser.maintenance.url in
     /// maintenance mode, as set, else the image default - name this key as a
     /// placeholder? While the debug screen is up, its template counts too.
     async fn url_uses(&self, key: &str) -> bool {
@@ -1085,7 +1085,7 @@ impl Control {
         let (_, template) = state::shown_template(&state.settings, &self.defaults);
         keys::placeholders(&template).contains(&key)
             || (state::debug_screen(&state.settings, &self.defaults)
-                && keys::placeholders(&self.template(&state.settings, "debug.template"))
+                && keys::placeholders(&self.template(&state.settings, "browser.debug.template"))
                     .contains(&key))
     }
 
@@ -1108,7 +1108,7 @@ impl Control {
     }
 
     /// Someone asked for the public address outright - `net`, or
-    /// `get net.public_ip` - so look it up now, whatever kiosk.url uses.
+    /// `get network.public_ip` - so look it up now, whatever browser.url uses.
     /// One request per ask; at worst the command waits out the 5s budgets.
     async fn refresh_public_ip_now(&self) {
         let http = crate::http::HyperHttp::new(5, 5, 4096, Heartbeat::detached());
@@ -1328,7 +1328,7 @@ impl Control {
                 .iter()
                 .any(|(_, key)| key.consumers.contains(&consumer))
         };
-        // kiosk.url can be built from any setting, so a change to one of
+        // browser.url can be built from any setting, so a change to one of
         // them can move the URL without touching a key the agent reads. The
         // test is whether the URL this agent started with is still the one.
         let url_moved = self.expanded_url(&state.settings).await != self.agent_url;
@@ -1400,7 +1400,7 @@ impl Control {
             .map(|c| format!("{}: {}", c.name, c.modes.join(" ")))
             .collect();
         Err(format!(
-            "no connected display offers {mode}; see `tessaro-ctl modes` ({})",
+            "no connected display offers {mode}; see `tessaro-ctl screen modes` ({})",
             offered.join("; ")
         ))
     }
@@ -1429,7 +1429,7 @@ impl Control {
         if let Ok(state) = self.read_state().await {
             if let Some(pending) = &state.pending {
                 self.log.info(format!(
-                    "{}={} is on probation: `tessaro-ctl confirm` within {}s or it reverts",
+                    "{}={} is on probation: `tessaro-ctl screen confirm` within {}s or it reverts",
                     pending.key,
                     pending.value,
                     protocol::CONFIRM_SECONDS
@@ -1511,7 +1511,10 @@ impl Control {
     // --- the browser -------------------------------------------------------
 
     async fn navigate(&self, url: &str) -> Result<Done, String> {
-        let url = keys::validate(keys::find("kiosk.url").expect("kiosk.url is a key"), url)?;
+        let url = keys::validate(
+            keys::find("browser.url").expect("browser.url is a key"),
+            url,
+        )?;
         let result = self
             .session
             .call(
@@ -1684,7 +1687,9 @@ impl Control {
 
         let _writes = self.writes.lock().await;
         if !self.claimed() {
-            return Err("this device is unclaimed; `tessaro-ctl claim` it first".to_string());
+            return Err(
+                "this device is unclaimed; `tessaro-ctl access claim` it first".to_string(),
+            );
         }
 
         let store = self.auth_store.clone();
@@ -2042,7 +2047,7 @@ fn changed_keys(
 struct Edit {
     normalized: BTreeMap<String, Option<String>>,
     if_revision: Option<u64>,
-    /// The guarded keys among them (`display.resolution`).
+    /// The guarded keys among them (`screen.resolution`).
     guarded: Vec<&'static str>,
     default_templates: Vec<(&'static str, String)>,
     default_debug: String,
@@ -2064,7 +2069,7 @@ impl Edit {
         if !self.guarded.is_empty() {
             if let Some(pending) = &state.pending {
                 return Err(format!(
-                    "{}={} is waiting for `tessaro-ctl confirm`; confirm it or let it revert first",
+                    "{}={} is waiting for `tessaro-ctl screen confirm`; confirm it or let it revert first",
                     pending.key, pending.value
                 ));
             }
@@ -2101,7 +2106,7 @@ impl Edit {
 
         let template = state
             .settings
-            .get("debug.template")
+            .get("browser.debug.template")
             .unwrap_or(&self.default_debug);
         let (_, missing) = state::expand_text(
             template,
@@ -2109,7 +2114,7 @@ impl Edit {
             &self.defaults,
             &state::Live::default(),
         );
-        check_template("debug.template", template, &missing)?;
+        check_template("browser.debug.template", template, &missing)?;
 
         state.revision += 1;
         for name in &self.guarded {
@@ -2129,7 +2134,7 @@ impl Edit {
     }
 }
 
-/// Why a template (`keys::TEMPLATES`, debug.template) cannot be saved with these
+/// Why a template (`keys::TEMPLATES`, browser.debug.template) cannot be saved with these
 /// placeholders missing, if it cannot.
 fn check_template(key: &str, template: &str, missing: &[String]) -> Result<(), String> {
     // A custom data.* nobody set yet just needs a value; anything else is not
@@ -2138,8 +2143,10 @@ fn check_template(key: &str, template: &str, missing: &[String]) -> Result<(), S
         .iter()
         .partition(|name| keys::param_name(name).is_some());
     if let Some(typo) = typos.first() {
-        // The likeliest slip: {table} for {data.table}.
-        let hint = if keys::is_param(typo) {
+        // The likeliest slips: {table} for {data.table}, and an old name.
+        let hint = if let Some(new) = keys::renamed(typo) {
+            format!("; {typo} is {{{new}}} now")
+        } else if keys::is_param(typo) {
             format!(
                 "; a custom value is written in full: {{{}{typo}}}",
                 keys::DATA_PREFIX
@@ -2149,7 +2156,7 @@ fn check_template(key: &str, template: &str, missing: &[String]) -> Result<(), S
         };
         return Err(format!(
             "{key} {template} uses {{{typo}}}, which is not a setting \
-             (and no template can contain a template){hint}; `tessaro-ctl keys` lists them"
+             (and no template can contain a template){hint}; `tessaro-ctl config keys` lists them"
         ));
     }
     if !unset.is_empty() {
@@ -2184,7 +2191,7 @@ fn os_release_fields(path: &std::path::Path) -> (Option<String>, Option<String>)
 }
 
 fn unknown(name: &str) -> String {
-    format!("{name} is not a setting; `tessaro-ctl keys` lists them")
+    keys::unknown(name)
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -2416,7 +2423,7 @@ mod tests {
             &fx.control,
             &Caller::Local,
             Command::Set {
-                values: [("ethernet.mode".to_string(), "static".to_string())].into(),
+                values: [("network.ethernet.mode".to_string(), "static".to_string())].into(),
                 if_revision: None,
                 apply: false,
                 verify: Default::default(),
@@ -2428,21 +2435,26 @@ mod tests {
         let incomplete = err(
             &fx.control,
             &Caller::Local,
-            set(&[("ethernet.mode", "static")]),
+            set(&[("network.ethernet.mode", "static")]),
         )
         .await;
         assert!(
-            incomplete.contains("needs ethernet.address"),
+            incomplete.contains("needs network.ethernet.address"),
             "{incomplete}"
         );
-        let client = err(&fx.control, &Caller::Local, set(&[("wifi.mode", "client")])).await;
-        assert!(client.contains("wifi.ssid"), "{client}");
+        let client = err(
+            &fx.control,
+            &Caller::Local,
+            set(&[("network.wifi.mode", "client")]),
+        )
+        .await;
+        assert!(client.contains("network.wifi.ssid"), "{client}");
 
         let settings: Settings = ok(
             &fx.control,
             &Caller::Local,
             Command::Get {
-                key: Some("ethernet.mode".into()),
+                key: Some("network.ethernet.mode".into()),
             },
         )
         .await;
@@ -2470,7 +2482,7 @@ mod tests {
         assert!(!everything.contains("clientsecret22"));
         assert!(
             everything.contains("tessaro-"),
-            "wifi.hotspot_ssid is reported"
+            "network.wifi.hotspot_ssid is reported"
         );
     }
 
@@ -2792,7 +2804,7 @@ mod tests {
             &fx.control,
             &Caller::Local,
             Command::Set {
-                values: [("kiosk.url".to_string(), "https://shop.test/".to_string())].into(),
+                values: [("browser.url".to_string(), "https://shop.test/".to_string())].into(),
                 if_revision: None,
                 apply: false,
                 verify: Default::default(),
@@ -2802,7 +2814,7 @@ mod tests {
 
         let reply = fx
             .control
-            .handle(&Caller::Local, set(&[("maintenance.enable", "on")]))
+            .handle(&Caller::Local, set(&[("browser.maintenance.enable", "on")]))
             .await;
         let applied: Applied = serde_json::from_value(reply.result.unwrap()).unwrap();
 
@@ -2823,15 +2835,15 @@ mod tests {
             &fx.control,
             &Caller::Local,
             set(&[
-                ("maintenance.enable", "0"),
+                ("browser.maintenance.enable", "0"),
                 (
-                    "maintenance.url",
+                    "browser.maintenance.url",
                     "http://127.0.0.1/maintenance.html?m={data.msg}",
                 ),
             ]),
         )
         .await;
-        assert!(refused.contains("maintenance.url"), "{refused}");
+        assert!(refused.contains("browser.maintenance.url"), "{refused}");
         assert!(refused.contains("data.msg"), "{refused}");
     }
 
@@ -2868,7 +2880,7 @@ mod tests {
         let fx = fixture();
         let reply = fx
             .control
-            .handle(&Caller::Local, set(&[("display.osk", "never")]))
+            .handle(&Caller::Local, set(&[("screen.osk", "never")]))
             .await;
         assert_eq!(
             reply.after,
@@ -2882,12 +2894,29 @@ mod tests {
         let bad = err(
             &fx.control,
             &Caller::Local,
-            set(&[("agent.debug", "1"), ("display.osk", "maybe")]),
+            set(&[("agent.debug", "1"), ("screen.osk", "maybe")]),
         )
         .await;
-        assert!(bad.contains("display.osk"), "{bad}");
+        assert!(bad.contains("screen.osk"), "{bad}");
         let unknown = err(&fx.control, &Caller::Local, set(&[("no.such", "1")])).await;
         assert!(unknown.contains("not a setting"), "{unknown}");
+        // An old name is refused too, saying what it is called now.
+        let old = err(
+            &fx.control,
+            &Caller::Local,
+            set(&[("display.osk", "never")]),
+        )
+        .await;
+        assert_eq!(old, "display.osk is now screen.osk");
+        let old_get = err(
+            &fx.control,
+            &Caller::Local,
+            Command::Get {
+                key: Some("kiosk.url".into()),
+            },
+        )
+        .await;
+        assert_eq!(old_get, "kiosk.url is now browser.url");
 
         let settings: Settings = ok(&fx.control, &Caller::Local, Command::Get { key: None }).await;
         assert_eq!(settings.revision, 0);
@@ -2919,7 +2948,7 @@ mod tests {
         let refused = err(
             &fx.control,
             &Caller::Local,
-            set(&[("display.resolution", "3840x2160")]),
+            set(&[("screen.resolution", "3840x2160")]),
         )
         .await;
         assert!(refused.contains("1280x720"), "{refused}");
@@ -2927,7 +2956,7 @@ mod tests {
         let applied: Applied = ok(
             &fx.control,
             &Caller::Local,
-            set(&[("display.resolution", "1280x720")]),
+            set(&[("screen.resolution", "1280x720")]),
         )
         .await;
         let pending = applied.pending.expect("a guarded change is on probation");
@@ -2937,7 +2966,7 @@ mod tests {
         let busy = err(
             &fx.control,
             &Caller::Local,
-            set(&[("display.resolution", "1920x1080")]),
+            set(&[("screen.resolution", "1920x1080")]),
         )
         .await;
         assert!(busy.contains("confirm"), "{busy}");
@@ -2947,7 +2976,7 @@ mod tests {
             &fx.control,
             &Caller::Local,
             Command::Get {
-                key: Some("display.resolution".into()),
+                key: Some("screen.resolution".into()),
             },
         )
         .await;
@@ -2962,7 +2991,7 @@ mod tests {
         let _: Applied = ok(
             &fx.control,
             &Caller::Local,
-            set(&[("display.resolution", "1280x720")]),
+            set(&[("screen.resolution", "1280x720")]),
         )
         .await;
 
@@ -2977,7 +3006,7 @@ mod tests {
             &fx.control,
             &Caller::Local,
             Command::Get {
-                key: Some("display.resolution".into()),
+                key: Some("screen.resolution".into()),
             },
         )
         .await;
@@ -2994,7 +3023,7 @@ mod tests {
             // Same origin as the default, so the policy - and with it a
             // browser restart, which needs a bus - stays out of this test.
             set(&[(
-                "kiosk.url",
+                "browser.url",
                 "http://127.0.0.1/?store={data.store}&lang={data.lang}",
             )]),
         )
@@ -3006,7 +3035,7 @@ mod tests {
             &Caller::Local,
             set(&[
                 (
-                    "kiosk.url",
+                    "browser.url",
                     "http://127.0.0.1/?store={data.store}&lang={data.lang}",
                 ),
                 ("data.store", "42"),
@@ -3014,7 +3043,7 @@ mod tests {
             ]),
         )
         .await;
-        assert_eq!(applied.changed, ["data.lang", "data.store", "kiosk.url"]);
+        assert_eq!(applied.changed, ["browser.url", "data.lang", "data.store"]);
         let env = fs::read_to_string(fx.paths.generated_env()).unwrap();
         assert!(
             env.contains("KIOSK_URL=http://127.0.0.1/?store=42&lang=sk\n"),
@@ -3039,7 +3068,7 @@ mod tests {
         let short = err(
             &fx.control,
             &Caller::Local,
-            set(&[("kiosk.url", "http://127.0.0.1/?store={store}")]),
+            set(&[("browser.url", "http://127.0.0.1/?store={store}")]),
         )
         .await;
         assert!(short.contains("{data.store}"), "{short}");
@@ -3073,7 +3102,7 @@ mod tests {
             &fx.control,
             &Caller::Local,
             set(&[
-                ("kiosk.url", "http://127.0.0.1/?t={data.table}"),
+                ("browser.url", "http://127.0.0.1/?t={data.table}"),
                 ("data.table", "12"),
                 ("data.spare", "x"),
             ]),
@@ -3102,13 +3131,15 @@ mod tests {
         let _: Applied = ok(
             &fx.control,
             &Caller::Local,
-            set(&[("debug.template", "spare {data.spare}")]),
+            set(&[("browser.debug.template", "spare {data.spare}")]),
         )
         .await;
         let keys: Vec<KeyInfo> = ok(&fx.control, &Caller::Local, Command::Keys).await;
         let spare = keys.iter().find(|k| k.name == "data.spare").unwrap();
         assert!(
-            spare.doc.contains("debug.template uses it as {data.spare}"),
+            spare
+                .doc
+                .contains("browser.debug.template uses it as {data.spare}"),
             "{}",
             spare.doc
         );
@@ -3121,18 +3152,18 @@ mod tests {
         let typo = err(
             &fx.control,
             &Caller::Local,
-            set(&[("debug.template", "ip {net.ip}\\nt {table}")]),
+            set(&[("browser.debug.template", "ip {network.ip}\\nt {table}")]),
         )
         .await;
         assert!(
-            typo.contains("debug.template") && typo.contains("{data.table}"),
+            typo.contains("browser.debug.template") && typo.contains("{data.table}"),
             "{typo}"
         );
 
         let unset = err(
             &fx.control,
             &Caller::Local,
-            set(&[("debug.template", "t {data.table}")]),
+            set(&[("browser.debug.template", "t {data.table}")]),
         )
         .await;
         assert!(unset.contains("set data.table"), "{unset}");
@@ -3142,8 +3173,8 @@ mod tests {
             &Caller::Local,
             set(&[
                 (
-                    "debug.template",
-                    "{node.name}\\nurl {kiosk.url}\\nt {data.table}",
+                    "browser.debug.template",
+                    "{device.name}\\nurl {browser.url}\\nt {data.table}",
                 ),
                 ("data.table", "12"),
             ]),
@@ -3154,19 +3185,14 @@ mod tests {
     #[tokio::test]
     async fn keys_document_themselves() {
         let fx = fixture();
-        let _: Applied = ok(
-            &fx.control,
-            &Caller::Local,
-            set(&[("display.osk", "never")]),
-        )
-        .await;
+        let _: Applied = ok(&fx.control, &Caller::Local, set(&[("screen.osk", "never")])).await;
 
         let keys: Vec<KeyInfo> = ok(&fx.control, &Caller::Local, Command::Keys).await;
 
-        let osk = keys.iter().find(|k| k.name == "display.osk").unwrap();
+        let osk = keys.iter().find(|k| k.name == "screen.osk").unwrap();
         assert_eq!(osk.values, "one of: auto, always, never");
         assert_eq!(osk.value.as_deref(), Some("never"));
-        let url = keys.iter().find(|k| k.name == "kiosk.url").unwrap();
+        let url = keys.iter().find(|k| k.name == "browser.url").unwrap();
         assert_eq!(url.default.as_deref(), Some("http://127.0.0.1/"));
         assert!(keys.iter().any(|k| k.name == "data.<name>"));
     }

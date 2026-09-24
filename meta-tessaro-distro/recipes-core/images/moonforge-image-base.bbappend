@@ -107,7 +107,7 @@ CORE_IMAGE_EXTRA_INSTALL += " \
 # it twice costs nothing.
 #
 # The empty password is the *unclaimed* state, not a permanent one. The first
-# `tessaro-ctl claim` sets a random root password (shown to that client once),
+# `tessaro-ctl access claim` sets a random root password (shown to that client once),
 # and unclaim or a factory reset empties it again - tessaro-agent owns root's
 # /etc/shadow entry from the first boot on (agent/tessaro-agent/src/shadow.rs).
 # So a fresh or reset device is a root shell with no credential on whatever

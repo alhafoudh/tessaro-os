@@ -5,7 +5,7 @@
 //! the device by IP, `name.local` or plain name, and the conversation is TLS
 //! with a pinned certificate and a token.
 //!
-//! A fresh device is unclaimed: `tessaro-ctl --node NAME claim` takes it,
+//! A fresh device is unclaimed: `tessaro-ctl --node NAME access claim` takes it,
 //! stores the token in ~/.config/tessaro/nodes.json, and prints the device's
 //! new root password - once.
 
@@ -22,7 +22,8 @@ use std::process::ExitCode;
 // Shadow the std macros: these strip colors when stdout is not a terminal.
 use anstream::{eprint, eprintln, println};
 use clap::builder::styling::Styles;
-use clap::{ColorChoice, Parser, Subcommand, ValueEnum};
+use clap::{ColorChoice, CommandFactory, Parser, Subcommand, ValueEnum};
+use protocol::keys;
 use protocol::speedtest_size_label as size_label;
 use protocol::{
     Applied, Claimed, Command, Connector, Direction, Done, KeyInfo, Net, NetInterface, NodeInfo,
@@ -53,44 +54,46 @@ const HELP_STYLES: Styles = Styles::styled()
     long_about = "Manage Tessaro kiosks: settings, the browser, the display, tokens and the root password.\n\n\
         On the device, as root, it talks to the agent over the local socket and needs nothing else. \
         From anywhere else, --node names the device and the conversation is TLS with a pinned \
-        certificate and a token, which `claim` or `login` stores in ~/.config/tessaro/nodes.json.\n\n\
-        `tessaro-ctl keys` documents every setting: what it accepts, its default, what is set, and \
-        what a change restarts.",
+        certificate and a token, which `access claim` or `access login` stores in \
+        ~/.config/tessaro/nodes.json.\n\n\
+        `tessaro-ctl config keys` documents every setting: what it accepts, its default, what is \
+        set, and what a change restarts.",
     after_long_help = "EXAMPLES:\n\
-        \x20 tessaro-ctl nodes                              devices answering on this network\n\
-        \x20 tessaro-ctl -n brave-otter-3fa2 claim          take a fresh device; prints its root password once\n\
-        \x20 tessaro-ctl -n brave-otter-3fa2 status\n\
-        \x20 tessaro-ctl keys                               every setting, documented\n\
-        \x20 tessaro-ctl keys display.resolution            one setting in full\n\
-        \x20 tessaro-ctl set kiosk.url=https://shop.test/\n\
-        \x20 tessaro-ctl set 'kiosk.url=https://menu.test/?table={data.table}' data.table=12\n\
-        \x20 tessaro-ctl set 'kiosk.url=https://{node.name}.menu.test/'  any setting is a placeholder too\n\
-        \x20 tessaro-ctl modes && tessaro-ctl set display.resolution=1920x1080 && tessaro-ctl confirm\n\
-        \x20 tessaro-ctl net                                address, gateway, DNS, interfaces\n\
-        \x20 tessaro-ctl net interfaces                     every interface in detail\n\
-        \x20 tessaro-ctl net profiles                       NetworkManager's profiles\n\
-        \x20 tessaro-ctl set ethernet.mode=static ethernet.address=192.168.1.50/24 ethernet.gateway=192.168.1.1\n\
+        \x20 tessaro-ctl nodes list                         devices answering on this network\n\
+        \x20 tessaro-ctl -n brave-otter-3fa2 access claim   take a fresh device; prints its root password once\n\
+        \x20 tessaro-ctl -n brave-otter-3fa2 device status\n\
+        \x20 tessaro-ctl config keys                        every setting, documented\n\
+        \x20 tessaro-ctl config keys screen.resolution      one setting in full\n\
+        \x20 tessaro-ctl config set browser.url=https://shop.test/\n\
+        \x20 tessaro-ctl config set 'browser.url=https://menu.test/?table={data.table}' data.table=12\n\
+        \x20 tessaro-ctl config set 'browser.url=https://{device.name}.menu.test/'  any setting is a placeholder too\n\
+        \x20 tessaro-ctl screen modes && tessaro-ctl config set screen.resolution=1920x1080 && tessaro-ctl screen confirm\n\
+        \x20 tessaro-ctl network show                       address, gateway, DNS, interfaces\n\
+        \x20 tessaro-ctl network interfaces                 every interface in detail\n\
+        \x20 tessaro-ctl network profiles list              NetworkManager's profiles\n\
+        \x20 tessaro-ctl config set network.ethernet.mode=static network.ethernet.address=192.168.1.50/24 network.ethernet.gateway=192.168.1.1\n\
         \x20                                                kept only if the gateway still answers\n\
-        \x20 tessaro-ctl set ethernet.mode=dhcp\n\
-        \x20 tessaro-ctl net wifi scan && tessaro-ctl net wifi join Office   the hotspot goes down\n\
-        \x20 tessaro-ctl set wifi.mode=hotspot              back to the hotspot, tessaro-NAME\n\
-        \x20 tessaro-ctl set wifi.nat=0                     hotspot clients reach the device only\n\
-        \x20 tessaro-ctl net last                           what the last change did, if the answer never came\n\
-        \x20 tessaro-ctl net ping 192.168.1.1               from the device\n\
-        \x20 tessaro-ctl -n brave-otter-3fa2 ping           from here to the device\n\
-        \x20 tessaro-ctl get net.ip                         one read-only value\n\
-        \x20 tessaro-ctl set 'kiosk.url=https://menu.test/?ip={net.ip}'  read-only keys are placeholders too\n\
-        \x20 tessaro-ctl set browser.fps_counter=on\n\
-        \x20 tessaro-ctl maintenance on                     show the maintenance page; `off` goes back\n\
-        \x20 tessaro-ctl debug on                           name and addresses full screen; `off` goes back\n\
-        \x20 tessaro-ctl unset kiosk.url                    back to the image default\n\
-        \x20 tessaro-ctl logs -f -u tessaro-agent.service\n\
+        \x20 tessaro-ctl config set network.ethernet.mode=dhcp\n\
+        \x20 tessaro-ctl network wifi scan && tessaro-ctl network wifi join Office   the hotspot goes down\n\
+        \x20 tessaro-ctl config set network.wifi.mode=hotspot   back to the hotspot, tessaro-NAME\n\
+        \x20 tessaro-ctl config set network.wifi.nat=0      hotspot clients reach the device only\n\
+        \x20 tessaro-ctl network last                       what the last change did, if the answer never came\n\
+        \x20 tessaro-ctl network ping 192.168.1.1           from the device\n\
+        \x20 tessaro-ctl -n brave-otter-3fa2 device ping    from here to the device\n\
+        \x20 tessaro-ctl config get network.ip              one read-only value\n\
+        \x20 tessaro-ctl config set 'browser.url=https://menu.test/?ip={network.ip}'  read-only keys are placeholders too\n\
+        \x20 tessaro-ctl config set browser.fps_counter=on\n\
+        \x20 tessaro-ctl browser maintenance on             show the maintenance page; `off` goes back\n\
+        \x20 tessaro-ctl browser debug on                   name and addresses full screen; `off` goes back\n\
+        \x20 tessaro-ctl config unset browser.url           back to the image default\n\
+        \x20 tessaro-ctl device logs -f -u tessaro-agent.service\n\
         \x20 tessaro-ctl update send tessaro-os-qemux86-64.rootfs.wic.bz2   a new image; settings are kept\n\
-        \x20 tessaro-ctl token create phone                 a token for a second client\n\
-        \x20 tessaro-ctl -n brave-otter-3fa2 ssh            a root shell, by your ~/.ssh key\n\
-        \x20 tessaro-ctl -n brave-otter-3fa2 ssh -- journalctl -fu tessaro-agent\n\
-        \x20 tessaro-ctl ssh-key list                       keys that can log in as root\n\
-        \x20 tessaro-ctl ssh-key revoke user@laptop         by comment or fingerprint\n\n\
+        \x20 tessaro-ctl access token create phone          a token for a second client\n\
+        \x20 tessaro-ctl -n brave-otter-3fa2 ssh connect    a root shell, by your ~/.ssh key\n\
+        \x20 tessaro-ctl -n brave-otter-3fa2 ssh connect -- journalctl -fu tessaro-agent\n\
+        \x20 tessaro-ctl ssh keys list                      keys that can log in as root\n\
+        \x20 tessaro-ctl ssh keys revoke user@laptop        by comment or fingerprint\n\
+        \x20 source <(tessaro-ctl completion bash)          tab completion; also zsh, powershell\n\n\
         ENVIRONMENT:\n\
         \x20 TESSARO_NODE        default for --node\n\
         \x20 TESSARO_TOKEN       use this token instead of the stored one\n\
@@ -116,27 +119,52 @@ struct Cli {
     command: Cmd,
 }
 
+/// `tessaro-ctl <group> <command>`, always. The groups are nouns for what a
+/// command acts on, and a setting key starts with the group that acts on the
+/// same thing (`screen confirm`, `screen.resolution`). The rules for adding
+/// to the tree are "tessaro-ctl command and key structure" in CLAUDE.md.
 #[derive(Subcommand)]
 enum Cmd {
+    /// The device itself: who it is, what it is doing, its journal, restarts.
+    #[command(subcommand)]
+    Device(DeviceCmd),
+    /// Who may manage the device: claiming it, tokens, the root password.
+    #[command(subcommand)]
+    Access(AccessCmd),
+    /// A root shell on the device by key, and the keys that may log in.
+    #[command(subcommand)]
+    Ssh(SshCmd),
+    /// The device's settings: documented, read and changed.
+    #[command(subcommand)]
+    Config(ConfigCmd),
+    /// The device's network: addresses, profiles, WiFi, ping, speed test.
+    #[command(subcommand)]
+    Network(net::NetworkCmd),
+    /// The physical display: what is on it, and its modes.
+    #[command(subcommand)]
+    Screen(ScreenCmd),
+    /// What the browser shows: a URL, maintenance mode, the debug screen.
+    #[command(subcommand)]
+    Browser(BrowserCmd),
+    /// Put a new image on the device, keeping its settings and claim.
+    #[command(subcommand)]
+    Update(UpdateCmd),
+    /// The devices this client knows or finds. Needs no device.
+    #[command(subcommand)]
+    Nodes(NodesCmd),
+    /// Print the completion script for a shell.
+    ///
+    ///   source <(tessaro-ctl completion bash)
+    ///   tessaro-ctl completion zsh > ~/.zfunc/_tessaro-ctl
+    Completion { shell: CompletionShell },
+}
+
+#[derive(Subcommand)]
+enum DeviceCmd {
     /// What the device is doing right now.
     Status,
     /// Who the device is: node id, name, TLS fingerprint, claim state.
     Id,
-    /// Every setting, documented: accepted values, default, current value,
-    /// and what a change restarts. With KEY, just that one.
-    Keys {
-        key: Option<String>,
-    },
-    /// The resolutions the connected displays offer (for display.resolution).
-    Modes,
-    /// The network as the device sees it: address, gateway, DNS, and every
-    /// interface - the same values as the net.* keys. The subcommands read
-    /// and change NetworkManager's profiles and WiFi; the device keeps a
-    /// change only if it still reaches the network afterwards.
-    Net {
-        #[command(subcommand)]
-        what: Option<net::NetCmd>,
-    },
     /// How fast the device answers this client: the TCP connect, the TLS
     /// handshake, then round trips over the control connection. Needs no
     /// token, like `id`.
@@ -147,28 +175,113 @@ enum Cmd {
         #[arg(long, short = 'i', default_value_t = 1.0)]
         interval: f64,
     },
-    /// Current settings, or one of them.
-    Get {
-        key: Option<String>,
+    /// The device's journal.
+    Logs {
+        #[arg(long, short)]
+        follow: bool,
+        #[arg(long, short)]
+        unit: Option<String>,
+        /// How many lines back to start (`-n` is --node).
+        #[arg(long, default_value_t = 100)]
+        lines: u32,
     },
+    /// Restart the browser, the display (Weston, with the browser and agent)
+    /// or the agent.
+    Restart {
+        what: What,
+    },
+    Reboot,
+    /// Defaults, unclaimed, empty root password - the fresh-install state.
+    FactoryReset {
+        #[arg(long, short)]
+        yes: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum AccessCmd {
+    /// Take an unclaimed device: get a token and its new root password.
+    Claim {
+        /// What to call this client in `access token list`.
+        #[arg(long)]
+        name: Option<String>,
+        /// Pin the certificate without asking.
+        #[arg(long, short)]
+        yes: bool,
+    },
+    /// Remember a device with a token someone issued for you.
+    Login {
+        #[arg(long)]
+        token: String,
+        #[arg(long, short)]
+        yes: bool,
+    },
+    /// Release the device: every token and ssh key removed, root password
+    /// emptied.
+    Unclaim {
+        #[arg(long, short)]
+        yes: bool,
+    },
+    /// Tokens on the device.
+    #[command(subcommand)]
+    Token(TokenCmd),
+    /// The device's root password.
+    #[command(subcommand)]
+    Password(PasswordCmd),
+}
+
+#[derive(Subcommand)]
+enum SshCmd {
+    /// A root shell on the device. Sends your SSH public key over this
+    /// pinned connection, adds it to root's authorized_keys, then runs ssh
+    /// with the host key the device reported - no password, no first-use
+    /// prompt. Anything after `--` goes to ssh: options or a command.
+    Connect {
+        /// The key to send: a .pub file, or a private key with its .pub
+        /// next to it. Default: the first of ~/.ssh/id_ed25519.pub,
+        /// id_ecdsa.pub, id_ecdsa_sk.pub, id_ed25519_sk.pub, id_rsa.pub.
+        #[arg(long, short = 'i', value_name = "PATH")]
+        key: Option<std::path::PathBuf>,
+        /// The device's SSH port.
+        #[arg(long, default_value_t = 22)]
+        port: u16,
+        /// Send the key and print the ssh command instead of running it.
+        #[arg(long)]
+        print: bool,
+        #[arg(last = true, value_name = "SSH_ARGS")]
+        args: Vec<String>,
+    },
+    /// The SSH keys that can log in as root. Unclaiming or a factory reset
+    /// removes them all.
+    #[command(subcommand)]
+    Keys(SshKeysCmd),
+}
+
+#[derive(Subcommand)]
+enum ConfigCmd {
+    /// Every setting, documented: accepted values, default, current value,
+    /// and what a change restarts. With KEY, just that one.
+    Keys { key: Option<String> },
+    /// Current settings, or one of them.
+    Get { key: Option<String> },
     /// Change settings: KEY=VALUE ... Restarts only what reads them.
     ///
-    /// `tessaro-ctl keys` lists every KEY with what it accepts. Several pairs
-    /// are applied as one change. `data.NAME=VALUE` defines a custom value,
-    /// with a NAME you choose. Any setting's full key in braces is a
-    /// placeholder in kiosk.url, filled percent-encoded: `{data.NAME}`,
-    /// `{node.name}`, `{display.osk}`, ...
+    /// `tessaro-ctl config keys` lists every KEY with what it accepts.
+    /// Several pairs are applied as one change. `data.NAME=VALUE` defines a
+    /// custom value, with a NAME you choose. Any setting's full key in braces
+    /// is a placeholder in browser.url, filled percent-encoded:
+    /// `{data.NAME}`, `{device.name}`, `{screen.osk}`, ...
     ///
-    ///   tessaro-ctl set 'kiosk.url=https://menu.test/?table={data.table}&screen={data.screen}' data.table=12 data.screen=entrance
+    ///   tessaro-ctl config set 'browser.url=https://menu.test/?table={data.table}&screen={data.screen}' data.table=12 data.screen=entrance
     ///
-    /// The ethernet.* and wifi.* keys switch the device's own network
-    /// profiles. That change is applied and checked by the device before it
-    /// is saved at all - see --verify - and rolled back by the device alone
-    /// if it cuts it off:
+    /// The network.ethernet.* and network.wifi.* keys switch the device's own
+    /// network profiles. That change is applied and checked by the device
+    /// before it is saved at all - see --verify - and rolled back by the
+    /// device alone if it cuts it off:
     ///
-    ///   tessaro-ctl set ethernet.mode=static ethernet.address=192.168.1.50/24 ethernet.gateway=192.168.1.1 ethernet.dns=192.168.1.1
-    ///   tessaro-ctl set ethernet.mode=dhcp
-    ///   tessaro-ctl set wifi.mode=hotspot
+    ///   tessaro-ctl config set network.ethernet.mode=static network.ethernet.address=192.168.1.50/24 network.ethernet.gateway=192.168.1.1 network.ethernet.dns=192.168.1.1
+    ///   tessaro-ctl config set network.ethernet.mode=dhcp
+    ///   tessaro-ctl config set network.wifi.mode=hotspot
     Set {
         #[arg(required = true, value_name = "KEY=VALUE")]
         pairs: Vec<String>,
@@ -193,147 +306,78 @@ enum Cmd {
         #[command(flatten)]
         verify: net::VerifyArg,
     },
-    /// Keep a change that is on probation (display.resolution).
-    Confirm,
-    /// Maintenance mode: show maintenance.url instead of kiosk.url, which is
-    /// left as it is. The same as `set maintenance.enable=1|0`.
-    ///
-    ///   tessaro-ctl maintenance on --url 'http://127.0.0.1/maintenance.html?message=Back%20at%2014:00'
-    Maintenance {
-        state: Toggle,
-        /// With `on`: set maintenance.url in the same change.
-        #[arg(long)]
-        url: Option<String>,
-    },
-    /// The debug screen: debug.template in large text over the whole screen,
-    /// instead of the kiosk or maintenance page. The same as
-    /// `set debug.enable=1|0`. `\n` breaks a line.
-    ///
-    ///   tessaro-ctl debug on --template 'IP {net.ip}\nGW {net.gateway}'
-    Debug {
-        state: Toggle,
-        /// With `on`: set debug.template in the same change.
-        #[arg(long)]
-        template: Option<String>,
-    },
-    /// Point the browser at a URL until the next refresh.
-    Navigate {
-        url: String,
-    },
-    /// Restart the browser, the display (Weston, with the browser and agent)
-    /// or the agent.
-    Restart {
-        what: What,
-    },
-    Reboot,
+}
+
+#[derive(Subcommand)]
+enum ScreenCmd {
     /// Save what the browser is rendering as a JPEG.
     Screenshot {
         #[arg(long, short)]
         output: Option<String>,
     },
-    /// The device's journal.
-    Logs {
-        #[arg(long, short)]
-        follow: bool,
-        #[arg(long, short)]
-        unit: Option<String>,
-        /// How many lines back to start (`-n` is --node).
-        #[arg(long, default_value_t = 100)]
-        lines: u32,
-    },
-    /// Measure the device's internet connection against speed.cloudflare.com:
-    /// latency, then download and upload at growing payload sizes.
+    /// The resolutions the connected displays offer (for screen.resolution).
+    Modes,
+    /// Keep a change that is on probation (screen.resolution).
+    Confirm,
+}
+
+#[derive(Subcommand)]
+enum BrowserCmd {
+    /// Point the browser at a URL until the next refresh.
+    Navigate { url: String },
+    /// Maintenance mode: show browser.maintenance.url instead of
+    /// browser.url, which is left as it is. The same as
+    /// `config set browser.maintenance.enable=1|0`.
     ///
-    /// Runs on the device, so it measures the kiosk's link, not this one.
-    /// A full run moves a few hundred MB - mind a metered connection, and
-    /// use a smaller --max-size there.
+    ///   tessaro-ctl browser maintenance on --url 'http://127.0.0.1/maintenance.html?message=Back%20at%2014:00'
+    Maintenance {
+        state: Toggle,
+        /// With `on`: set browser.maintenance.url in the same change.
+        #[arg(long)]
+        url: Option<String>,
+    },
+    /// The debug screen: browser.debug.template in large text over the whole
+    /// screen, instead of the kiosk or maintenance page. The same as
+    /// `config set browser.debug.enable=1|0`. `\n` breaks a line.
     ///
-    ///   tessaro-ctl speedtest --max-size 1m --tests 3
-    Speedtest {
-        /// Largest payload: 100k, 1m, 10m, 25m or 100m. Uploads stop at 25m.
-        #[arg(long, default_value = "25m", value_parser = parse_payload)]
-        max_size: u64,
-        /// Samples per payload size.
-        #[arg(long, default_value_t = protocol::SPEEDTEST_DEFAULT_TESTS)]
-        tests: u32,
-    },
-    /// Take an unclaimed device: get a token and its new root password.
-    Claim {
-        /// What to call this client in `token list`.
+    ///   tessaro-ctl browser debug on --template 'IP {network.ip}\nGW {network.gateway}'
+    Debug {
+        state: Toggle,
+        /// With `on`: set browser.debug.template in the same change.
         #[arg(long)]
-        name: Option<String>,
-        /// Pin the certificate without asking.
-        #[arg(long, short)]
-        yes: bool,
+        template: Option<String>,
     },
-    /// Remember a device with a token someone issued for you.
-    Login {
-        #[arg(long)]
-        token: String,
-        #[arg(long, short)]
-        yes: bool,
-    },
-    /// Forget a device: its pin and token on this machine.
-    Forget {
-        node: String,
-    },
-    /// Tokens on the device.
-    Token {
-        #[command(subcommand)]
-        command: TokenCmd,
-    },
-    /// The device's root password.
-    Password {
-        #[command(subcommand)]
-        command: PasswordCmd,
-    },
-    /// A root shell on the device. Sends your SSH public key over this
-    /// pinned connection, adds it to root's authorized_keys, then runs ssh
-    /// with the host key the device reported - no password, no first-use
-    /// prompt. Anything after `--` goes to ssh: options or a command.
-    Ssh {
-        /// The key to send: a .pub file, or a private key with its .pub
-        /// next to it. Default: the first of ~/.ssh/id_ed25519.pub,
-        /// id_ecdsa.pub, id_ecdsa_sk.pub, id_ed25519_sk.pub, id_rsa.pub.
-        #[arg(long, short = 'i', value_name = "PATH")]
-        key: Option<std::path::PathBuf>,
-        /// The device's SSH port.
-        #[arg(long, default_value_t = 22)]
-        port: u16,
-        /// Send the key and print the ssh command instead of running it.
-        #[arg(long)]
-        print: bool,
-        #[arg(last = true, value_name = "SSH_ARGS")]
-        args: Vec<String>,
-    },
-    /// The SSH keys that can log in as root. Unclaiming or a factory reset
-    /// removes them all.
-    SshKey {
-        #[command(subcommand)]
-        command: SshKeyCmd,
-    },
-    /// Release the device: every token and ssh key removed, root password
-    /// emptied.
-    Unclaim {
-        #[arg(long, short)]
-        yes: bool,
-    },
-    /// Defaults, unclaimed, empty root password - the fresh-install state.
-    FactoryReset {
-        #[arg(long, short)]
-        yes: bool,
-    },
-    /// Put a new image on the device, keeping its settings and claim.
-    Update {
-        #[command(subcommand)]
-        command: UpdateCmd,
-    },
+}
+
+#[derive(Subcommand)]
+enum NodesCmd {
     /// Devices answering on the local network.
-    Nodes {
+    List {
         /// Seconds to listen.
         #[arg(long, default_value_t = 3)]
         wait: u64,
     },
+    /// Forget a device: its pin and token on this machine.
+    Forget { node: String },
+}
+
+/// The shells `completion` writes for. clap_complete's own enum offers fish
+/// and elvish too, which nobody here uses.
+#[derive(Clone, Copy, ValueEnum)]
+enum CompletionShell {
+    Bash,
+    Zsh,
+    Powershell,
+}
+
+impl From<CompletionShell> for clap_complete::Shell {
+    fn from(shell: CompletionShell) -> Self {
+        match shell {
+            CompletionShell::Bash => clap_complete::Shell::Bash,
+            CompletionShell::Zsh => clap_complete::Shell::Zsh,
+            CompletionShell::Powershell => clap_complete::Shell::PowerShell,
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -350,7 +394,7 @@ enum TokenCmd {
 }
 
 #[derive(Subcommand)]
-enum SshKeyCmd {
+enum SshKeysCmd {
     /// Every key in root's authorized_keys: fingerprint, type, comment.
     List,
     /// Remove one: its SHA256 fingerprint, a unique prefix of it, or its
@@ -425,7 +469,7 @@ enum What {
     Agent,
 }
 
-/// Rust starts with SIGPIPE ignored, so `tessaro-ctl keys | head` panics on
+/// Rust starts with SIGPIPE ignored, so `tessaro-ctl config keys | head` panics on
 /// the first write after `head` exits. A command-line tool should just stop,
 /// as every other one in the pipe does. SIGPIPE is 13 and SIG_DFL is 0 on
 /// both Linux and macOS.
@@ -461,27 +505,34 @@ fn main() -> ExitCode {
 }
 
 fn run(cli: Cli) -> Result<(), String> {
+    if let Cmd::Completion { shell } = cli.command {
+        print!("{}", completion(shell));
+        return Ok(());
+    }
+
     let mut nodes = Nodes::load()?;
 
     // The two that do not need a device conversation at all.
     match &cli.command {
-        Cmd::Nodes { wait } => return list_nodes(&nodes, *wait, cli.json),
-        Cmd::Forget { node } => return forget(&mut nodes, node),
+        Cmd::Nodes(NodesCmd::List { wait }) => return list_nodes(&nodes, *wait, cli.json),
+        Cmd::Nodes(NodesCmd::Forget { node }) => return forget(&mut nodes, node),
         _ => {}
     }
 
     let target = connect::resolve(cli.node.as_deref(), &nodes)?;
     let local = matches!(target, Target::Local(_));
     let trust = match &cli.command {
-        Cmd::Id | Cmd::Ping { .. } => Trust::Peek,
-        Cmd::Claim { yes, .. } | Cmd::Login { yes, .. } => Trust::Pin { assume_yes: *yes },
+        Cmd::Device(DeviceCmd::Id | DeviceCmd::Ping { .. }) => Trust::Peek,
+        Cmd::Access(AccessCmd::Claim { yes, .. } | AccessCmd::Login { yes, .. }) => {
+            Trust::Pin { assume_yes: *yes }
+        }
         _ => Trust::KnownOnly,
     };
     // No read timeout: a followed log is open-ended, and a speed test on a
     // slow link can go quiet for longer than one. The device bounds that.
     let follow = match &cli.command {
-        Cmd::Logs { follow: true, .. } | Cmd::Speedtest { .. } => true,
-        Cmd::Net { what: Some(what) } => net::streams(what),
+        Cmd::Device(DeviceCmd::Logs { follow: true, .. }) => true,
+        Cmd::Network(what) => net::streams(what),
         _ => false,
     };
     let mut session = connect::open(&target, &nodes, trust, follow)?;
@@ -489,15 +540,15 @@ fn run(cli: Cli) -> Result<(), String> {
     let json = cli.json;
 
     match cli.command {
-        Cmd::Status => {
+        Cmd::Device(DeviceCmd::Status) => {
             let status: Status = call(&mut session, Command::Status)?;
             print(json, &status, || show_status(&status))
         }
-        Cmd::Id => {
+        Cmd::Device(DeviceCmd::Id) => {
             let node: NodeInfo = call(&mut session, Command::Id)?;
             print(json, &node, || show_node(&node))
         }
-        Cmd::Keys { key } => {
+        Cmd::Config(ConfigCmd::Keys { key }) => {
             let mut keys: Vec<KeyInfo> = call(&mut session, Command::Keys)?;
             if let Some(wanted) = &key {
                 let template = wanted.starts_with(protocol::keys::DATA_PREFIX);
@@ -507,7 +558,7 @@ fn run(cli: Cli) -> Result<(), String> {
                 }
                 if keys.is_empty() {
                     return Err(format!(
-                        "{wanted} is not a setting; `tessaro-ctl keys` lists them"
+                        "{wanted} is not a setting; `tessaro-ctl config keys` lists them"
                     ));
                 }
             }
@@ -520,204 +571,22 @@ fn run(cli: Cli) -> Result<(), String> {
                 }
             })
         }
-        Cmd::Net {
-            what: what @ (None | Some(net::NetCmd::Interfaces)),
-        } => {
+        Cmd::Network(net::NetworkCmd::Show) => {
             let net: Net = call(&mut session, Command::Net)?;
-            match what {
-                None => print(json, &net, || show_net(&net)),
-                _ => print(json, &net.interfaces, || {
-                    for (at, interface) in net.interfaces.iter().enumerate() {
-                        if at > 0 {
-                            println!();
-                        }
-                        show_interface(interface);
-                    }
-                }),
-            }
+            print(json, &net, || show_net(&net))
         }
-        Cmd::Net { what: Some(what) } => net::run(&mut session, what, json),
-        Cmd::Ping { count, interval } => net::ping(&mut session, json, count, interval),
-        Cmd::Modes => {
-            let connectors: Vec<Connector> = call(&mut session, Command::Modes)?;
-            print(json, &connectors, || {
-                if connectors.is_empty() {
-                    println!(
-                        "{}",
-                        paint(style::WARN, "no connected display reports its modes")
-                    );
-                }
-                for connector in &connectors {
-                    println!("{}", paint(style::HEADING, format!("{}:", connector.name)));
-                    for (at, mode) in connector.modes.iter().enumerate() {
-                        let note = if at == 0 {
-                            paint(style::MUTED, "  (preferred)")
-                        } else {
-                            String::new()
-                        };
-                        println!("  {mode}{note}");
+        Cmd::Network(net::NetworkCmd::Interfaces) => {
+            let net: Net = call(&mut session, Command::Net)?;
+            print(json, &net.interfaces, || {
+                for (at, interface) in net.interfaces.iter().enumerate() {
+                    if at > 0 {
+                        println!();
                     }
+                    show_interface(interface);
                 }
-                println!(
-                    "\nset one with: {}",
-                    paint(
-                        style::CMD,
-                        "tessaro-ctl set display.resolution=WIDTHxHEIGHT"
-                    )
-                );
             })
         }
-        Cmd::Get { key } => {
-            let settings: Settings = call(&mut session, Command::Get { key })?;
-            print(json, &settings, || {
-                for setting in &settings.settings {
-                    let value = setting.value.as_deref().unwrap_or("");
-                    let source = match setting.source {
-                        Source::Set => String::new(),
-                        Source::Default => paint(style::MUTED, "  (default)"),
-                        Source::Live => paint(style::MUTED, "  (read-only)"),
-                    };
-                    println!(
-                        "{} {} {value}{source}",
-                        paint(style::HEADING, &setting.key),
-                        paint(style::LABEL, "=")
-                    );
-                }
-                println!(
-                    "{}",
-                    paint(style::MUTED, format!("# revision {}", settings.revision))
-                );
-            })
-        }
-        Cmd::Set {
-            pairs,
-            if_revision,
-            no_apply,
-            verify,
-        } => {
-            let mut values = BTreeMap::new();
-            for pair in pairs {
-                let (key, value) = pair
-                    .split_once('=')
-                    .ok_or_else(|| format!("{pair}: expected KEY=VALUE"))?;
-                values.insert(key.to_string(), value.to_string());
-            }
-            let network = values.keys().any(|key| net::is_network_key(key));
-            let command = Command::Set {
-                values,
-                if_revision,
-                apply: !no_apply,
-                verify: verify.verify.clone(),
-            };
-            if network && !no_apply {
-                return net::apply(
-                    &mut session,
-                    json,
-                    "changing the network",
-                    &verify.verify,
-                    command,
-                );
-            }
-            let applied: Applied = call(&mut session, command)?;
-            print(json, &applied, || show_applied(&applied, no_apply))
-        }
-        Cmd::Unset {
-            keys,
-            if_revision,
-            no_apply,
-            verify,
-        } => {
-            let network = keys.iter().any(|key| net::is_network_key(key));
-            let command = Command::Unset {
-                keys,
-                if_revision,
-                apply: !no_apply,
-                verify: verify.verify.clone(),
-            };
-            if network && !no_apply {
-                return net::apply(
-                    &mut session,
-                    json,
-                    "changing the network",
-                    &verify.verify,
-                    command,
-                );
-            }
-            let applied: Applied = call(&mut session, command)?;
-            print(json, &applied, || show_applied(&applied, no_apply))
-        }
-        Cmd::Confirm => done(&mut session, Command::Confirm, json),
-        Cmd::Maintenance { state, url } => toggle(
-            &mut session,
-            json,
-            &Mode {
-                name: "maintenance",
-                flag: "maintenance.enable",
-                with: ("--url", "maintenance.url"),
-                shows: "maintenance.url",
-                back: "kiosk.url",
-                command: "maintenance",
-            },
-            state,
-            url,
-        ),
-        Cmd::Debug { state, template } => toggle(
-            &mut session,
-            json,
-            &Mode {
-                name: "debug screen",
-                flag: "debug.enable",
-                with: ("--template", "debug.template"),
-                shows: "debug.template",
-                back: "the kiosk page (or the maintenance page)",
-                command: "debug",
-            },
-            state,
-            template,
-        ),
-        Cmd::Navigate { url } => done(&mut session, Command::Navigate { url }, json),
-        Cmd::Restart { what } => {
-            let what = match what {
-                What::Browser => RestartTarget::Browser,
-                What::Weston => RestartTarget::Weston,
-                What::Agent => RestartTarget::Agent,
-            };
-            done(&mut session, Command::Restart { what }, json)
-        }
-        Cmd::Reboot => done(&mut session, Command::Reboot, json),
-        Cmd::Screenshot { output } => {
-            let shot: Screenshot = call(&mut session, Command::Screenshot)?;
-            let bytes = data_encoding::BASE64
-                .decode(shot.data.as_bytes())
-                .map_err(|err| format!("the image is not base64: {err}"))?;
-            let path = output.unwrap_or_else(|| format!("{}.jpg", session.node.name));
-            std::fs::write(&path, &bytes).map_err(|err| format!("{path}: {err}"))?;
-            println!(
-                "{} {}",
-                paint(style::OK, &path),
-                paint(style::MUTED, format!("({} bytes)", bytes.len()))
-            );
-            Ok(())
-        }
-        Cmd::Logs {
-            follow,
-            unit,
-            lines,
-        } => session.stream(
-            Command::Logs {
-                follow,
-                unit,
-                lines: Some(lines),
-            },
-            |event| {
-                if json {
-                    println!("{event}");
-                } else {
-                    println!("{}", journal_line(&event));
-                }
-            },
-        ),
-        Cmd::Speedtest { max_size, tests } => {
+        Cmd::Network(net::NetworkCmd::Speedtest { max_size, tests }) => {
             if !json {
                 eprintln!(
                     "{}",
@@ -748,7 +617,192 @@ fn run(cli: Cli) -> Result<(), String> {
                 },
             )
         }
-        Cmd::Claim { name, .. } => {
+        Cmd::Network(what) => net::run(&mut session, what, json),
+        Cmd::Device(DeviceCmd::Ping { count, interval }) => {
+            net::ping(&mut session, json, count, interval)
+        }
+        Cmd::Screen(ScreenCmd::Modes) => {
+            let connectors: Vec<Connector> = call(&mut session, Command::Modes)?;
+            print(json, &connectors, || {
+                if connectors.is_empty() {
+                    println!(
+                        "{}",
+                        paint(style::WARN, "no connected display reports its modes")
+                    );
+                }
+                for connector in &connectors {
+                    println!("{}", paint(style::HEADING, format!("{}:", connector.name)));
+                    for (at, mode) in connector.modes.iter().enumerate() {
+                        let note = if at == 0 {
+                            paint(style::MUTED, "  (preferred)")
+                        } else {
+                            String::new()
+                        };
+                        println!("  {mode}{note}");
+                    }
+                }
+                println!(
+                    "\nset one with: {}",
+                    paint(
+                        style::CMD,
+                        "tessaro-ctl config set screen.resolution=WIDTHxHEIGHT"
+                    )
+                );
+            })
+        }
+        Cmd::Config(ConfigCmd::Get { key }) => {
+            let settings: Settings = call(&mut session, Command::Get { key })?;
+            print(json, &settings, || {
+                for setting in &settings.settings {
+                    let value = setting.value.as_deref().unwrap_or("");
+                    let source = match setting.source {
+                        Source::Set => String::new(),
+                        Source::Default => paint(style::MUTED, "  (default)"),
+                        Source::Live => paint(style::MUTED, "  (read-only)"),
+                    };
+                    println!(
+                        "{} {} {value}{source}",
+                        paint(style::HEADING, &setting.key),
+                        paint(style::LABEL, "=")
+                    );
+                }
+                println!(
+                    "{}",
+                    paint(style::MUTED, format!("# revision {}", settings.revision))
+                );
+            })
+        }
+        Cmd::Config(ConfigCmd::Set {
+            pairs,
+            if_revision,
+            no_apply,
+            verify,
+        }) => {
+            let mut values = BTreeMap::new();
+            for pair in pairs {
+                let (key, value) = pair
+                    .split_once('=')
+                    .ok_or_else(|| format!("{pair}: expected KEY=VALUE"))?;
+                values.insert(key.to_string(), value.to_string());
+            }
+            let network = values.keys().any(|key| net::is_network_key(key));
+            let command = Command::Set {
+                values,
+                if_revision,
+                apply: !no_apply,
+                verify: verify.verify.clone(),
+            };
+            if network && !no_apply {
+                return net::apply(
+                    &mut session,
+                    json,
+                    "changing the network",
+                    &verify.verify,
+                    command,
+                );
+            }
+            let applied: Applied = call(&mut session, command)?;
+            print(json, &applied, || show_applied(&applied, no_apply))
+        }
+        Cmd::Config(ConfigCmd::Unset {
+            keys,
+            if_revision,
+            no_apply,
+            verify,
+        }) => {
+            let network = keys.iter().any(|key| net::is_network_key(key));
+            let command = Command::Unset {
+                keys,
+                if_revision,
+                apply: !no_apply,
+                verify: verify.verify.clone(),
+            };
+            if network && !no_apply {
+                return net::apply(
+                    &mut session,
+                    json,
+                    "changing the network",
+                    &verify.verify,
+                    command,
+                );
+            }
+            let applied: Applied = call(&mut session, command)?;
+            print(json, &applied, || show_applied(&applied, no_apply))
+        }
+        Cmd::Screen(ScreenCmd::Confirm) => done(&mut session, Command::Confirm, json),
+        Cmd::Browser(BrowserCmd::Maintenance { state, url }) => toggle(
+            &mut session,
+            json,
+            &Mode {
+                name: "maintenance",
+                flag: keys::MAINTENANCE_ENABLE,
+                with: ("--url", keys::MAINTENANCE_URL),
+                shows: keys::MAINTENANCE_URL,
+                back: keys::URL,
+                command: "browser maintenance",
+            },
+            state,
+            url,
+        ),
+        Cmd::Browser(BrowserCmd::Debug { state, template }) => toggle(
+            &mut session,
+            json,
+            &Mode {
+                name: "debug screen",
+                flag: keys::DEBUG_ENABLE,
+                with: ("--template", keys::DEBUG_TEMPLATE),
+                shows: keys::DEBUG_TEMPLATE,
+                back: "the kiosk page (or the maintenance page)",
+                command: "browser debug",
+            },
+            state,
+            template,
+        ),
+        Cmd::Browser(BrowserCmd::Navigate { url }) => {
+            done(&mut session, Command::Navigate { url }, json)
+        }
+        Cmd::Device(DeviceCmd::Restart { what }) => {
+            let what = match what {
+                What::Browser => RestartTarget::Browser,
+                What::Weston => RestartTarget::Weston,
+                What::Agent => RestartTarget::Agent,
+            };
+            done(&mut session, Command::Restart { what }, json)
+        }
+        Cmd::Device(DeviceCmd::Reboot) => done(&mut session, Command::Reboot, json),
+        Cmd::Screen(ScreenCmd::Screenshot { output }) => {
+            let shot: Screenshot = call(&mut session, Command::Screenshot)?;
+            let bytes = data_encoding::BASE64
+                .decode(shot.data.as_bytes())
+                .map_err(|err| format!("the image is not base64: {err}"))?;
+            let path = output.unwrap_or_else(|| format!("{}.jpg", session.node.name));
+            std::fs::write(&path, &bytes).map_err(|err| format!("{path}: {err}"))?;
+            println!(
+                "{} {}",
+                paint(style::OK, &path),
+                paint(style::MUTED, format!("({} bytes)", bytes.len()))
+            );
+            Ok(())
+        }
+        Cmd::Device(DeviceCmd::Logs {
+            follow,
+            unit,
+            lines,
+        }) => session.stream(
+            Command::Logs {
+                follow,
+                unit,
+                lines: Some(lines),
+            },
+            |event| {
+                if json {
+                    println!("{event}");
+                } else {
+                    println!("{}", journal_line(&event));
+                }
+            },
+        ),
+        Cmd::Access(AccessCmd::Claim { name, .. }) => {
             let name = name.unwrap_or_else(default_client_name);
             // A token left over from before an unclaim means nothing now.
             session.clear_token();
@@ -784,7 +838,7 @@ fn run(cli: Cli) -> Result<(), String> {
             }
             Ok(())
         }
-        Cmd::Login { token, .. } => {
+        Cmd::Access(AccessCmd::Login { token, .. }) => {
             session.set_token(token.clone());
             // Prove the token before storing it.
             let _: Vec<TokenInfo> = call(&mut session, Command::TokenList)?;
@@ -797,8 +851,8 @@ fn run(cli: Cli) -> Result<(), String> {
             );
             Ok(())
         }
-        Cmd::Forget { .. } | Cmd::Nodes { .. } => unreachable!("handled above"),
-        Cmd::Token { command } => match command {
+        Cmd::Nodes(_) | Cmd::Completion { .. } => unreachable!("handled above"),
+        Cmd::Access(AccessCmd::Token(command)) => match command {
             TokenCmd::Create { name } => {
                 let created: TokenCreated = call(&mut session, Command::TokenCreate { name })?;
                 print(json, &created, || {
@@ -811,7 +865,7 @@ fn run(cli: Cli) -> Result<(), String> {
                         paint(
                             style::CMD,
                             format!(
-                                "tessaro-ctl --node {} login --token <token>",
+                                "tessaro-ctl --node {} access login --token <token>",
                                 session.node.name
                             )
                         )
@@ -834,7 +888,7 @@ fn run(cli: Cli) -> Result<(), String> {
             }
             TokenCmd::Revoke { id } => done(&mut session, Command::TokenRevoke { id }, json),
         },
-        Cmd::Password { command } => match command {
+        Cmd::Access(AccessCmd::Password(command)) => match command {
             PasswordCmd::Set { random } => {
                 let password = if random {
                     None
@@ -858,12 +912,12 @@ fn run(cli: Cli) -> Result<(), String> {
                 })
             }
         },
-        Cmd::Ssh {
+        Cmd::Ssh(SshCmd::Connect {
             key,
             port,
             print,
             args,
-        } => ssh::run(
+        }) => ssh::run(
             &mut session,
             ssh::Options {
                 key,
@@ -873,8 +927,8 @@ fn run(cli: Cli) -> Result<(), String> {
             },
             json,
         ),
-        Cmd::SshKey { command } => match command {
-            SshKeyCmd::List => {
+        Cmd::Ssh(SshCmd::Keys(command)) => match command {
+            SshKeysCmd::List => {
                 let keys: Vec<SshKeyInfo> = call(&mut session, Command::SshKeyList)?;
                 print(json, &keys, || {
                     if keys.is_empty() {
@@ -894,7 +948,7 @@ fn run(cli: Cli) -> Result<(), String> {
                     }
                 })
             }
-            SshKeyCmd::Revoke { key } => {
+            SshKeysCmd::Revoke { key } => {
                 let done: Done = call(&mut session, Command::SshKeyRevoke { key })?;
                 print(json, &done, || {
                     match done.message.strip_prefix("revoked ") {
@@ -908,7 +962,7 @@ fn run(cli: Cli) -> Result<(), String> {
                 })
             }
         },
-        Cmd::Unclaim { yes } => {
+        Cmd::Access(AccessCmd::Unclaim { yes }) => {
             confirm_destructive(
                 &session,
                 yes,
@@ -917,7 +971,7 @@ fn run(cli: Cli) -> Result<(), String> {
             done(&mut session, Command::Unclaim, json)?;
             forget_session(&mut nodes, &session)
         }
-        Cmd::FactoryReset { yes } => {
+        Cmd::Device(DeviceCmd::FactoryReset { yes }) => {
             confirm_destructive(
                 &session,
                 yes,
@@ -926,7 +980,7 @@ fn run(cli: Cli) -> Result<(), String> {
             done(&mut session, Command::FactoryReset, json)?;
             forget_session(&mut nodes, &session)
         }
-        Cmd::Update { command } => match command {
+        Cmd::Update(command) => match command {
             UpdateCmd::Send {
                 image,
                 bmap,
@@ -955,6 +1009,27 @@ fn run(cli: Cli) -> Result<(), String> {
             UpdateCmd::Status => update::status(&mut session, json),
             UpdateCmd::Cancel => update::cancel(&mut session, json),
         },
+    }
+}
+
+/// The completion script for `shell`.
+///
+/// clap_complete 4.6's bash script names the root `tessaro__ctl` when it
+/// walks the words typed, but `tessaro__subcmd__ctl` in the cases that list
+/// what comes next - it escapes the dash in the binary's name two ways - so
+/// nothing below the first word would ever complete. One spelling fixes it.
+fn completion(shell: CompletionShell) -> String {
+    let mut script = Vec::new();
+    clap_complete::generate(
+        clap_complete::Shell::from(shell),
+        &mut Cli::command(),
+        "tessaro-ctl",
+        &mut script,
+    );
+    let script = String::from_utf8_lossy(&script).into_owned();
+    match shell {
+        CompletionShell::Bash => script.replace("tessaro__subcmd__ctl", "tessaro__ctl"),
+        _ => script,
     }
 }
 
@@ -1123,7 +1198,7 @@ fn show_net(net: &Net) {
         "\n  {}",
         paint(
             style::MUTED,
-            "* carries the default route. `tessaro-ctl net interfaces` for details."
+            "* carries the default route. `tessaro-ctl network interfaces` for details."
         )
     );
 }
@@ -1218,7 +1293,7 @@ fn show_key(key: &KeyInfo) {
             "note",
             &paint(
                 style::WARN,
-                "applied on probation: `tessaro-ctl confirm` within 60s or it reverts",
+                "applied on probation: `tessaro-ctl screen confirm` within 60s or it reverts",
             ),
         );
     }
@@ -1260,8 +1335,8 @@ fn show_status(status: &Status) {
                 "{} {} {} {}",
                 paint(style::WARN, "on"),
                 paint(style::MUTED, "-"),
-                paint(style::CMD, "tessaro-ctl maintenance off"),
-                paint(style::MUTED, "returns to kiosk.url")
+                paint(style::CMD, "tessaro-ctl browser maintenance off"),
+                paint(style::MUTED, "returns to browser.url")
             ),
         );
     }
@@ -1272,12 +1347,12 @@ fn show_status(status: &Status) {
                 "{} {} {} {}",
                 paint(style::WARN, "on"),
                 paint(style::MUTED, "-"),
-                paint(style::CMD, "tessaro-ctl debug off"),
+                paint(style::CMD, "tessaro-ctl browser debug off"),
                 paint(style::MUTED, "returns to the page below")
             ),
         );
     }
-    node_row("kiosk url", &status.kiosk_url);
+    node_row("browser url", &status.kiosk_url);
     node_row(
         "showing",
         &status
@@ -1306,7 +1381,7 @@ fn show_status(status: &Status) {
             paint(style::WARN, "on probation"),
             pending.key,
             pending.value,
-            paint(style::CMD, "`tessaro-ctl confirm`"),
+            paint(style::CMD, "`tessaro-ctl screen confirm`"),
             pending.seconds_left,
             pending.previous.as_deref().unwrap_or("the default")
         );
@@ -1351,7 +1426,7 @@ fn show_applied(applied: &Applied, no_apply: bool) {
                 style::WARN,
                 format!("{}={} is on probation.", pending.key, pending.value)
             ),
-            paint(style::CMD, "tessaro-ctl confirm"),
+            paint(style::CMD, "tessaro-ctl screen confirm"),
             pending.seconds_left,
             pending.previous.as_deref().unwrap_or("the default")
         );
@@ -1642,6 +1717,26 @@ fn list_nodes(nodes: &Nodes, wait: u64, json: bool) -> Result<(), String> {
 mod tests {
     use super::*;
     use anstream::adapter::strip_str;
+
+    #[test]
+    fn bash_completes_below_the_first_word() {
+        let script = completion(CompletionShell::Bash);
+        // Every command the word walk can arrive at has a case of its own.
+        for line in script.lines() {
+            let Some(name) = line.trim().strip_prefix("cmd=\"") else {
+                continue;
+            };
+            let name = name.trim_end_matches('"');
+            if name.is_empty() {
+                continue;
+            }
+            assert!(
+                script.contains(&format!("        {name})")),
+                "no case for {name}"
+            );
+        }
+        assert!(script.contains("tessaro__ctl__subcmd__ssh__subcmd__keys)"));
+    }
 
     fn plain(step: SpeedtestEvent) -> String {
         strip_str(&speedtest_line(&step)).to_string()

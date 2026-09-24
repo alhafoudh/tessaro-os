@@ -82,6 +82,59 @@ parseable; `--json` output is never styled; and aligned columns use
 painted string counts the escape bytes. Both crates were already in the lock
 through clap, so this cost no new crates.
 
+**tessaro-ctl command and key structure.** The tree is always `tessaro-ctl
+<group> <command>`, and a setting key starts with the group that acts on the
+same thing. Keep to these rules when adding a command or a setting:
+
+* **No flat top-level commands besides `completion`, and no hidden
+  aliases.** Each action has one spelling, so docs, hints and scripts cannot
+  drift apart.
+* **Groups are nouns, split by what the command acts on**, not by how it is
+  implemented:
+  * `device`: the device itself. Its identity, current state, journal,
+    `ping` to it, restart and reboot, factory reset.
+  * `access`: who may manage it. Claim, login, unclaim, tokens, root password.
+  * `ssh`: shell access by key. `connect` and `keys list|revoke`.
+  * `config`: the settings registry. `keys`, `get`, `set`, `unset`.
+  * `network`: the device's network link. Addresses, interfaces, profiles,
+    WiFi, `ping` from the device, speed test.
+  * `screen`: the physical display. Screenshot, modes, confirming a mode.
+  * `browser`: what the browser shows. Navigate, maintenance, debug screen.
+  * `update`: putting an image on the device.
+  * `nodes`: this client's own view (discovery, known devices). Needs no device.
+* **Commands are verbs or short nouns**, and the same verb means the same thing
+  in every group: `list`, `create`, `revoke`, `set`, `show`, `status`, `cancel`.
+* **A group's bare name does nothing**; it prints its help. Overviews are an
+  explicit `show` or `status` (`network show`, `network wifi status`).
+* **Nest a third level only for a collection with its own verbs**
+  (`access token create|list|revoke`, `ssh keys list|revoke`,
+  `network profiles list|show`). Otherwise use two levels.
+* **A new command goes into an existing group.** Add a group only when at least
+  two commands would share it and none of the existing groups fits; a lone
+  command goes to the nearest group.
+* **Destructive commands take `-y/--yes`** and live in the group their effect
+  belongs to (`device factory-reset` wipes the device, `access unclaim` only
+  removes its owners).
+* **Setting keys are prefixed by the command group that acts on the same
+  thing**: `browser.*`, `screen.*`, `network.*`, `device.*`, `access.*`. A key
+  that no command group matches is named after the component it tunes
+  (`agent.*`), and `data.*` is the user's namespace. A sub-feature with its own
+  on/off gets a third level that mirrors its command (`browser maintenance on
+  --url` goes with `browser.maintenance.enable` and `.url`), as do the network
+  profiles' keys (`network.ethernet.*`, `network.wifi.*`).
+* **Renaming a key means adding it to `RENAMED`** in `agent/protocol/src/keys.rs`,
+  so devices in the field migrate at boot (see **Migration** below), and a
+  `git grep` over the whole repo, placeholders in templates included. The
+  `KIOSK_*` env names do not follow the keys and never need to move.
+* **Every command name in a user-facing string is the full path**
+  (`tessaro-ctl screen confirm`): in the ctl, the agent's hints, key docs and
+  pages alike.
+
+`tessaro-ctl completion bash|zsh|powershell` prints a completion script. The
+bash one is patched after generation: clap_complete 4.6 escapes the dash in
+`tessaro-ctl` two ways, and nothing below the first word completed until
+`completion()` in `main.rs` unified them (a test guards it).
+
 After changing any `Cargo.toml` in the workspace or `agent/Cargo.lock`,
 regenerate the crate list the recipe requires and commit it:
 
@@ -213,7 +266,7 @@ The defaults deliberately live under `/usr/lib`, not `/etc`: `/etc` is an
 overlayfs upper on `/data`, so the first write to a file there shadows the
 image's copy permanently and no later image could move the default again.
 
-Change a setting with `tessaro-ctl set KEY=VALUE`; it restarts exactly what
+Change a setting with `tessaro-ctl config set KEY=VALUE`; it restarts exactly what
 reads that key.
 
 The agent used to be a Ruby program in a podman container. It is now a Rust
@@ -447,7 +500,7 @@ exists to handle and asserts on the lines it writes to its journal - the site
 going down, the page wandering off the origin, a crashed renderer, a killed
 browser, a wedged browser, an operator-stopped unit, a DNS server that
 swallows queries, the agent itself wedging, a short agent stall, a parked
-agent, SIGTERM - and the control plane: a `tessaro-ctl set` that restarts the
+agent, SIGTERM - and the control plane: a `tessaro-ctl config set` that restarts the
 agent onto the new value, the debug screen and maintenance mode each on and
 off with the browser left running, a claim and unclaim round trip, an ssh key
 authorized with a pinned host key, then revoked and cleared by unclaim, a resolution
@@ -456,7 +509,7 @@ managed network profiles as the boot renders them, a static Ethernet address
 that is committed and switched back to DHCP, one that cuts the VM off and is
 rolled back by the device alone, one whose agent is killed half way and is
 rolled back at its restart, the hotspot password following a claim and an
-unclaim, the hotspot's NAT table, and `ping` and `net ping` with and without
+unclaim, the hotspot's NAT table, and `device ping` and `network ping` with and without
 ping sockets. Last, because
 each reboots the VM, four image updates of the image it booted from:
 damaged staging refused at boot with nothing written, an update that keeps
@@ -485,7 +538,7 @@ sees; through mise, `mise run agent-e2e -- -v`.
   which is why the suite never leaves the device claimed: its claim case
   claims, checks and unclaims inside one SSH command, with a local-socket
   unclaim in a `trap`.
-* **It retunes the agent for the run** with `tessaro-ctl set --no-apply` over
+* **It retunes the agent for the run** with `tessaro-ctl config set --no-apply` over
   the guest's local socket (5s probes, a 15s restart backoff, no periodic
   refresh) and unsets those keys afterwards. The VM runs with `snapshot`, so a
   power-off discards everything anyway. mDNS cannot be exercised here: slirp
@@ -504,7 +557,7 @@ sees; through mise, `mise run agent-e2e -- -v`.
 
 **This is what a factory image opens.** `TESSARO_KIOSK_URL` in `tessaro.conf`
 defaults to `http://127.0.0.1/`; a deployment repoints it, at build time or
-with `tessaro-ctl set kiosk.url=...`.
+with `tessaro-ctl config set browser.url=...`.
 
 `meta-tessaro-distro/recipes-browser/tessaro-selftest/` ships one static page at
 `/usr/share/tessaro-selftest/index.html`, with its media beside it. It exercises
@@ -513,7 +566,7 @@ multi-touch, WebSerial and WebHID, audio and video playback, and WebAudio
 synthesis - from local files, with the network down. Passive checks grade
 themselves in a strip at the top; interactive ones stay `pending` until someone
 actually does something. To get back to it on a deployed device,
-`tessaro-ctl set kiosk.url=http://127.0.0.1/`, and `unset` it afterwards.
+`tessaro-ctl config set browser.url=http://127.0.0.1/`, and `config unset` it afterwards.
 
 * **It is served by nginx, and that is not a preference.** A `file://` page has
   a null origin, and `SerialAllowAllPortsForUrls` /
@@ -536,7 +589,7 @@ actually does something. To get back to it on a deployed device,
   which has to stay in `/etc`, its path being compiled in by `--conf-path` -
   and deletes the stock `default_server` symlink, which would otherwise answer
   on `0.0.0.0:80` with the nginx welcome page. Ours binds `127.0.0.1` only.
-* **`tessaro-ctl set agent.refresh_interval=0` before a manual pass.** The agent
+* **`tessaro-ctl config set agent.refresh_interval=0` before a manual pass.** The agent
   re-navigates on that timer, 600s by default, and a reload closes any serial
   port the page has open and wipes every form value. Put it back afterwards:
   on a real site the periodic reload is what recovers a stale page.
@@ -544,7 +597,7 @@ actually does something. To get back to it on a deployed device,
   nginx dying puts the offline page on screen like any other outage, rather
   than going unnoticed.
 * **The on-screen keyboard only appears on a device with no keyboard**, so the
-  text inputs need a USB keyboard or `display.osk=always` - see **On-screen
+  text inputs need a USB keyboard or `screen.osk=always` - see **On-screen
   keyboard** below. Everything that is a tap, a slider or a picker works with a
   finger. The page carries this as a note.
 * **It is a separate recipe from `tessaro-kiosk` on purpose.** That recipe
@@ -590,17 +643,17 @@ connector will be called, the config is generated per boot:
   as `ExecStartPre=`, and those lines do not come back under the unit even
   though the compositor's own do. Every decision it makes - connector, scale
   and why, keyboard and why - is one line there.
-* Scale is `display.scale` (`KIOSK_SCALE`) if set, otherwise 2 above 3400px
+* Scale is `screen.scale` (`KIOSK_SCALE`) if set, otherwise 2 above 3400px
   wide and 1 below - measured on the mode being set, if one is. `none` writes
   no `scale=`.
-* **Resolution is `display.resolution` (`KIOSK_RESOLUTION`)**: `preferred`, or
+* **Resolution is `screen.resolution` (`KIOSK_RESOLUTION`)**: `preferred`, or
   a `WIDTHxHEIGHT` written as `mode=` into each connector's `[output]`. It is
   the one setting that can leave nobody able to see the screen, so it has
   three guards. The agent only accepts a mode some connected connector lists
-  in `/sys/class/drm/*/modes` (`tessaro-ctl modes` prints them); the
+  in `/sys/class/drm/*/modes` (`tessaro-ctl screen modes` prints them); the
   generator writes it only for connectors that list it and leaves the rest on
   their preferred mode; and the change is on **probation** - it reverts on its
-  own unless `tessaro-ctl confirm` arrives within 60s. The pending change is in
+  own unless `tessaro-ctl screen confirm` arrives within 60s. The pending change is in
   `state.json`, so it survives the agent restarting with Weston, and the boot
   oneshot reverts a change still pending at boot: a reboot is not a confirm.
   The timer is monotonic, never the wall clock.
@@ -612,8 +665,8 @@ connector will be called, the config is generated per boot:
 * The empty `ExecStart=` in the drop-in is required to clear oe-core's line
   before replacing it, and `--modules=systemd-notify.so` has to be carried over
   verbatim - `weston.service` is `Type=notify` and hangs without it.
-* The `display.*` keys are the ones read by the compositor, so
-  `tessaro-ctl set` restarts Weston for them - and with it the browser and the
+* The `screen.*` keys are the ones read by the compositor, so
+  `tessaro-ctl config set` restarts Weston for them - and with it the browser and the
   agent - rather than just the browser.
 
 ### Display hotplug
@@ -635,7 +688,7 @@ holds:
   scale and resolution settings are;
 * an `[output]` section would now be written differently: a different panel
   on the same connector;
-* the `[input-method]` section changed: `display.osk=auto` saw a keyboard come
+* the `[input-method]` section changed: `screen.osk=auto` saw a keyboard come
   or go.
 
 A connector going away is never a reason. Weston copes with a head
@@ -643,7 +696,7 @@ disappearing, and the running config keeps its section for when the screen
 comes back. So a monitor switched off and on restarts nothing. Every decision
 is one `display: ...` line in `journalctl -u tessaro-agent`.
 
-* **`display.resolution` and `display.scale` stay in charge.** The restart
+* **`screen.resolution` and `screen.scale` stay in charge.** The restart
   only re-runs the same generator with the same settings, so a late screen
   gets the configured mode (if it offers it) and the right scale. The check is
   paused while a change is on probation: that change restarted Weston itself,
@@ -664,7 +717,7 @@ is one `display: ...` line in `journalctl -u tessaro-agent`.
   That is harmless; the hotplug restart gives it a fresh start anyway.
 * **Writeback connectors are not screens.** vc4 under full KMS exposes
   `Writeback-1`, always `connected` with no modes. The generator and
-  `tessaro-ctl modes` skip it.
+  `tessaro-ctl screen modes` skip it.
 * **The generator's output must depend on the settings and the hardware
   only.** A timestamp or anything random in it would make every hotplug
   restart the compositor.
@@ -725,10 +778,10 @@ keyboard attached", and how that is decided matters:
   boots x86 with `-machine q35,i8042=off -usb -device usb-kbd`, so the guest
   has a real USB keyboard (`QEMU QEMU USB Keyboard`) and `auto` hides the
   panel. Exercising the keyboard under `mise run run-vnc` therefore needs
-  `tessaro-ctl set display.osk=always`; note `run`/`run-vnc` pass
+  `tessaro-ctl config set screen.osk=always`; note `run`/`run-vnc` pass
   `-snapshot`, so that does not survive a reboot of the VM.
 * **Keyboard-shaped peripherals will fool it.** A barcode scanner, an RFID
-  reader or a KVM dongle enumerates as a USB HID keyboard. `display.osk=always`
+  reader or a KVM dongle enumerates as a USB HID keyboard. `screen.osk=always`
   is the answer, which is why that value exists.
 * **It fails towards showing the keyboard.** No `udevadm`, an unpopulated udev
   database, anything unexpected: the verdict is "no keyboard" and the panel is
@@ -738,7 +791,7 @@ keyboard attached", and how that is decided matters:
   the decision when an input device comes or goes, and restarts Weston, taking
   the browser with it, if the verdict changed - see **Display hotplug**. So on
   a device with `auto`, plugging in a keyboard, or a scanner that looks like
-  one, costs a page reload. `display.osk=always`/`never` never restart for it.
+  one, costs a page reload. `screen.osk=always`/`never` never restart for it.
 * An `[input-method]` section written by hand in `/etc/xdg/weston/weston.ini`
   wins over all of it, the same courtesy `[output]` sections get.
 
@@ -856,7 +909,7 @@ which is the half that does not reach the browser, see above.
 
 ### SSH keys
 
-**`tessaro-ctl --node NAME ssh` is a root shell by key, with no password and
+**`tessaro-ctl --node NAME ssh connect` is a root shell by key, with no password and
 no first-use prompt.** It sends your public key (`~/.ssh/id_ed25519.pub` and
 the other ssh-keygen defaults, or `--key PATH`) over the pinned, token-
 authenticated control connection; the agent adds it to root's
@@ -864,7 +917,7 @@ authenticated control connection; the agent adds it to root's
 that to `~/.config/tessaro/known_hosts` under `tessaro-<node id>` and execs
 `ssh -o HostKeyAlias=... -o StrictHostKeyChecking=yes root@<address>`.
 Anything after `--` goes to ssh. `--print` pushes the key and prints the
-command instead. `tessaro-ctl ssh-key list` and `ssh-key revoke
+command instead. `tessaro-ctl ssh keys list` and `ssh keys revoke
 <fingerprint|prefix|comment>` manage what is there. The logic is
 `agent/tessaro-agent/src/ssh.rs`; key parsing is `agent/protocol/src/sshkey.rs`,
 shared so both ends refuse the same keys.
@@ -898,10 +951,10 @@ shared so both ends refuse the same keys.
 * **Dropbear is socket-activated**, and `dropbearkey.service` only runs on the
   first connection. So a device nobody has logged in to has no host key yet;
   the agent makes it (`dropbearkey -t rsa`, the unit's own command) before
-  answering, and the first `tessaro-ctl ssh` already gets a pin. When no host
+  answering, and the first `tessaro-ctl ssh connect` already gets a pin. When no host
   key can be read, the client drops the stale pin and ssh asks as usual.
 * **The address is the one the control connection used**, from `nodes.json`
-  or mDNS, so a device that moved is found the same way `status` finds it -
+  or mDNS, so a device that moved is found the same way `device status` finds it -
   and a different device at the old address fails the TLS pin before any
   key is sent.
 
@@ -909,13 +962,13 @@ shared so both ends refuse the same keys.
 
 **One management surface.** A device's settings live in
 `/data/tessaro/state.json`, the only way to change them is `tessaro-ctl`, and
-`tessaro-agent` is the only thing that writes the file. `tessaro-ctl keys`
-lists every setting (the registry is `agent/protocol/src/keys.rs`), `get`,
-`set KEY=VALUE ...` and `unset KEY ...` do what they say, and each change
+`tessaro-agent` is the only thing that writes the file. `tessaro-ctl config keys`
+lists every setting (the registry is `agent/protocol/src/keys.rs`), `config get`,
+`config set KEY=VALUE ...` and `config unset KEY ...` do what they say, and each change
 restarts exactly what reads the key: the agent restarts itself for an agent
 key (invisible on screen), the browser restarts for a browser key or a new
 kiosk origin, Weston restarts - taking the browser and agent with it - for a
-`display.*` key.
+`screen.*` key.
 
 * **`state.json` is sparse**: only what was set, as the registry's dotted
   names. Everything else follows `/usr/lib/tessaro-kiosk/tessaro-kiosk.env`,
@@ -927,65 +980,65 @@ kiosk origin, Weston restarts - taking the browser and agent with it - for a
   file to `.prev` to the defaults and logs it; a torn file never stops the
   kiosk. `auth.json` uses the same store. Nothing in either file is a
   timestamp: device clocks drift, and `revision` is a counter
-  (`set --if-revision N` is compare-and-set).
-* **The CLI documents itself.** `tessaro-ctl keys` prints every setting with
+  (`config set --if-revision N` is compare-and-set).
+* **The CLI documents itself.** `tessaro-ctl config keys` prints every setting with
   its description, current value or default, what it accepts and what a
-  change restarts; `keys KEY` prints one. The text comes from the registry on
+  change restarts; `config keys KEY` prints one. The text comes from the registry on
   the device (`Kind::describe` plus each key's `doc`), so a client never
   documents settings a device does not have. `tessaro-ctl --help` carries
   worked examples.
 * **Custom values and URL placeholders.** `data.NAME=VALUE` defines a custom
   value - the NAME is whatever the site needs, the kiosk gives it no meaning.
   **A placeholder is always a setting's full key in braces**, custom or
-  built-in, anywhere in `kiosk.url` - host, path or query - percent-encoded so
+  built-in, anywhere in `browser.url` - host, path or query - percent-encoded so
   a value cannot change the URL's structure:
-  `set 'kiosk.url=https://menu.test/?table={data.table}' data.table=12`.
+  `config set 'browser.url=https://menu.test/?table={data.table}' data.table=12`.
   There is no short form: `{table}` is refused, with a hint to write
-  `{data.table}`. `tessaro-ctl keys` lists every custom value defined, and
+  `{data.table}`. `tessaro-ctl config keys` lists every custom value defined, and
   says whether the URL uses it. Expansion happens once, in `state::Effective`:
   the browser unit gets the expanded URL in `generated.env`, and the agent's
   origin checks and the device-API policy see the same one, so a placeholder
   in the host moves the grants too. Built-in settings expand to their
-  effective value, set or image default - `{display.osk}`,
-  `{browser.fps_counter}` - and `{node.name}` is the name the device actually
-  answers to even when none was set. Only `{kiosk.url}`,
-  `{maintenance.url}` and `{debug.template}` are refused, as no template may
-  contain a template (the debug template alone takes `{kiosk.url}`).
-  `maintenance.url` and `debug.template` are templates by the same rules, and
-  `set` checks all three whichever one is on screen. Because any setting can move the URL, whether
+  effective value, set or image default - `{screen.osk}`,
+  `{browser.fps_counter}` - and `{device.name}` is the name the device actually
+  answers to even when none was set. Only `{browser.url}`,
+  `{browser.maintenance.url}` and `{browser.debug.template}` are refused, as no template may
+  contain a template (the debug template alone takes `{browser.url}`).
+  `browser.maintenance.url` and `browser.debug.template` are templates by the same rules, and
+  `config set` checks all three whichever one is on screen. Because any setting can move the URL, whether
   the agent restarts is decided by comparing the expanded URL with the one the
-  running agent started with, not by which key changed. `set` refuses a
-  template with an unset `data.*` or a name that is no setting, and an `unset`
+  running agent started with, not by which key changed. `config set` refuses a
+  template with an unset `data.*` or a name that is no setting, and a `config unset`
   of a `data.*` still in use; custom values and template can go in one command.
   Nothing is added implicitly - only what the template names.
-* **Read-only keys report the device.** `node.id` and `net.*` - `net.ip`,
-  `net.netmask`, `net.cidr`, `net.gateway`, `net.dns`, `net.interface`,
-  `net.mac`, `net.hostname`, and every address as `net.ipv4`/`net.ipv6`
-  (comma separated) - are listed by `keys`, read by `get`, usable as
-  placeholders, and refused by `set`. They come straight from the kernel
+* **Read-only keys report the device.** `device.id` and `network.*` - `network.ip`,
+  `network.netmask`, `network.cidr`, `network.gateway`, `network.dns`, `network.interface`,
+  `network.mac`, `network.hostname`, and every address as `network.ipv4`/`network.ipv6`
+  (comma separated) - are listed by `config keys`, read by `config get`, usable as
+  placeholders, and refused by `config set`. They come straight from the kernel
   (`agent/tessaro-agent/src/net.rs`: `/sys/class/net`, `getifaddrs`,
   `/proc/net/route`, and resolved's own `/run/systemd/resolve/resolv.conf`,
   since `/etc/resolv.conf` is its 127.0.0.53 stub), not from NetworkManager,
   so they answer even when NM is the broken thing. The exception is
-  `net.public_ip`, which only the outside world knows. **It is looked up only
-  while `kiosk.url` uses `{net.public_ip}`** - a link may be metered - and
+  `network.public_ip`, which only the outside world knows. **It is looked up only
+  while `browser.url` uses `{network.public_ip}`** - a link may be metered - and
   then the agent asks `https://1.1.1.1/cdn-cgi/trace` every 5 minutes (30s
   until it has an answer, and after a failure), keeps it in
   `/run/tessaro-kiosk/public-ip`, and keeps the last address when a request
   fails. So it is empty at the boot render and fills in shortly after.
-  `tessaro-ctl net` and `get net.public_ip` look it up on the spot whatever
-  the URL uses - one request per ask, up to ~5s when offline - while `keys`
-  and a plain `get` only show the last address found this boot. "Primary"
+  `tessaro-ctl network show` and `config get network.public_ip` look it up on the spot whatever
+  the URL uses - one request per ask, up to ~5s when offline - while `config keys`
+  and a plain `config get` only show the last address found this boot. "Primary"
   means the
-  interface carrying the IPv4 default route. `tessaro-ctl net` shows the same
-  as an overview, `net interfaces` every interface with kind, state, carrier,
-  MAC, MTU, speed and addresses. Changing the network is the `ethernet.*` and
-  `wifi.*` settings - see **Network control**.
+  interface carrying the IPv4 default route. `tessaro-ctl network show` shows the same
+  as an overview, `network interfaces` every interface with kind, state, carrier,
+  MAC, MTU, speed and addresses. Changing the network is the `network.ethernet.*` and
+  `network.wifi.*` settings - see **Network control**.
   **A URL using one moves on its own**: the boot render runs before DHCP, and
-  leases change, so while `kiosk.url` uses a read-only key the agent checks
+  leases change, so while `browser.url` uses a read-only key the agent checks
   every 15s and, when the expanded URL is no longer the one it drives,
   re-renders and restarts itself onto it (and the browser, if the origin moved).
-* **Values are validated once, at `set`**: enums, ranges, URLs, modes - and no
+* **Values are validated once, at `config set`**: enums, ranges, URLs, modes - and no
   control characters, quotes, backslashes or `$` anywhere, because the value
   ends up in an env file systemd parses. A newline would write a second
   variable.
@@ -998,11 +1051,16 @@ kiosk origin, Weston restarts - taking the browser and agent with it - for a
   crashlooping agent still leaves a browser on the defaults.
 * **Escape hatch**: `/data/tessaro/factory-reset`, or `tessaro.factory_reset`
   typed on the kernel command line at the boot loader for one boot, is acted
-  on by the boot oneshot before the agent starts. `tessaro-ctl factory-reset`
+  on by the boot oneshot before the agent starts. `tessaro-ctl device factory-reset`
   does the same while the agent runs.
 * **Migration**: a leftover `/etc/default/tessaro-kiosk` is imported into
   `state.json` once at boot - valid keys only, the rest named in
-  `journalctl -t tessaro-config` - and renamed `.migrated`.
+  `journalctl -t tessaro-config` - and renamed `.migrated`. The same boot step
+  moves settings saved under a key's old name to the new one
+  (`keys::RENAMED`: `kiosk.url` became `browser.url`, `display.*` became
+  `screen.*`, and so on), placeholders in the templates included, and logs
+  each move. A `config set` or `config get` of an old name is refused with
+  the new one - there are no aliases.
 
 **Two transports, one protocol** (newline-delimited JSON,
 `agent/protocol/src/lib.rs`):
@@ -1010,7 +1068,7 @@ kiosk origin, Weston restarts - taking the browser and agent with it - for a
 * **`/run/tessaro-agent.sock`**, mode 0600 root: no auth, no TLS, full power.
   Not group accessible on purpose - Chromium runs as `weston`, and a
   compromised browser must not be one `connect()` from the control plane.
-* **TLS on `api.listen`** (default `0.0.0.0:7400`, `off` disables it). The
+* **TLS on `access.listen`** (default `0.0.0.0:7400`, `off` disables it). The
   device makes an EC P-256 key and a self-signed certificate in
   `/data/tessaro/tls/` on first boot, valid from 1970 to 9999 so a wrong clock
   cannot break it. Clients **pin** its SHA-256 on first use, keyed by node id,
@@ -1026,14 +1084,14 @@ kiosk origin, Weston restarts - taking the browser and agent with it - for a
   committed, so a cut in between leaves "no tokens, a password", which the
   boot oneshot resets to empty. The reverse would leave a claimed device with
   an empty root.
-* **Further tokens are issued only against a valid token** (`token create`),
+* **Further tokens are issued only against a valid token** (`access token create`),
   or over the local socket. Tokens never expire; revoking one deletes it.
   Only SHA-256s are stored, compared in constant time. The device is claimed
   exactly when a token exists, so revoking the last one unclaims it.
-* **`unclaim`** removes every token and ssh key and empties the root password;
-  **`factory-reset`** also wipes the settings. After either, the first client
+* **`access unclaim`** removes every token and ssh key and empties the root password;
+  **`device factory-reset`** also wipes the settings. After either, the first client
   to claim wins again. The TLS key survives both, so pins stay valid.
-* `password set` (prompted, or `--random`) changes the root password on a
+* `access password set` (prompted, or `--random`) changes the root password on a
   claimed device; an unclaimed one keeps it empty.
 * Failed tokens are rate-limited per address, but a valid token always gets
   in - the tokens are 256 bits, the limiter only keeps scans quiet.
@@ -1045,8 +1103,8 @@ kiosk origin, Weston restarts - taking the browser and agent with it - for a
 `systemd-id128 -a 8a6c7b172d5443cd9033a24d0df85022 machine-id`, and the
 machine id itself never leaves the device. **Never change that app id**: it
 would rename every device. The name is `adjective-noun-xxxx` from the id, or
-`node.name`. The agent announces `NAME.local` and `_tessaro._tcp` over mDNS
-(`mdns-sd`, TXT `id`, `fp`, `ver`, `machine`, `claimed`; `api.mdns=off`
+`device.name`. The agent announces `NAME.local` and `_tessaro._tcp` over mDNS
+(`mdns-sd`, TXT `id`, `fp`, `ver`, `machine`, `claimed`; `access.mdns=off`
 stops it). `tessaro-ctl --node NAME` goes to the address it last saw that
 device at first - instant, no scan - and scans mDNS only when nothing answers
 there, or when a different certificate or node id does (then with a warning:
@@ -1054,50 +1112,50 @@ the device most likely moved and its old address went to someone else). A
 device found at a new address has it updated in `nodes.json`. With an
 expected node, its own pin is always checked first, so another known kiosk
 answering at that address is a mismatch, never a silent switch.
-`tessaro-ctl nodes` lists what answers.
+`tessaro-ctl nodes list` lists what answers.
 Wiping `/data` or the `/etc` overlay re-identifies a device.
 
 `tessaro-ctl` on a laptop: `mise run build-ctl`, then
-`tessaro-ctl --node NAME claim` (or `login --token` with a token someone
+`tessaro-ctl --node NAME access claim` (or `access login --token` with a token someone
 issued). Pins and tokens are kept in `~/.config/tessaro/nodes.json`, 0600.
 
 ### Maintenance mode
 
-**`tessaro-ctl maintenance on|off`** - the same as `set maintenance.enable=1|0`
-- puts `maintenance.url` on screen and leaves `kiosk.url` as it is, so `off`
+**`tessaro-ctl browser maintenance on|off`** - the same as `config set browser.maintenance.enable=1|0`
+- puts `browser.maintenance.url` on screen and leaves `browser.url` as it is, so `off`
 goes straight back to the site. The default page is
 `http://127.0.0.1/maintenance.html` (`TESSARO_MAINTENANCE_URL` in
 `tessaro.conf`), shipped by `tessaro-selftest` next to the self-test page,
 self-contained so it renders with the network down. It takes `?title=` and
 `?message=` as plain text, which is how a device customises it without an
-image: `maintenance on --url 'http://127.0.0.1/maintenance.html?message={data.msg}'`
+image: `browser maintenance on --url 'http://127.0.0.1/maintenance.html?message={data.msg}'`
 plus `data.msg=...`.
 
 * **The swap is one place, `state::Effective`.** With `KIOSK_MAINTENANCE=1`,
   `KIOSK_URL` *is* the expanded maintenance URL, so every consumer follows it
   without knowing the mode exists: `generated.env` (a reboot in maintenance
   never flashes the site), the agent's navigation and origin enforcement, the
-  periodic refresh, `status`, the `url_moved` restart check and the read-only
+  periodic refresh, `device status`, the `url_moved` restart check and the read-only
   key watcher.
 * **`KIOSK_PROBE_URL` reads as empty meanwhile**, so the agent probes the
   maintenance page. Probing the site's health endpoint instead would put the
   offline page over the maintenance page the moment the site went down - and
   maintenance is often exactly when it is down.
 * **The device-API grants do not move.** `render::device_origins` uses
-  `Effective::kiosk_url()`, kiosk.url's origin whatever the mode. Following the
+  `Effective::kiosk_url()`, browser.url's origin whatever the mode. Following the
   maintenance page would rewrite the policy on every toggle, restart the
   browser on a public screen and take the site's grants away. So a toggle
   restarts the agent only, which re-navigates; the browser keeps running.
 
 ### Debug screen
 
-**`tessaro-ctl debug on|off`** - the same as `set debug.enable=1|0` - swaps the
-page for a full-screen text screen: `debug.template` filled in, in large
+**`tessaro-ctl browser debug on|off`** - the same as `config set browser.debug.enable=1|0` - swaps the
+page for a full-screen text screen: `browser.debug.template` filled in, in large
 DejaVu Sans Mono, white on black, shrunk until the longest line fits.
-`debug on --template '...'` sets the template in the same change, and
-`status` shows a `debug screen` row while it is up. Both keys are agent keys,
+`browser debug on --template '...'` sets the template in the same change, and
+`device status` shows a `debug screen` row while it is up. Both keys are agent keys,
 so a toggle restarts only the agent, like maintenance mode; the browser keeps
-running. `debug.enable` is not `agent.debug`, which is journal verbosity; its
+running. `browser.debug.enable` is not `agent.debug`, which is journal verbosity; its
 env name is `KIOSK_DEBUG_SCREEN` because `KIOSK_DEBUG` was taken.
 
 * **It wins over maintenance mode, and it is the agent's, not
@@ -1107,14 +1165,14 @@ env name is `KIOSK_DEBUG_SCREEN` because `KIOSK_DEBUG` was taken.
   changes: not `generated.env`, not the policy. After a reboot the browser comes
   up on `KIOSK_URL` for the few seconds until the agent's first cycle.
 
-* **The template is kiosk.url's templating with raw values.** It accepts the
+* **The template is browser.url's templating with raw values.** It accepts the
   same `{key}` placeholders (any setting, read-only or `data.*`), plus
-  `{kiosk.url}` itself, expanded. `set` holds it to the same rules: an unset
+  `{browser.url}` itself, expanded. `config set` holds it to the same rules: an unset
   `data.*` or a name that is no setting is refused. Values go in as they are,
   not percent-encoded, and `debug.rs` escapes them for HTML
   (`state::expand_text` next to `expand_url`, both on `keys::expand_with`).
   The default shows the name, node id, hostname, the default route, IP, MAC,
-  DNS, the public address, every interface (`net.interfaces`, read-only,
+  DNS, the public address, every interface (`network.interfaces`, read-only,
   added for this) and IPv6.
 * **`\n` - a backslash and an n, as typed - is the line break**, and it is
   the one backslash any value may carry (`Kind::Template` in `keys.rs`). The
@@ -1135,14 +1193,14 @@ env name is `KIOSK_DEBUG_SCREEN` because `KIOSK_DEBUG` was taken.
   DHCP renewal shows up within seconds without a reload loop. The template is
   filled in from the settings the agent started with and the device as it is
   at that moment (`render::live`).
-* **`{net.public_ip}` asks Cloudflare only while the screen shows it.**
+* **`{network.public_ip}` asks Cloudflare only while the screen shows it.**
   `watch_public_ip` treats the debug template as in use only while
-  `debug.enable` is on, so the default template costs no request on a
+  `browser.debug.enable` is on, so the default template costs no request on a
   device that is not in debug mode.
 
 ### Speed test
 
-**`tessaro-ctl speedtest` measures the device's link, not the client's.** The
+**`tessaro-ctl network speedtest` measures the device's link, not the client's.** The
 agent runs it against speed.cloudflare.com and streams one line per step:
 where Cloudflare sees the device from (`/cdn-cgi/trace`), latency (25 empty
 requests, less the server's own `Server-Timing`), then download and upload at
@@ -1196,7 +1254,7 @@ What was actually missing was kernel drivers and file permissions.
   where the first two are the same string. These match on *origin* only -
   scheme, host, port, no `[*.]host` wildcards. The image ships them
   substituted at build time (`TESSARO_DEVICE_ORIGINS` in the recipe), and on
-  the device **tessaro-agent re-renders the policy from `kiosk.url` as set**,
+  the device **tessaro-agent re-renders the policy from `browser.url` as set**,
   from the `/usr/lib/tessaro-kiosk/policy.json` copy, so pointing a device at
   a new origin moves the grants with it. A change of origin therefore restarts
   the browser, not just the agent: Chromium reads the policy at start. The
@@ -1344,7 +1402,7 @@ disk** below.
    `agent/update/src/{image,apply,flash,wipe}.rs`.
 5. **Report**: the boot oneshot puts the result in `journalctl -t
    tessaro-config` once; `tessaro-ctl update status` shows it until the next
-   update. `tessaro-ctl status` shows `PRETTY_NAME`/`IMAGE_VERSION`.
+   update. `tessaro-ctl device status` shows `PRETTY_NAME`/`IMAGE_VERSION`.
 
 Things to know:
 
@@ -1561,17 +1619,17 @@ control connection:
 
 | profile | up when |
 | --- | --- |
-| `tessaro-ethernet-dhcp` | `ethernet.mode=dhcp` (the default) |
-| `tessaro-ethernet-static` | `ethernet.mode=static`, with `ethernet.address`, `.gateway`, `.dns` |
-| `tessaro-wifi-hotspot` | `wifi.mode=hotspot` (the default) and `wifi.interface` (`auto` = `wlan0`) exists |
-| `tessaro-wifi-client` | `wifi.mode=client`, joining `wifi.ssid` (`wifi.ipv4=dhcp\|static` like Ethernet) |
+| `tessaro-ethernet-dhcp` | `network.ethernet.mode=dhcp` (the default) |
+| `tessaro-ethernet-static` | `network.ethernet.mode=static`, with `network.ethernet.address`, `.gateway`, `.dns` |
+| `tessaro-wifi-hotspot` | `network.wifi.mode=hotspot` (the default) and `network.wifi.interface` (`auto` = `wlan0`) exists |
+| `tessaro-wifi-client` | `network.wifi.mode=client`, joining `network.wifi.ssid` (`network.wifi.ipv4=dhcp\|static` like Ethernet) |
 
-`tessaro-ctl set ethernet.mode=static ethernet.address=192.168.1.50/24
-ethernet.gateway=192.168.1.1` and `set ethernet.mode=dhcp` switch Ethernet,
-`net wifi join SSID` makes WiFi a client (the hotspot goes down), `set
-wifi.mode=hotspot` brings the hotspot back, `wifi.mode=off` frees the radio.
-Profiles made by hand - other ports, anything nmtui saved - are listed by `net
-profiles` and never touched. `ethernet.interface` names the managed port;
+`tessaro-ctl config set network.ethernet.mode=static network.ethernet.address=192.168.1.50/24
+network.ethernet.gateway=192.168.1.1` and `config set network.ethernet.mode=dhcp` switch Ethernet,
+`network wifi join SSID` makes WiFi a client (the hotspot goes down), `config set
+network.wifi.mode=hotspot` brings the hotspot back, `network.wifi.mode=off` frees the radio.
+Profiles made by hand - other ports, anything nmtui saved - are listed by `network
+profiles list` and never touched. `network.ethernet.interface` names the managed port;
 `auto` leaves the profile unbound, so NetworkManager puts it on the first
 Ethernet device that comes up.
 
@@ -1580,11 +1638,11 @@ afterwards, and it is saved only then.** There is no confirm step, on purpose:
 a change is one request, and whether it sticks is the device's decision alone,
 so a change that takes the operator's own connection away - re-addressing the
 link it came in on - is safe by construction. The client explains a lost
-connection and `net last` reads the verdict afterwards. `net profiles`, `net
-show`, `net wifi` and `net wifi scan` read; `net ping HOST` pings from the
-device (streamed, like `speedtest`); `tessaro-ctl ping` times the client's own
-path to the agent - TCP connect, TLS handshake, round trips - and, like `id`,
-needs no token. The logic is `agent/tessaro-agent/src/nm/` (`profiles.rs`
+connection and `network last` reads the verdict afterwards. `network profiles
+list|show`, `network wifi status` and `network wifi scan` read; `network ping HOST`
+pings from the device (streamed, like `network speedtest`); `tessaro-ctl device ping`
+times the client's own path to the agent - TCP connect, TLS handshake, round
+trips - and, like `device id`, needs no token. The logic is `agent/tessaro-agent/src/nm/` (`profiles.rs`
 renders, `txn.rs` switches) and `ping.rs`.
 
 * **The profiles are generated, never saved.** The agent renders them as
@@ -1597,7 +1655,7 @@ renders, `txn.rs` switches) and `ping.rs`.
   ever written to `/etc`. Only the selected profile of each pair has
   `autoconnect=true`, at priority 100, so it wins over a hand-made profile on
   the same device. The uuids are fixed, the same on every device.
-  NetworkManager flags everything under `/run` as unsaved, so `net profiles`
+  NetworkManager flags everything under `/run` as unsaved, so `network profiles list`
   lists these four as `(managed)` instead; `(not saved)` on any other
   profile means it really is lost at reboot.
 * **One change is one transaction** (`nm/txn.rs`): write `txn.json`, take a
@@ -1607,9 +1665,9 @@ renders, `txn.rs` switches) and `ping.rs`.
   verify - and only then run the caller's commit, which writes `state.json`
   (and a staged WiFi password to `secrets.json`), and drop the checkpoint. Any
   failure puts the old keyfiles back, then rolls the checkpoint back; nothing
-  is saved. The outcome goes to `last.json`. `set` answers with the checks
+  is saved. The outcome goes to `last.json`. `config set` answers with the checks
   (`Applied.network`); a rolled-back change is an error with the reason.
-  Network keys are always applied: `set --no-apply` refuses them.
+  Network keys are always applied: `config set --no-apply` refuses them.
 * **Verify means, on the device:** what was brought up reaches ACTIVATED
   (failing fast with NetworkManager's reason - `no secrets (wrong
   password?)`), its device gets a global address, a default route is still
@@ -1626,21 +1684,21 @@ renders, `txn.rs` switches) and `ping.rs`.
   lock the way a speed test holds its own, so a client that is cut off does
   not stop it - the commit happens anyway. A network change is refused while
   an update waits for its reboot, and `update commit` is refused during one.
-  `node.name` is a network key too: it renames the hotspot.
+  `device.name` is a network key too: it renames the hotspot.
 * **The hotspot is `tessaro-<node name>`, open while the device is unclaimed.**
-  `claim` gives it a random 16-character WPA2 password, stored in
+  `access claim` gives it a random 16-character WPA2 password, stored in
   `/data/tessaro/secrets.json` (0600, never in `state.json`, never shown by
-  `get` or `keys`) and shown once with the root password; the profiles are
+  `config get` or `config keys`) and shown once with the root password; the profiles are
   re-rendered only after the answer is out (`After::Network`), so a claimer on
-  the hotspot gets the password before it drops them. `net wifi
+  the hotspot gets the password before it drops them. `network wifi
   hotspot-password` makes a new one. Unclaim, revoking the last token, a
   factory reset and the boot oneshot's claim invariant open it again. It is
   WPA2 with CCMP and `pmf=1` (disabled): the Pi's brcmfmac refuses clients
   with PMF on in AP mode, and its WPA3 AP support is broken.
 * **Hotspot clients get DHCP and DNS from NetworkManager's own dnsmasq**
-  (`ipv4.method=shared`, 10.42.0.x) and, with `wifi.nat=1`, NAT through
+  (`ipv4.method=shared`, 10.42.0.x) and, with `network.wifi.nat=1`, NAT through
   NetworkManager's nftables table (`firewall-backend=nftables` in
-  `10-tessaro.conf`). `wifi.nat=0` is a table of the agent's, `inet
+  `10-tessaro.conf`). `network.wifi.nat=0` is a table of the agent's, `inet
   tessaro-hotspot`, dropping forwarded traffic from the WiFi interface - NM
   1.46 has no per-connection switch - so clients reach the device itself and
   nothing past it. dnsmasq and nftables are `RDEPENDS` of `tessaro-network`;
@@ -1660,7 +1718,7 @@ renders, `txn.rs` switches) and `ping.rs`.
   for zbus's default features, which bring async-io, async-executor, blocking
   and polling back - compiled but idle: zbus still runs on tokio, and the nmrs
   calls that start futures-timer's thread are never made.
-* **`net ping` falls back to a raw socket.** It prefers the kernel's ICMP
+* **`network ping` falls back to a raw socket.** It prefers the kernel's ICMP
   datagram sockets, but `net.ipv4.ping_group_range` does not exempt root: the
   kernel's own `1 0` refuses even uid 0 (systemd's default opens it). Refused,
   the agent opens a raw socket, which root may, and does the identifier, the

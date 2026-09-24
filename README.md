@@ -79,7 +79,7 @@ It pulls the image first, builds `tessaro-ctl` from this checkout, and runs
 `tessaro-ctl --node NAME update send` with it, which shows the upload, the
 device preparing it and the reboot. A dropped connection is resumed by running
 it again. The device has to be claimed from this workstation
-(`tessaro-ctl --node NAME claim`), and running an image with the update layout -
+(`tessaro-ctl --node NAME access claim`), and running an image with the update layout -
 see "Updating a device" in CLAUDE.md.
 
 **Flashing** is the manual path: a first install, a device that no longer

@@ -32,7 +32,7 @@ local_conf_header:
     QB_GRAPHICS = "-vga none"
     # runqemu's own slirp forwards (ssh on 2222, telnet on 2323) plus the
     # tessaro-ctl TLS port, so `tessaro-ctl -n 127.0.0.1` and
-    # `tessaro-ctl -n 127.0.0.1 ssh --port 2222` reach the VM from the host.
+    # `tessaro-ctl -n 127.0.0.1 ssh connect --port 2222` reach the VM from the host.
     # All on the loopback. They only reach the host because the run tasks
     # start the kas container with --network=host; runqemu shifts a port up
     # by itself if it is taken, and says so in its "Port forward:" line.

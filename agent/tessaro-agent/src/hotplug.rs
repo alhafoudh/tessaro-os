@@ -3,8 +3,8 @@
 //! `tessaro-weston-config` decides a device's `[output]` and `[input-method]`
 //! sections once, as `ExecStartPre=` of `weston.service`, from the screens
 //! and keyboards attached at that moment. A screen plugged in after boot gets
-//! no scale and no `display.resolution`, a 4K panel swapped for a 1080p one
-//! keeps a scale of 2, and `display.osk=auto` never notices a keyboard coming
+//! no scale and no `screen.resolution`, a 4K panel swapped for a 1080p one
+//! keeps a scale of 2, and `screen.osk=auto` never notices a keyboard coming
 //! or going. So the agent watches the same sysfs the generator reads and,
 //! once a change has settled, runs the generator again into a scratch file
 //! and compares. Weston is restarted only when the answer differs from the

@@ -6,8 +6,8 @@
   TESSARO_KIOSK_URL defaults to http://127.0.0.1/. On a deployed device, whose
   KIOSK_URL is the customer's site, get back to it with
 
-      tessaro-ctl set kiosk.url=http://127.0.0.1/
-      tessaro-ctl unset kiosk.url                  (afterwards, back to the site)
+      tessaro-ctl config set browser.url=http://127.0.0.1/
+      tessaro-ctl config unset browser.url                  (afterwards, back to the site)
 
   if the image was built with the self-test page as its default, `unset` alone
   gets here.
@@ -399,7 +399,7 @@
     raises Weston's virtual keyboard, but only on a device with no hardware
     keyboard of its own - if a USB keyboard is plugged in, nothing appears and
     you type on that instead. Forced on with
-    <code>tessaro-ctl set display.osk=always</code>, which restarts the display;
+    <code>tessaro-ctl config set screen.osk=always</code>, which restarts the display;
     <code>journalctl -t tessaro-weston-config</code> says what it decided. It draws over the page rather than moving it, so it
     can cover a field near the bottom of the screen - scroll the field up
     first. Everything that is a tap, a slider or a picker works with a finger

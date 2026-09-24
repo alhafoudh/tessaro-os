@@ -43,7 +43,7 @@ Type=simple
 # 60s is not a cycle budget. Before every external call the agent pledges when
 # that call will be over, and pings only while the pledge holds
 # (agent/tessaro-agent/src/watchdog.rs), so the probe timeouts
-# (`tessaro-ctl set agent.probe_timeout=...`) can be raised without touching
+# (`tessaro-ctl config set agent.probe_timeout=...`) can be raised without touching
 # this. It is only how long systemd waits after
 # the last ping: the agent pings every 15s, and a real wedge is caught in
 # about 75s - the longest single pledge at the shipped timeouts (the probe's

@@ -130,7 +130,7 @@ pub fn snapshot(paths: &Paths) -> Net {
     }
 }
 
-/// The read-only `net.*` keys, as placeholders and in `keys`/`get`.
+/// The read-only `network.*` keys, as placeholders and in `keys`/`get`.
 pub fn values(net: &Net) -> BTreeMap<String, String> {
     let primary = net
         .interface
@@ -152,36 +152,42 @@ pub fn values(net: &Net) -> BTreeMap<String, String> {
     let mut put = |key: &str, value: String| {
         out.insert(key.to_string(), value);
     };
-    put("net.hostname", net.hostname.clone());
-    put("net.interface", net.interface.clone().unwrap_or_default());
+    put("network.hostname", net.hostname.clone());
     put(
-        "net.mac",
+        "network.interface",
+        net.interface.clone().unwrap_or_default(),
+    );
+    put(
+        "network.mac",
         primary
             .and_then(|iface| iface.mac.clone())
             .unwrap_or_default(),
     );
     put(
-        "net.ip",
+        "network.ip",
         primary_v4.map(|a| a.address.clone()).unwrap_or_default(),
     );
     put(
-        "net.netmask",
+        "network.netmask",
         primary_v4
             .map(|a| netmask(a.prefix).to_string())
             .unwrap_or_default(),
     );
     put(
-        "net.cidr",
+        "network.cidr",
         primary_v4
             .map(|a| format!("{}/{}", a.address, a.prefix))
             .unwrap_or_default(),
     );
-    put("net.gateway", net.gateway.clone().unwrap_or_default());
-    put("net.dns", net.dns.join(","));
-    put("net.ipv4", every("ipv4"));
-    put("net.ipv6", every("ipv6"));
-    put("net.public_ip", net.public_ip.clone().unwrap_or_default());
-    put("net.interfaces", interfaces(net));
+    put("network.gateway", net.gateway.clone().unwrap_or_default());
+    put("network.dns", net.dns.join(","));
+    put("network.ipv4", every("ipv4"));
+    put("network.ipv6", every("ipv6"));
+    put(
+        "network.public_ip",
+        net.public_ip.clone().unwrap_or_default(),
+    );
+    put("network.interfaces", interfaces(net));
     out
 }
 
@@ -373,23 +379,27 @@ eth0\t0000000A\t00000000\t0001\t0\t0\t100\t00FFFFFF\t0\t0\t0
 
         let values = values(&net);
 
-        assert_eq!(values["net.interface"], "eth0");
-        assert_eq!(values["net.ip"], "10.0.0.20");
-        assert_eq!(values["net.netmask"], "255.255.255.0");
-        assert_eq!(values["net.cidr"], "10.0.0.20/24");
-        assert_eq!(values["net.gateway"], "10.0.0.1");
-        assert_eq!(values["net.dns"], "10.0.0.1,1.1.1.1");
-        assert_eq!(values["net.mac"], "02:00:00:00:00:4");
-        assert_eq!(values["net.ipv4"], "10.0.0.20,192.168.1.7");
-        assert_eq!(values["net.ipv6"], "fe80::1");
-        assert_eq!(values["net.public_ip"], "203.0.113.9");
+        assert_eq!(values["network.interface"], "eth0");
+        assert_eq!(values["network.ip"], "10.0.0.20");
+        assert_eq!(values["network.netmask"], "255.255.255.0");
+        assert_eq!(values["network.cidr"], "10.0.0.20/24");
+        assert_eq!(values["network.gateway"], "10.0.0.1");
+        assert_eq!(values["network.dns"], "10.0.0.1,1.1.1.1");
+        assert_eq!(values["network.mac"], "02:00:00:00:00:4");
+        assert_eq!(values["network.ipv4"], "10.0.0.20,192.168.1.7");
+        assert_eq!(values["network.ipv6"], "fe80::1");
+        assert_eq!(values["network.public_ip"], "203.0.113.9");
         assert_eq!(
-            values["net.interfaces"],
+            values["network.interfaces"],
             "eth0 up 10.0.0.20/24 fe80::1/64; wlan0 up 192.168.1.7/24"
         );
-        // Every read-only net.* key in the registry has a value here.
+        // Every read-only network.* key in the registry has a value here,
+        // but the hotspot's name, which is the WiFi code's.
         for key in protocol::keys::KEYS {
-            if key.name.starts_with("net.") {
+            if key.kind == protocol::keys::Kind::ReadOnly
+                && key.name.starts_with("network.")
+                && !key.name.starts_with("network.wifi.")
+            {
                 assert!(values.contains_key(key.name), "{}", key.name);
             }
         }
@@ -406,9 +416,9 @@ eth0\t0000000A\t00000000\t0001\t0\t0\t100\t00FFFFFF\t0\t0\t0
             public_ip: None,
         };
         let values = values(&net);
-        assert_eq!(values["net.ip"], "");
-        assert_eq!(values["net.public_ip"], "");
-        assert_eq!(values["net.hostname"], "tessaro");
+        assert_eq!(values["network.ip"], "");
+        assert_eq!(values["network.public_ip"], "");
+        assert_eq!(values["network.hostname"], "tessaro");
     }
 
     #[test]

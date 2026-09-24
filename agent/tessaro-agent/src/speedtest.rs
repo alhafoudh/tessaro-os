@@ -1,4 +1,4 @@
-//! `tessaro-ctl speedtest`: the device's own internet connection, measured
+//! `tessaro-ctl network speedtest`: the device's own internet connection, measured
 //! against speed.cloudflare.com by the cfspeedtest crate.
 //!
 //! It runs here, not in the client, because the question is what the kiosk

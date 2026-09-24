@@ -9,7 +9,7 @@
 //! * **Name** is an adjective-noun pair and four hex digits, all taken from
 //!   the node id, so a device always answers to the same name. The digits
 //!   make two devices on one segment colliding a 1-in-16-million event rather
-//!   than a 1-in-2000 one. `node.name` overrides it.
+//!   than a 1-in-2000 one. `device.name` overrides it.
 //! * **TLS identity** is an EC P-256 key and a self-signed certificate made on
 //!   first start, under `/data/tessaro/tls/`. Clients pin its SHA-256; there
 //!   is no chain to verify, so its validity dates are set to cover all time

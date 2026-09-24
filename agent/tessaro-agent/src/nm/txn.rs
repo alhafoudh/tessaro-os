@@ -629,7 +629,7 @@ mod tests {
 
     fn to_static() -> Plan {
         Plan {
-            action: "set ethernet.mode".into(),
+            action: "set network.ethernet.mode".into(),
             devices: vec!["eth0".into()],
             new: vec![keyfile("new")],
             old: vec![keyfile("old")],
@@ -811,7 +811,7 @@ mod tests {
             .write(
                 RECORD,
                 Record {
-                    action: "set ethernet.mode".into(),
+                    action: "set network.ethernet.mode".into(),
                     checkpoint: Some("/cp/1".into()),
                 },
             )

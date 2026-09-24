@@ -65,7 +65,7 @@ pub trait OfflinePage {
     async fn stage(&self) -> Option<String>;
 }
 
-/// The debug screen: `debug.template`, filled in with the device as it is now.
+/// The debug screen: `browser.debug.template`, filled in with the device as it is now.
 #[async_trait(?Send)]
 pub trait DebugScreen {
     /// Render the page where the browser can load it, or `None` when it

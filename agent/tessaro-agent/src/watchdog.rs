@@ -5,7 +5,7 @@
 //! never returns - the one failure this exists to catch. Pinging at the end of
 //! each cycle does catch it, but then `WatchdogSec=` must exceed the probe
 //! interval plus the slowest legitimate cycle, and both are settings
-//! (`tessaro-ctl set`): someone raising `agent.probe_timeout` for a
+//! (`tessaro-ctl config set`): someone raising `agent.probe_timeout` for a
 //! slow link would silently turn a healthy agent into a restart loop against
 //! a number baked into the image.
 //!

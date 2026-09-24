@@ -53,7 +53,7 @@ RDEPENDS:${PN} = " \
 # runs dnsmasq for its DHCP and DNS - found at runtime on NM's fixed search
 # path, which is why tessaro.conf can keep the dnsmasq PACKAGECONFIG off -
 # and, with firewall-backend=nftables in 10-tessaro.conf, masquerades it with
-# nft. The agent's own wifi.nat=0 table goes through nft too. See the dnsmasq
+# nft. The agent's own network.wifi.nat=0 table goes through nft too. See the dnsmasq
 # bbappend for the two things that package must not do here.
 RDEPENDS:${PN} += " \
     dnsmasq \

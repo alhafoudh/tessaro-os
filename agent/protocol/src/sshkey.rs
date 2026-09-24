@@ -1,4 +1,4 @@
-//! SSH public keys, as `tessaro-ctl ssh` sends them and root's
+//! SSH public keys, as `tessaro-ctl ssh connect` sends them and root's
 //! `authorized_keys` holds them.
 //!
 //! One line, `TYPE BASE64 [COMMENT]`, in the OpenSSH form every `.pub` file

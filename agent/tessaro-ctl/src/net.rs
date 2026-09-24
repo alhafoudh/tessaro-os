@@ -1,15 +1,15 @@
-//! `tessaro-ctl net ...` beyond the kernel's view: NetworkManager's profiles,
-//! WiFi, a ping from the device, and `tessaro-ctl ping` to it.
+//! `tessaro-ctl network ...` beyond the kernel's view: NetworkManager's
+//! profiles, WiFi, a ping from the device, and `tessaro-ctl device ping` to it.
 //!
 //! The device manages four profiles of its own and switches between them
-//! through settings (`set ethernet.mode=static ...`, `set wifi.mode=...`);
-//! `net wifi join` is the one change made here, as sugar for those settings
-//! plus the password. Either way it is one request: the device applies it,
-//! checks on its own that it still reaches the network, and keeps it or
-//! rolls it back - so this client does not have to be there for the end.
-//! When the change takes this very connection away, which re-addressing the
-//! link it came in on does, the answer never arrives; `net last` asks what
-//! happened.
+//! through settings (`config set network.ethernet.mode=static ...`,
+//! `config set network.wifi.mode=...`); `network wifi join` is the one change
+//! made here, as sugar for those settings plus the password. Either way it is
+//! one request: the device applies it, checks on its own that it still
+//! reaches the network, and keeps it or rolls it back - so this client does
+//! not have to be there for the end. When the change takes this very
+//! connection away, which re-addressing the link it came in on does, the
+//! answer never arrives; `network last` asks what happened.
 
 use std::io::Read;
 use std::time::{Duration, Instant};
@@ -31,16 +31,19 @@ use crate::{call, print, show_applied, show_once};
 /// a connection the change silently broke does not hang the terminal.
 const CHANGE: Duration = Duration::from_secs(180);
 
+/// `tessaro-ctl network ...`. `Show`, `Interfaces` and `Speedtest` are
+/// answered in main, next to the rest of the kernel's view.
 #[derive(Subcommand)]
-pub enum NetCmd {
+pub enum NetworkCmd {
+    /// The network as the device sees it: address, gateway, DNS, and every
+    /// interface - the same values as the network.* keys.
+    Show,
     /// Every network interface: kind, state, MAC, MTU, addresses.
     Interfaces,
-    /// NetworkManager's profiles: the device's own tessaro-* four, and any
-    /// made by hand - which is active where, and which come up on their own.
-    Profiles,
-    /// One profile, by name or uuid: addressing, DNS, WiFi - never its
-    /// password - and what its device has right now.
-    Show { profile: String },
+    /// NetworkManager's profiles. The device keeps a change to them only if
+    /// it still reaches the network afterwards.
+    #[command(subcommand)]
+    Profiles(ProfilesCmd),
     /// What the last network change did: for when the change took the
     /// connection that asked for it.
     Last,
@@ -59,16 +62,42 @@ pub enum NetCmd {
         #[arg(long, short = 'I')]
         interface: Option<String>,
     },
-    /// The WiFi radio and what each WiFi device is connected to. Scan, join
-    /// with the subcommands; `set wifi.mode=hotspot` goes back to the hotspot.
-    Wifi {
-        #[command(subcommand)]
-        what: Option<WifiCmd>,
+    /// WiFi: the radio, scanning, joining a network, the hotspot password.
+    /// `config set network.wifi.mode=hotspot` goes back to the hotspot.
+    #[command(subcommand)]
+    Wifi(WifiCmd),
+    /// Measure the device's internet connection against speed.cloudflare.com:
+    /// latency, then download and upload at growing payload sizes.
+    ///
+    /// Runs on the device, so it measures the kiosk's link, not this one.
+    /// A full run moves a few hundred MB - mind a metered connection, and
+    /// use a smaller --max-size there.
+    ///
+    ///   tessaro-ctl network speedtest --max-size 1m --tests 3
+    Speedtest {
+        /// Largest payload: 100k, 1m, 10m, 25m or 100m. Uploads stop at 25m.
+        #[arg(long, default_value = "25m", value_parser = crate::parse_payload)]
+        max_size: u64,
+        /// Samples per payload size.
+        #[arg(long, default_value_t = protocol::SPEEDTEST_DEFAULT_TESTS)]
+        tests: u32,
     },
 }
 
 #[derive(Subcommand)]
+pub enum ProfilesCmd {
+    /// The device's own tessaro-* four, and any made by hand - which is
+    /// active where, and which come up on their own.
+    List,
+    /// One profile, by name or uuid: addressing, DNS, WiFi - never its
+    /// password - and what its device has right now.
+    Show { profile: String },
+}
+
+#[derive(Subcommand)]
 pub enum WifiCmd {
+    /// The WiFi radio and what each WiFi device is connected to.
+    Status,
     /// The networks in range, strongest first.
     Scan {
         #[arg(long, short = 'I')]
@@ -77,14 +106,15 @@ pub enum WifiCmd {
         #[arg(long)]
         cached: bool,
     },
-    /// Join SSID as a client: wifi.mode=client, and the hotspot goes down.
-    /// The password is prompted, or read from stdin with --password-stdin -
-    /// never taken from the command line, never shown by `get`. Rejoining
-    /// the same network keeps its saved password if you give none.
-    /// `set wifi.mode=hotspot` brings the hotspot back.
+    /// Join SSID as a client: network.wifi.mode=client, and the hotspot goes
+    /// down. The password is prompted, or read from stdin with
+    /// --password-stdin - never taken from the command line, never shown by
+    /// `config get`. Rejoining the same network keeps its saved password if
+    /// you give none. `config set network.wifi.mode=hotspot` brings the
+    /// hotspot back.
     ///
-    ///   tessaro-ctl net wifi join Office
-    ///   tessaro-ctl net wifi join Backroom --hidden --security psk
+    ///   tessaro-ctl network wifi join Office
+    ///   tessaro-ctl network wifi join Backroom --hidden --security psk
     Join {
         ssid: String,
         /// Read the password from stdin instead of prompting.
@@ -133,47 +163,53 @@ pub struct VerifyArg {
     pub verify: Verify,
 }
 
-/// Whether `net ping` streams, which drops the read timeout.
-pub fn streams(command: &NetCmd) -> bool {
-    matches!(command, NetCmd::Ping { .. })
+/// Whether `network ping` or `network speedtest` streams, which drops the
+/// read timeout.
+pub fn streams(command: &NetworkCmd) -> bool {
+    matches!(
+        command,
+        NetworkCmd::Ping { .. } | NetworkCmd::Speedtest { .. }
+    )
 }
 
-pub fn run(session: &mut Session, command: NetCmd, json: bool) -> Result<(), String> {
+pub fn run(session: &mut Session, command: NetworkCmd, json: bool) -> Result<(), String> {
     match command {
-        NetCmd::Interfaces => unreachable!("main shows the kernel's interfaces"),
-        NetCmd::Profiles => {
+        NetworkCmd::Show | NetworkCmd::Interfaces | NetworkCmd::Speedtest { .. } => {
+            unreachable!("main answers these")
+        }
+        NetworkCmd::Profiles(ProfilesCmd::List) => {
             let profiles: Vec<NetProfile> = call(session, Command::NetProfiles)?;
             print(json, &profiles, || show_profiles(&profiles))
         }
-        NetCmd::Show { profile } => {
+        NetworkCmd::Profiles(ProfilesCmd::Show { profile }) => {
             let detail: NetProfileDetail = call(session, Command::NetShow { profile })?;
             print(json, &detail, || show_detail(&detail))
         }
-        NetCmd::Last => {
+        NetworkCmd::Last => {
             let last: Option<NetChange> = call(session, Command::NetLast)?;
             print(json, &last, || match &last {
                 Some(change) => show_change(change),
                 None => println!("{}", paint(style::MUTED, "no network change yet")),
             })
         }
-        NetCmd::Ping {
+        NetworkCmd::Ping {
             host,
             count,
             interval,
             timeout,
             interface,
         } => net_ping(session, json, host, count, interval, timeout, interface),
-        NetCmd::Wifi { what } => wifi(session, json, what),
+        NetworkCmd::Wifi(what) => wifi(session, json, what),
     }
 }
 
-fn wifi(session: &mut Session, json: bool, what: Option<WifiCmd>) -> Result<(), String> {
+fn wifi(session: &mut Session, json: bool, what: WifiCmd) -> Result<(), String> {
     match what {
-        None => {
+        WifiCmd::Status => {
             let status: WifiStatus = call(session, Command::Wifi)?;
             print(json, &status, || show_wifi(&status))
         }
-        Some(WifiCmd::Scan { interface, cached }) => {
+        WifiCmd::Scan { interface, cached } => {
             if !json && !cached {
                 eprintln!(
                     "{}",
@@ -189,13 +225,13 @@ fn wifi(session: &mut Session, json: bool, what: Option<WifiCmd>) -> Result<(), 
             )?;
             print(json, &networks, || show_networks(&networks))
         }
-        Some(WifiCmd::Join {
+        WifiCmd::Join {
             ssid,
             password_stdin,
             hidden,
             security,
             verify,
-        }) => {
+        } => {
             let psk = join_password(session, &ssid, security, password_stdin)?;
             apply(
                 session,
@@ -211,7 +247,7 @@ fn wifi(session: &mut Session, json: bool, what: Option<WifiCmd>) -> Result<(), 
                 },
             )
         }
-        Some(WifiCmd::HotspotPassword) => {
+        WifiCmd::HotspotPassword => {
             let hotspot: HotspotCredentials = call(session, Command::HotspotPassword)?;
             print(json, &hotspot, || {
                 show_once(
@@ -285,7 +321,8 @@ pub fn is_network_key(key: &str) -> bool {
         .is_some_and(|key| key.consumers.contains(&protocol::keys::Consumer::Network))
 }
 
-/// Send one change of network settings - a `set`, an `unset`, a join - and
+/// Send one change of network settings - a `config set`, a `config unset`,
+/// a join - and
 /// wait for the device's verdict, or explain why it never came.
 pub fn apply(
     session: &mut Session,
@@ -331,7 +368,7 @@ pub fn apply(
                 "see what it did with: {}",
                 paint(
                     style::CMD,
-                    "tessaro-ctl net last   (at the new address, if it changed)"
+                    "tessaro-ctl network last   (at the new address, if it changed)"
                 )
             );
             return Err("no answer from the device".to_string());
@@ -389,7 +426,7 @@ fn net_ping(
     Ok(())
 }
 
-/// `tessaro-ctl ping`: the path this client really uses - the TCP connect,
+/// `tessaro-ctl device ping`: the path this client really uses - the TCP connect,
 /// the TLS handshake with the hello, then round trips on the session.
 pub fn ping(session: &mut Session, json: bool, count: u32, interval: f64) -> Result<(), String> {
     if count == 0 {
