@@ -297,6 +297,31 @@ tessaro-ctl device factory-reset -y         # settings, owners and files gone
 Tab completion: `source <(tessaro-ctl completion bash)` (also zsh and
 powershell). On the device it is already on.
 
+### The desktop client
+
+**Everything `tessaro-ctl` does, in windows and tables.** `tessaro-gui` shares
+the command line's device list, pins and tokens (`~/.config/tessaro/nodes.json`),
+so a device claimed with one is open in the other.
+
+```sh
+mise run gui-build              # build/gui-target/release/tessaro-gui, for this machine
+```
+
+- The device list shows every device answering on the network next to the
+  ones you know. Log in to or claim one from there; the certificate is shown
+  before it is pinned.
+- Each device opens in a window of its own inside the app. It has an overview,
+  every setting in tables (double-click to edit), and a page for each command
+  group:
+  - the screen and its modes, network and WiFi, storage, sound
+  - tokens and passwords, SSH keys
+  - a file manager for `/data/files`
+  - image updates with progress
+- The Log page follows the journal live. The VNC panel shows the screen live
+  (view only) through an SSH tunnel it sets up itself.
+- Keys: Enter confirms, Esc closes, Up and Down move through a table,
+  Cmd + and Cmd - zoom.
+
 ## Hardware
 
 | Hardware | Machine | State |
@@ -316,13 +341,14 @@ Tessaro is a Yocto Linux distribution derived from
 compositor and Chromium 147 as the browser. `tessaro-agent`, a Rust service,
 supervises the browser over CDP and is the device's control plane;
 `tessaro-ctl` talks to it over a local socket on the device or over pinned TLS
-from anywhere else. [docs/](docs/) explains each part and the reasons behind
-it.
+from anywhere else, and `tessaro-gui` does the same from a desktop.
+[docs/](docs/) explains each part and the reasons behind it.
 
 ## More
 
 - [DEVELOPMENT.md](DEVELOPMENT.md) - building, running in QEMU, flashing from
   a workstation, testing the agent.
 - [docs/](docs/) - how each subsystem works: the browser, settings and
-  claiming, display, networking, updates, sound, remote access.
+  claiming, display, networking, updates, sound, remote access, the desktop
+  client.
 - `tessaro-ctl --help` - worked examples for every command group.

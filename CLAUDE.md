@@ -246,6 +246,10 @@ recipe.
 * **`gui/` is its own workspace and never joins `agent/`**: the recipe builds
   every member of that one into the image. It reaches `protocol` and `client`
   by path, and its tasks build into `build/gui-target`.
+* **A new `tessaro-ctl` command gets its place in `tessaro-gui` in the same
+  change**: an action on the page of its group (`gui/tessaro-gui/src/device/pages.rs`,
+  the table in [docs/gui.md](docs/gui.md)). Logic both need goes into
+  `agent/client`, not into either binary.
 
 **Command-line output is colored, and any new CLI must be too.** Print through
 anstream's `println!`/`eprintln!` (imported to shadow the std macros) with the
