@@ -9,7 +9,7 @@
 //!   must not be one `connect()` away from the control plane.
 //! * **TCP** (`api.listen`, default `0.0.0.0:7400`) is TLS with the device's
 //!   own self-signed identity, which clients pin. Every request needs a
-//!   valid token except `id` and `claim`. Failed tokens are counted per
+//!   valid token except `id`, `claim` and `ping`. Failed tokens are counted per
 //!   address, and an address that keeps failing is refused for a minute.
 //!
 //! Every wait on a client is bounded - the hello, each request, each write -
@@ -287,8 +287,51 @@ async fn serve<S>(
                     continue;
                 }
             };
-            if stream_speedtest(&mut write, id, steps, shutdown.clone())
-                .await // naked: stream_speedtest bounds the whole test with speedtest::TOTAL
+            let what = "the speed test";
+            if stream_steps(
+                &mut write,
+                id,
+                steps,
+                what,
+                crate::speedtest::TOTAL,
+                shutdown.clone(),
+            )
+            .await // naked: stream_steps bounds the whole test with speedtest::TOTAL
+            .is_err()
+            {
+                return;
+            }
+            continue;
+        }
+
+        if let Command::NetPing {
+            host,
+            count,
+            interval_ms,
+            timeout_ms,
+            interface,
+        } = &request.command
+        {
+            let plan = crate::ping::Plan::new(
+                host.clone(),
+                *count,
+                *interval_ms,
+                *timeout_ms,
+                interface.clone(),
+            );
+            let plan = match plan {
+                Ok(plan) => plan,
+                Err(error) => {
+                    if send(&mut write, &Frame::Error { id, error }).await.is_err() {
+                        return;
+                    }
+                    continue;
+                }
+            };
+            let total = plan.total();
+            let steps = control.net_ping(&caller, plan);
+            if stream_steps(&mut write, id, steps, "the ping", total, shutdown.clone())
+                .await // naked: stream_steps bounds the whole run with the plan's total
                 .is_err()
             {
                 return;
@@ -406,20 +449,23 @@ async fn stream_logs<W: AsyncWrite + Unpin>(
     send(write, &Frame::End { id }).await
 }
 
-/// Every step of a speed test as an event, then `end`. Dropping `steps` on
-/// the way out is what tells the test's thread to stop.
-async fn stream_speedtest<W: AsyncWrite + Unpin>(
+/// Every step of a speed test or a ping as an event, then `end`, all within
+/// `total`. Dropping `steps` on the way out is what tells the thread or task
+/// producing them to stop.
+async fn stream_steps<W: AsyncWrite + Unpin, T: serde::Serialize>(
     write: &mut W,
     id: u64,
-    mut steps: tokio::sync::mpsc::Receiver<crate::speedtest::Step>,
+    mut steps: tokio::sync::mpsc::Receiver<Result<T, String>>,
+    what: &'static str,
+    total: Duration,
     mut shutdown: watch::Receiver<bool>,
 ) -> io::Result<()> {
     let started = Instant::now();
 
     loop {
-        let left = crate::speedtest::TOTAL.saturating_sub(started.elapsed());
+        let left = total.saturating_sub(started.elapsed());
         let next = tokio::select! {
-            next = within("the speed test", left, steps.recv()) => next,
+            next = within(what, left, steps.recv()) => next,
             _ = shutdown.changed() => {
                 let error = "the agent is stopping".to_string();
                 return send(write, &Frame::Error { id, error }).await;
@@ -578,6 +624,9 @@ mod tests {
             .collect()
     }
 
+    const WHAT: &str = "the speed test";
+    const TOTAL: Duration = crate::speedtest::TOTAL;
+
     #[tokio::test]
     async fn a_speed_test_is_events_then_end_or_an_error() {
         let (_stop, shutdown) = watch::channel(false);
@@ -592,7 +641,7 @@ mod tests {
         tx.send(Ok(step.clone())).await.unwrap();
         drop(tx);
         let mut written = Vec::new();
-        stream_speedtest(&mut written, 3, rx, shutdown.clone())
+        stream_steps(&mut written, 3, rx, WHAT, TOTAL, shutdown.clone())
             .await
             .unwrap();
         assert_eq!(
@@ -606,10 +655,10 @@ mod tests {
             ]
         );
 
-        let (tx, rx) = tokio::sync::mpsc::channel(4);
+        let (tx, rx) = tokio::sync::mpsc::channel::<crate::speedtest::Step>(4);
         tx.send(Err("offline".to_string())).await.unwrap();
         let mut written = Vec::new();
-        stream_speedtest(&mut written, 4, rx, shutdown)
+        stream_steps(&mut written, 4, rx, WHAT, TOTAL, shutdown)
             .await
             .unwrap();
         assert_eq!(
@@ -625,10 +674,10 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_speed_test_that_goes_silent_is_cut_off() {
         let (_stop, shutdown) = watch::channel(false);
-        let (_tx, rx) = tokio::sync::mpsc::channel(4);
+        let (_tx, rx) = tokio::sync::mpsc::channel::<crate::speedtest::Step>(4);
         let mut written = Vec::new();
 
-        stream_speedtest(&mut written, 5, rx, shutdown)
+        stream_steps(&mut written, 5, rx, WHAT, TOTAL, shutdown)
             .await
             .unwrap();
 

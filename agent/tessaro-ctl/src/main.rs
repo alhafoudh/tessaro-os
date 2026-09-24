@@ -10,6 +10,7 @@
 //! new root password - once.
 
 mod connect;
+mod net;
 mod nodes;
 mod ssh;
 mod style;
@@ -67,6 +68,12 @@ const HELP_STYLES: Styles = Styles::styled()
         \x20 tessaro-ctl modes && tessaro-ctl set display.resolution=1920x1080 && tessaro-ctl confirm\n\
         \x20 tessaro-ctl net                                address, gateway, DNS, interfaces\n\
         \x20 tessaro-ctl net interfaces                     every interface in detail\n\
+        \x20 tessaro-ctl net profiles                       NetworkManager's profiles\n\
+        \x20 tessaro-ctl net set 'Wired connection 1' ipv4.dns=1.1.1.1   kept only if the gateway still answers\n\
+        \x20 tessaro-ctl net wifi scan && tessaro-ctl net wifi join Office\n\
+        \x20 tessaro-ctl net last                           what the last change did, if the answer never came\n\
+        \x20 tessaro-ctl net ping 192.168.1.1               from the device\n\
+        \x20 tessaro-ctl -n brave-otter-3fa2 ping           from here to the device\n\
         \x20 tessaro-ctl get net.ip                         one read-only value\n\
         \x20 tessaro-ctl set 'kiosk.url=https://menu.test/?ip={net.ip}'  read-only keys are placeholders too\n\
         \x20 tessaro-ctl set browser.fps_counter=on\n\
@@ -119,10 +126,22 @@ enum Cmd {
     /// The resolutions the connected displays offer (for display.resolution).
     Modes,
     /// The network as the device sees it: address, gateway, DNS, and every
-    /// interface. Read-only; the same values are the net.* keys.
+    /// interface - the same values as the net.* keys. The subcommands read
+    /// and change NetworkManager's profiles and WiFi; the device keeps a
+    /// change only if it still reaches the network afterwards.
     Net {
         #[command(subcommand)]
-        what: Option<NetCmd>,
+        what: Option<net::NetCmd>,
+    },
+    /// How fast the device answers this client: the TCP connect, the TLS
+    /// handshake, then round trips over the control connection. Needs no
+    /// token, like `id`.
+    Ping {
+        #[arg(long, short = 'c', default_value_t = 4)]
+        count: u32,
+        /// Seconds between round trips.
+        #[arg(long, short = 'i', default_value_t = 1.0)]
+        interval: f64,
     },
     /// Current settings, or one of them.
     Get {
@@ -300,12 +319,6 @@ enum Cmd {
 }
 
 #[derive(Subcommand)]
-enum NetCmd {
-    /// Every network interface: kind, state, MAC, MTU, addresses.
-    Interfaces,
-}
-
-#[derive(Subcommand)]
 enum TokenCmd {
     /// Issue a token for another client. Shown once.
     Create {
@@ -435,16 +448,17 @@ fn run(cli: Cli) -> Result<(), String> {
     let target = connect::resolve(cli.node.as_deref(), &nodes)?;
     let local = matches!(target, Target::Local(_));
     let trust = match &cli.command {
-        Cmd::Id => Trust::Peek,
+        Cmd::Id | Cmd::Ping { .. } => Trust::Peek,
         Cmd::Claim { yes, .. } | Cmd::Login { yes, .. } => Trust::Pin { assume_yes: *yes },
         _ => Trust::KnownOnly,
     };
     // No read timeout: a followed log is open-ended, and a speed test on a
     // slow link can go quiet for longer than one. The device bounds that.
-    let follow = matches!(
-        cli.command,
-        Cmd::Logs { follow: true, .. } | Cmd::Speedtest { .. }
-    );
+    let follow = match &cli.command {
+        Cmd::Logs { follow: true, .. } | Cmd::Speedtest { .. } => true,
+        Cmd::Net { what: Some(what) } => net::streams(what),
+        _ => false,
+    };
     let mut session = connect::open(&target, &nodes, trust, follow)?;
     refresh_address(&mut nodes, &session)?;
     let json = cli.json;
@@ -481,11 +495,13 @@ fn run(cli: Cli) -> Result<(), String> {
                 }
             })
         }
-        Cmd::Net { what } => {
+        Cmd::Net {
+            what: what @ (None | Some(net::NetCmd::Interfaces)),
+        } => {
             let net: Net = call(&mut session, Command::Net)?;
             match what {
                 None => print(json, &net, || show_net(&net)),
-                Some(NetCmd::Interfaces) => print(json, &net.interfaces, || {
+                _ => print(json, &net.interfaces, || {
                     for (at, interface) in net.interfaces.iter().enumerate() {
                         if at > 0 {
                             println!();
@@ -495,6 +511,8 @@ fn run(cli: Cli) -> Result<(), String> {
                 }),
             }
         }
+        Cmd::Net { what: Some(what) } => net::run(&mut session, what, json),
+        Cmd::Ping { count, interval } => net::ping(&mut session, json, count, interval),
         Cmd::Modes => {
             let connectors: Vec<Connector> = call(&mut session, Command::Modes)?;
             print(json, &connectors, || {

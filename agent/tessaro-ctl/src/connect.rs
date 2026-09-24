@@ -185,6 +185,25 @@ pub struct Session {
     pub node: NodeInfo,
     /// Set when this session should be (re)stored in nodes.json.
     pub remote: Option<(SocketAddr, String)>,
+    /// The TCP socket under the TLS, kept to change its read timeout.
+    tcp: Option<TcpStream>,
+    /// How long the TCP connect and the TLS handshake plus the welcome took.
+    pub timing: Option<Timing>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Timing {
+    pub connect: Duration,
+    pub handshake: Duration,
+}
+
+/// How one command went.
+pub enum Answer {
+    Ok(Value),
+    /// The device answered with an error.
+    Refused(String),
+    /// No answer came: the connection broke or timed out.
+    Lost(String),
 }
 
 pub fn open(target: &Target, nodes: &Nodes, trust: Trust, follow: bool) -> Result<Session, String> {
@@ -258,11 +277,14 @@ fn open_remote(
     follow: bool,
     connect: Duration,
 ) -> Result<Session, Failure> {
+    let started = Instant::now();
     let tcp = TcpStream::connect_timeout(&address, connect)
         .map_err(|err| Failure::Unreachable(format!("{address}: {err}")))?;
+    let connected = started.elapsed();
     tcp.set_read_timeout(if follow { None } else { Some(IO) })
         .and_then(|()| tcp.set_write_timeout(Some(IO)))
         .map_err(|err| Failure::Refused(err.to_string()))?;
+    let control = tcp.try_clone().ok();
 
     let connector = native_tls::TlsConnector::builder()
         .danger_accept_invalid_certs(true)
@@ -285,6 +307,11 @@ fn open_remote(
     // claims to be. The pin is checked before any token is sent.
     let mut session = handshake(Box::new(tls), None, None)
         .map_err(|why| Failure::Unreachable(format!("{address}: {why}")))?;
+    session.tcp = control;
+    session.timing = Some(Timing {
+        connect: connected,
+        handshake: started.elapsed().saturating_sub(connected),
+    });
 
     // The node we meant, if we meant one. Only without an expectation - an
     // IP typed by hand - is the answering device looked up by its own id,
@@ -437,6 +464,8 @@ fn handshake(
             token,
             node,
             remote,
+            tcp: None,
+            timing: None,
         }),
         Frame::Error { error, .. } => Err(error),
         other => Err(format!("unexpected greeting: {other:?}")),
@@ -454,13 +483,36 @@ impl Session {
 
     /// One command, one answer.
     pub fn call(&mut self, command: Command) -> Result<Value, String> {
-        let id = self.send(command)?;
+        match self.request(command) {
+            Answer::Ok(value) => Ok(value),
+            Answer::Refused(error) | Answer::Lost(error) => Err(error),
+        }
+    }
+
+    /// One command, one answer - and whether a missing answer was the
+    /// device's doing or the connection's.
+    pub fn request(&mut self, command: Command) -> Answer {
+        let id = match self.send(command) {
+            Ok(id) => id,
+            Err(error) => return Answer::Lost(error),
+        };
         loop {
-            match read_frame(&mut self.stream)? {
-                Frame::Ok { id: got, result } if got == id => return Ok(result),
-                Frame::Error { id: got, error } if got == id || got == 0 => return Err(error),
-                _ => continue,
+            match read_frame(&mut self.stream) {
+                Ok(Frame::Ok { id: got, result }) if got == id => return Answer::Ok(result),
+                Ok(Frame::Error { id: got, error }) if got == id || got == 0 => {
+                    return Answer::Refused(error)
+                }
+                Ok(_) => continue,
+                Err(error) => return Answer::Lost(error),
             }
+        }
+    }
+
+    /// How long a TCP session waits for an answer from now on. `None` waits
+    /// for good; the local socket never times out.
+    pub fn set_read_timeout(&self, timeout: Option<Duration>) {
+        if let Some(tcp) = &self.tcp {
+            let _ = tcp.set_read_timeout(timeout);
         }
     }
 

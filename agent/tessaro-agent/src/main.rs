@@ -33,9 +33,11 @@ mod identity;
 mod log;
 mod mdns;
 mod net;
+mod nm;
 mod notify;
 mod offline;
 mod paths;
+mod ping;
 mod ports;
 mod probe;
 mod render;
@@ -279,6 +281,7 @@ async fn start_control(
 
     control.arm_if_pending().await; // naked: a disk read under blocking()'s within()
     control.load_update().await; // naked: a disk read under blocking()'s within()
+    control.recover_network();
     control.watch_url();
     control.watch_public_ip();
 }

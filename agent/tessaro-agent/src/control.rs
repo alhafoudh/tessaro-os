@@ -36,6 +36,7 @@ use crate::cdp::session::SessionHandle;
 use crate::display;
 use crate::log::Log;
 use crate::mdns::Mdns;
+use crate::nm::{Change, Network};
 use crate::paths::Paths;
 use crate::render;
 use crate::shadow;
@@ -157,6 +158,7 @@ pub struct Control {
     updates: Arc<Updates>,
     /// Held by the thread running a speed test, for as long as it runs.
     speedtest: Arc<tokio::sync::Mutex<()>>,
+    network: Arc<Network>,
 }
 
 impl Control {
@@ -175,6 +177,7 @@ impl Control {
         Arc::new(Self {
             agent_url,
             updates: Updates::new(Arc::clone(&log), paths.clone()),
+            network: Network::new(Arc::clone(&log), paths.clone()),
             state: Store::new(&paths.state_dir, state::FILE),
             auth_store: Store::new(&paths.state_dir, auth::FILE),
             log,
@@ -207,6 +210,20 @@ impl Control {
         self.log
             .info(format!("speed test requested by {}", caller.describe()));
         Ok(speedtest::start(plan, lock, Arc::clone(&self.log)))
+    }
+
+    /// Ping a host from the device; the server streams what comes back.
+    pub fn net_ping(
+        &self,
+        caller: &Caller,
+        plan: crate::ping::Plan,
+    ) -> tokio::sync::mpsc::Receiver<crate::ping::Step> {
+        self.log.debug(format!(
+            "net ping {} requested by {}",
+            plan.host,
+            caller.describe()
+        ));
+        crate::ping::start(plan, Arc::clone(&self.log))
     }
 
     pub fn set_mdns(&self, mdns: Option<Mdns>) {
@@ -295,13 +312,97 @@ impl Control {
                 .into(),
             Command::UpdateChunk { offset, data } => self.updates.chunk(offset, data).await.into(),
             Command::UpdateStatus => self.updates.status().await.into(),
+            Command::UpdateCommit { .. } if self.network.busy() => {
+                Reply::err("a network change is in progress; commit the update once it is done")
+            }
             Command::UpdateCommit { wipe_data, reboot } => {
                 let who = caller.describe();
                 let reply: Reply = self.updates.commit(&who, wipe_data).await.into();
                 reply.then(reboot.then_some(After::Reboot))
             }
             Command::UpdateCancel => self.updates.cancel(&caller.describe()).await.into(),
+            Command::Ping => Reply::ok(Done {
+                message: "pong".to_string(),
+            }),
+            Command::NetPing { .. } => Reply::err("net-ping is a stream; the server handles it"),
+            Command::NetProfiles => self.network.profiles().await.into(),
+            Command::NetShow { profile } => self.network.show(&profile).await.into(),
+            Command::NetKeys => Reply::ok(self.network.keys()),
+            Command::NetLast => self.network.last().await.into(),
+            Command::Wifi => self.network.wifi().await.into(),
+            Command::WifiScan { interface, rescan } => {
+                self.network.scan(interface, rescan).await.into()
+            }
+            Command::NetSet {
+                profile,
+                values,
+                psk,
+                verify,
+            } => {
+                let psk = psk.map(|secret| secret.expose().to_string());
+                let change = Change::Set {
+                    profile,
+                    values,
+                    psk,
+                };
+                self.net_change(caller, change, verify).await.into()
+            }
+            Command::NetUp { profile, verify } => self
+                .net_change(caller, Change::Up { profile }, verify)
+                .await
+                .into(),
+            Command::NetDown { profile, verify } => self
+                .net_change(caller, Change::Down { profile }, verify)
+                .await
+                .into(),
+            Command::NetForget { profile, verify } => self
+                .net_change(caller, Change::Forget { profile }, verify)
+                .await
+                .into(),
+            Command::WifiJoin {
+                ssid,
+                psk,
+                security,
+                hidden,
+                interface,
+                verify,
+            } => {
+                let change = Change::Join {
+                    ssid,
+                    psk: psk.map(|secret| secret.expose().to_string()),
+                    security,
+                    hidden,
+                    interface,
+                };
+                self.net_change(caller, change, verify).await.into()
+            }
+            Command::WifiRadio { on, verify } => self
+                .net_change(caller, Change::Radio { on }, verify)
+                .await
+                .into(),
         }
+    }
+
+    /// A network change, refused while an update waits for its reboot: the
+    /// reboot would cut the change's checks short, and the rollback with it.
+    async fn net_change(
+        &self,
+        caller: &Caller,
+        change: Change,
+        verify: protocol::Verify,
+    ) -> Result<protocol::NetChange, String> {
+        if self.updates.is_pending() {
+            return Err(
+                "an update is committed and waiting for its reboot; change the network after it"
+                    .to_string(),
+            );
+        }
+        self.network.change(caller.describe(), change, verify).await
+    }
+
+    /// Roll back a network change the previous agent never finished.
+    pub fn recover_network(&self) {
+        self.network.recover();
     }
 
     /// Resume whatever update the staging directory holds.

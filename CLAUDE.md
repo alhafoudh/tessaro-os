@@ -450,8 +450,11 @@ swallows queries, the agent itself wedging, a short agent stall, a parked
 agent, SIGTERM - and the control plane: a `tessaro-ctl set` that restarts the
 agent onto the new value, the debug screen and maintenance mode each on and
 off with the browser left running, a claim and unclaim round trip, an ssh key
-authorized with a pinned host key, then revoked and cleared by unclaim, and a resolution
-change that refuses an unoffered mode and reverts unconfirmed. Last, because
+authorized with a pinned host key, then revoked and cleared by unclaim, a resolution
+change that refuses an unoffered mode and reverts unconfirmed, a network
+change that is committed, one that cuts the VM off and is rolled back by the
+device alone, one whose agent is killed half way and is rolled back at its
+restart, and `ping` and `net ping` with and without ping sockets. Last, because
 each reboots the VM, three image updates of the image it booted from:
 damaged staging refused at boot with nothing written, an update that keeps
 the settings, and one with `--wipe-data`. About twenty minutes; exits non-zero on any failure and prints
@@ -901,7 +904,8 @@ kiosk origin, Weston restarts - taking the browser and agent with it - for a
   means the
   interface carrying the IPv4 default route. `tessaro-ctl net` shows the same
   as an overview, `net interfaces` every interface with kind, state, carrier,
-  MAC, MTU, speed and addresses. Nothing here edits the network yet.
+  MAC, MTU, speed and addresses. Editing the network is NetworkManager's,
+  through `net set|up|down|forget` and `net wifi` - see **Network control**.
   **A URL using one moves on its own**: the boot render runs before DHCP, and
   leases change, so while `kiosk.url` uses a read-only key the agent checks
   every 15s and, when the expanded URL is no longer the one it drives,
@@ -940,7 +944,7 @@ kiosk origin, Weston restarts - taking the browser and agent with it - for a
 **The claim model:**
 
 * A fresh device is **unclaimed**: no tokens, empty root password. Over TCP it
-  answers only `id` and `claim`.
+  answers only `id`, `claim` and `ping`.
 * **The first `claim` wins.** It gets a token and the root password becomes a
   random 20-character one, which `tessaro-ctl` shows exactly once. Order
   matters for power loss: the password is set first, then the token
@@ -1405,6 +1409,77 @@ Things to know:
   rots.
 * **Changing systemd's `PACKAGECONFIG` rebuilds most of the image.** Removing
   `networkd` is not an incremental change. Budget a near-full build.
+
+### Network control
+
+**`tessaro-ctl net set|up|down|forget` and `net wifi join|on|off` change
+NetworkManager's profiles from anywhere, over the pinned, token-checked
+control connection, and the device keeps a change only if it still reaches
+the network afterwards.** There is no confirm step, on purpose: a change is
+one request, and whether it sticks is the device's decision alone, so a change
+that takes the operator's own connection away - re-addressing the link it came
+in on - is safe by construction. The client explains a lost connection and
+`net last` reads the verdict afterwards. `net profiles`, `net show`, `net keys`,
+`net wifi` and `net wifi scan` read; `net ping HOST` pings from the device
+(streamed, like `speedtest`); `tessaro-ctl ping` times the client's own path to
+the agent - TCP connect, TLS handshake, round trips - and, like `id`, needs no
+token. The logic is `agent/tessaro-agent/src/nm/` and `ping.rs`; the editable
+properties are `agent/protocol/src/netkeys.rs`, in nmcli's own names.
+
+* **One change is one transaction** (`nm/txn.rs`): snapshot every profile it
+  touches, secrets included, to `/data/tessaro/network/snapshot.json` (0600,
+  in a 0700 directory - the same exposure as NetworkManager's own keyfiles on
+  the same `/data`), write `txn.json`, take a NetworkManager **checkpoint** on
+  the devices involved (with a 150s rollback timer of NetworkManager's own, the
+  backstop if the agent dies), apply **in memory only** (`Update2` with
+  `IN_MEMORY`, a new WiFi profile with `persist: memory`), verify, and only
+  then `Save()` to disk and drop the checkpoint. Any failure rolls back: the
+  radio first, then the checkpoint, then every snapshot (a checkpoint only
+  covers profiles active at the time), then whatever was created. The outcome
+  goes to `last.json`. A power cut before `Save()` boots the old config from
+  disk, since `/run` - where in-memory profiles live - is gone.
+* **Verify means, on the device:** a connection it activated reaches
+  ACTIVATED (failing fast with NetworkManager's reason - `no secrets (wrong
+  password?)`), its device gets a global address, a default route is still
+  there if there was one, and `--verify` holds: `gateway` (the default, one
+  ping from the interface), `HOST` (a ping), `HOST:PORT` (a TCP connect) or
+  `none`. About 90s at most; the client waits 180s.
+* **An agent that dies half way is rolled back at its next start** (`recover`,
+  from `start_control`, retrying for a minute while NetworkManager comes up).
+  That covers SIGTERM too: the transaction is not waited for at shutdown.
+* **The transaction runs on a task of its own**, holding the one-at-a-time
+  lock the way a speed test holds its own, so a client that is cut off does
+  not stop it. A network change is refused while an update waits for its
+  reboot, and `update commit` is refused during a change.
+* **Update2 keeps stored secrets only when the new settings carry none at
+  all** (`nm-settings-connection.c`). So a patch starts from `GetSettings`,
+  which never includes secrets, and adds a `psk` only when one is being
+  changed; one secret too many would erase the rest.
+* **nmrs is for reading only.** Saved profiles, access points, WiFi devices,
+  and the builder for a new WiFi profile come from it; every write goes
+  through our own proxies (`nm/proxy.rs`) on nmrs's connection, because nmrs's
+  writes save to disk at once and know no checkpoints. It costs 19 crates -
+  it asks for zbus's default features, which bring async-io, async-executor,
+  blocking and polling back - compiled but idle: zbus still runs on tokio,
+  and the nmrs calls that start futures-timer's thread are never made.
+* **Guards before anything moves**: `connection.autoconnect=no` on the profile
+  carrying the default route is refused (reachability now says nothing about
+  the next boot), and `net down` says it lasts until the next boot or
+  autoconnect. A patch is checked whole first - `manual` needs addresses, the
+  gateway must be inside one of them - on both ends.
+* **WiFi joins are Open, WPA2-PSK and WPA3-SAE.** The security comes from a
+  scan, or `--hidden --security`; enterprise (802.1X) is refused as not yet
+  supported. A known network is updated in place rather than duplicated, and
+  comes back up on its saved password if none is given. The password is
+  prompted or read from stdin, never argv, and travels as `protocol::Secret`,
+  whose `Debug` prints `***`.
+* **`net ping` falls back to a raw socket.** It prefers the kernel's ICMP
+  datagram sockets, but `net.ipv4.ping_group_range` does not exempt root: the
+  kernel's own `1 0` refuses even uid 0 (systemd's default opens it). Refused,
+  the agent opens a raw socket, which root may, and does the identifier, the
+  IPv4 checksum and the IP header itself. The e2e runs both.
+* **qemu cannot exercise WiFi** - no emulated wireless NIC - so joins, scans
+  and the radio are tested on the Pi by hand.
 
 ## Gotchas
 

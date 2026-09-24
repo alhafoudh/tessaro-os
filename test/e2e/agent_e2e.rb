@@ -93,6 +93,13 @@ module AgentE2E
       status.success?
     end
 
+    # `command` as a transient unit of its own, so it runs to the end even
+    # when it takes this SSH session away - which a network change does.
+    def run_detached(name, command)
+      quoted = command.gsub("'", %('"'"'))
+      run("systemd-run --quiet --collect --unit=e2e-#{name} sh -c '#{quoted}'")
+    end
+
     def property(unit, name)
       run("systemctl show -p #{name} --value #{unit}").strip
     end
@@ -646,6 +653,140 @@ module AgentE2E
   # CONFIRM_SECONDS in the protocol crate.
   def self.protocol_confirm_seconds = 60
 
+  # The network cases. The guest has one NIC, on slirp, and NetworkManager's
+  # own `Wired connection 1` on it; the suite's SSH comes in through it. So a
+  # change that breaks it takes the case's own session away - which is the
+  # point: the change is started detached (run_detached), and what the device
+  # decided is read back once SSH answers again.
+
+  # The profile active on the interface with the default route, and that
+  # interface's IPv4 address.
+  def self.uplink(guest)
+    net = JSON.parse(guest.run("tessaro-ctl --json net"))
+    profiles = JSON.parse(guest.run("tessaro-ctl --json net profiles"))
+    profile = profiles.find { _1["active"] && _1["device"] == net["interface"] } or
+      raise Failure, "no active profile on #{net["interface"]}:\n#{profiles}"
+    address = net["interfaces"].find { _1["name"] == net["interface"] }["addresses"]
+                               .find { _1["family"] == "ipv4" }["address"]
+    [profile, address]
+  end
+
+  def self.keyfiles(guest)
+    guest.run("cat /etc/NetworkManager/system-connections/*.nmconnection 2>/dev/null", allow_failure: true)
+  end
+
+  # A static address on a subnet with nobody in it: the gateway can never
+  # answer, so the device must put DHCP back by itself.
+  BAD_ADDRESS = "ipv4.method=manual ipv4.addresses=10.99.0.5/24 ipv4.gateway=10.99.0.1"
+
+  def self.last_change(guest)
+    out = guest.run("tessaro-ctl --json net last", allow_failure: true).strip
+    out.empty? ? nil : JSON.parse(out)
+  end
+
+  # Once SSH answers again: the device's verdict on the change started after
+  # `previous`, with the address back to `before`.
+  def self.wait_for_rollback(guest, before, previous)
+    sleep 5
+    wait_for_ssh(guest, timeout: 180, what: "a network change")
+    deadline = Time.now + 120
+    loop do
+      last = last_change(guest)
+      if last && last != previous
+        _, now = uplink(guest)
+        return last if now == before
+      end
+      raise Failure, "no new verdict with the address back at #{before} (last: #{last})" if Time.now > deadline
+
+      sleep 3
+    rescue Failure
+      raise if Time.now > deadline
+
+      sleep 3
+    end
+  end
+
+  check "net-read", "net profiles and net show read NetworkManager's profiles" do |guest, _journal|
+    profile, = uplink(guest)
+    shown = JSON.parse(guest.run("tessaro-ctl --json net show '#{profile["uuid"]}'"))
+    raise Failure, "net show is not about #{profile["name"]}" unless shown["profile"]["uuid"] == profile["uuid"]
+    raise Failure, "net show has no live address" if shown["addresses"].empty?
+    keys = guest.run("tessaro-ctl net keys ipv4.method")
+    raise Failure, "net keys does not document ipv4.method:\n#{keys}" unless keys.include?("auto is DHCP")
+    typo = guest.run("tessaro-ctl net set '#{profile["uuid"]}' ipv4.metod=manual 2>&1", allow_failure: true)
+    raise Failure, "a typo was sent to the device:\n#{typo}" unless typo.include?("cannot be changed here")
+  end
+
+  check "net-commit", "a change that keeps the network is verified, committed and saved to disk" do |guest, _journal|
+    profile, = uplink(guest)
+    out = guest.run("tessaro-ctl --json net set '#{profile["uuid"]}' ipv4.dns=9.9.9.9")
+    change = JSON.parse(out)
+    raise Failure, "not committed:\n#{out}" unless change["outcome"] == "committed"
+    raise Failure, "the gateway was not checked:\n#{out}" unless change["checks"].any? { _1["name"] == "reach" && _1["passed"] }
+
+    shown = JSON.parse(guest.run("tessaro-ctl --json net show '#{profile["uuid"]}'"))
+    raise Failure, "net show has no 9.9.9.9: #{shown["ipv4"]}" unless shown["ipv4"]["dns"].include?("9.9.9.9")
+    raise Failure, "the change is not on disk" unless keyfiles(guest).include?("9.9.9.9")
+    last = JSON.parse(guest.run("tessaro-ctl --json net last"))
+    raise Failure, "net last does not say so: #{last}" unless last["outcome"] == "committed"
+  ensure
+    guest.run("tessaro-ctl net set '#{profile["uuid"]}' ipv4.dns=", allow_failure: true) if profile
+  end
+
+  check "net-rollback", "a change that cuts the device off is rolled back by the device alone" do |guest, journal|
+    profile, before = uplink(guest)
+    previous = last_change(guest)
+    guest.run_detached("net-rollback", "tessaro-ctl net set '#{profile["uuid"]}' #{BAD_ADDRESS}")
+    last = wait_for_rollback(guest, before, previous)
+
+    raise Failure, "net last says #{last}" unless last["outcome"] == "rolled-back"
+    raise Failure, "rolled back for the wrong reason: #{last["reason"]}" unless last["reason"].to_s.include?("did not hold")
+    raise Failure, "the bad address reached the disk" if keyfiles(guest).include?("10.99.0.5")
+    journal.wait_for(/^network: set .* rolled back: /, timeout: 5)
+  end
+
+  check "net-recovery", "an agent killed during a change rolls it back when it starts again" do |guest, journal|
+    profile, before = uplink(guest)
+    previous = last_change(guest)
+    # Both halves on the guest, since the change takes this session away:
+    # the change itself, and a watcher that kills the agent once it started.
+    guest.run_detached("net-kill", <<~SH)
+      until journalctl -u tessaro-agent -n 50 -o cat | grep -q "network: set .* started"; do sleep 1; done
+      sleep 2
+      systemctl kill -s KILL tessaro-agent
+    SH
+    guest.run_detached("net-recovery", "tessaro-ctl net set '#{profile["uuid"]}' #{BAD_ADDRESS}")
+    last = wait_for_rollback(guest, before, previous)
+
+    raise Failure, "net last says #{last}" unless last["outcome"] == "rolled-back"
+    raise Failure, "not rolled back by recovery: #{last["reason"]}" unless last["reason"].to_s.include?("stopped")
+    journal.wait_for(/^network: rolled back an unfinished network change \(set /, timeout: 30)
+    raise Failure, "the bad address reached the disk" if keyfiles(guest).include?("10.99.0.5")
+  ensure
+    guest.run("systemctl reset-failed e2e-net-kill e2e-net-recovery", allow_failure: true)
+    guest.restart_agent
+  end
+
+  # `ping` needs no token, so it works on this unclaimed device over TLS. The
+  # device pings twice: over a ping socket, and - with ping sockets closed to
+  # everyone, root included - over the raw socket it falls back to.
+  check "ping", "ping measures the control connection, net ping works with and without ping sockets" do |guest, _journal|
+    out = guest.run("TESSARO_CONFIG_DIR=/tmp/e2e-ping tessaro-ctl -n 127.0.0.1 ping -c 3 -i 0.2")
+    raise Failure, "tessaro-ctl ping:\n#{out}" unless out.include?("3/3 answered")
+    raise Failure, "no TLS timing:\n#{out}" unless out.match?(/^tls\s+\d/)
+
+    range = guest.run("cat /proc/sys/net/ipv4/ping_group_range").strip
+    begin
+      [range, "1\t0"].each do |sockets|
+        guest.run("echo '#{sockets}' > /proc/sys/net/ipv4/ping_group_range")
+        out = guest.run("tessaro-ctl net ping 127.0.0.1 -c 2 -i 0.2")
+        raise Failure, "net ping with ping_group_range #{sockets.inspect}:\n#{out}" unless out.include?("2/2 received")
+      end
+    ensure
+      guest.run("echo '#{range}' > /proc/sys/net/ipv4/ping_group_range", allow_failure: true)
+    end
+  end
+
   # The image updates, last because each one reboots the VM. The VM runs
   # with `snapshot`, which lasts across a guest reboot, so what an update
   # writes is really there for the next boot - and gone at power-off.
@@ -676,15 +817,19 @@ module AgentE2E
     raise Failure, "the update was not committed:\n#{output}" unless output.include?("applied at the next boot")
   end
 
-  def self.wait_for_reboot(guest)
-    deadline = Time.now + 120
-    sleep 2 while guest.reachable? && Time.now < deadline
-    deadline = Time.now + 900
+  def self.wait_for_ssh(guest, timeout:, what:)
+    deadline = Time.now + timeout
     until guest.reachable?
-      raise Failure, "the VM did not come back within 15 minutes of an update" if Time.now > deadline
+      raise Failure, "the VM did not come back within #{timeout}s of #{what}" if Time.now > deadline
 
       sleep 5
     end
+  end
+
+  def self.wait_for_reboot(guest)
+    deadline = Time.now + 120
+    sleep 2 while guest.reachable? && Time.now < deadline
+    wait_for_ssh(guest, timeout: 900, what: "an update")
     deadline = Time.now + 180
     until guest.run("journalctl -u tessaro-agent -b --no-pager -o cat").include?("navigated to #{KIOSK_URL}")
       raise Failure, "the agent never navigated after the update" if Time.now > deadline

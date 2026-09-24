@@ -129,4 +129,11 @@ impl Paths {
     pub fn update_dir(&self) -> PathBuf {
         self.state_dir.join("update")
     }
+
+    /// Network changes: the one in progress, the profiles it touched with
+    /// their secrets (0600, like NetworkManager's own keyfiles on the same
+    /// `/data`), and what the last one did.
+    pub fn network_dir(&self) -> PathBuf {
+        self.state_dir.join("network")
+    }
 }
