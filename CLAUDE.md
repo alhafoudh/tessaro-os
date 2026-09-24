@@ -464,7 +464,18 @@ the settings, one with `--wipe-data`, and one with `--repartition` that
 rewrites the whole disk from RAM. About twenty minutes; exits non-zero on any failure and prints
 the journal lines the failing case saw. `ruby test/e2e/agent_e2e.rb --list`
 names the cases, `--only a,b` runs some, `--boot --keep` leaves the VM up, and
-without `--boot` it reuses a VM left up that way.
+without `--boot` it reuses a VM left up that way. `-v` prints each step of a
+case as it starts - guest commands, journal waits and what matched, CDP
+calls, deliberate sleeps - and `-vv` adds every agent journal line a wait
+sees; through mise, `mise run agent-e2e -- -v`.
+
+* **Steps come from the helpers, not from the cases.** `Guest#run`,
+  `Journal#wait_for`/`refute` and `Cdp#command` print one line each via
+  `AgentE2E.step`. Plumbing (cursors, journal reads, unit properties) and
+  every polling loop run inside `AgentE2E.quietly`, with one `step` naming
+  the wait before it, or `-v` would print once per poll. A sleep that is
+  part of what a case proves is `pause SECONDS, "why"`. A new case gets its
+  steps for free; a new polling loop has to be wrapped.
 
 * **It boots its own VM, not through `mise run run`.** The guest is driven over
   SSH, and runqemu's slirp forwards `127.0.0.1:2222` - but inside the kas

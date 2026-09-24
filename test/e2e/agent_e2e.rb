@@ -15,6 +15,7 @@
 #   ruby test/e2e/agent_e2e.rb --boot --keep boot, run, leave the VM up
 #   ruby test/e2e/agent_e2e.rb               reuse a VM left up by --keep
 #   ruby test/e2e/agent_e2e.rb --only drift,dns --list
+#   ruby test/e2e/agent_e2e.rb -v            each step as it starts (-vv: journal too)
 #
 # The guest is reached over SSH on 127.0.0.1:2222. runqemu's slirp forwards
 # that port, but inside the kas container's network namespace - which is why
@@ -67,6 +68,43 @@ module AgentE2E
 
   class Failure < StandardError; end
 
+  # How much a run says: 0 is one line per case, 1 (-v) adds every step a
+  # case takes, 2 (-vv) also every agent journal line a wait sees arrive.
+  # Steps are printed as they start, so a case that hangs shows where.
+  @verbose = 0
+  @muted = 0
+
+  class << self
+    attr_accessor :verbose
+  end
+
+  STEP_INDENT = " " * 9
+
+  def self.step(text, level: 1)
+    return if verbose < level || @muted.positive?
+
+    first, *rest = text.to_s.lines(chomp: true)
+    puts "#{STEP_INDENT}#{first}"
+    rest.each { puts "#{STEP_INDENT}  #{_1}" }
+    $stdout.flush
+  end
+
+  # No steps from inside the block: the plumbing (cursors, journal reads,
+  # unit properties) and polling loops, which would print once per poll and
+  # bury the steps that matter. The caller names the wait with one step.
+  def self.quietly
+    @muted += 1
+    yield
+  ensure
+    @muted -= 1
+  end
+
+  # A sleep that is part of what a case proves, named as a step.
+  def self.pause(seconds, why)
+    step "sleep #{seconds}s: #{why}"
+    sleep seconds
+  end
+
   # The VM, over SSH.
   class Guest
     # Extra ssh options go in front of SSH's own, because ssh keeps the first
@@ -79,6 +117,7 @@ module AgentE2E
     # Every guest command is bounded, so a hang shows up as a failure rather
     # than as a suite that never finishes.
     def run(command, allow_failure: false, input: "", timeout: 120)
+      AgentE2E.step("$ #{command.strip}")
       out, err, status = Open3.capture3("timeout", timeout.to_s, *@ssh, command, stdin_data: input)
       raise Failure, "guest command timed out after #{timeout}s: #{command}" if status.exitstatus == 124
       unless status.success? || allow_failure
@@ -101,7 +140,7 @@ module AgentE2E
     end
 
     def property(unit, name)
-      run("systemctl show -p #{name} --value #{unit}").strip
+      AgentE2E.quietly { run("systemctl show -p #{name} --value #{unit}").strip }
     end
 
     def agent_pid = property("tessaro-agent", "MainPID").to_i
@@ -113,19 +152,23 @@ module AgentE2E
     # killed our own SSH session and SIGSTOP froze it.
     def signal_matching(signal, pattern)
       guarded = "#{pattern[0...-1]}[#{pattern[-1]}]"
-      run(%(pids=$(pgrep -f -- '#{guarded}'); test -n "$pids" && kill -#{signal} $pids))
+      AgentE2E.step("kill -#{signal} every process matching #{pattern}")
+      AgentE2E.quietly { run(%(pids=$(pgrep -f -- '#{guarded}'); test -n "$pids" && kill -#{signal} $pids)) }
     end
 
     # Restart the agent and wait until it has navigated, so the next case
     # starts from a settled agent rather than one still coming up.
     def restart_agent
-      cursor = self.cursor
-      run("systemctl restart tessaro-agent")
-      deadline = Time.now + 45
-      until journal_after(cursor).any? { _1.start_with?("navigated to #{KIOSK_URL}") }
-        raise Failure, "the agent did not navigate within 45s of a restart" if Time.now > deadline
+      AgentE2E.step("restart the agent and wait for it to navigate")
+      AgentE2E.quietly do
+        cursor = self.cursor
+        run("systemctl restart tessaro-agent")
+        deadline = Time.now + 45
+        until journal_after(cursor).any? { _1.start_with?("navigated to #{KIOSK_URL}") }
+          raise Failure, "the agent did not navigate within 45s of a restart" if Time.now > deadline
 
-        sleep 1
+          sleep 1
+        end
       end
     end
 
@@ -133,17 +176,18 @@ module AgentE2E
     # caused. systemd's own lines about the unit (the watchdog timeout, the
     # restart) are included: `-u` matches those too.
     def cursor
-      run("journalctl -u tessaro-agent -n 0 --show-cursor --no-pager")[/-- cursor: (\S+)/, 1] or
+      AgentE2E.quietly { run("journalctl -u tessaro-agent -n 0 --show-cursor --no-pager") }[/-- cursor: (\S+)/, 1] or
         raise Failure, "no journal cursor"
     end
 
     def journal_after(cursor)
-      run("journalctl -u tessaro-agent --no-pager -o cat --after-cursor='#{cursor}'").lines(chomp: true)
+      AgentE2E.quietly { run("journalctl -u tessaro-agent --no-pager -o cat --after-cursor='#{cursor}'") }
+              .lines(chomp: true)
     end
 
     def journal_json_after(cursor)
-      run("journalctl -u tessaro-agent --no-pager -o json --after-cursor='#{cursor}'")
-        .lines.map { JSON.parse(_1) }
+      AgentE2E.quietly { run("journalctl -u tessaro-agent --no-pager -o json --after-cursor='#{cursor}'") }
+              .lines.map { JSON.parse(_1) }
     end
 
     # The settings as the case wants them: the test settings plus whatever
@@ -151,12 +195,21 @@ module AgentE2E
     # rendered only (--no-apply); the case restarts what it needs itself.
     # Goes through the local socket on the guest, which needs no token.
     def configure(extra = {})
-      run("tessaro-ctl unset #{CASE_SETTINGS.join(" ")} --no-apply")
+      AgentE2E.step(extra.empty? ? "configure the test settings" : "configure the test settings plus #{extra}")
       pairs = TEST_SETTINGS.merge(extra).map { |key, value| "'#{key}=#{value}'" }.join(" ")
-      run("tessaro-ctl set #{pairs} --no-apply")
+      AgentE2E.quietly do
+        run("tessaro-ctl unset #{CASE_SETTINGS.join(" ")} --no-apply")
+        run("tessaro-ctl set #{pairs} --no-apply")
+      end
     end
 
     def restore
+      AgentE2E.quietly { restore_quietly }
+    end
+
+    private
+
+    def restore_quietly
       run(<<~SH, allow_failure: true)
         pids=$(pgrep -f /usr/lib/chromium/chromium-bi[n]); test -n "$pids" && kill -CONT $pids
         kill -CONT $(systemctl show -p MainPID --value tessaro-agent) 2>/dev/null
@@ -178,19 +231,29 @@ module AgentE2E
     def lines = @guest.journal_after(@cursor)
     def entries = @guest.journal_json_after(@cursor)
 
-    # The first line matching `pattern`, polled until it shows up.
+    # The first line matching `pattern`, polled until it shows up. At -vv,
+    # every journal line not shown yet is printed as it arrives.
     def wait_for(pattern, timeout:)
-      deadline = monotonic + timeout
+      AgentE2E.step("wait up to #{timeout}s for /#{pattern.source}/")
+      started = monotonic
       loop do
-        found = lines.find { _1.match?(pattern) }
-        return found if found
-        raise Failure, "no journal line matching #{pattern.inspect} within #{timeout}s" if monotonic > deadline
+        seen = lines
+        @shown ||= 0
+        seen.drop(@shown).each { AgentE2E.step("| #{_1}", level: 2) }
+        @shown = [@shown, seen.size].max
+        found = seen.find { _1.match?(pattern) }
+        if found
+          AgentE2E.step(format("  seen after %.1fs: %s", monotonic - started, found))
+          return found
+        end
+        raise Failure, "no journal line matching #{pattern.inspect} within #{timeout}s" if monotonic - started > timeout
 
         sleep 1
       end
     end
 
     def refute(pattern)
+      AgentE2E.step("no line may match /#{pattern.source}/")
       found = lines.find { _1.match?(pattern) }
       raise Failure, "unexpected journal line: #{found}" if found
     end
@@ -216,6 +279,7 @@ module AgentE2E
     def current_url = page["url"]
 
     def command(method, params = {})
+      AgentE2E.step("cdp #{method} #{JSON.generate(params) unless params.empty?}".strip)
       socket = TCPSocket.new("127.0.0.1", @port)
       socket.timeout = 10
       handshake(socket, URI(page["webSocketDebuggerUrl"]).path)
@@ -362,7 +426,7 @@ module AgentE2E
   end
 
   check "browser-wedged", "restarts a browser that stopped answering" do |guest, journal|
-    sleep 15 # let the previous case's restart leave the backoff window
+    pause 15, "let the previous case's restart leave the backoff window"
     guest.signal_matching("STOP", "/usr/lib/chromium/chromium-bin")
     journal.wait_for(/^chromium is not answering on /, timeout: 30)
     journal.wait_for(/^restarting tessaro-kiosk\.service: no CDP reply after \d+ attempts$/, timeout: 60)
@@ -376,7 +440,7 @@ module AgentE2E
   end
 
   check "operator-stop", "leaves a browser that someone stopped by hand alone" do |guest, journal|
-    sleep 15
+    pause 15, "let the previous case's restart leave the backoff window"
     guest.run("systemctl stop tessaro-kiosk")
     journal.wait_for(/^tessaro-kiosk\.service is 'inactive'; leaving it alone$/, timeout: 60)
     journal.refute(/^restarting tessaro-kiosk\.service/)
@@ -395,10 +459,14 @@ module AgentE2E
 
     # getaddrinfo is on tokio's blocking pool; a thread that outlives its
     # deadline must still finish on glibc's own timeout rather than pile up.
-    samples = Array.new(6) do
-      sleep 5
-      guest.run("ls /proc/#{guest.agent_pid}/task | wc -l").to_i
+    step "count the agent's threads every 5s for 30s"
+    samples = quietly do
+      Array.new(6) do
+        sleep 5
+        guest.run("ls /proc/#{guest.agent_pid}/task | wc -l").to_i
+      end
     end
+    step "  threads: #{samples.join(" ")}"
     raise Failure, "agent threads grew: #{samples.inspect}" if samples.max > 4
   ensure
     guest.run("rm -f /etc/resolv.conf; ln -s ../run/systemd/resolve/stub-resolv.conf /etc/resolv.conf",
@@ -411,7 +479,7 @@ module AgentE2E
     pid = guest.agent_pid
     restarts = guest.property("tessaro-agent", "NRestarts")
     guest.run("kill -STOP #{pid}; sleep 30; kill -CONT #{pid}")
-    sleep 20
+    pause 20, "give the agent time to be killed or to reload the page, if it would"
     raise Failure, "the agent was replaced (#{pid} -> #{guest.agent_pid})" unless guest.agent_pid == pid
     raise Failure, "NRestarts moved" unless guest.property("tessaro-agent", "NRestarts") == restarts
 
@@ -437,7 +505,7 @@ module AgentE2E
     guest.run("systemctl restart tessaro-agent")
     journal.wait_for(/^KIOSK_AGENT_ENABLE is off; idling$/, timeout: 15)
     pid = guest.agent_pid
-    sleep 75
+    pause 75, "stay parked past WatchdogSec"
     raise Failure, "the parked agent was replaced (#{pid} -> #{guest.agent_pid})" unless guest.agent_pid == pid
 
     journal.refute(/Watchdog timeout/)
@@ -483,11 +551,12 @@ module AgentE2E
     journal.wait_for(/^debug screen on: showing debug\.template instead of /, timeout: 15)
     journal.wait_for(%r{^navigated to the debug screen \(file:///run/tessaro-kiosk/debug\.html\)$}, timeout: 30)
     want = "e2e #{hostname}\nurl #{KIOSK_URL}"
+    step "wait up to 10s for the page to read #{want.inspect}"
     deadline = Time.now + 10
     text = ""
     until text.include?(want) || Time.now > deadline
       sleep 1
-      text = cdp.command("Runtime.evaluate", expression: "document.body.innerText", returnByValue: true)
+      text = quietly { cdp.command("Runtime.evaluate", expression: "document.body.innerText", returnByValue: true) }
                 .dig("result", "value").to_s
     end
     raise Failure, "the debug screen reads #{text.inspect}" unless text.include?(want)
@@ -518,7 +587,7 @@ module AgentE2E
     status = guest.run("tessaro-ctl status")
     raise Failure, "status does not say so:\n#{status}" unless status.include?("maintenance  on")
     # Three probe intervals: a probe of kiosk.probe_url would have failed by now.
-    sleep 16
+    pause 16, "three probe intervals"
     raise Failure, "the offline page replaced it: #{cdp.current_url}" unless cdp.current_url == maintenance
 
     # The dead probe URL has to go first: out of maintenance it is probed
@@ -617,6 +686,7 @@ module AgentE2E
         unless guest.reachable?
           by_key.("e2e-keep").run("tessaro-ctl unclaim --yes", allow_failure: true)
           # No key got in: the guard unclaims on its own, so wait for it.
+          step "wait up to #{SSH_KEY_GUARD + 30}s for the guard to unclaim and the password login to work again"
           deadline = Time.now + SSH_KEY_GUARD + 30
           sleep 5 until guest.reachable? || Time.now > deadline
         end
@@ -634,18 +704,19 @@ module AgentE2E
     target = modes[1] || modes[0]
     guest.run("tessaro-ctl set display.resolution=#{target}")
     # Weston - and with it the agent - restarts; the new agent arms the timer.
+    step "wait up to 60s for tessaro-ctl status to say on probation"
     deadline = Time.now + 60
-    sleep 2 until guest.run("tessaro-ctl status 2>/dev/null", allow_failure: true).include?("on probation") ||
+    sleep 2 until quietly { guest.run("tessaro-ctl status 2>/dev/null", allow_failure: true) }.include?("on probation") ||
                   Time.now > deadline
     ini = guest.run("cat /run/weston/weston.ini")
     raise Failure, "weston.ini has no mode=#{target}:\n#{ini}" unless ini.include?("mode=#{target}")
 
-    sleep protocol_confirm_seconds + 10
+    pause protocol_confirm_seconds + 10, "no confirm, so the probation runs out"
     value = guest.run("tessaro-ctl get display.resolution")
     raise Failure, "an unconfirmed mode stuck: #{value}" unless value.include?("(default)")
   ensure
     guest.run("tessaro-ctl unset display.resolution", allow_failure: true)
-    sleep 5
+    pause 5, "let Weston settle"
     guest.configure
     guest.restart_agent
   end
@@ -699,12 +770,16 @@ module AgentE2E
   def self.wait_for_rollback(guest, before, previous)
     sleep 5
     wait_for_ssh(guest, timeout: 180, what: "a network change")
+    step "wait up to 120s for a new verdict in net last, with the address back at #{before}"
     deadline = Time.now + 120
     loop do
-      last = last_change(guest)
+      last = quietly { last_change(guest) }
       if last && last != previous
-        _, now = uplink(guest)
-        return last if now == before
+        _, now = quietly { uplink(guest) }
+        if now == before
+          step "  verdict: #{last["outcome"]} (#{last["reason"]})"
+          return last
+        end
       end
       raise Failure, "no new verdict with the address back at #{before} (last: #{last})" if Time.now > deadline
 
@@ -896,6 +971,7 @@ module AgentE2E
   end
 
   def self.wait_for_ssh(guest, timeout:, what:)
+    step "wait up to #{timeout}s for SSH to answer after #{what}"
     deadline = Time.now + timeout
     until guest.reachable?
       raise Failure, "the VM did not come back within #{timeout}s of #{what}" if Time.now > deadline
@@ -905,11 +981,13 @@ module AgentE2E
   end
 
   def self.wait_for_reboot(guest)
+    step "wait up to 120s for the VM to go down"
     deadline = Time.now + 120
     sleep 2 while guest.reachable? && Time.now < deadline
     wait_for_ssh(guest, timeout: 900, what: "an update")
+    step "wait up to 180s for the agent to navigate this boot"
     deadline = Time.now + 180
-    until guest.run("journalctl -u tessaro-agent -b --no-pager -o cat").include?("navigated to #{KIOSK_URL}")
+    until quietly { guest.run("journalctl -u tessaro-agent -b --no-pager -o cat") }.include?("navigated to #{KIOSK_URL}")
       raise Failure, "the agent never navigated after the update" if Time.now > deadline
 
       sleep 2
@@ -1050,8 +1128,11 @@ module AgentE2E
   def self.main(argv)
     options = { boot: false, keep: false, only: nil }
     OptionParser.new do |parser|
-      parser.banner = "usage: agent_e2e.rb [--boot] [--keep] [--only a,b] [--list]"
+      parser.banner = "usage: agent_e2e.rb [--boot] [--keep] [--only a,b] [-v|-vv] [--list]"
       parser.on("--boot", "boot the qemux86-64 image first") { options[:boot] = true }
+      parser.on("-v", "--verbose", "print each step a case takes; twice, also the agent's journal lines") do
+        self.verbose += 1
+      end
       parser.on("--keep", "leave a VM booted by --boot running afterwards") { options[:keep] = true }
       parser.on("--only NAMES", Array, "run only these cases") { options[:only] = _1 }
       parser.on("--list", "list the cases and exit") do
@@ -1075,7 +1156,7 @@ module AgentE2E
       # The boot race: the kiosk is only settled once the agent has navigated
       # at least once this boot.
       deadline = Time.now + 120
-      until guest.run("journalctl -u tessaro-agent -b --no-pager -o cat").include?("navigated to #{KIOSK_URL}")
+      until quietly { guest.run("journalctl -u tessaro-agent -b --no-pager -o cat") }.include?("navigated to #{KIOSK_URL}")
         raise Failure, "the agent never navigated after boot" if Time.now > deadline
 
         sleep 2
@@ -1090,22 +1171,28 @@ module AgentE2E
 
       # Once, before any case, so `--only` runs with the same settings as the
       # full suite.
-      guest.configure
-      guest.restart_agent
+      quietly do
+        guest.configure
+        guest.restart_agent
+      end
 
       results = selected.each_with_index.map do |test, index|
-        print format("[%2d/%d] %-15s ", index + 1, selected.size, test.name)
+        header = format("[%2d/%d] %-15s ", index + 1, selected.size, test.name)
+        # With steps, they go on lines of their own under the case's name,
+        # and the verdict after them lines up with them.
+        verdict = verbose.positive? ? STEP_INDENT : ""
+        verbose.positive? ? puts(header + test.summary) : print(header)
         $stdout.flush
         journal = Journal.new(guest)
         started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
         begin
           test.block.call(guest, journal, cdp)
-          puts format("PASS  %5.1fs  %s", Process.clock_gettime(Process::CLOCK_MONOTONIC) - started, test.summary)
+          puts format("%sPASS  %5.1fs  %s", verdict, Process.clock_gettime(Process::CLOCK_MONOTONIC) - started, test.summary)
           true
         # Anything at all: a bug in one case must not stop the others running
         # or skip the cleanup.
         rescue StandardError => e
-          puts format("FAIL  %5.1fs  %s", Process.clock_gettime(Process::CLOCK_MONOTONIC) - started, test.summary)
+          puts format("%sFAIL  %5.1fs  %s", verdict, Process.clock_gettime(Process::CLOCK_MONOTONIC) - started, test.summary)
           puts "         #{e.class == Failure ? "" : "#{e.class}: "}#{e.message.gsub("\n", "\n         ")}"
           puts "         journal since the case began:"
           journal.tail.each { puts "           | #{_1}" }
