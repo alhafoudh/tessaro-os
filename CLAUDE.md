@@ -38,7 +38,9 @@ Use the mise tasks rather than calling `kas-container` directly:
 | `mise run agent-lint` | `cargo fmt --check` plus clippy for the workspace |
 | `mise run agent-integration` | The agent against a real headless Chromium (`agent/compose.yaml`, needs docker compose), control plane in a sandbox |
 | `mise run build-ctl` | Release `tessaro-ctl` for this host, to manage devices remotely |
-| `mise run agent-e2e` | Boot the qemu image, provoke each agent behaviour, assert on its journal |
+| `mise run agent-e2e` | Boot qemu VMs (E2E_JOBS at a time), provoke each agent behaviour, assert on its journal |
+| `mise run agent-e2e:one` | One lane or case of that suite, with plain rspec |
+| `mise run agent-e2e:setup` | `bundle install` for the suite's gems |
 | `mise run image:pull` | Workstation: fetch the image and bmap from the build host |
 | `mise run image:update` | Workstation: pull the image and update a running device over the network (the normal path) |
 | `mise run image:flash` | Workstation, manual: write the pulled image to a card or disk (first install, recovery) |
@@ -548,8 +550,8 @@ unsupervised.
 
 ### The agent's end-to-end checks
 
-`mise run agent-e2e` boots the qemux86-64 image and runs
-`test/e2e/agent_e2e.rb` against it: each case provokes one thing the agent
+`mise run agent-e2e` boots the qemux86-64 image and runs the RSpec suite in
+`test/e2e/spec/` against it: each case provokes one thing the agent
 exists to handle and asserts on the lines it writes to its journal - the
 agent arming its watchdog and navigating at startup, systemd deriving
 `NotifyAccess=main` and receiving the pings, the site
@@ -566,25 +568,65 @@ that is committed and switched back to DHCP, one that cuts the VM off and is
 rolled back by the device alone, one whose agent is killed half way and is
 rolled back at its restart, the hotspot password following a claim and an
 unclaim, the hotspot's NAT table, and `device ping` and `network ping` with and without
-ping sockets. Last, because
-each reboots the VM, image updates of the image it booted from:
-damaged staging refused at boot with nothing written, an update that keeps
-the settings, one with `--wipe-data`, and one with `--repartition` that
-rewrites the whole disk from RAM. About twenty minutes; exits non-zero on any failure and prints
-the journal lines the failing case saw. `ruby test/e2e/agent_e2e.rb --list`
-names the cases, `--only a,b` runs some, `--boot --keep` leaves the VM up, and
-without `--boot` it reuses a VM left up that way. `-v` prints each step of a
-case as it starts - guest commands, journal waits and what matched, CDP
-calls, deliberate sleeps - and `-vv` adds every agent journal line a wait
-sees; through mise, `mise run agent-e2e -- -v`.
+ping sockets. And, each on a VM of its own because each reboots it, image
+updates of the image it booted from: damaged staging refused at boot with
+nothing written, an update that keeps the settings, one with `--wipe-data`,
+and one with `--repartition` that rewrites the whole disk from RAM. About
+twelve minutes with three VMs at a time, twenty with one. Exits 1 on a
+failing case, printing the journal lines it saw under the failure, and 2
+when it cannot start at all (no image).
 
+Running it: `mise run agent-e2e:setup` once (rspec and parallel_tests, in
+`test/e2e/Gemfile`), then `mise run agent-e2e`. `E2E_JOBS=N` is how many VMs
+run at once (3 by default, 1 for one at a time); `mise run agent-e2e:one --
+spec/network_spec.rb -e ping` runs one lane or case with plain rspec, with
+paths relative to `test/e2e`. `E2E_VERBOSE=1` prints each step of a case as it
+starts - guest commands, journal waits and what matched, CDP calls,
+deliberate sleeps - and `2` adds every agent journal line a wait sees. Every
+lane's steps go to `build/e2e/<lane>.log` whatever the verbosity, and its
+console to `build/e2e/<lane>.qemu.log`. `E2E_KEEP=1` leaves a VM up after its
+lane, `E2E_REUSE=1` runs against one already up on worker 0's ports, and
+`-o '--tag ~reboot'` leaves out the update lanes. Output is live, each line
+prefixed with its worker, and after every case one `== progress 12/30, 1
+failed, 6:03 elapsed, ~9 min left` line covers the whole run: the workers
+meet in `build/e2e/progress/` (`spec/support/progress.rb`), which
+`mise run agent-e2e` empties before they start. The old one-VM script is
+still `mise run agent-e2e:legacy` until the suite has passed twice.
+
+* **The suite never builds the image.** `mise run build` does, in its own
+  pane; the suite refuses to start without a `.wic` and warns when the image
+  is older than anything under `agent/` or `meta-tessaro-distro/`, since an
+  old agent passes and proves nothing. It is a warning so an older image can
+  still be tested on purpose.
+* **A spec file is a lane, and a lane is a VM.** The cases of a file run in
+  order (`config.order = :defined`) and leave state behind for each other,
+  so the shared context in `spec/support/booted_vm.rb` boots a fresh VM
+  before a file's first case and powers it off after its last. That is per
+  file, not per worker: parallel_tests runs several files one after the other
+  on a worker, and a lane must never inherit another's VM. A new case goes
+  into the lane whose state it fits; a case that reboots goes into a file of
+  its own, tagged `:reboot`.
+* **Every worker has its own ports**, from `TEST_ENV_NUMBER`: SSH `2222+10n`,
+  telnet `2323+10n`, API `7400+10n`, the CDP tunnel `19222+10n`
+  (`spec/support/ports.rb`). Worker 0 has the ports a single VM always had.
+  The forwards are fixed in the image's qemuboot.conf, so each worker writes
+  its own copy, `tessaro-os-qemux86-64.e2e-worker-N.qemuboot.conf`, into the
+  deploy directory and passes it to runqemu *after* the `.wic`. runqemu forces
+  those choices: it derives a conf from the image argument and only a
+  later conf argument replaces it, and it takes the conf's own directory as
+  `DEPLOY_DIR_IMAGE`, where it looks for the kernel and OVMF. runqemu moves a
+  forward whose port is taken and logs `Port forward changed`; the harness
+  fails on that line rather than drive another worker's VM.
+* **Cleanup is hooks and `ensure`.** `:reconfigure` on a case puts the test
+  settings back and waits for a settled agent after it, whatever happened;
+  cleanup particular to one case stays in its `ensure`, which runs first.
 * **Steps come from the helpers, not from the cases.** `Guest#run`,
-  `Journal#wait_for`/`refute` and `Cdp#command` print one line each via
-  `AgentE2E.step`. Plumbing (cursors, journal reads, unit properties) and
-  every polling loop run inside `AgentE2E.quietly`, with one `step` naming
-  the wait before it, or `-v` would print once per poll. A sleep that is
-  part of what a case proves is `pause SECONDS, "why"`. A new case gets its
-  steps for free; a new polling loop has to be wrapped.
+  `Journal#wait_for`/`refute` and `Cdp#command` write one line each via
+  `AgentE2E.step` (`spec/support/output.rb`). Plumbing (cursors, journal
+  reads, unit properties) and every polling loop run inside `quietly`, with
+  one `step` naming the wait before it, or the log would get a line per poll.
+  A sleep that is part of what a case proves is `pause SECONDS, "why"`. A new
+  case gets its steps for free; a new polling loop has to be wrapped.
 
 * **It boots its own VM, not through `mise run run`.** The guest is driven over
   SSH, and runqemu's slirp forwards `127.0.0.1:2222` - but inside the kas

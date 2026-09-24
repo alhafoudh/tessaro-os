@@ -139,16 +139,56 @@ KIOSK_DEBUG=1 \
     cargo run -p tessaro-agent
 '''
 
+[tasks."agent-e2e:setup"]
+description = "Install the gems the agent end-to-end suite runs on (rspec, parallel_tests)"
+dir = "{{config_root}}/test/e2e"
+run = "bundle install"
+
 [tasks.agent-e2e]
-description = "Boot the qemux86-64 image and run the agent end-to-end checks against it"
+description = "Run the agent end-to-end suite, one qemux86-64 VM per lane, E2E_JOBS (3) at a time"
+dir = "{{config_root}}/test/e2e"
+depends = ["unpack"]
+raw = true
+# Never builds: `mise run build` first. Each spec file under test/e2e/spec is
+# a lane, run in order on a VM of its own (snapshot, host networking, ports
+# offset per worker); parallel_tests spreads the lanes over E2E_JOBS workers,
+# balanced by the runtimes the last run logged. E2E_JOBS=1 runs one VM at a
+# time. Output is live, each line prefixed with its worker; E2E_VERBOSE=1
+# adds each step (2 the agent's journal), and every lane's steps are in
+# build/e2e/<lane>.log either way. Arguments go to parallel_rspec, e.g.
+# `-- -o '--tag ~reboot'` to leave out the update lanes.
+run = '''
+[ "$TESSARO_MACHINE" = "qemux86-64" ] || {
+    echo "agent-e2e only works for qemux86-64, not $TESSARO_MACHINE" >&2
+    exit 1
+}
+rm -rf ../../build/e2e/progress && mkdir -p ../../build/e2e/progress
+date +%s > ../../build/e2e/progress/started
+exec bundle exec parallel_rspec -n "${E2E_JOBS:-3}" --prefix-output --combine-stderr \
+    --runtime-log ../../build/e2e/parallel_runtime.log "$@" spec
+'''
+
+[tasks."agent-e2e:one"]
+description = "Run one lane or case of the agent end-to-end suite with plain rspec, on worker 0's ports"
+dir = "{{config_root}}/test/e2e"
+depends = ["unpack"]
+raw = true
+# Arguments go to rspec, relative to test/e2e:
+#   mise run agent-e2e:one -- spec/network_spec.rb -e ping
+# With E2E_KEEP=1 the VM stays up afterwards, and E2E_REUSE=1 runs against it.
+run = '''
+[ "$TESSARO_MACHINE" = "qemux86-64" ] || {
+    echo "agent-e2e only works for qemux86-64, not $TESSARO_MACHINE" >&2
+    exit 1
+}
+exec bundle exec rspec "$@"
+'''
+
+[tasks."agent-e2e:legacy"]
+description = "The old one-VM agent e2e script, kept until the rspec suite has passed twice"
 dir = "{{config_root}}"
 depends = ["unpack"]
 raw = true
-# Boots its own VM (snapshot, host networking so SSH on 127.0.0.1:2222 is
-# reachable), runs every case in test/e2e/agent_e2e.rb, powers off. Pass
-# `-- --keep` to leave the VM up, `-- --only drift,dns` to run a subset,
-# `-- -v` to see each step of each case (`-vv` adds the agent's journal);
-# `ruby test/e2e/agent_e2e.rb --list` names the cases.
 run = '''
 [ "$TESSARO_MACHINE" = "qemux86-64" ] || {
     echo "agent-e2e only works for qemux86-64, not $TESSARO_MACHINE" >&2

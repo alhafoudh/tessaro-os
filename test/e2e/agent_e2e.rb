@@ -548,7 +548,7 @@ module AgentE2E
     out = guest.run("tessaro-ctl browser debug on --template 'e2e {network.hostname}\\nurl {browser.url}'")
     raise Failure, "debug on did not restart the agent:\n#{out}" unless out.include?("restarting tessaro-agent.service")
 
-    journal.wait_for(/^debug screen on: showing debug\.template instead of /, timeout: 15)
+    journal.wait_for(/^debug screen on: showing browser\.debug\.template instead of /, timeout: 15)
     journal.wait_for(%r{^navigated to the debug screen \(file:///run/tessaro-kiosk/debug\.html\)$}, timeout: 30)
     want = "e2e #{hostname}\nurl #{KIOSK_URL}"
     step "wait up to 10s for the page to read #{want.inspect}"

@@ -1,0 +1,9 @@
+# frozen_string_literal: true
+
+# The agent end-to-end suite: `mise run agent-e2e:setup` installs these,
+# `mise run agent-e2e` runs them. Nothing else belongs here - the helpers are
+# stdlib only, on purpose.
+source "https://rubygems.org"
+
+gem "parallel_tests"
+gem "rspec"
