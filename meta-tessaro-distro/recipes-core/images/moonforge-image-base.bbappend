@@ -123,6 +123,12 @@ CORE_IMAGE_EXTRA_INSTALL += " \
 # authorized_keys story is still the obvious next step.
 IMAGE_FEATURES += "ssh-server-dropbear empty-root-password allow-empty-password"
 
+# Tab completion for whoever gets that shell: bash-completion itself, plus the
+# -bash-completion package of everything installed (tessaro-ctl, systemctl,
+# journalctl, nmcli and the rest). Root's /bin/sh is bash, and completion
+# works in the POSIX mode it runs in as sh.
+IMAGE_FEATURES += "bash-completion-pkgs"
+
 # No account is created for the VNC login on purpose. It was tried: Weston
 # authenticates VNC clients through PAM, and pam_unix can only ever check the
 # password of the account the compositor itself runs as - its helper drops the

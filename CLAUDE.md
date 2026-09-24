@@ -156,7 +156,13 @@ same thing. Keep to these rules when adding a command or a setting:
 `tessaro-ctl completion bash|zsh|powershell` prints a completion script. The
 bash one is patched after generation: clap_complete 4.6 escapes the dash in
 `tessaro-ctl` two ways, and nothing below the first word completed until
-`completion()` in `main.rs` unified them (a test guards it).
+`completion()` in `main.rs` unified them (a test guards it). On the device it
+is on by itself: the `bash-completion-pkgs` image feature installs
+`tessaro-kiosk-bash-completion`, whose
+`/usr/share/bash-completion/completions/tessaro-ctl` just evals
+`tessaro-ctl completion bash` on the first Tab, so it can never fall behind the
+binary. Root's `/bin/sh` is bash, and completion works in its POSIX mode. On a
+workstation, `source <(tessaro-ctl completion bash)` in `~/.bashrc`.
 
 After changing any `Cargo.toml` in the workspace or `agent/Cargo.lock`,
 regenerate the crate list the recipe requires and commit it:
