@@ -159,6 +159,27 @@ bitbake -n moonforge-image-base         # dry run: what would rebuild
 
 Builds are long. Run them in a Herdr pane, not the Bash tool.
 
+**Rules for builds and worktrees** (for Claude):
+
+* **One build at a time, across every checkout.** Before starting any
+  `mise run build*` (or `shell` with bitbake, or `agent-e2e`), check nothing
+  else is building: `pgrep -af 'kas-container|bitbake'` must come back empty,
+  worktrees included. If something is running, say what and wait, or ask -
+  never start a second one next to it.
+* **A new worktree gets the cache symlinked the moment it is created**, even
+  for cargo-only work, so nothing ever re-downloads the ~40G cache:
+
+  ```sh
+  ln -s <main checkout>/cache <worktree>/cache   # .claude/worktrees/<name>: ln -s ../../../cache cache
+  mkdir -p <worktree>/build                      # kas-container's mkdir is not recursive
+  ```
+
+  `mise.toml` derives `DL_DIR`/`SSTATE_DIR` from `{{config_root}}`, so without
+  the link a worktree starts from an empty cache.
+* **Never start a build from a worktree on your own.** Prepare the changes,
+  then ask; the user decides whether and where it builds. Host-side cargo
+  (`agent-test`, `agent-lint`) is fine.
+
 ## Architecture
 
 **This repository is the kas root repo.** Everything else is a build input that
