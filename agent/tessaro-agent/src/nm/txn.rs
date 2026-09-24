@@ -33,7 +33,7 @@ use std::time::Duration;
 use protocol::{ChangeOutcome, NetChange, NetCheck, Verify};
 use serde::{Deserialize, Serialize};
 
-use crate::control::blocking;
+use crate::deadline::blocking;
 use crate::log::Log;
 use crate::nm::profiles::{Keyfile, Profile};
 

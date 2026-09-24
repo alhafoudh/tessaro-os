@@ -47,12 +47,6 @@ pub struct FileBegun {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FileReceived {
-    pub received: u64,
-    pub size: u64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FileData {
     /// Base64, at most `UPDATE_CHUNK` bytes before encoding. Empty at the
     /// end of the file.

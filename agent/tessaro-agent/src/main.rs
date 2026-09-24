@@ -6,7 +6,7 @@
 //! `/usr/lib/tessaro-kiosk/tessaro-kiosk.env`; what was set on this device
 //! comes from `/data/tessaro/state.json` on top. Nothing else configures it,
 //! and the only way to change `state.json` is `tessaro-ctl`, over the local
-//! socket or TLS (`control.rs`, `server.rs`).
+//! socket or TLS (`control/`, `server.rs`).
 //!
 //! `tessaro-agent boot` is the other mode: the oneshot that renders the
 //! configuration before anything reads it (`boot.rs`).
@@ -43,6 +43,7 @@ mod paths;
 mod ping;
 mod ports;
 mod probe;
+mod proc;
 mod render;
 mod secrets;
 mod server;
@@ -52,6 +53,7 @@ mod ssh;
 mod state;
 mod storage;
 mod store;
+mod sync;
 mod systemd;
 mod updates;
 mod url;

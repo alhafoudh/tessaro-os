@@ -10,35 +10,67 @@
 //! Every phase reports progress on stderr: one line that redraws itself on a
 //! terminal, one line per step otherwise.
 
-use std::collections::VecDeque;
 use std::fs::File;
-use std::io::{IsTerminal, Read, Seek, SeekFrom, Write};
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use anstream::println;
 use protocol::{
-    Command, Done, Status, UpdateBegun, UpdatePhase, UpdateReceived, UpdateResult, UpdateStatus,
+    Command, Done, ImageUpload, Received, Status, UpdateBegun, UpdatePhase, UpdateResult,
+    UpdateStatus,
 };
 use sha2::{Digest, Sha256};
 
 use crate::connect::{self, Session, Target, Trust};
 use crate::nodes::Nodes;
+use crate::progress::{clock, mb, percent, step_line, Progress, Rate};
+use crate::prompt;
 use crate::style::{self, pad, paint};
 
 /// How long to wait for a device to come back from applying an update:
 /// writing a root filesystem to a slow SD card, then a second boot.
 const COME_BACK: Duration = Duration::from_secs(20 * 60);
 
+/// `update send`, as it is typed.
+#[derive(clap::Args)]
 pub struct Send {
     pub image: PathBuf,
+    /// The block map, if it is not IMAGE without .bz2 plus .bmap.
+    #[arg(long)]
     pub bmap: Option<PathBuf>,
-    pub wipe_data: bool,
+    /// Also re-create /data: every setting, the claim, the browser
+    /// profile and the device's identity go. It comes back unclaimed.
+    #[arg(long)]
+    wipe_data: bool,
+    /// Write the whole disk - partition table, boot, root and /data - as
+    /// `mise run image:flash` would, for a device on another disk layout.
+    /// Implies --wipe-data. The device holds the upload in RAM while it
+    /// writes, and a power cut before it is done needs a physical
+    /// reflash.
+    #[arg(long)]
     pub repartition: bool,
+    /// Stage and commit it, but leave the reboot for later.
+    #[arg(long)]
     pub no_reboot: bool,
+    /// Do not wait for the device to come back.
+    #[arg(long)]
     pub no_wait: bool,
+    /// Skip the device's check of the whole upload against its SHA-256
+    /// before preparing it. The bmap's checksums still cover every block
+    /// that is written. Needs a device on an image that knows the flag;
+    /// an older one checks anyway.
+    #[arg(long)]
     pub no_verify: bool,
+    #[arg(long, short)]
     pub yes: bool,
+}
+
+impl Send {
+    /// `/data` goes: asked for, or part of rewriting the whole disk.
+    fn wipes_data(&self) -> bool {
+        self.wipe_data || self.repartition
+    }
 }
 
 /// What `send` left for the caller to do with nodes.json.
@@ -78,7 +110,7 @@ pub fn send(
 
     let node = session.node.name.clone();
     if options.repartition {
-        crate::confirm_destructive(
+        prompt::confirm_destructive(
             session,
             options.yes,
             &format!(
@@ -87,8 +119,8 @@ pub fn send(
                  writes needs a physical reflash)"
             ),
         )?;
-    } else if options.wipe_data {
-        crate::confirm_destructive(
+    } else if options.wipes_data() {
+        prompt::confirm_destructive(
             session,
             options.yes,
             &format!(
@@ -96,33 +128,31 @@ pub fn send(
                  profile and the device's identity"
             ),
         )?;
-    } else if !options.yes
-        && !connect::ask(&format!(
-            "Write {name} to {node}{}?",
-            if options.no_reboot {
-                ""
-            } else {
-                " and reboot it"
-            }
-        ))?
-    {
-        return Err("not confirmed".to_string());
+    } else {
+        prompt::confirm(
+            options.yes,
+            &format!(
+                "Write {name} to {node}{}?",
+                if options.no_reboot {
+                    ""
+                } else {
+                    " and reboot it"
+                }
+            ),
+        )?;
     }
 
     let mut progress = Progress::new(json);
     let sha256 = hash(&options.image, size, &mut progress)?;
 
-    let begun: UpdateBegun = call(
-        session,
-        Command::UpdateBegin {
-            name: name.clone(),
-            size,
-            sha256,
-            bmap,
-            verify: !options.no_verify,
-            repartition: options.repartition,
-        },
-    )?;
+    let begun: UpdateBegun = session.call(Command::UpdateBegin(ImageUpload {
+        name: name.clone(),
+        size,
+        sha256,
+        bmap,
+        verify: !options.no_verify,
+        repartition: options.repartition,
+    }))?;
     if begun.phase == UpdatePhase::Receiving {
         upload(session, &options.image, size, begun.offset, &mut progress)?;
     } else {
@@ -131,13 +161,10 @@ pub fn send(
 
     prepare(session, &mut progress)?;
     let reboot = !options.no_reboot;
-    let done: Done = call(
-        session,
-        Command::UpdateCommit {
-            wipe_data: options.wipe_data,
-            reboot,
-        },
-    )?;
+    let done: Done = session.call(Command::UpdateCommit {
+        wipe_data: options.wipes_data(),
+        reboot,
+    })?;
     progress.done(&paint(style::OK, &done.message));
 
     if !reboot {
@@ -146,7 +173,7 @@ pub fn send(
             paint(style::CMD, "`tessaro-ctl device reboot`"),
             paint(style::CMD, "`tessaro-ctl update cancel`")
         ));
-        return Ok(if options.wipe_data {
+        return Ok(if options.wipes_data() {
             Sent::Wiped
         } else {
             Sent::Kept
@@ -157,7 +184,7 @@ pub fn send(
         format!("{node} is rebooting to apply it - this takes a few minutes; do not power it off"),
     ));
 
-    if options.wipe_data {
+    if options.wipes_data() {
         progress.done(&format!(
             "{} find it with {} and claim it again",
             paint(
@@ -198,12 +225,12 @@ pub fn send(
 }
 
 pub fn status(session: &mut Session, json: bool) -> Result<(), String> {
-    let status: UpdateStatus = call(session, Command::UpdateStatus)?;
+    let status: UpdateStatus = session.call(Command::UpdateStatus)?;
     crate::print(json, &status, || show(&status))
 }
 
 pub fn cancel(session: &mut Session, json: bool) -> Result<(), String> {
-    let done: Done = call(session, Command::UpdateCancel)?;
+    let done: Done = session.call(Command::UpdateCancel)?;
     crate::print(json, &done, || println!("{}", done.message))
 }
 
@@ -270,15 +297,6 @@ fn show(status: &UpdateStatus) {
     }
 }
 
-/// A progress line: the step's verb in its own column, then the details.
-pub(crate) fn step_line(
-    verb_style: anstyle::Style,
-    verb: &str,
-    rest: impl std::fmt::Display,
-) -> String {
-    format!("{} {rest}", pad(verb_style, verb, 10))
-}
-
 /// `x.rootfs.wic.bz2` -> `x.rootfs.wic.bmap`, the same rule as `image:flash`.
 fn bmap_for(image: &Path) -> PathBuf {
     let text = image.to_string_lossy();
@@ -311,7 +329,7 @@ fn hash(path: &Path, size: u64, progress: &mut Progress) -> Result<String, Strin
         );
     }
     progress.done(&step_line(style::OK, "hashed", mb(size)));
-    Ok(connect::hex(&hasher.finalize()))
+    Ok(protocol::hex(&hasher.finalize()))
 }
 
 fn upload(
@@ -338,7 +356,8 @@ fn upload(
         file.read_exact(&mut buffer[..want])
             .map_err(|err| format!("{}: {err}", path.display()))?;
         let data = data_encoding::BASE64.encode(&buffer[..want]);
-        let received: UpdateReceived = call(session, Command::UpdateChunk { offset, data })
+        let received: Received = session
+            .call(Command::UpdateChunk { offset, data })
             .map_err(|err| {
                 format!(
                     "the upload stopped at {}: {err}; run the same command again to resume",
@@ -346,20 +365,11 @@ fn upload(
                 )
             })?;
         offset = received.received;
-        let (speed, eta) = rate.update(offset, size);
         progress.show(
             &step_line(
                 style::LABEL,
                 "uploading",
-                format!(
-                    "{}/{}  {:>3}%  {}/s  {} {}{resumed}",
-                    mb(offset),
-                    mb(size),
-                    percent(offset, size),
-                    mb(speed as u64),
-                    paint(style::LABEL, "ETA"),
-                    eta
-                ),
+                format!("{}{resumed}", rate.line(offset, size)),
             ),
             offset,
             size,
@@ -379,7 +389,7 @@ fn prepare(session: &mut Session, progress: &mut Progress) -> Result<(), String>
     // The step being shown, and its rate since it started.
     let mut step: Option<(UpdatePhase, Rate)> = None;
     loop {
-        let status: UpdateStatus = call(session, Command::UpdateStatus)?;
+        let status: UpdateStatus = session.call(Command::UpdateStatus)?;
         let (label, done, total) = match status.phase {
             UpdatePhase::Verifying => ("verifying", status.verified, status.size),
             UpdatePhase::Preparing => ("preparing", status.prepared, status.to_prepare),
@@ -399,20 +409,8 @@ fn prepare(session: &mut Session, progress: &mut Progress) -> Result<(), String>
                 }
                 let rate = &mut step.as_mut().expect("set just above").1;
                 if total > 0 {
-                    let (speed, eta) = rate.update(done, total);
                     progress.show(
-                        &step_line(
-                            style::LABEL,
-                            label,
-                            format!(
-                                "{}/{}  {:>3}%  {}/s  {} {eta}",
-                                mb(done),
-                                mb(total),
-                                percent(done, total),
-                                mb(speed as u64),
-                                paint(style::LABEL, "ETA"),
-                            ),
-                        ),
+                        &step_line(style::LABEL, label, rate.line(done, total)),
                         done,
                         total,
                     );
@@ -462,9 +460,9 @@ fn wait_for(
             0,
             1,
         );
-        if let Ok(mut session) = connect::open(target, nodes, Trust::KnownOnly, false) {
-            let update: UpdateStatus = call(&mut session, Command::UpdateStatus)?;
-            let status: Status = call(&mut session, Command::Status)?;
+        if let Ok(mut session) = connect::open(target, nodes, Trust::KnownOnly) {
+            let update: UpdateStatus = session.call(Command::UpdateStatus)?;
+            let status: Status = session.call(Command::Status)?;
             progress.done(&paint(
                 style::OK,
                 format!("{node} is back after {}", clock(started.elapsed())),
@@ -482,122 +480,6 @@ fn wait_for(
     }
 }
 
-fn call<T: serde::de::DeserializeOwned>(
-    session: &mut Session,
-    command: Command,
-) -> Result<T, String> {
-    let value = session.call(command)?;
-    serde_json::from_value(value).map_err(|err| format!("unexpected answer: {err}"))
-}
-
-/// Progress on stderr. On a terminal one line redraws itself; otherwise,
-/// and with `--json`, a line per tenth, so a log stays readable.
-///
-/// The text goes through anstream, which drops its colors when they are
-/// off; the `\r` and clear-to-end-of-line around it go straight to stderr,
-/// since the redraw needs them even under `--color never`.
-pub(crate) struct Progress {
-    redraw: bool,
-    shown: Option<u64>,
-}
-
-impl Progress {
-    pub(crate) fn new(json: bool) -> Self {
-        Self {
-            redraw: !json && std::io::stderr().is_terminal(),
-            shown: None,
-        }
-    }
-
-    pub(crate) fn show(&mut self, line: &str, done: u64, total: u64) {
-        if self.redraw {
-            Self::redraw(line, "");
-            return;
-        }
-        let tenth = done * 10 / total.max(1);
-        if self.shown != Some(tenth) {
-            self.shown = Some(tenth);
-            let _ = writeln!(anstream::stderr(), "{line}");
-        }
-    }
-
-    /// A step is over: its last line stays.
-    pub(crate) fn done(&mut self, line: &str) {
-        if self.redraw {
-            Self::redraw(line, "\n");
-        } else {
-            let _ = writeln!(anstream::stderr(), "{line}");
-        }
-        self.shown = None;
-    }
-
-    /// Overwrite the current terminal line with `line`, then `end`.
-    fn redraw(line: &str, end: &str) {
-        let mut raw = std::io::stderr();
-        let _ = write!(raw, "\r");
-        let _ = write!(anstream::stderr(), "{line}");
-        let _ = write!(raw, "\x1b[K{end}");
-        let _ = raw.flush();
-    }
-}
-
-/// Upload speed over the last few seconds, and what it means for the rest.
-pub(crate) struct Rate {
-    pub(crate) started: Instant,
-    samples: VecDeque<(Instant, u64)>,
-}
-
-impl Rate {
-    const WINDOW: Duration = Duration::from_secs(5);
-
-    pub(crate) fn new(from: u64) -> Self {
-        let now = Instant::now();
-        Self {
-            started: now,
-            samples: VecDeque::from([(now, from)]),
-        }
-    }
-
-    /// Bytes per second, and the time left as text.
-    pub(crate) fn update(&mut self, done: u64, total: u64) -> (f64, String) {
-        let now = Instant::now();
-        self.samples.push_back((now, done));
-        while self.samples.len() > 2 && now.duration_since(self.samples[0].0) > Self::WINDOW {
-            self.samples.pop_front();
-        }
-        let (then, before) = self.samples[0];
-        let seconds = now.duration_since(then).as_secs_f64();
-        if seconds <= 0.0 || done <= before {
-            return (0.0, "--:--".to_string());
-        }
-        let speed = (done - before) as f64 / seconds;
-        let left = Duration::from_secs_f64(total.saturating_sub(done) as f64 / speed);
-        (speed, clock(left))
-    }
-}
-
-pub(crate) fn clock(duration: Duration) -> String {
-    let seconds = duration.as_secs();
-    if seconds >= 3600 {
-        format!(
-            "{}:{:02}:{:02}",
-            seconds / 3600,
-            seconds / 60 % 60,
-            seconds % 60
-        )
-    } else {
-        format!("{}:{:02}", seconds / 60, seconds % 60)
-    }
-}
-
-pub(crate) fn mb(bytes: u64) -> String {
-    format!("{:.1} MB", bytes as f64 / 1_000_000.0)
-}
-
-pub(crate) fn percent(done: u64, total: u64) -> u64 {
-    done * 100 / total.max(1)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -609,20 +491,5 @@ mod tests {
             PathBuf::from("out/tessaro-os-qemux86-64.rootfs.wic.bmap")
         );
         assert_eq!(bmap_for(Path::new("x.wic")), PathBuf::from("x.wic.bmap"));
-    }
-
-    #[test]
-    fn clocks() {
-        assert_eq!(clock(Duration::from_secs(75)), "1:15");
-        assert_eq!(clock(Duration::from_secs(3725)), "1:02:05");
-    }
-
-    #[test]
-    fn the_rate_needs_two_samples() {
-        let mut rate = Rate::new(0);
-        rate.samples[0].0 -= Duration::from_secs(2);
-        let (speed, eta) = rate.update(2_000_000, 10_000_000);
-        assert!((900_000.0..1_100_000.0).contains(&speed), "{speed}");
-        assert_eq!(eta, "0:08");
     }
 }

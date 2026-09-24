@@ -9,7 +9,6 @@
 //! refusal, not a prompt. Then this process becomes `ssh`.
 
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use anstream::println;
@@ -30,10 +29,21 @@ const DEFAULT_KEYS: &[&str] = &[
     "id_rsa",
 ];
 
+/// `ssh connect`, as it is typed.
+#[derive(clap::Args)]
 pub struct Options {
+    /// The key to send: a .pub file, or a private key with its .pub
+    /// next to it. Default: the first of ~/.ssh/id_ed25519.pub,
+    /// id_ecdsa.pub, id_ecdsa_sk.pub, id_ed25519_sk.pub, id_rsa.pub.
+    #[arg(long, short = 'i', value_name = "PATH")]
     pub key: Option<PathBuf>,
+    /// The device's SSH port.
+    #[arg(long, default_value_t = 22)]
     pub port: u16,
+    /// Send the key and print the ssh command instead of running it.
+    #[arg(long)]
     pub print: bool,
+    #[arg(last = true, value_name = "SSH_ARGS")]
     pub args: Vec<String>,
 }
 
@@ -55,7 +65,7 @@ pub fn run(session: &mut Session, options: Options, json: bool) -> Result<(), St
     let key =
         PublicKey::parse(&line).map_err(|err| format!("{}: {err}", chosen.public.display()))?;
 
-    let access: SshAccess = crate::call(session, Command::SshAuthorize { key: key.line() })?;
+    let access: SshAccess = session.call(Command::SshAuthorize { key: key.line() })?;
 
     let alias = format!("tessaro-{}", session.node.id);
     let known_hosts = nodes::dir().join("known_hosts");
@@ -72,12 +82,7 @@ pub fn run(session: &mut Session, options: Options, json: bool) -> Result<(), St
     );
 
     if json {
-        let value = json!({ "access": access, "command": argv });
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&value).map_err(|err| err.to_string())?
-        );
-        return Ok(());
+        return crate::print_json(&json!({ "access": access, "command": argv }));
     }
 
     // Same shape as `claimed NAME (id)`: the verb, the device, the detail.
@@ -190,26 +195,7 @@ fn write_known_hosts(path: &Path, alias: &str, host_keys: &[String]) -> Result<(
     if body == existing {
         return Ok(());
     }
-
-    let dir = path
-        .parent()
-        .ok_or_else(|| format!("{}: no directory", path.display()))?;
-    fs::create_dir_all(dir).map_err(|err| format!("{}: {err}", dir.display()))?;
-    let temporary = dir.join(".known_hosts.tmp");
-    let mut options = fs::OpenOptions::new();
-    options.create(true).truncate(true).write(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut file = options
-        .open(&temporary)
-        .map_err(|err| format!("{}: {err}", temporary.display()))?;
-    file.write_all(body.as_bytes())
-        .and_then(|()| file.sync_all())
-        .map_err(|err| format!("{}: {err}", temporary.display()))?;
-    fs::rename(&temporary, path).map_err(|err| format!("{}: {err}", path.display()))
+    crate::nodes::write_private(path, body.as_bytes())
 }
 
 fn ssh_argv(

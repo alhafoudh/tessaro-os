@@ -32,7 +32,8 @@ use openssl::sha::sha256;
 use openssl::sign::Signer;
 use openssl::x509::{X509Builder, X509NameBuilder, X509};
 
-use crate::auth::hex;
+use protocol::hex;
+
 use crate::store;
 
 /// The Tessaro application id. **Never change it**: it would rename every

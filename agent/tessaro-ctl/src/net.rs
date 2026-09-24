@@ -11,28 +11,27 @@
 //! connection away, which re-addressing the link it came in on does, the
 //! answer never arrives; `network last` asks what happened.
 
-use std::io::Read;
 use std::time::{Duration, Instant};
 
 use anstream::{eprintln, println};
 use clap::{Args, Subcommand, ValueEnum};
 use protocol::{
-    Applied, ChangeOutcome, Command, Done, HotspotCredentials, NetAddress, NetChange, NetProfile,
-    NetProfileDetail, PingEvent, Secret, Verify, WifiNetwork, WifiSecurity, WifiStatus,
+    speedtest_size_label, Applied, ChangeOutcome, Command, Direction, Done, HotspotCredentials,
+    Net, NetAddress, NetChange, NetInterface, NetProfile, NetProfileDetail, PingEvent, Secret,
+    SpeedtestEvent, Verify, WifiNetwork, WifiSecurity, WifiStatus,
 };
 use serde_json::json;
 
 use crate::connect::{Answer, Session};
 use crate::style::{self, pad, paint, yes_no};
-use crate::{call, print, show_applied, show_once};
+use crate::{print, show_applied, show_once};
 
 /// Longer than the device takes to apply, check and roll back a change
 /// (about 90s at most), so its answer is waited for - and short enough that
 /// a connection the change silently broke does not hang the terminal.
 const CHANGE: Duration = Duration::from_secs(180);
 
-/// `tessaro-ctl network ...`. `Show`, `Interfaces` and `Speedtest` are
-/// answered in main, next to the rest of the kernel's view.
+/// `tessaro-ctl network ...`.
 #[derive(Subcommand)]
 pub enum NetworkCmd {
     /// The network as the device sees it: address, gateway, DNS, and every
@@ -53,10 +52,10 @@ pub enum NetworkCmd {
         #[arg(long, short = 'c', default_value_t = protocol::PING_DEFAULT_COUNT)]
         count: u32,
         /// Seconds between echoes.
-        #[arg(long, short = 'i', default_value_t = 1.0)]
+        #[arg(long, short = 'i', default_value_t = seconds(protocol::PING_DEFAULT_INTERVAL_MS))]
         interval: f64,
         /// Seconds to wait for each reply.
-        #[arg(long, short = 'W', default_value_t = 2.0)]
+        #[arg(long, short = 'W', default_value_t = seconds(protocol::PING_DEFAULT_TIMEOUT_MS))]
         timeout: f64,
         /// Send from this interface.
         #[arg(long, short = 'I')]
@@ -76,7 +75,7 @@ pub enum NetworkCmd {
     ///   tessaro-ctl network speedtest --max-size 1m --tests 3
     Speedtest {
         /// Largest payload: 100k, 1m, 10m, 25m or 100m. Uploads stop at 25m.
-        #[arg(long, default_value = "25m", value_parser = crate::parse_payload)]
+        #[arg(long, default_value = "25m", value_parser = parse_payload)]
         max_size: u64,
         /// Samples per payload size.
         #[arg(long, default_value_t = protocol::SPEEDTEST_DEFAULT_TESTS)]
@@ -163,30 +162,264 @@ pub struct VerifyArg {
     pub verify: Verify,
 }
 
-/// Whether `network ping` or `network speedtest` streams, which drops the
-/// read timeout.
-pub fn streams(command: &NetworkCmd) -> bool {
-    matches!(
-        command,
-        NetworkCmd::Ping { .. } | NetworkCmd::Speedtest { .. }
+fn speedtest(session: &mut Session, json: bool, max_size: u64, tests: u32) -> Result<(), String> {
+    if !json {
+        eprintln!(
+            "{}",
+            paint(
+                style::MUTED,
+                format!(
+                    "{}: measuring against speed.cloudflare.com, up to {} per sample...",
+                    session.node.name,
+                    speedtest_size_label(max_size)
+                )
+            )
+        );
+    }
+    session.stream_events(
+        Command::Speedtest {
+            max_size: Some(max_size),
+            tests: Some(tests),
+        },
+        json,
+        |step: SpeedtestEvent| println!("{}", speedtest_line(&step)),
     )
+}
+
+/// `--max-size`: one of the sizes the device offers, as `100k`, `1m`, ...
+fn parse_payload(text: &str) -> Result<u64, String> {
+    protocol::SPEEDTEST_SIZES
+        .into_iter()
+        .find(|size| speedtest_size_label(*size) == text.to_ascii_lowercase())
+        .ok_or_else(|| {
+            let offered: Vec<String> = protocol::SPEEDTEST_SIZES.map(speedtest_size_label).into();
+            format!("one of {}", offered.join(", "))
+        })
+}
+
+fn speedtest_line(step: &SpeedtestEvent) -> String {
+    // The headline number in `style`, a missing one muted; the spread and the
+    // sample counts are background.
+    let value = |style: anstyle::Style, v: Option<f64>, unit: &str| match v {
+        Some(v) => paint(style, format!("{v:.1} {unit}")),
+        None => paint(style::MUTED, "n/a"),
+    };
+    let mbit = |style, v| value(style, v, "Mbit/s");
+    let ms = |style, v| value(style, v, "ms");
+    let label = style::label;
+    match step {
+        SpeedtestEvent::Server { ip, colo, country } => format!(
+            "{} Cloudflare {}, seen from {ip} ({country})",
+            label("server"),
+            paint(style::HEADING, colo)
+        ),
+        SpeedtestEvent::Latency {
+            samples,
+            avg_ms,
+            min_ms,
+            max_ms,
+        } => format!(
+            "{} {} {}",
+            label("latency"),
+            ms(style::HEADING, *avg_ms),
+            paint(
+                style::MUTED,
+                format!(
+                    "(min {}, max {}, {samples} samples)",
+                    ms(anstyle::Style::new(), *min_ms),
+                    ms(anstyle::Style::new(), *max_ms)
+                )
+            )
+        ),
+        SpeedtestEvent::Transfer {
+            direction,
+            size,
+            samples,
+            attempts,
+            median_mbit,
+            min_mbit,
+            max_mbit,
+        } => {
+            let direction = match direction {
+                Direction::Download => "download",
+                Direction::Upload => "upload",
+            };
+            // Samples short of the attempts means retries: worth noticing.
+            let counted = if samples < attempts {
+                style::WARN
+            } else {
+                style::MUTED
+            };
+            format!(
+                "{} {} {} {} {}",
+                label(direction),
+                pad(style::HEADING, speedtest_size_label(*size), 5),
+                mbit(style::HEADING, *median_mbit),
+                paint(
+                    style::MUTED,
+                    format!(
+                        "(min {}, max {},",
+                        mbit(anstyle::Style::new(), *min_mbit),
+                        mbit(anstyle::Style::new(), *max_mbit)
+                    )
+                ),
+                paint(counted, format!("{samples}/{attempts} samples)"))
+            )
+        }
+        SpeedtestEvent::Result {
+            download_mbit,
+            upload_mbit,
+            latency_ms,
+        } => format!(
+            "{} download {}, upload {}, latency {}",
+            pad(style::HEADING, "result", 9),
+            mbit(style::OK, *download_mbit),
+            mbit(style::OK, *upload_mbit),
+            ms(style::OK, *latency_ms)
+        ),
+    }
+}
+
+fn show_net(net: &Net) {
+    let primary = net
+        .interface
+        .as_deref()
+        .and_then(|name| net.interfaces.iter().find(|iface| iface.name == name));
+    let address = primary.and_then(|iface| iface.addresses.iter().find(|a| a.family == "ipv4"));
+    let none = paint(style::MUTED, "(none)");
+    let row = style::row;
+
+    row("hostname", &paint(style::HEADING, &net.hostname));
+    row(
+        "interface",
+        &net.interface
+            .clone()
+            .unwrap_or_else(|| paint(style::WARN, "(no default route)")),
+    );
+    row(
+        "address",
+        &address
+            .map(|a| format!("{}/{}", a.address, a.prefix))
+            .unwrap_or_else(|| none.clone()),
+    );
+    row("gateway", net.gateway.as_ref().unwrap_or(&none));
+    row("public ip", net.public_ip.as_ref().unwrap_or(&none));
+    row(
+        "dns",
+        &if net.dns.is_empty() {
+            none.clone()
+        } else {
+            net.dns.join(", ")
+        },
+    );
+    if let Some(mac) = primary.and_then(|iface| iface.mac.as_ref()) {
+        row("mac", mac);
+    }
+    println!();
+    println!("{}", paint(style::HEADING, "interfaces:"));
+    for iface in &net.interfaces {
+        let addresses: Vec<String> = iface
+            .addresses
+            .iter()
+            .map(|a| format!("{}/{}", a.address, a.prefix))
+            .collect();
+        let marker = if iface.default_route {
+            paint(style::OK, " *")
+        } else {
+            String::new()
+        };
+        println!(
+            "  {} {} {} {}{marker}",
+            pad(style::HEADING, &iface.name, 12),
+            pad(style::MUTED, &iface.kind, 9),
+            pad(style::link_state(&iface.state), &iface.state, 8),
+            if addresses.is_empty() {
+                paint(style::MUTED, "-")
+            } else {
+                addresses.join(" ")
+            }
+        );
+    }
+    println!(
+        "\n  {}",
+        paint(
+            style::MUTED,
+            "* carries the default route. `tessaro-ctl network interfaces` for details."
+        )
+    );
+}
+
+fn show_interface(iface: &NetInterface) {
+    let marker = if iface.default_route {
+        paint(style::OK, "  (default route)")
+    } else {
+        String::new()
+    };
+    let row = style::sub_row;
+    println!("{}{marker}", paint(style::HEADING, &iface.name));
+    row("kind", &iface.kind);
+    row(
+        "state",
+        &paint(style::link_state(&iface.state), &iface.state),
+    );
+    if let Some(carrier) = iface.carrier {
+        row("carrier", &style::yes_no(carrier));
+    }
+    if let Some(mac) = &iface.mac {
+        row("mac", mac);
+    }
+    if let Some(mtu) = iface.mtu {
+        row("mtu", &mtu.to_string());
+    }
+    if let Some(speed) = iface.speed_mbps {
+        row("speed", &format!("{speed} Mb/s"));
+    }
+    for address in &iface.addresses {
+        row(
+            &address.family,
+            &format!(
+                "{}/{}  {}",
+                address.address,
+                address.prefix,
+                paint(style::MUTED, format!("({})", address.scope))
+            ),
+        );
+    }
+}
+
+/// A protocol default in milliseconds, as the seconds the command line takes.
+pub(crate) fn seconds(millis: u64) -> f64 {
+    millis as f64 / 1000.0
 }
 
 pub fn run(session: &mut Session, command: NetworkCmd, json: bool) -> Result<(), String> {
     match command {
-        NetworkCmd::Show | NetworkCmd::Interfaces | NetworkCmd::Speedtest { .. } => {
-            unreachable!("main answers these")
+        NetworkCmd::Show => {
+            let net: Net = session.call(Command::Net)?;
+            print(json, &net, || show_net(&net))
         }
+        NetworkCmd::Interfaces => {
+            let net: Net = session.call(Command::Net)?;
+            print(json, &net.interfaces, || {
+                for (at, interface) in net.interfaces.iter().enumerate() {
+                    if at > 0 {
+                        println!();
+                    }
+                    show_interface(interface);
+                }
+            })
+        }
+        NetworkCmd::Speedtest { max_size, tests } => speedtest(session, json, max_size, tests),
         NetworkCmd::Profiles(ProfilesCmd::List) => {
-            let profiles: Vec<NetProfile> = call(session, Command::NetProfiles)?;
+            let profiles: Vec<NetProfile> = session.call(Command::NetProfiles)?;
             print(json, &profiles, || show_profiles(&profiles))
         }
         NetworkCmd::Profiles(ProfilesCmd::Show { profile }) => {
-            let detail: NetProfileDetail = call(session, Command::NetShow { profile })?;
+            let detail: NetProfileDetail = session.call(Command::NetShow { profile })?;
             print(json, &detail, || show_detail(&detail))
         }
         NetworkCmd::Last => {
-            let last: Option<NetChange> = call(session, Command::NetLast)?;
+            let last: Option<NetChange> = session.call(Command::NetLast)?;
             print(json, &last, || match &last {
                 Some(change) => show_change(change),
                 None => println!("{}", paint(style::MUTED, "no network change yet")),
@@ -206,7 +439,7 @@ pub fn run(session: &mut Session, command: NetworkCmd, json: bool) -> Result<(),
 fn wifi(session: &mut Session, json: bool, what: WifiCmd) -> Result<(), String> {
     match what {
         WifiCmd::Status => {
-            let status: WifiStatus = call(session, Command::Wifi)?;
+            let status: WifiStatus = session.call(Command::Wifi)?;
             print(json, &status, || show_wifi(&status))
         }
         WifiCmd::Scan { interface, cached } => {
@@ -216,13 +449,10 @@ fn wifi(session: &mut Session, json: bool, what: WifiCmd) -> Result<(), String> 
                     paint(style::MUTED, format!("{}: scanning...", session.node.name))
                 );
             }
-            let networks: Vec<WifiNetwork> = call(
-                session,
-                Command::WifiScan {
-                    interface,
-                    rescan: !cached,
-                },
-            )?;
+            let networks: Vec<WifiNetwork> = session.call(Command::WifiScan {
+                interface,
+                rescan: !cached,
+            })?;
             print(json, &networks, || show_networks(&networks))
         }
         WifiCmd::Join {
@@ -248,7 +478,7 @@ fn wifi(session: &mut Session, json: bool, what: WifiCmd) -> Result<(), String> 
             )
         }
         WifiCmd::HotspotPassword => {
-            let hotspot: HotspotCredentials = call(session, Command::HotspotPassword)?;
+            let hotspot: HotspotCredentials = session.call(Command::HotspotPassword)?;
             print(json, &hotspot, || {
                 show_once(
                     &format!("hotspot {} password - shown this once:", hotspot.ssid),
@@ -271,14 +501,12 @@ fn join_password(
     let seen = match security {
         Some(_) => None,
         None => {
-            let networks: Vec<WifiNetwork> = call(
-                session,
-                Command::WifiScan {
+            let networks: Vec<WifiNetwork> = session
+                .call(Command::WifiScan {
                     interface: None,
                     rescan: false,
-                },
-            )
-            .unwrap_or_default();
+                })
+                .unwrap_or_default();
             networks.into_iter().find(|network| network.ssid == ssid)
         }
     };
@@ -295,23 +523,12 @@ fn join_password(
     } else {
         format!("WiFi password for {ssid}: ")
     };
-    let psk = password(from_stdin, &prompt)?;
+    let psk = crate::prompt::password(from_stdin, &prompt)?;
     if psk.is_empty() && known {
         return Ok(None);
     }
     protocol::keys::check_psk(&psk)?;
     Ok(Some(psk))
-}
-
-pub fn password(from_stdin: bool, prompt: &str) -> Result<String, String> {
-    if from_stdin {
-        let mut text = String::new();
-        std::io::stdin()
-            .read_to_string(&mut text)
-            .map_err(|err| format!("reading the password: {err}"))?;
-        return Ok(text.trim_end_matches(['\n', '\r']).to_string());
-    }
-    rpassword::prompt_password(prompt).map_err(|err| err.to_string())
 }
 
 /// Whether `key` is one of the device's network settings, whose change runs
@@ -345,11 +562,11 @@ pub fn apply(
         );
     }
     session.set_read_timeout(Some(CHANGE));
-    let answer = session.request(command);
-    session.set_read_timeout(Some(Duration::from_secs(60)));
+    let answer = session.request::<Applied>(command);
+    session.restore_read_timeout();
 
-    let value = match answer {
-        Answer::Ok(value) => value,
+    let applied = match answer {
+        Answer::Ok(applied) => applied,
         // A rolled-back change is the device refusing it, with the reason.
         Answer::Refused(error) => return Err(error),
         Answer::Lost(why) => {
@@ -374,8 +591,6 @@ pub fn apply(
             return Err("no answer from the device".to_string());
         }
     };
-    let applied: Applied =
-        serde_json::from_value(value).map_err(|err| format!("unexpected answer: {err}"))?;
     print(json, &applied, || {
         if let Some(change) = &applied.network {
             show_change(change);
@@ -396,7 +611,7 @@ fn net_ping(
 ) -> Result<(), String> {
     let millis = |seconds: f64| (seconds * 1000.0).round().max(0.0) as u64;
     let mut failed = false;
-    session.stream(
+    session.stream_events(
         Command::NetPing {
             host,
             count: Some(count),
@@ -404,20 +619,12 @@ fn net_ping(
             timeout_ms: Some(millis(timeout)),
             interface,
         },
-        |event| {
-            if json {
-                println!("{event}");
-                return;
+        json,
+        |step: PingEvent| {
+            if let PingEvent::Summary { received: 0, .. } = step {
+                failed = true;
             }
-            match serde_json::from_value::<PingEvent>(event.clone()) {
-                Ok(step) => {
-                    if let PingEvent::Summary { received: 0, .. } = step {
-                        failed = true;
-                    }
-                    println!("{}", ping_line(&step));
-                }
-                Err(_) => println!("{event}"),
-            }
+            println!("{}", ping_line(&step));
         },
     )?;
     if failed {
@@ -433,7 +640,7 @@ pub fn ping(session: &mut Session, json: bool, count: u32, interval: f64) -> Res
         return Err("--count must be at least 1".to_string());
     }
     let timing = session.timing;
-    let label = |text: &str| pad(style::LABEL, text, 9);
+    let label = style::label;
     if !json {
         match session.remote.as_ref() {
             Some((address, _)) => eprintln!(
@@ -473,11 +680,9 @@ pub fn ping(session: &mut Session, json: bool, count: u32, interval: f64) -> Res
             std::thread::sleep(Duration::from_secs_f64(interval.max(0.05)));
         }
         let started = Instant::now();
-        match session.call(Command::Ping) {
-            Ok(value) => {
+        match session.call::<Done>(Command::Ping) {
+            Ok(_) => {
                 let rtt = started.elapsed();
-                let _: Done = serde_json::from_value(value)
-                    .map_err(|err| format!("unexpected answer: {err}"))?;
                 rtts.push(rtt);
                 if !json {
                     println!(
@@ -508,21 +713,17 @@ pub fn ping(session: &mut Session, json: bool, count: u32, interval: f64) -> Res
     let max = rtts.iter().map(seconds).reduce(f64::max);
     let avg = (!rtts.is_empty()).then(|| rtts.iter().map(seconds).sum::<f64>() / rtts.len() as f64);
     if json {
-        return print(
-            true,
-            &json!({
-                "node": session.node.name,
-                "connect_ms": timing.map(|t| seconds(&t.connect)),
-                "handshake_ms": timing.map(|t| seconds(&t.handshake)),
-                "sent": count,
-                "received": rtts.len(),
-                "rtt_ms": rtts.iter().map(seconds).collect::<Vec<_>>(),
-                "min_ms": min,
-                "avg_ms": avg,
-                "max_ms": max,
-            }),
-            || {},
-        );
+        return crate::print_json(&json!({
+            "node": session.node.name,
+            "connect_ms": timing.map(|t| seconds(&t.connect)),
+            "handshake_ms": timing.map(|t| seconds(&t.handshake)),
+            "sent": count,
+            "received": rtts.len(),
+            "rtt_ms": rtts.iter().map(seconds).collect::<Vec<_>>(),
+            "min_ms": min,
+            "avg_ms": avg,
+            "max_ms": max,
+        }));
     }
     println!(
         "{}",
@@ -581,7 +782,7 @@ fn summary_line(
 }
 
 fn ping_line(step: &PingEvent) -> String {
-    let label = |text: &str| pad(style::LABEL, text, 9);
+    let label = style::label;
     match step {
         PingEvent::Start { host, address } => {
             let target = if host == address {
@@ -649,7 +850,7 @@ fn show_profiles(profiles: &[NetProfile]) {
 fn show_detail(detail: &NetProfileDetail) {
     let profile = &detail.profile;
     let none = || paint(style::MUTED, "(none)");
-    let row = |label: &str, value: &str| println!("{} {value}", pad(style::LABEL, label, 12));
+    let row = style::row;
     let sub = |label: &str, value: &str| println!("    {} {value}", pad(style::LABEL, label, 15));
 
     println!(
@@ -746,7 +947,7 @@ fn address(address: &NetAddress) -> String {
 }
 
 fn show_wifi(status: &WifiStatus) {
-    let row = |label: &str, value: &str| println!("{} {value}", pad(style::LABEL, label, 12));
+    let row = style::row;
     let radio = match (status.enabled, status.hardware_enabled) {
         (true, true) => paint(style::OK, "on"),
         (false, true) => paint(style::WARN, "off"),
@@ -881,6 +1082,37 @@ mod tests {
     use super::*;
     use anstream::adapter::strip_str;
     use protocol::NetCheck;
+
+    #[test]
+    fn speedtest_lines_strip_to_aligned_plain_text() {
+        assert_eq!(
+            plain(speedtest_line(&SpeedtestEvent::Transfer {
+                direction: Direction::Upload,
+                size: 1_000_000,
+                samples: 3,
+                attempts: 4,
+                median_mbit: Some(42.5),
+                min_mbit: Some(40.0),
+                max_mbit: None,
+            })),
+            "upload    1m    42.5 Mbit/s (min 40.0 Mbit/s, max n/a, 3/4 samples)"
+        );
+        assert_eq!(
+            plain(speedtest_line(&SpeedtestEvent::Result {
+                download_mbit: Some(93.14),
+                upload_mbit: None,
+                latency_ms: Some(12.0),
+            })),
+            "result    download 93.1 Mbit/s, upload n/a, latency 12.0 ms"
+        );
+    }
+
+    #[test]
+    fn max_size_takes_the_offered_sizes_only() {
+        assert_eq!(parse_payload("25M"), Ok(25_000_000));
+        assert_eq!(parse_payload("100k"), Ok(100_000));
+        assert!(parse_payload("5m").is_err());
+    }
 
     fn plain(text: String) -> String {
         strip_str(&text).to_string()

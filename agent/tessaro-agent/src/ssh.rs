@@ -147,11 +147,7 @@ fn write(path: &Path, lines: &[String]) -> io::Result<()> {
     if !body.is_empty() {
         body.push('\n');
     }
-    let temporary = dir.join(".authorized_keys.tessaro-tmp");
-    store::write_synced(&temporary, body.as_bytes(), 0o600)?;
-    fs::set_permissions(&temporary, fs::Permissions::from_mode(0o600))?;
-    fs::rename(&temporary, path)?;
-    store::sync_dir(dir)
+    store::replace(path, body.as_bytes(), 0o600, None)
 }
 
 /// Make dropbear's RSA host key if no directory has one yet, exactly as

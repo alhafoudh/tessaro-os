@@ -25,7 +25,6 @@ pub mod settings;
 pub mod txn;
 
 use std::collections::{HashMap, HashSet};
-use std::future::Future;
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -38,8 +37,8 @@ use protocol::{
 use zbus::proxy::CacheProperties;
 use zbus::zvariant::{ObjectPath, OwnedObjectPath};
 
-use crate::control::blocking;
-use crate::deadline::within;
+// Every call to NetworkManager: bounded, with its error in words.
+use crate::deadline::{blocking, within, within_result as nm_call};
 use crate::log::Log;
 use crate::paths::Paths;
 use profiles::{Keyfile, NetConfig, Profile, WifiMode};
@@ -59,19 +58,6 @@ const SCAN: Duration = Duration::from_secs(10);
 const TCP_VERIFY: Duration = Duration::from_secs(5);
 /// One echo at the gateway or a `--verify` host.
 const ECHO: Duration = Duration::from_secs(2);
-
-/// A call to NetworkManager, bounded, with its error in words.
-async fn nm_call<T, E: std::fmt::Display>(
-    what: &'static str,
-    limit: Duration,
-    call: impl Future<Output = Result<T, E>>,
-) -> Result<T, String> {
-    match within(what, limit, call).await {
-        Ok(Ok(value)) => Ok(value),
-        Ok(Err(err)) => Err(format!("{what}: {err}")),
-        Err(expired) => Err(expired.to_string()),
-    }
-}
 
 fn path(text: &str) -> Result<ObjectPath<'_>, String> {
     ObjectPath::try_from(text).map_err(|err| format!("{text}: {err}"))
@@ -271,7 +257,7 @@ impl Network {
         rescan: bool,
     ) -> Result<Vec<WifiNetwork>, String> {
         if let Some(name) = &interface {
-            crate::ping::check_interface(name)?;
+            protocol::keys::check_interface(name)?;
         }
         let nm = self.client().await?;
         let live = self.live().await?;

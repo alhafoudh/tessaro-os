@@ -540,8 +540,27 @@ impl PartialEq for Placeholder<'_> {
     }
 }
 
-/// The keys whose values are URL templates, expanded before anyone sees them.
-pub const TEMPLATES: [&str; 2] = [URL, MAINTENANCE_URL];
+/// How a template's placeholders are filled in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Expansion {
+    /// Percent-encoded into a URL.
+    Url,
+    /// Raw, into text the debug screen escapes for HTML.
+    Text,
+}
+
+/// The keys whose values are templates, expanded before anyone sees them.
+/// No template may name another one as a placeholder.
+pub const TEMPLATES: [(&str, Expansion); 3] = [
+    (URL, Expansion::Url),
+    (MAINTENANCE_URL, Expansion::Url),
+    (DEBUG_TEMPLATE, Expansion::Text),
+];
+
+/// Is `name` one of the `TEMPLATES`?
+pub fn is_template(name: &str) -> bool {
+    TEMPLATES.iter().any(|(template, _)| *template == name)
+}
 
 /// A placeholder is always a setting's full key: `{data.table}` for the
 /// custom `data.table`, `{device.name}` for `device.name`. One rule, no short
@@ -551,9 +570,7 @@ pub fn placeholder(name: &str) -> Placeholder<'_> {
         return Placeholder::Param(custom);
     }
     match KEYS.iter().find(|key| key.name == name) {
-        Some(key) if !TEMPLATES.contains(&key.name) && key.kind != Kind::Template => {
-            Placeholder::Key(key)
-        }
+        Some(key) if !is_template(key.name) && key.kind != Kind::Template => Placeholder::Key(key),
         _ => Placeholder::Unknown,
     }
 }
@@ -856,13 +873,24 @@ pub fn is_audio_device(value: &str) -> bool {
     !AUDIO_OUTPUTS.contains(&value) && !AUDIO_INPUTS.contains(&value)
 }
 
-/// A name the kernel could give an interface: `IFNAMSIZ` less the NUL.
+/// A name the kernel could give an interface: `IFNAMSIZ` less the NUL. No
+/// `:` - an old-style alias like `eth0:1` is not an interface NetworkManager
+/// or `SO_BINDTODEVICE` would take.
 pub fn is_interface(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 15
         && name
             .chars()
             .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+}
+
+/// `is_interface`, as the error a command answers with.
+pub fn check_interface(name: &str) -> Result<(), String> {
+    if is_interface(name) {
+        Ok(())
+    } else {
+        Err(format!("{name} is not an interface name"))
+    }
 }
 
 /// `192.168.1.50/24`.

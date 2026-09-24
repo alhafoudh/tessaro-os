@@ -10,11 +10,11 @@ use std::collections::BTreeMap;
 
 use anstream::println;
 use clap::Subcommand;
-use protocol::{keys, Applied, AudioDevice, AudioSide, AudioStatus, AudioTested, Command};
+use protocol::{keys, AudioDevice, AudioSide, AudioStatus, AudioTested, Command};
 
 use crate::connect::Session;
 use crate::style::{self, pad, paint};
-use crate::{call, print, show_applied as show_change, Toggle};
+use crate::{print, show_applied, Toggle};
 
 #[derive(Subcommand)]
 pub enum AudioCmd {
@@ -64,33 +64,30 @@ pub enum AudioCmd {
 pub fn run(session: &mut Session, command: AudioCmd, json: bool) -> Result<(), String> {
     match command {
         AudioCmd::Show => {
-            let status: AudioStatus = call(session, Command::AudioStatus)?;
+            let status: AudioStatus = session.call(Command::AudioStatus)?;
             print(json, &status, || show(&status))
         }
         AudioCmd::Outputs => {
-            let status: AudioStatus = call(session, Command::AudioStatus)?;
+            let status: AudioStatus = session.call(Command::AudioStatus)?;
             print(json, &status.output.devices, || {
                 list(&status, &status.output, "output")
             })
         }
         AudioCmd::Inputs => {
-            let status: AudioStatus = call(session, Command::AudioStatus)?;
+            let status: AudioStatus = session.call(Command::AudioStatus)?;
             print(json, &status.input.devices, || {
                 list(&status, &status.input, "input")
             })
         }
         AudioCmd::Output { output } => set(session, json, keys::AUDIO_OUTPUT, output),
         AudioCmd::Volume { percent } => set(session, json, keys::AUDIO_VOLUME, percent.to_string()),
-        AudioCmd::Mute { state } => {
-            let flag = if state == Toggle::On { "1" } else { "0" };
-            set(session, json, keys::AUDIO_MUTE, flag.to_string())
-        }
+        AudioCmd::Mute { state } => set(session, json, keys::AUDIO_MUTE, state.flag().to_string()),
         AudioCmd::Input { input } => set(session, json, keys::AUDIO_INPUT, input),
         AudioCmd::InputVolume { percent } => {
             set(session, json, keys::AUDIO_INPUT_VOLUME, percent.to_string())
         }
         AudioCmd::Test { input } => {
-            let tested: AudioTested = call(session, Command::AudioTest { input })?;
+            let tested: AudioTested = session.call(Command::AudioTest { input })?;
             print(json, &tested, || {
                 println!("{}", paint(style::OK, &tested.message));
                 if let (Some(peak), Some(rms)) = (tested.peak_dbfs, tested.rms_dbfs) {
@@ -106,20 +103,12 @@ pub fn run(session: &mut Session, command: AudioCmd, json: bool) -> Result<(), S
 }
 
 fn set(session: &mut Session, json: bool, key: &str, value: String) -> Result<(), String> {
-    let applied: Applied = call(
-        session,
-        Command::Set {
-            values: BTreeMap::from([(key.to_string(), value)]),
-            if_revision: None,
-            apply: true,
-            verify: Default::default(),
-        },
-    )?;
-    print(json, &applied, || show_change(&applied, false))
+    let applied = crate::set(session, BTreeMap::from([(key.to_string(), value)]))?;
+    print(json, &applied, || show_applied(&applied, false))
 }
 
 /// What a change of the audio.* keys did on the device, one line per side.
-pub fn show_applied(audio: &str) {
+pub fn show_outcome(audio: &str) {
     if audio.starts_with("saved,") {
         println!("{}", paint(style::WARN, audio));
         return;

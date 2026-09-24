@@ -15,16 +15,14 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anstream::{eprintln, println};
 use clap::Subcommand;
-use protocol::files::{
-    self as store, FileBegun, FileData, FileEntry, FileKind, FileReceived, FilesListing,
-};
-use protocol::{Command, Done};
+use protocol::files::{self as store, FileBegun, FileData, FileEntry, FileKind, FilesListing};
+use protocol::{size_label, Command, Done, Received};
 use serde::Serialize;
 
-use crate::connect::{self, Session};
+use crate::connect::Session;
+use crate::progress::{mb, step_line, Progress, Rate};
 use crate::style::{self, pad, paint};
-use crate::update::{mb, percent, step_line, Progress, Rate};
-use crate::{call, print};
+use crate::{print, prompt};
 
 #[derive(Subcommand)]
 pub enum FilesCmd {
@@ -103,13 +101,10 @@ pub fn run(session: &mut Session, command: FilesCmd, json: bool) -> Result<(), S
     match command {
         FilesCmd::List { remote, recursive } => {
             let path = store::normalize(remote.as_deref().unwrap_or(""))?;
-            let listing: FilesListing = call(
-                session,
-                Command::FilesList {
-                    path: path.clone(),
-                    recursive,
-                },
-            )?;
+            let listing: FilesListing = session.call(Command::FilesList {
+                path: path.clone(),
+                recursive,
+            })?;
             print(json, &listing, || show_listing(&path, &listing))
         }
         FilesCmd::Upload { local, remote } => upload(session, &local, remote.as_deref(), json),
@@ -140,7 +135,7 @@ pub fn run(session: &mut Session, command: FilesCmd, json: bool) -> Result<(), S
                 } else {
                     dest.clone()
                 };
-                let done: Done = call(session, Command::FilesMove { from, to })?;
+                let done: Done = session.call(Command::FilesMove { from, to })?;
                 if !json {
                     println!("{}", done.message);
                 }
@@ -160,16 +155,11 @@ pub fn run(session: &mut Session, command: FilesCmd, json: bool) -> Result<(), S
                 .iter()
                 .map(|path| store::normalize(path))
                 .collect::<Result<Vec<_>, _>>()?;
-            if !yes
-                && !connect::ask(&format!(
-                    "Remove {} from {}?",
-                    paths.join(", "),
-                    session.node.name
-                ))?
-            {
-                return Err("not confirmed".to_string());
-            }
-            let done: Done = call(session, Command::FilesDelete { paths, recursive })?;
+            prompt::confirm(
+                yes,
+                &format!("Remove {} from {}?", paths.join(", "), session.node.name),
+            )?;
+            let done: Done = session.call(Command::FilesDelete { paths, recursive })?;
             print(json, &done, || println!("{}", done.message))
         }
     }
@@ -178,13 +168,10 @@ pub fn run(session: &mut Session, command: FilesCmd, json: bool) -> Result<(), S
 /// Whether `path` is a directory in the store: its listing is not the file
 /// itself. A missing path is an error, as it would be for `mv`.
 fn is_dir(session: &mut Session, path: &str) -> Result<bool, String> {
-    let listing: FilesListing = call(
-        session,
-        Command::FilesList {
-            path: path.to_string(),
-            recursive: false,
-        },
-    )?;
+    let listing: FilesListing = session.call(Command::FilesList {
+        path: path.to_string(),
+        recursive: false,
+    })?;
     Ok(!(listing.entries.len() == 1
         && listing.entries[0].path == path
         && listing.entries[0].kind == FileKind::File))
@@ -386,10 +373,11 @@ fn sync(
         recursive: true,
     };
     let listed: Result<FilesListing, String> = if dry_run || root.is_empty() {
-        call(session, tree)
+        session.call(tree)
     } else {
-        call::<Done>(session, Command::FilesMkdir { path: root.clone() })
-            .and_then(|_| call(session, tree))
+        session
+            .call::<Done>(Command::FilesMkdir { path: root.clone() })
+            .and_then(|_| session.call(tree))
     };
     let theirs = match listed {
         Ok(listing) => relative(&root, listing.entries),
@@ -430,7 +418,7 @@ fn sync(
                         format!(
                             "{}  {}",
                             store::join(&root, &item.path),
-                            paint(style::MUTED, human(item.size))
+                            paint(style::MUTED, size_label(item.size))
                         )
                     )
                 ),
@@ -445,7 +433,7 @@ fn sync(
         for path in &removals {
             eprintln!("{}", step_line(style::WARN, "remove", path));
         }
-        if !connect::ask(&format!(
+        if !prompt::ask(&format!(
             "Remove what is listed above from {}?",
             session.node.name
         ))? {
@@ -457,13 +445,10 @@ fn sync(
     for action in actions {
         match action {
             Action::Remove(_) => {
-                call::<Done>(
-                    session,
-                    Command::FilesDelete {
-                        paths: removals.clone(),
-                        recursive: true,
-                    },
-                )?;
+                session.call::<Done>(Command::FilesDelete {
+                    paths: removals.clone(),
+                    recursive: true,
+                })?;
                 for path in &removals {
                     progress.done(&step_line(style::WARN, "removed", path));
                 }
@@ -471,7 +456,7 @@ fn sync(
             }
             Action::Mkdir(path) => {
                 let path = store::join(&root, &path);
-                call::<Done>(session, Command::FilesMkdir { path: path.clone() })?;
+                session.call::<Done>(Command::FilesMkdir { path: path.clone() })?;
                 report.made.push(path);
             }
             Action::Send(item) => {
@@ -544,13 +529,13 @@ fn upload(
         eprintln!("{} {line}", paint(style::WARN, "skipped:"));
     }
     if !root.is_empty() {
-        call::<Done>(session, Command::FilesMkdir { path: root.clone() })?;
+        session.call::<Done>(Command::FilesMkdir { path: root.clone() })?;
     }
     for item in &ours {
         let path = store::join(&root, &item.path);
         match item.kind {
             FileKind::Dir => {
-                call::<Done>(session, Command::FilesMkdir { path: path.clone() })?;
+                session.call::<Done>(Command::FilesMkdir { path: path.clone() })?;
                 report.made.push(path);
             }
             FileKind::File => send(session, item, &path, &mut progress, &mut report)?,
@@ -568,14 +553,11 @@ fn send(
     progress: &mut Progress,
     report: &mut Report,
 ) -> Result<(), String> {
-    let begun: FileBegun = call(
-        session,
-        Command::FilesBegin {
-            path: path.to_string(),
-            size: item.size,
-            mtime: item.mtime,
-        },
-    )?;
+    let begun: FileBegun = session.call(Command::FilesBegin {
+        path: path.to_string(),
+        size: item.size,
+        mtime: item.mtime,
+    })?;
     if begun.offset >= item.size && item.size > 0 {
         report.unchanged.push(path.to_string());
         return Ok(());
@@ -597,36 +579,26 @@ fn send(
             )
         })?;
         let data = data_encoding::BASE64.encode(&buffer[..want]);
-        let received: FileReceived = call(
-            session,
-            Command::FilesChunk {
+        let received: Received = session
+            .call(Command::FilesChunk {
                 path: path.to_string(),
                 offset,
                 data,
-            },
-        )
-        .map_err(|err| {
-            format!(
-                "{path} stopped at {}: {err}; run the same command again to resume",
-                mb(offset)
-            )
-        })?;
+            })
+            .map_err(|err| {
+                format!(
+                    "{path} stopped at {}: {err}; run the same command again to resume",
+                    mb(offset)
+                )
+            })?;
         offset = received.received;
         // Only a file of several chunks is worth a progress line of its own.
         if item.size > protocol::UPDATE_CHUNK as u64 {
-            let (speed, eta) = rate.update(offset, item.size);
             progress.show(
                 &step_line(
                     style::LABEL,
                     "sending",
-                    format!(
-                        "{path}  {}/{}  {:>3}%  {}/s  {} {eta}",
-                        mb(offset),
-                        mb(item.size),
-                        percent(offset, item.size),
-                        mb(speed as u64),
-                        paint(style::LABEL, "ETA"),
-                    ),
+                    format!("{path}  {}", rate.line(offset, item.size)),
                 ),
                 offset,
                 item.size,
@@ -636,7 +608,7 @@ fn send(
     progress.done(&step_line(
         style::OK,
         "sent",
-        format!("{path}  {}", paint(style::MUTED, human(item.size))),
+        format!("{path}  {}", paint(style::MUTED, size_label(item.size))),
     ));
     report.bytes += item.size - begun.offset;
     report.sent.push(path.to_string());
@@ -650,13 +622,10 @@ fn download(
     json: bool,
 ) -> Result<(), String> {
     let path = store::normalize(remote)?;
-    let listing: FilesListing = call(
-        session,
-        Command::FilesList {
-            path: path.clone(),
-            recursive: true,
-        },
-    )?;
+    let listing: FilesListing = session.call(Command::FilesList {
+        path: path.clone(),
+        recursive: true,
+    })?;
     let name = path
         .rsplit('/')
         .next()
@@ -754,14 +723,11 @@ fn fetch(
     let mut mtime = entry.mtime;
     let mut size = entry.size;
     while offset < size {
-        let data: FileData = call(
-            session,
-            Command::FilesRead {
-                path: entry.path.clone(),
-                offset,
-                len: protocol::UPDATE_CHUNK as u64,
-            },
-        )?;
+        let data: FileData = session.call(Command::FilesRead {
+            path: entry.path.clone(),
+            offset,
+            len: protocol::UPDATE_CHUNK as u64,
+        })?;
         (size, mtime) = (data.size, data.mtime);
         if data.data.is_empty() {
             break;
@@ -772,20 +738,11 @@ fn fetch(
         file.write_all(&bytes).map_err(fail)?;
         offset += bytes.len() as u64;
         if size > protocol::UPDATE_CHUNK as u64 {
-            let (speed, eta) = rate.update(offset, size);
             progress.show(
                 &step_line(
                     style::LABEL,
                     "receiving",
-                    format!(
-                        "{}  {}/{}  {:>3}%  {}/s  {} {eta}",
-                        entry.path,
-                        mb(offset),
-                        mb(size),
-                        percent(offset, size),
-                        mb(speed as u64),
-                        paint(style::LABEL, "ETA"),
-                    ),
+                    format!("{}  {}", entry.path, rate.line(offset, size)),
                 ),
                 offset,
                 size,
@@ -806,7 +763,7 @@ fn fetch(
     progress.done(&step_line(
         style::OK,
         "received",
-        format!("{shown}  {}", paint(style::MUTED, human(size))),
+        format!("{shown}  {}", paint(style::MUTED, size_label(size))),
     ));
     report.bytes += size;
     report.received.push(shown);
@@ -826,7 +783,7 @@ fn show_listing(base: &str, listing: &FilesListing) {
             FileKind::Dir => String::new(),
             FileKind::File => {
                 total += entry.size;
-                human(entry.size)
+                size_label(entry.size)
             }
         };
         let name = shown_name(base, &entry.path);
@@ -840,7 +797,7 @@ fn show_listing(base: &str, listing: &FilesListing) {
             size
         );
     }
-    println!("{} {}", pad(style::LABEL, "total", 18), human(total));
+    println!("{} {}", pad(style::LABEL, "total", 18), size_label(total));
 }
 
 /// `path` from `base`: `media/a.mp4` listed from `media` is `a.mp4`.
@@ -851,21 +808,6 @@ fn shown_name<'a>(base: &str, path: &'a str) -> &'a str {
     path.strip_prefix(base)
         .and_then(|rest| rest.strip_prefix('/'))
         .unwrap_or(path)
-}
-
-/// Bytes the way a person reads them.
-fn human(bytes: u64) -> String {
-    const UNITS: [&str; 4] = ["kB", "MB", "GB", "TB"];
-    if bytes < 1000 {
-        return format!("{bytes} B");
-    }
-    let mut value = bytes as f64 / 1000.0;
-    let mut unit = 0;
-    while value >= 1000.0 && unit + 1 < UNITS.len() {
-        value /= 1000.0;
-        unit += 1;
-    }
-    format!("{value:.1} {}", UNITS[unit])
 }
 
 /// `YYYY-MM-DD HH:MM`, UTC: the device's clock may not be the local one.
@@ -1054,12 +996,5 @@ mod tests {
         assert_eq!(date(1_700_000_000), "2023-11-14 22:13");
         assert_eq!(date(951_782_400), "2000-02-29 00:00");
         assert_eq!(date(-60), "1969-12-31 23:59");
-    }
-
-    #[test]
-    fn sizes_read_like_a_person_would() {
-        assert_eq!(human(999), "999 B");
-        assert_eq!(human(1_500), "1.5 kB");
-        assert_eq!(human(12_300_000), "12.3 MB");
     }
 }

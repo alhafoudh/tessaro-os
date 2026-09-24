@@ -17,9 +17,12 @@ use std::net::{IpAddr, SocketAddr, TcpStream, ToSocketAddrs};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use anstream::{eprint, eprintln};
+use anstream::{eprintln, println};
 use mdns_sd::{ServiceDaemon, ServiceEvent};
-use protocol::{from_line, to_line, Command, Frame, Hello, NodeInfo, Request, PROTOCOL_VERSION};
+use protocol::{
+    from_line, hex, to_line, Command, Frame, Hello, NodeInfo, Request, PROTOCOL_VERSION,
+};
+use serde::de::DeserializeOwned;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
@@ -198,33 +201,25 @@ pub struct Timing {
 }
 
 /// How one command went.
-pub enum Answer {
-    Ok(Value),
+pub enum Answer<T> {
+    Ok(T),
     /// The device answered with an error.
     Refused(String),
     /// No answer came: the connection broke or timed out.
     Lost(String),
 }
 
-pub fn open(target: &Target, nodes: &Nodes, trust: Trust, follow: bool) -> Result<Session, String> {
+pub fn open(target: &Target, nodes: &Nodes, trust: Trust) -> Result<Session, String> {
     match target {
         Target::Local(path) => open_local(path),
         Target::Remote {
             address,
             expected,
             label,
-        } => open_remote(
-            *address,
-            expected.as_deref(),
-            label,
-            nodes,
-            trust,
-            follow,
-            CONNECT,
-        )
-        .map_err(Failure::message),
+        } => open_remote(*address, expected.as_deref(), label, nodes, trust, CONNECT)
+            .map_err(Failure::message),
         Target::Named { name, port, known } => {
-            open_named(name, *port, known.as_ref(), nodes, trust, follow)
+            open_named(name, *port, known.as_ref(), nodes, trust)
         }
     }
 }
@@ -267,21 +262,19 @@ impl Failure {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn open_remote(
     address: SocketAddr,
     expected: Option<&str>,
     label: &str,
     nodes: &Nodes,
     trust: Trust,
-    follow: bool,
     connect: Duration,
 ) -> Result<Session, Failure> {
     let started = Instant::now();
     let tcp = TcpStream::connect_timeout(&address, connect)
         .map_err(|err| Failure::Unreachable(format!("{address}: {err}")))?;
     let connected = started.elapsed();
-    tcp.set_read_timeout(if follow { None } else { Some(IO) })
+    tcp.set_read_timeout(Some(IO))
         .and_then(|()| tcp.set_write_timeout(Some(IO)))
         .map_err(|err| Failure::Refused(err.to_string()))?;
     let control = tcp.try_clone().ok();
@@ -351,7 +344,9 @@ fn open_remote(
                     "{label} ({address}) presents certificate\n  {}",
                     paint(style::HEADING, &fingerprint)
                 );
-                if !assume_yes && !ask("Pin it and continue?").map_err(Failure::Refused)? {
+                if !assume_yes
+                    && !crate::prompt::ask("Pin it and continue?").map_err(Failure::Refused)?
+                {
                     return Err(Failure::Refused("not pinned".to_string()));
                 }
             }
@@ -384,7 +379,6 @@ fn open_named(
     known: Option<&Node>,
     nodes: &Nodes,
     trust: Trust,
-    follow: bool,
 ) -> Result<Session, String> {
     let with_port =
         |address: SocketAddr| SocketAddr::new(address.ip(), port.unwrap_or(address.port()));
@@ -398,15 +392,7 @@ fn open_named(
     // What happened at the cached address, for the final error.
     let mut at_cached = "not answering at";
     if let Some((node, address)) = cached {
-        match open_remote(
-            address,
-            Some(&node.id),
-            name,
-            nodes,
-            trust,
-            follow,
-            CACHED_CONNECT,
-        ) {
+        match open_remote(address, Some(&node.id), name, nodes, trust, CACHED_CONNECT) {
             Ok(session) => return Ok(session),
             Err(Failure::Mismatch(why)) => {
                 let warning = paint(style::WARN, "warning:");
@@ -431,7 +417,6 @@ fn open_named(
                 name,
                 nodes,
                 trust,
-                follow,
                 CONNECT,
             )
             .map_err(Failure::message)
@@ -481,8 +466,8 @@ impl Session {
         self.token = None;
     }
 
-    /// One command, one answer.
-    pub fn call(&mut self, command: Command) -> Result<Value, String> {
+    /// One command, one answer, as the type it should be.
+    pub fn call<T: DeserializeOwned>(&mut self, command: Command) -> Result<T, String> {
         match self.request(command) {
             Answer::Ok(value) => Ok(value),
             Answer::Refused(error) | Answer::Lost(error) => Err(error),
@@ -490,15 +475,21 @@ impl Session {
     }
 
     /// One command, one answer - and whether a missing answer was the
-    /// device's doing or the connection's.
-    pub fn request(&mut self, command: Command) -> Answer {
+    /// device's doing or the connection's. An answer of the wrong shape
+    /// counts as refused: the device did answer.
+    pub fn request<T: DeserializeOwned>(&mut self, command: Command) -> Answer<T> {
         let id = match self.send(command) {
             Ok(id) => id,
             Err(error) => return Answer::Lost(error),
         };
         loop {
             match read_frame(&mut self.stream) {
-                Ok(Frame::Ok { id: got, result }) if got == id => return Answer::Ok(result),
+                Ok(Frame::Ok { id: got, result }) if got == id => {
+                    return match serde_json::from_value(result) {
+                        Ok(value) => Answer::Ok(value),
+                        Err(err) => Answer::Refused(format!("unexpected answer: {err}")),
+                    }
+                }
                 Ok(Frame::Error { id: got, error }) if got == id || got == 0 => {
                     return Answer::Refused(error)
                 }
@@ -516,17 +507,51 @@ impl Session {
         }
     }
 
-    /// A streaming command: `each` gets every event until the end.
+    /// Back to the usual wait for an answer, after a longer one.
+    pub fn restore_read_timeout(&self) {
+        self.set_read_timeout(Some(IO));
+    }
+
+    /// A streaming command: `each` gets every event until the end. A stream
+    /// can go quiet for longer than an answer - a followed log, a speed test
+    /// on a slow link - so it waits for good; the device bounds every stream
+    /// but a followed log, and that one runs until the user stops it.
     pub fn stream(&mut self, command: Command, mut each: impl FnMut(Value)) -> Result<(), String> {
-        let id = self.send(command)?;
-        loop {
-            match read_frame(&mut self.stream)? {
-                Frame::Event { id: got, event } if got == id => each(event),
-                Frame::End { id: got } if got == id => return Ok(()),
-                Frame::Error { id: got, error } if got == id || got == 0 => return Err(error),
-                _ => continue,
+        self.set_read_timeout(None);
+        let streamed = (|| {
+            let id = self.send(command)?;
+            loop {
+                match read_frame(&mut self.stream)? {
+                    Frame::Event { id: got, event } if got == id => each(event),
+                    Frame::End { id: got } if got == id => return Ok(()),
+                    Frame::Error { id: got, error } if got == id || got == 0 => return Err(error),
+                    _ => continue,
+                }
             }
-        }
+        })();
+        self.restore_read_timeout();
+        streamed
+    }
+
+    /// `stream`, printed the way every stream is: with `--json` each event
+    /// as the device sent it, otherwise through `each` - and an event this
+    /// client does not know, from a newer device, as it came.
+    pub fn stream_events<E: DeserializeOwned>(
+        &mut self,
+        command: Command,
+        json: bool,
+        mut each: impl FnMut(E),
+    ) -> Result<(), String> {
+        self.stream(command, |event| {
+            if json {
+                println!("{event}");
+                return;
+            }
+            match serde_json::from_value::<E>(event.clone()) {
+                Ok(step) => each(step),
+                Err(_) => println!("{event}"),
+            }
+        })
     }
 
     fn send(&mut self, command: Command) -> Result<u64, String> {
@@ -561,18 +586,4 @@ fn read_frame(stream: &mut BufReader<Box<dyn Stream>>) -> Result<Frame, String> 
         return Err("the device closed the connection".to_string());
     }
     from_line(&line)
-}
-
-pub fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
-pub fn ask(question: &str) -> Result<bool, String> {
-    eprint!("{question} {} ", paint(style::LABEL, "[y/N]"));
-    std::io::stderr().flush().ok();
-    let mut answer = String::new();
-    std::io::stdin()
-        .read_line(&mut answer)
-        .map_err(|err| err.to_string())?;
-    Ok(matches!(answer.trim(), "y" | "Y" | "yes"))
 }

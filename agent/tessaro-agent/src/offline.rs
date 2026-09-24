@@ -11,9 +11,7 @@
 //! /data takes effect without restarting anything.
 
 use std::fs;
-use std::path::{Path, PathBuf};
-use std::process;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::path::Path;
 
 use async_trait::async_trait;
 
@@ -106,43 +104,14 @@ impl Offline<'_> {
 /// browser is never served a half-written page. The debug screen stages its
 /// page the same way, next to this one.
 pub(crate) fn replace(dir: &Path, name: &str, contents: &[u8]) -> std::io::Result<()> {
-    let temp = dir.join(temp_name(name));
-    write_then_rename(&temp, &dir.join(name), contents).inspect_err(|_| {
-        // Best-effort: if the rename is what failed, the copy is still
-        // sitting there, and the directory is small and root-owned.
-        let _ = fs::remove_file(&temp);
-    })
-}
-
-fn write_then_rename(temp: &Path, target: &Path, contents: &[u8]) -> std::io::Result<()> {
-    fs::write(temp, contents)?;
-    set_mode(temp, 0o644)?;
-    // Same directory, so same filesystem, so the rename is atomic and the
-    // browser never sees a partial page.
-    fs::rename(temp, target)
-}
-
-#[cfg(unix)]
-fn set_mode(path: &Path, mode: u32) -> std::io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(path, fs::Permissions::from_mode(mode))
-}
-
-/// Unique within the directory without pulling in an RNG: this process is the
-/// only writer, and the clock moves between staging attempts.
-fn temp_name(name: &str) -> PathBuf {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|elapsed| elapsed.subsec_nanos())
-        .unwrap_or(0);
-
-    PathBuf::from(format!(".{name}.{}.{nanos}", process::id()))
+    crate::store::replace(&dir.join(name), contents, 0o644, None)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::test_support::config_with;
+    use std::path::PathBuf;
 
     struct Fixture {
         _root: tempfile::TempDir,

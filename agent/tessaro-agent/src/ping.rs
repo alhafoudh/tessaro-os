@@ -79,7 +79,7 @@ impl Plan {
             ));
         }
         if let Some(name) = &interface {
-            check_interface(name)?;
+            protocol::keys::check_interface(name)?;
         }
         Ok(Self {
             host,
@@ -94,19 +94,6 @@ impl Plan {
     pub fn total(&self) -> Duration {
         RESOLVE + (self.interval + self.timeout) * self.count + Duration::from_secs(5)
     }
-}
-
-/// An interface name the kernel could have: `SO_BINDTODEVICE` takes it raw.
-pub fn check_interface(name: &str) -> Result<(), String> {
-    if name.is_empty()
-        || name.len() > 15
-        || !name
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || "-_.:".contains(ch))
-    {
-        return Err(format!("{name} is not an interface name"));
-    }
-    Ok(())
 }
 
 pub type Step = Result<PingEvent, String>;

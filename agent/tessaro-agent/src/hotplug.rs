@@ -28,7 +28,7 @@
 
 use std::fs;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Command;
 
 /// The comment line `tessaro-weston-config` writes: every connector that was
 /// connected when it ran, space separated, or `(none)`.
@@ -98,23 +98,20 @@ pub fn generate(
     sources: &Sources,
     override_env: &Path,
 ) -> Result<String, String> {
-    let output = Command::new(generator)
-        .env("TESSARO_WESTON_CONFIG", out)
-        .env("TESSARO_DRM_ROOT", sources.drm)
-        .env("TESSARO_INPUT_ROOT", sources.input)
-        .env("TESSARO_OVERRIDE", override_env)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .output()
-        .map_err(|err| format!("{}: {err}", generator.display()))?;
+    let output = crate::proc::run(
+        Command::new(generator)
+            .env("TESSARO_WESTON_CONFIG", out)
+            .env("TESSARO_DRM_ROOT", sources.drm)
+            .env("TESSARO_INPUT_ROOT", sources.input)
+            .env("TESSARO_OVERRIDE", override_env),
+        None,
+    )?;
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!(
             "{} failed ({}): {}",
             generator.display(),
             output.status,
-            stderr.trim()
+            crate::proc::said(&output)
         ));
     }
     fs::read_to_string(out).map_err(|err| format!("{}: {err}", out.display()))

@@ -29,14 +29,15 @@ use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use protocol::{Done, UpdateBegun, UpdatePhase, UpdateReceived, UpdateResult, UpdateStatus};
+use protocol::{Done, ImageUpload, Received, UpdateBegun, UpdatePhase, UpdateResult, UpdateStatus};
 use update::image::Image;
 use update::manifest::{Manifest, Mode, Outcome, Pending, Source, Upload};
 use update::{bmap, flash, fsutil, layout, megabytes, prepare, ptable};
 
-use crate::control::blocking;
+use crate::deadline::blocking;
 use crate::log::Log;
 use crate::paths::Paths;
+use crate::sync::lock;
 
 /// Beyond the upload: the manifest, and room for the kiosk to keep writing
 /// its profile meanwhile.
@@ -148,13 +149,17 @@ impl Updates {
     pub async fn begin(
         self: &Arc<Self>,
         caller: &str,
-        upload: Upload,
+        upload: ImageUpload,
     ) -> Result<UpdateBegun, String> {
         self.load().await;
         check_name(&upload.name)?;
         let upload = Upload {
+            name: upload.name,
+            size: upload.size,
             sha256: upload.sha256.to_ascii_lowercase(),
-            ..upload
+            bmap: upload.bmap,
+            verify: upload.verify,
+            repartition: upload.repartition,
         };
         let (name, size, sha256) = (upload.name.clone(), upload.size, upload.sha256.clone());
         if sha256.len() != 64 || !sha256.chars().all(|ch| ch.is_ascii_hexdigit()) {
@@ -279,11 +284,7 @@ impl Updates {
         })
     }
 
-    pub async fn chunk(
-        self: &Arc<Self>,
-        offset: u64,
-        data: String,
-    ) -> Result<UpdateReceived, String> {
+    pub async fn chunk(self: &Arc<Self>, offset: u64, data: String) -> Result<Received, String> {
         self.load().await;
         let (upload, received, head_checked) = {
             let job = lock(&self.job);
@@ -309,15 +310,7 @@ impl Updates {
                 upload.name
             ));
         }
-        let bytes = openssl::base64::decode_block(&data)
-            .map_err(|_| "the chunk is not base64".to_string())?;
-        if bytes.is_empty() || bytes.len() > protocol::UPDATE_CHUNK {
-            return Err(format!(
-                "a chunk is 1 to {} bytes, not {}",
-                protocol::UPDATE_CHUNK,
-                bytes.len()
-            ));
-        }
+        let bytes = protocol::decode_chunk(&data)?;
         if received + bytes.len() as u64 > upload.size {
             return Err("the chunk runs past the end of the file".to_string());
         }
@@ -380,7 +373,7 @@ impl Updates {
             ));
             self.spawn_prepare();
         }
-        Ok(UpdateReceived {
+        Ok(Received {
             received: now,
             size: upload.size,
         })
@@ -422,6 +415,18 @@ impl Updates {
     /// Committed, and applied at the next boot.
     pub fn is_pending(&self) -> bool {
         lock(&self.job).phase == UpdatePhase::Pending
+    }
+
+    /// An upload has been checked against this disk's partition table, or
+    /// is being: it would be applied to a layout that must not move first.
+    pub fn is_staged(&self) -> bool {
+        matches!(
+            lock(&self.job).phase,
+            UpdatePhase::Verifying
+                | UpdatePhase::Preparing
+                | UpdatePhase::Ready
+                | UpdatePhase::Pending
+        )
     }
 
     pub async fn commit(self: &Arc<Self>, caller: &str, wipe_data: bool) -> Result<Done, String> {
@@ -479,9 +484,9 @@ impl Updates {
         self.log.info(format!(
             "update: {name} committed by {caller}; it is applied at the next boot{what}"
         ));
-        Ok(Done {
-            message: format!("{name} is applied at the next boot{what}"),
-        })
+        Ok(Done::new(format!(
+            "{name} is applied at the next boot{what}"
+        )))
     }
 
     pub async fn cancel(self: &Arc<Self>, caller: &str) -> Result<Done, String> {
@@ -498,9 +503,7 @@ impl Updates {
         if preparing {
             self.log
                 .info(format!("update: preparation cancelled by {caller}"));
-            return Ok(Done {
-                message: "cancelling the preparation".to_string(),
-            });
+            return Ok(Done::new("cancelling the preparation"));
         }
 
         let dir = self.paths.update_dir();
@@ -513,9 +516,7 @@ impl Updates {
         .await?;
         *lock(&self.job) = Job::default();
         self.log.info(format!("update: cancelled by {caller}"));
-        Ok(Done {
-            message: "the update is cancelled and its staging removed".to_string(),
-        })
+        Ok(Done::new("the update is cancelled and its staging removed"))
     }
 
     /// Drop the staging, and remember why for `update-status`.
@@ -920,17 +921,11 @@ fn loop_mount_kernel(boot: &Path, dest: &Path, name: &str) -> Result<(), String>
 }
 
 fn run(program: &str, args: &[&std::ffi::OsStr]) -> Result<(), String> {
-    let output = Command::new(program)
-        .args(args)
-        .output()
-        .map_err(|err| format!("{program}: {err}"))?;
+    let output = crate::proc::run(Command::new(program).args(args), None)?;
     if output.status.success() {
         Ok(())
     } else {
-        Err(format!(
-            "{program} failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        ))
+        Err(format!("{program} failed: {}", crate::proc::said(&output)))
     }
 }
 
@@ -948,12 +943,6 @@ fn lower_priority() {
 /// The preparation thread is running: verifying the upload, then staging it.
 fn working(phase: UpdatePhase) -> bool {
     matches!(phase, UpdatePhase::Verifying | UpdatePhase::Preparing)
-}
-
-fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 #[cfg(test)]
@@ -1008,8 +997,8 @@ mod tests {
         )
     }
 
-    fn upload(device: &Device, sha256: String, verify: bool) -> Upload {
-        Upload {
+    fn upload(device: &Device, sha256: String, verify: bool) -> ImageUpload {
+        ImageUpload {
             name: "tessaro.wic".to_string(),
             size: device.image.len() as u64,
             sha256,
@@ -1142,7 +1131,7 @@ mod tests {
         let device = device();
         relayout(&device);
         let first = updates(&device);
-        let upload = Upload {
+        let upload = ImageUpload {
             repartition: true,
             ..upload(&device, update::sha256(&device.image), true)
         };
@@ -1176,7 +1165,7 @@ mod tests {
         let device = device();
         fs::write(&device.paths.meminfo, "MemTotal:  100000 kB\n").unwrap();
         let updates = updates(&device);
-        let upload = Upload {
+        let upload = ImageUpload {
             repartition: true,
             ..upload(&device, update::sha256(&device.image), true)
         };
@@ -1191,7 +1180,7 @@ mod tests {
         let disk = device.paths.sys_block.join("sda/size");
         fs::write(disk, "16384\n").unwrap();
         let updates = updates(&device);
-        let upload = Upload {
+        let upload = ImageUpload {
             repartition: true,
             ..upload(&device, update::sha256(&device.image), true)
         };

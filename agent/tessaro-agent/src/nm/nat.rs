@@ -12,11 +12,10 @@
 //! Applied by the boot oneshot (blocking, before NetworkManager is up) and
 //! by the agent when the setting changes, through `nft -f -` either way.
 
-use std::io::Write;
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::time::Duration;
 
-use crate::deadline::within;
+use crate::proc;
 
 pub const TABLE: &str = "tessaro-hotspot";
 
@@ -39,61 +38,32 @@ pub fn script(nat: bool, interface: &str) -> String {
 
 /// Blocking, for the boot oneshot.
 pub fn apply_blocking(nat: bool, interface: &str) -> Result<(), String> {
-    let mut child = Command::new(BINARY)
-        .args(["-f", "-"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|err| format!("{BINARY}: {err}"))?;
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin
-            .write_all(script(nat, interface).as_bytes())
-            .map_err(|err| format!("{BINARY}: {err}"))?;
-    }
-    let output = child
-        .wait_with_output()
-        .map_err(|err| format!("{BINARY}: {err}"))?;
-    if output.status.success() {
-        Ok(())
-    } else {
-        Err(format!(
-            "{BINARY}: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        ))
-    }
+    let script = script(nat, interface);
+    let output = proc::run(
+        Command::new(BINARY).args(["-f", "-"]),
+        Some(script.as_bytes()),
+    )?;
+    succeeded(&output)
 }
 
 /// On the agent's runtime, under a deadline.
 pub async fn apply(nat: bool, interface: &str) -> Result<(), String> {
-    let mut child = tokio::process::Command::new(BINARY)
-        .args(["-f", "-"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
-        .map_err(|err| format!("{BINARY}: {err}"))?;
-    let body = script(nat, interface);
-    let mut stdin = child.stdin.take();
-    let run = async move {
-        if let Some(stdin) = stdin.as_mut() {
-            use tokio::io::AsyncWriteExt;
-            // naked: bounded by the within() below
-            stdin.write_all(body.as_bytes()).await?;
-        }
-        drop(stdin);
-        // naked: bounded by the within() below
-        child.wait_with_output().await
-    };
-    match within("nft", NFT, run).await {
-        Ok(Ok(output)) if output.status.success() => Ok(()),
-        Ok(Ok(output)) => Err(format!(
-            "{BINARY}: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        )),
-        Ok(Err(err)) => Err(format!("{BINARY}: {err}")),
-        Err(expired) => Err(expired.to_string()),
+    let script = script(nat, interface);
+    let output = proc::run_async(
+        tokio::process::Command::new(BINARY).args(["-f", "-"]),
+        Some(script.as_bytes()),
+        "nft",
+        NFT,
+    )
+    .await?;
+    succeeded(&output)
+}
+
+fn succeeded(output: &std::process::Output) -> Result<(), String> {
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!("{BINARY}: {}", proc::said(output)))
     }
 }
 

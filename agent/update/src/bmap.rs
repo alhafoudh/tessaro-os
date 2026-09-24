@@ -8,6 +8,8 @@
 
 use sha2::{Digest, Sha256};
 
+use crate::hex;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Bmap {
     pub image_size: u64,
@@ -152,10 +154,6 @@ pub fn parse(text: &str) -> Result<Bmap, String> {
 
 fn is_sha256(value: &str) -> bool {
     value.len() == 64 && value.chars().all(|ch| ch.is_ascii_hexdigit())
-}
-
-fn hex(bytes: &[u8]) -> String {
-    crate::hex(bytes)
 }
 
 #[cfg(test)]

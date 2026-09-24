@@ -26,12 +26,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use protocol::files::{self, FileBegun, FileData, FileEntry, FileKind, FileReceived, FilesListing};
-use protocol::Done;
+use protocol::files::{self, FileBegun, FileData, FileEntry, FileKind, FilesListing};
+use protocol::{Done, Received};
 use serde::{Deserialize, Serialize};
 use update::{fsutil, megabytes};
 
-use crate::control::blocking;
+use crate::deadline::blocking;
 use crate::log::Log;
 use crate::paths::Paths;
 
@@ -130,17 +130,9 @@ impl Files {
         path: &str,
         offset: u64,
         data: String,
-    ) -> Result<FileReceived, String> {
+    ) -> Result<Received, String> {
         let path = files::normalize(path)?;
-        let bytes = openssl::base64::decode_block(&data)
-            .map_err(|_| "the chunk is not base64".to_string())?;
-        if bytes.is_empty() || bytes.len() > protocol::UPDATE_CHUNK {
-            return Err(format!(
-                "a chunk is 1 to {} bytes, not {}",
-                protocol::UPDATE_CHUNK,
-                bytes.len()
-            ));
-        }
+        let bytes = protocol::decode_chunk(&data)?;
         let _writes = self.writes.lock().await;
         let root = self.paths.files_dir.clone();
         let staging = self.paths.files_upload_dir();
@@ -155,7 +147,7 @@ impl Files {
                 megabytes(size)
             ));
         }
-        Ok(FileReceived { received, size })
+        Ok(Received { received, size })
     }
 
     pub async fn read(&self, path: &str, offset: u64, len: u64) -> Result<FileData, String> {
@@ -177,9 +169,7 @@ impl Files {
         if made {
             self.log.info(format!("files: made {path}/ for {caller}"));
         }
-        Ok(Done {
-            message: format!("{}/", display(&path)),
-        })
+        Ok(Done::new(format!("{}/", display(&path))))
     }
 
     /// `move` is a keyword, hence the name.
@@ -198,9 +188,7 @@ impl Files {
         .await?;
         self.log
             .info(format!("files: moved {from} to {landed} for {caller}"));
-        Ok(Done {
-            message: format!("moved {from} to {landed}"),
-        })
+        Ok(Done::new(format!("moved {from} to {landed}")))
     }
 
     pub async fn delete(
@@ -228,9 +216,7 @@ impl Files {
         .await?;
         self.log
             .info(format!("files: removed {} for {caller}", paths.join(", ")));
-        Ok(Done {
-            message: format!("removed {}", paths.join(", ")),
-        })
+        Ok(Done::new(format!("removed {}", paths.join(", "))))
     }
 }
 

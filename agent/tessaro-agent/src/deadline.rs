@@ -31,6 +31,33 @@ pub async fn within<T>(
         .map_err(|_| Expired { what, limit })
 }
 
+/// A call that can fail, under a deadline, with either failure as one
+/// message: `what: the error`, or `what did not answer within Ns`.
+pub async fn within_result<T, E: std::fmt::Display>(
+    what: &'static str,
+    limit: Duration,
+    fut: impl Future<Output = Result<T, E>>,
+) -> Result<T, String> {
+    match within(what, limit, fut).await {
+        Ok(Ok(value)) => Ok(value),
+        Ok(Err(err)) => Err(format!("{what}: {err}")),
+        Err(expired) => Err(expired.to_string()),
+    }
+}
+
+/// Any one piece of file work: a store update, a render, a shadow rewrite.
+/// Milliseconds normally; past this the disk is the problem.
+const BLOCKING: Duration = Duration::from_secs(20);
+
+/// Blocking file work, off the runtime thread and under a deadline, so the
+/// one runtime thread never waits on a disk.
+pub async fn blocking<T: Send + 'static>(
+    what: &'static str,
+    work: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    within_result(what, BLOCKING, tokio::task::spawn_blocking(work)).await?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -208,7 +235,11 @@ mod tests {
             "src/cdp/mod.rs",
             "src/cdp/session.rs",
             "src/cdp/targets.rs",
-            "src/control.rs",
+            "src/control/mod.rs",
+            "src/control/access.rs",
+            "src/control/network.rs",
+            "src/control/settings.rs",
+            "src/control/watchers.rs",
             "src/server.rs",
             "src/updates.rs",
             "src/files.rs",
@@ -219,14 +250,22 @@ mod tests {
             "src/nm/txn.rs",
             "src/nm/nat.rs",
             "src/audio.rs",
+            "src/proc.rs",
         ];
 
         // Helpers whose every wait is already under `within()` in their own
         // body, so a call to them is as bounded as a call to `within()`.
         // Each one is reviewed where it is defined; this list is the claim.
         let bounded = [
-            // control::blocking - spawn_blocking under within().
+            // deadline::blocking - spawn_blocking under within().
             "blocking(",
+            // deadline::within_result - within() with its failures joined.
+            "within_result(",
+            // proc::run_async - the whole run under within(); proc.rs is scanned.
+            "run_async(",
+            // Control::update_state and update_auth - one blocking() each.
+            ".update_state(",
+            ".update_auth(",
             // server::send - write_all and flush under within().
             "send(",
             // systemd::Bus - every method is within() inside.

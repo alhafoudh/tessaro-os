@@ -47,9 +47,7 @@ fn crypt_with(password: &str, setting: &str) -> io::Result<String> {
     let phrase = CString::new(password).map_err(io::Error::other)?;
     let setting = CString::new(setting).map_err(io::Error::other)?;
 
-    let _guard = CRYPT
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _guard = crate::sync::lock(&CRYPT);
     // SAFETY: both arguments are valid NUL-terminated strings for the whole
     // call; the result is copied out before the lock is released.
     let result = unsafe { crypt(phrase.as_ptr(), setting.as_ptr()) };
@@ -101,22 +99,12 @@ pub fn set_root(path: &Path, hashed: Option<&str>) -> io::Result<()> {
         .ok_or_else(|| io::Error::other(format!("{} has no root entry", path.display())))?;
 
     let metadata = fs::metadata(path)?;
-    let temporary = dir.join(".shadow.tessaro-tmp");
-    store::write_synced(&temporary, rewritten.as_bytes(), metadata.mode() & 0o7777)?;
-    // The mode given to open() is filtered through the umask; say it again.
-    fs::set_permissions(&temporary, metadata.permissions())?;
-    std::os::unix::fs::chown(&temporary, Some(metadata.uid()), Some(metadata.gid())).or_else(
-        |err| {
-            // Not root (a development host): the owner is already ours.
-            if err.kind() == io::ErrorKind::PermissionDenied {
-                Ok(())
-            } else {
-                Err(err)
-            }
-        },
-    )?;
-    fs::rename(&temporary, path)?;
-    store::sync_dir(dir)
+    store::replace(
+        path,
+        rewritten.as_bytes(),
+        metadata.mode() & 0o7777,
+        Some((metadata.uid(), metadata.gid())),
+    )
 }
 
 fn root_field(text: &str) -> Option<&str> {

@@ -40,6 +40,13 @@ pub struct PendingChange {
     pub previous: Option<String>,
 }
 
+impl PendingChange {
+    /// What a revert goes back to, in words.
+    pub fn previous_or_default(&self) -> &str {
+        protocol::previous_or_default(self.previous.as_deref())
+    }
+}
+
 impl State {
     /// Put a pending change back. Returns whether there was one.
     pub fn revert_pending(&mut self) -> Option<PendingChange> {
@@ -157,6 +164,21 @@ pub fn expand_text(
     )
 }
 
+/// One of `keys::TEMPLATES` filled in the way it is shown: a URL
+/// percent-encoded, the debug screen's text raw.
+pub fn expand(
+    expansion: protocol::keys::Expansion,
+    template: &str,
+    settings: &BTreeMap<String, String>,
+    defaults: &dyn Env,
+    live: &Live,
+) -> (String, Vec<String>) {
+    match expansion {
+        protocol::keys::Expansion::Url => expand_url(template, settings, defaults, live),
+        protocol::keys::Expansion::Text => expand_text(template, settings, defaults, live),
+    }
+}
+
 /// What one placeholder stands for, as `expand_url` describes.
 fn resolve(
     name: &str,
@@ -213,7 +235,11 @@ impl Live {
 }
 
 /// A setting as set, else the image default.
-fn setting(settings: &BTreeMap<String, String>, defaults: &dyn Env, name: &str) -> Option<String> {
+pub fn setting(
+    settings: &BTreeMap<String, String>,
+    defaults: &dyn Env,
+    name: &str,
+) -> Option<String> {
     let key = protocol::keys::find(name)?;
     settings
         .get(name)

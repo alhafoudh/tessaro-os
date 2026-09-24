@@ -7,7 +7,7 @@
 
 use std::fs;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -40,6 +40,36 @@ pub fn dir() -> PathBuf {
     PathBuf::from(home).join(".config").join("tessaro")
 }
 
+/// Replace `path` with `body`, readable by this user only (0600), through a
+/// synced temporary beside it: a file this client keeps a token or a pin in
+/// is never half-written. Makes the directory if it is missing.
+pub fn write_private(path: &Path, body: &[u8]) -> Result<(), String> {
+    let dir = path
+        .parent()
+        .ok_or_else(|| format!("{}: no directory", path.display()))?;
+    fs::create_dir_all(dir).map_err(|err| format!("{}: {err}", dir.display()))?;
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let temporary = dir.join(format!(".{name}.tmp"));
+
+    let mut options = fs::OpenOptions::new();
+    options.create(true).truncate(true).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options
+        .open(&temporary)
+        .map_err(|err| format!("{}: {err}", temporary.display()))?;
+    file.write_all(body)
+        .and_then(|()| file.sync_all())
+        .map_err(|err| format!("{}: {err}", temporary.display()))?;
+    fs::rename(&temporary, path).map_err(|err| format!("{}: {err}", path.display()))
+}
+
 impl Nodes {
     pub fn load() -> Result<Self, String> {
         let path = dir().join("nodes.json");
@@ -53,28 +83,9 @@ impl Nodes {
     }
 
     pub fn save(&self) -> Result<(), String> {
-        let dir = dir();
-        fs::create_dir_all(&dir).map_err(|err| format!("{}: {err}", dir.display()))?;
-        let path = dir.join("nodes.json");
-        let temporary = dir.join(".nodes.json.tmp");
-
         let mut body = serde_json::to_vec_pretty(self).map_err(|err| err.to_string())?;
         body.push(b'\n');
-
-        let mut options = fs::OpenOptions::new();
-        options.create(true).truncate(true).write(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let mut file = options
-            .open(&temporary)
-            .map_err(|err| format!("{}: {err}", temporary.display()))?;
-        file.write_all(&body)
-            .and_then(|()| file.sync_all())
-            .map_err(|err| format!("{}: {err}", temporary.display()))?;
-        fs::rename(&temporary, &path).map_err(|err| format!("{}: {err}", path.display()))
+        write_private(&dir().join("nodes.json"), &body)
     }
 
     pub fn by_id(&self, id: &str) -> Option<&Node> {

@@ -14,6 +14,8 @@ mod connect;
 mod files;
 mod net;
 mod nodes;
+mod progress;
+mod prompt;
 mod ssh;
 mod storage;
 mod style;
@@ -23,15 +25,14 @@ use std::collections::BTreeMap;
 use std::process::ExitCode;
 
 // Shadow the std macros: these strip colors when stdout is not a terminal.
-use anstream::{eprint, eprintln, println};
+use anstream::{eprintln, println};
 use clap::builder::styling::Styles;
-use clap::{ColorChoice, CommandFactory, Parser, Subcommand, ValueEnum};
+use clap::builder::{PossibleValuesParser, TypedValueParser};
+use clap::{Args, ColorChoice, CommandFactory, Parser, Subcommand, ValueEnum};
 use protocol::keys;
-use protocol::speedtest_size_label as size_label;
 use protocol::{
-    Applied, Claimed, Command, Connector, Direction, Done, KeyInfo, Net, NetInterface, NodeInfo,
-    Password, Screenshot, Settings, Source, SpeedtestEvent, SshKeyInfo, Status,
-    Target as RestartTarget, TokenCreated, TokenInfo,
+    Applied, Claimed, Command, Connector, Done, KeyInfo, NodeInfo, Password, RestartTarget,
+    Screenshot, Settings, Source, SshKeyInfo, SshKeyRevoked, Status, TokenCreated, TokenInfo,
 };
 use serde_json::Value;
 
@@ -191,10 +192,10 @@ enum DeviceCmd {
     /// handshake, then round trips over the control connection. Needs no
     /// token, like `id`.
     Ping {
-        #[arg(long, short = 'c', default_value_t = 4)]
+        #[arg(long, short = 'c', default_value_t = protocol::PING_DEFAULT_COUNT)]
         count: u32,
         /// Seconds between round trips.
-        #[arg(long, short = 'i', default_value_t = 1.0)]
+        #[arg(long, short = 'i', default_value_t = net::seconds(protocol::PING_DEFAULT_INTERVAL_MS))]
         interval: f64,
     },
     /// The device's journal.
@@ -210,7 +211,9 @@ enum DeviceCmd {
     /// Restart the browser, the display (Weston, with the browser and agent)
     /// or the agent.
     Restart {
-        what: What,
+        #[arg(value_parser = PossibleValuesParser::new(RestartTarget::NAMES)
+            .map(|name| name.parse::<RestartTarget>().expect("one of the names")))]
+        what: RestartTarget,
     },
     Reboot,
     /// Defaults, unclaimed, empty root password - the fresh-install state.
@@ -258,21 +261,7 @@ enum SshCmd {
     /// pinned connection, adds it to root's authorized_keys, then runs ssh
     /// with the host key the device reported - no password, no first-use
     /// prompt. Anything after `--` goes to ssh: options or a command.
-    Connect {
-        /// The key to send: a .pub file, or a private key with its .pub
-        /// next to it. Default: the first of ~/.ssh/id_ed25519.pub,
-        /// id_ecdsa.pub, id_ecdsa_sk.pub, id_ed25519_sk.pub, id_rsa.pub.
-        #[arg(long, short = 'i', value_name = "PATH")]
-        key: Option<std::path::PathBuf>,
-        /// The device's SSH port.
-        #[arg(long, default_value_t = 22)]
-        port: u16,
-        /// Send the key and print the ssh command instead of running it.
-        #[arg(long)]
-        print: bool,
-        #[arg(last = true, value_name = "SSH_ARGS")]
-        args: Vec<String>,
-    },
+    Connect(ssh::Options),
     /// The SSH keys that can log in as root. Unclaiming or a factory reset
     /// removes them all.
     #[command(subcommand)]
@@ -307,27 +296,30 @@ enum ConfigCmd {
     Set {
         #[arg(required = true, value_name = "KEY=VALUE")]
         pairs: Vec<String>,
-        /// Refuse unless the settings are still at this revision.
-        #[arg(long)]
-        if_revision: Option<u64>,
-        /// Save and render, but restart nothing yet. Not for network keys,
-        /// which are always applied and checked at once.
-        #[arg(long)]
-        no_apply: bool,
         #[command(flatten)]
-        verify: net::VerifyArg,
+        how: ChangeArgs,
     },
     /// Go back to the image default for KEY ...
     Unset {
         #[arg(required = true)]
         keys: Vec<String>,
-        #[arg(long)]
-        if_revision: Option<u64>,
-        #[arg(long)]
-        no_apply: bool,
         #[command(flatten)]
-        verify: net::VerifyArg,
+        how: ChangeArgs,
     },
+}
+
+/// How `config set` and `config unset` apply a change.
+#[derive(Args)]
+struct ChangeArgs {
+    /// Refuse unless the settings are still at this revision.
+    #[arg(long)]
+    if_revision: Option<u64>,
+    /// Save and render, but restart nothing yet. Not for network keys,
+    /// which are always applied and checked at once.
+    #[arg(long)]
+    no_apply: bool,
+    #[command(flatten)]
+    verify: net::VerifyArg,
 }
 
 #[derive(Subcommand)]
@@ -432,37 +424,7 @@ enum UpdateCmd {
     /// Run it again after a dropped connection and it resumes.
     ///
     ///   tessaro-ctl -n brave-otter-3fa2 update send tessaro-os-qemux86-64.rootfs.wic.bz2
-    Send {
-        image: std::path::PathBuf,
-        /// The block map, if it is not IMAGE without .bz2 plus .bmap.
-        #[arg(long)]
-        bmap: Option<std::path::PathBuf>,
-        /// Also re-create /data: every setting, the claim, the browser
-        /// profile and the device's identity go. It comes back unclaimed.
-        #[arg(long)]
-        wipe_data: bool,
-        /// Write the whole disk - partition table, boot, root and /data - as
-        /// `mise run image:flash` would, for a device on another disk layout.
-        /// Implies --wipe-data. The device holds the upload in RAM while it
-        /// writes, and a power cut before it is done needs a physical
-        /// reflash.
-        #[arg(long)]
-        repartition: bool,
-        /// Stage and commit it, but leave the reboot for later.
-        #[arg(long)]
-        no_reboot: bool,
-        /// Do not wait for the device to come back.
-        #[arg(long)]
-        no_wait: bool,
-        /// Skip the device's check of the whole upload against its SHA-256
-        /// before preparing it. The bmap's checksums still cover every block
-        /// that is written. Needs a device on an image that knows the flag;
-        /// an older one checks anyway.
-        #[arg(long)]
-        no_verify: bool,
-        #[arg(long, short)]
-        yes: bool,
-    },
+    Send(update::Send),
     /// What is under way, and what the last update did.
     Status,
     /// Drop the upload, or the staged update before it is applied.
@@ -496,11 +458,14 @@ enum Toggle {
     Off,
 }
 
-#[derive(Clone, Copy, ValueEnum)]
-enum What {
-    Browser,
-    Weston,
-    Agent,
+impl Toggle {
+    /// The value a `*.enable` or `*.mute` setting takes.
+    fn flag(self) -> &'static str {
+        match self {
+            Toggle::On => "1",
+            Toggle::Off => "0",
+        }
+    }
 }
 
 /// Rust starts with SIGPIPE ignored, so `tessaro-ctl config keys | head` panics on
@@ -562,29 +527,21 @@ fn run(cli: Cli) -> Result<(), String> {
         }
         _ => Trust::KnownOnly,
     };
-    // No read timeout: a followed log is open-ended, and a speed test on a
-    // slow link can go quiet for longer than one. The device bounds that.
-    let follow = match &cli.command {
-        Cmd::Device(DeviceCmd::Logs { follow: true, .. }) => true,
-        Cmd::Network(what) => net::streams(what),
-        Cmd::Storage(what) => storage::streams(what),
-        _ => false,
-    };
-    let mut session = connect::open(&target, &nodes, trust, follow)?;
+    let mut session = connect::open(&target, &nodes, trust)?;
     refresh_address(&mut nodes, &session)?;
     let json = cli.json;
 
     match cli.command {
         Cmd::Device(DeviceCmd::Status) => {
-            let status: Status = call(&mut session, Command::Status)?;
+            let status: Status = session.call(Command::Status)?;
             print(json, &status, || show_status(&status))
         }
         Cmd::Device(DeviceCmd::Id) => {
-            let node: NodeInfo = call(&mut session, Command::Id)?;
+            let node: NodeInfo = session.call(Command::Id)?;
             print(json, &node, || show_node(&node))
         }
         Cmd::Config(ConfigCmd::Keys { key }) => {
-            let mut keys: Vec<KeyInfo> = call(&mut session, Command::Keys)?;
+            let mut keys: Vec<KeyInfo> = session.call(Command::Keys)?;
             if let Some(wanted) = &key {
                 let template = wanted.starts_with(protocol::keys::DATA_PREFIX);
                 keys.retain(|k| &k.name == wanted || (template && k.name == "data.<name>"));
@@ -606,59 +563,13 @@ fn run(cli: Cli) -> Result<(), String> {
                 }
             })
         }
-        Cmd::Network(net::NetworkCmd::Show) => {
-            let net: Net = call(&mut session, Command::Net)?;
-            print(json, &net, || show_net(&net))
-        }
-        Cmd::Network(net::NetworkCmd::Interfaces) => {
-            let net: Net = call(&mut session, Command::Net)?;
-            print(json, &net.interfaces, || {
-                for (at, interface) in net.interfaces.iter().enumerate() {
-                    if at > 0 {
-                        println!();
-                    }
-                    show_interface(interface);
-                }
-            })
-        }
-        Cmd::Network(net::NetworkCmd::Speedtest { max_size, tests }) => {
-            if !json {
-                eprintln!(
-                    "{}",
-                    paint(
-                        style::MUTED,
-                        format!(
-                            "{}: measuring against speed.cloudflare.com, up to {} per sample...",
-                            session.node.name,
-                            size_label(max_size)
-                        )
-                    )
-                );
-            }
-            session.stream(
-                Command::Speedtest {
-                    max_size: Some(max_size),
-                    tests: Some(tests),
-                },
-                |event| {
-                    if json {
-                        println!("{event}");
-                    } else {
-                        match serde_json::from_value::<SpeedtestEvent>(event.clone()) {
-                            Ok(step) => println!("{}", speedtest_line(&step)),
-                            Err(_) => println!("{event}"),
-                        }
-                    }
-                },
-            )
-        }
         Cmd::Network(what) => net::run(&mut session, what, json),
         Cmd::Storage(what) => storage::run(&mut session, what, json),
         Cmd::Device(DeviceCmd::Ping { count, interval }) => {
             net::ping(&mut session, json, count, interval)
         }
         Cmd::Screen(ScreenCmd::Modes) => {
-            let connectors: Vec<Connector> = call(&mut session, Command::Modes)?;
+            let connectors: Vec<Connector> = session.call(Command::Modes)?;
             print(json, &connectors, || {
                 if connectors.is_empty() {
                     println!(
@@ -687,7 +598,7 @@ fn run(cli: Cli) -> Result<(), String> {
             })
         }
         Cmd::Config(ConfigCmd::Get { key }) => {
-            let settings: Settings = call(&mut session, Command::Get { key })?;
+            let settings: Settings = session.call(Command::Get { key })?;
             print(json, &settings, || {
                 for setting in &settings.settings {
                     let value = setting.value.as_deref().unwrap_or("");
@@ -708,12 +619,7 @@ fn run(cli: Cli) -> Result<(), String> {
                 );
             })
         }
-        Cmd::Config(ConfigCmd::Set {
-            pairs,
-            if_revision,
-            no_apply,
-            verify,
-        }) => {
+        Cmd::Config(ConfigCmd::Set { pairs, how }) => {
             let mut values = BTreeMap::new();
             for pair in pairs {
                 let (key, value) = pair
@@ -724,46 +630,21 @@ fn run(cli: Cli) -> Result<(), String> {
             let network = values.keys().any(|key| net::is_network_key(key));
             let command = Command::Set {
                 values,
-                if_revision,
-                apply: !no_apply,
-                verify: verify.verify.clone(),
+                if_revision: how.if_revision,
+                apply: !how.no_apply,
+                verify: how.verify.verify.clone(),
             };
-            if network && !no_apply {
-                return net::apply(
-                    &mut session,
-                    json,
-                    "changing the network",
-                    &verify.verify,
-                    command,
-                );
-            }
-            let applied: Applied = call(&mut session, command)?;
-            print(json, &applied, || show_applied(&applied, no_apply))
+            change(&mut session, json, command, network, &how)
         }
-        Cmd::Config(ConfigCmd::Unset {
-            keys,
-            if_revision,
-            no_apply,
-            verify,
-        }) => {
+        Cmd::Config(ConfigCmd::Unset { keys, how }) => {
             let network = keys.iter().any(|key| net::is_network_key(key));
             let command = Command::Unset {
                 keys,
-                if_revision,
-                apply: !no_apply,
-                verify: verify.verify.clone(),
+                if_revision: how.if_revision,
+                apply: !how.no_apply,
+                verify: how.verify.verify.clone(),
             };
-            if network && !no_apply {
-                return net::apply(
-                    &mut session,
-                    json,
-                    "changing the network",
-                    &verify.verify,
-                    command,
-                );
-            }
-            let applied: Applied = call(&mut session, command)?;
-            print(json, &applied, || show_applied(&applied, no_apply))
+            change(&mut session, json, command, network, &how)
         }
         Cmd::Screen(ScreenCmd::Confirm) => done(&mut session, Command::Confirm, json),
         Cmd::Browser(BrowserCmd::Maintenance { state, url }) => toggle(
@@ -799,16 +680,11 @@ fn run(cli: Cli) -> Result<(), String> {
         }
         Cmd::Audio(command) => audio::run(&mut session, command, json),
         Cmd::Device(DeviceCmd::Restart { what }) => {
-            let what = match what {
-                What::Browser => RestartTarget::Browser,
-                What::Weston => RestartTarget::Weston,
-                What::Agent => RestartTarget::Agent,
-            };
             done(&mut session, Command::Restart { what }, json)
         }
         Cmd::Device(DeviceCmd::Reboot) => done(&mut session, Command::Reboot, json),
         Cmd::Screen(ScreenCmd::Screenshot { output }) => {
-            let shot: Screenshot = call(&mut session, Command::Screenshot)?;
+            let shot: Screenshot = session.call(Command::Screenshot)?;
             let bytes = data_encoding::BASE64
                 .decode(shot.data.as_bytes())
                 .map_err(|err| format!("the image is not base64: {err}"))?;
@@ -843,10 +719,10 @@ fn run(cli: Cli) -> Result<(), String> {
             let name = name.unwrap_or_else(default_client_name);
             // A token left over from before an unclaim means nothing now.
             session.clear_token();
-            let claimed: Claimed = call(&mut session, Command::Claim { name })?;
+            let claimed: Claimed = session.call(Command::Claim { name })?;
             remember(&mut nodes, &session, Some(claimed.token.clone()), local)?;
             if json {
-                return print(true, &claimed, || {});
+                return print_json(&claimed);
             }
             println!(
                 "{} {} {}",
@@ -878,7 +754,7 @@ fn run(cli: Cli) -> Result<(), String> {
         Cmd::Access(AccessCmd::Login { token, .. }) => {
             session.set_token(token.clone());
             // Prove the token before storing it.
-            let _: Vec<TokenInfo> = call(&mut session, Command::TokenList)?;
+            let _: Vec<TokenInfo> = session.call(Command::TokenList)?;
             remember(&mut nodes, &session, Some(token), local)?;
             println!(
                 "{} {} {}",
@@ -891,7 +767,7 @@ fn run(cli: Cli) -> Result<(), String> {
         Cmd::Nodes(_) | Cmd::Completion { .. } => unreachable!("handled above"),
         Cmd::Access(AccessCmd::Token(command)) => match command {
             TokenCmd::Create { name } => {
-                let created: TokenCreated = call(&mut session, Command::TokenCreate { name })?;
+                let created: TokenCreated = session.call(Command::TokenCreate { name })?;
                 print(json, &created, || {
                     show_once(
                         &format!("token {} - shown this once:", created.id),
@@ -910,7 +786,7 @@ fn run(cli: Cli) -> Result<(), String> {
                 })
             }
             TokenCmd::List => {
-                let tokens: Vec<TokenInfo> = call(&mut session, Command::TokenList)?;
+                let tokens: Vec<TokenInfo> = session.call(Command::TokenList)?;
                 print(json, &tokens, || {
                     for token in &tokens {
                         println!(
@@ -933,25 +809,16 @@ fn run(cli: Cli) -> Result<(), String> {
             } => {
                 let password = if random {
                     None
-                } else if password.is_some() || password_stdin {
+                } else {
                     let password = match password {
                         Some(password) => password,
-                        None => net::password(true, "")?,
+                        None if password_stdin => prompt::password(true, "")?,
+                        None => prompt::new_password("new root password: ")?,
                     };
                     protocol::check_password(&password)?;
                     Some(password)
-                } else {
-                    let first = rpassword::prompt_password("new root password: ")
-                        .map_err(|err| err.to_string())?;
-                    let again =
-                        rpassword::prompt_password("again: ").map_err(|err| err.to_string())?;
-                    if first != again {
-                        return Err("the passwords do not match".to_string());
-                    }
-                    protocol::check_password(&first)?;
-                    Some(first)
                 };
-                let set: Password = call(&mut session, Command::PasswordSet { password })?;
+                let set: Password = session.call(Command::PasswordSet { password })?;
                 print(json, &set, || match &set.password {
                     Some(password) => {
                         show_once("root password - shown this once, store it now:", password)
@@ -960,24 +827,10 @@ fn run(cli: Cli) -> Result<(), String> {
                 })
             }
         },
-        Cmd::Ssh(SshCmd::Connect {
-            key,
-            port,
-            print,
-            args,
-        }) => ssh::run(
-            &mut session,
-            ssh::Options {
-                key,
-                port,
-                print,
-                args,
-            },
-            json,
-        ),
+        Cmd::Ssh(SshCmd::Connect(options)) => ssh::run(&mut session, options, json),
         Cmd::Ssh(SshCmd::Keys(command)) => match command {
             SshKeysCmd::List => {
-                let keys: Vec<SshKeyInfo> = call(&mut session, Command::SshKeyList)?;
+                let keys: Vec<SshKeyInfo> = session.call(Command::SshKeyList)?;
                 print(json, &keys, || {
                     if keys.is_empty() {
                         println!("{}", paint(style::MUTED, "no ssh keys"));
@@ -997,21 +850,19 @@ fn run(cli: Cli) -> Result<(), String> {
                 })
             }
             SshKeysCmd::Revoke { key } => {
-                let done: Done = call(&mut session, Command::SshKeyRevoke { key })?;
-                print(json, &done, || {
-                    match done.message.strip_prefix("revoked ") {
-                        Some(fingerprint) => println!(
-                            "{} {}",
-                            paint(style::OK, "revoked"),
-                            paint(style::MUTED, fingerprint)
-                        ),
-                        None => println!("{}", done.message),
-                    }
+                let revoked: SshKeyRevoked = session.call(Command::SshKeyRevoke { key })?;
+                print(json, &revoked, || match &revoked.fingerprint {
+                    Some(fingerprint) => println!(
+                        "{} {}",
+                        paint(style::OK, "revoked"),
+                        paint(style::MUTED, fingerprint)
+                    ),
+                    None => println!("{}", revoked.message),
                 })
             }
         },
         Cmd::Access(AccessCmd::Unclaim { yes }) => {
-            confirm_destructive(
+            prompt::confirm_destructive(
                 &session,
                 yes,
                 "remove every token and ssh key and empty the root password",
@@ -1020,7 +871,7 @@ fn run(cli: Cli) -> Result<(), String> {
             forget_session(&mut nodes, &session)
         }
         Cmd::Device(DeviceCmd::FactoryReset { yes }) => {
-            confirm_destructive(
+            prompt::confirm_destructive(
                 &session,
                 yes,
                 "erase every setting, remove every token and ssh key and empty the root password",
@@ -1029,26 +880,7 @@ fn run(cli: Cli) -> Result<(), String> {
             forget_session(&mut nodes, &session)
         }
         Cmd::Update(command) => match command {
-            UpdateCmd::Send {
-                image,
-                bmap,
-                wipe_data,
-                repartition,
-                no_reboot,
-                no_wait,
-                no_verify,
-                yes,
-            } => {
-                let options = update::Send {
-                    image,
-                    bmap,
-                    wipe_data: wipe_data || repartition,
-                    repartition,
-                    no_reboot,
-                    no_wait,
-                    no_verify,
-                    yes,
-                };
+            UpdateCmd::Send(options) => {
                 match update::send(&mut session, &target, &nodes, options, json)? {
                     update::Sent::Kept => Ok(()),
                     update::Sent::Wiped => forget_session(&mut nodes, &session),
@@ -1082,12 +914,40 @@ fn completion(shell: CompletionShell) -> String {
     }
 }
 
-fn call<T: serde::de::DeserializeOwned>(
+/// `config set` or `config unset`, sent. A change to network keys waits for
+/// the device's own verdict on it; anything else is answered at once.
+fn change(
     session: &mut Session,
+    json: bool,
     command: Command,
-) -> Result<T, String> {
-    let value = session.call(command)?;
-    serde_json::from_value(value).map_err(|err| format!("unexpected answer: {err}"))
+    network: bool,
+    how: &ChangeArgs,
+) -> Result<(), String> {
+    if network && !how.no_apply {
+        return net::apply(
+            session,
+            json,
+            "changing the network",
+            &how.verify.verify,
+            command,
+        );
+    }
+    let applied: Applied = session.call(command)?;
+    print(json, &applied, || show_applied(&applied, how.no_apply))
+}
+
+/// `KEY=VALUE ...` set and applied, with no revision check: what the
+/// shorthand commands (`browser maintenance on`, `audio volume 40`) are.
+pub(crate) fn set(
+    session: &mut Session,
+    values: BTreeMap<String, String>,
+) -> Result<Applied, String> {
+    session.call(Command::Set {
+        values,
+        if_revision: None,
+        apply: true,
+        verify: Default::default(),
+    })
 }
 
 /// A screen mode `on|off` switches: its flag, and the one setting `on` may
@@ -1118,20 +978,11 @@ fn toggle(
         return Err(format!("{option} goes with `{} on`", mode.command));
     }
     let mut values = BTreeMap::new();
-    let flag = if state == Toggle::On { "1" } else { "0" };
-    values.insert(mode.flag.to_string(), flag.to_string());
+    values.insert(mode.flag.to_string(), state.flag().to_string());
     if let Some(value) = value {
         values.insert(key.to_string(), value);
     }
-    let applied: Applied = call(
-        session,
-        Command::Set {
-            values,
-            if_revision: None,
-            apply: true,
-            verify: Default::default(),
-        },
-    )?;
+    let applied = set(session, values)?;
     print(json, &applied, || {
         let name = mode.name;
         let (label, rest) = match (state, applied.changed.is_empty()) {
@@ -1158,7 +1009,7 @@ fn toggle(
 }
 
 fn done(session: &mut Session, command: Command, json: bool) -> Result<(), String> {
-    let done: Done = call(session, command)?;
+    let done: Done = session.call(command)?;
     print(json, &done, || println!("{}", done.message))
 }
 
@@ -1171,123 +1022,23 @@ fn show_once(intro: &str, secret: &str) {
     println!();
 }
 
+/// `value` as pretty JSON with `--json`, otherwise what `human` prints.
 fn print<T: serde::Serialize>(json: bool, value: &T, human: impl FnOnce()) -> Result<(), String> {
     if json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(value).map_err(|err| err.to_string())?
-        );
+        print_json(value)
     } else {
         human();
+        Ok(())
     }
-    Ok(())
 }
 
-fn show_net(net: &Net) {
-    let primary = net
-        .interface
-        .as_deref()
-        .and_then(|name| net.interfaces.iter().find(|iface| iface.name == name));
-    let address = primary.and_then(|iface| iface.addresses.iter().find(|a| a.family == "ipv4"));
-    let none = paint(style::MUTED, "(none)");
-    let row = |label: &str, value: &str| println!("{} {value}", pad(style::LABEL, label, 12));
-
-    row("hostname", &paint(style::HEADING, &net.hostname));
-    row(
-        "interface",
-        &net.interface
-            .clone()
-            .unwrap_or_else(|| paint(style::WARN, "(no default route)")),
-    );
-    row(
-        "address",
-        &address
-            .map(|a| format!("{}/{}", a.address, a.prefix))
-            .unwrap_or_else(|| none.clone()),
-    );
-    row("gateway", net.gateway.as_ref().unwrap_or(&none));
-    row("public ip", net.public_ip.as_ref().unwrap_or(&none));
-    row(
-        "dns",
-        &if net.dns.is_empty() {
-            none.clone()
-        } else {
-            net.dns.join(", ")
-        },
-    );
-    if let Some(mac) = primary.and_then(|iface| iface.mac.as_ref()) {
-        row("mac", mac);
-    }
-    println!();
-    println!("{}", paint(style::HEADING, "interfaces:"));
-    for iface in &net.interfaces {
-        let addresses: Vec<String> = iface
-            .addresses
-            .iter()
-            .map(|a| format!("{}/{}", a.address, a.prefix))
-            .collect();
-        let marker = if iface.default_route {
-            paint(style::OK, " *")
-        } else {
-            String::new()
-        };
-        println!(
-            "  {} {} {} {}{marker}",
-            pad(style::HEADING, &iface.name, 12),
-            pad(style::MUTED, &iface.kind, 9),
-            pad(style::link_state(&iface.state), &iface.state, 8),
-            if addresses.is_empty() {
-                paint(style::MUTED, "-")
-            } else {
-                addresses.join(" ")
-            }
-        );
-    }
+/// `value` as pretty JSON, the way every `--json` answer is printed.
+pub(crate) fn print_json<T: serde::Serialize>(value: &T) -> Result<(), String> {
     println!(
-        "\n  {}",
-        paint(
-            style::MUTED,
-            "* carries the default route. `tessaro-ctl network interfaces` for details."
-        )
+        "{}",
+        serde_json::to_string_pretty(value).map_err(|err| err.to_string())?
     );
-}
-
-fn show_interface(iface: &NetInterface) {
-    let marker = if iface.default_route {
-        paint(style::OK, "  (default route)")
-    } else {
-        String::new()
-    };
-    let row = |label: &str, value: &str| println!("    {} {value}", pad(style::LABEL, label, 9));
-    println!("{}{marker}", paint(style::HEADING, &iface.name));
-    row("kind", &iface.kind);
-    row(
-        "state",
-        &paint(style::link_state(&iface.state), &iface.state),
-    );
-    if let Some(carrier) = iface.carrier {
-        row("carrier", &style::yes_no(carrier));
-    }
-    if let Some(mac) = &iface.mac {
-        row("mac", mac);
-    }
-    if let Some(mtu) = iface.mtu {
-        row("mtu", &mtu.to_string());
-    }
-    if let Some(speed) = iface.speed_mbps {
-        row("speed", &format!("{speed} Mb/s"));
-    }
-    for address in &iface.addresses {
-        row(
-            &address.family,
-            &format!(
-                "{}/{}  {}",
-                address.address,
-                address.prefix,
-                paint(style::MUTED, format!("({})", address.scope))
-            ),
-        );
-    }
+    Ok(())
 }
 
 fn show_key(key: &KeyInfo) {
@@ -1325,7 +1076,7 @@ fn show_key(key: &KeyInfo) {
         .collect::<Vec<_>>()
         .join(", ");
 
-    let row = |label: &str, value: &str| println!("    {} {value}", pad(style::LABEL, label, 9));
+    let row = style::sub_row;
     println!("{}", paint(style::HEADING, &key.name));
     println!("    {}", key.doc);
     row("value", &current);
@@ -1343,7 +1094,10 @@ fn show_key(key: &KeyInfo) {
             "note",
             &paint(
                 style::WARN,
-                "applied on probation: `tessaro-ctl screen confirm` within 60s or it reverts",
+                format!(
+                    "applied on probation: `{CONFIRM_COMMAND}` within {}s or it reverts",
+                    protocol::CONFIRM_SECONDS
+                ),
             ),
         );
     }
@@ -1352,37 +1106,32 @@ fn show_key(key: &KeyInfo) {
     }
 }
 
-/// `label` padded to the column `show_node` and `show_status` share.
-fn node_row(label: &str, value: &str) {
-    println!("{} {value}", pad(style::LABEL, label, 12));
-}
-
 fn show_node(node: &NodeInfo) {
-    node_row("name", &paint(style::HEADING, &node.name));
-    node_row("node id", &node.id);
-    node_row("machine", &node.machine);
-    node_row("agent", &node.version);
-    node_row("fingerprint", &paint(style::MUTED, &node.fingerprint));
-    node_row("claimed", &style::yes_no(node.claimed));
+    style::row("name", &paint(style::HEADING, &node.name));
+    style::row("node id", &node.id);
+    style::row("machine", &node.machine);
+    style::row("agent", &node.version);
+    style::row("fingerprint", &paint(style::MUTED, &node.fingerprint));
+    style::row("claimed", &style::yes_no(node.claimed));
 }
 
 fn show_status(status: &Status) {
     show_node(&status.node);
     if let Some(os) = &status.os {
         match &status.image_version {
-            Some(version) => node_row(
+            Some(version) => style::row(
                 "os",
                 &format!("{os}, {} {version}", paint(style::LABEL, "image")),
             ),
-            None => node_row("os", os),
+            None => style::row("os", os),
         }
     }
-    node_row("revision", &status.revision.to_string());
+    style::row("revision", &status.revision.to_string());
     if let Some(data) = &status.data {
-        node_row("data", &storage::usage_line(data));
+        style::row("data", &storage::usage_line(data));
     }
     if status.maintenance {
-        node_row(
+        style::row(
             "maintenance",
             &format!(
                 "{} {} {} {}",
@@ -1394,7 +1143,7 @@ fn show_status(status: &Status) {
         );
     }
     if status.debug_screen {
-        node_row(
+        style::row(
             "debug screen",
             &format!(
                 "{} {} {} {}",
@@ -1405,15 +1154,15 @@ fn show_status(status: &Status) {
             ),
         );
     }
-    node_row("browser url", &status.kiosk_url);
-    node_row(
+    style::row("browser url", &status.kiosk_url);
+    style::row(
         "showing",
         &status
             .current_url
             .clone()
             .unwrap_or_else(|| paint(style::WARN, "(cannot tell)")),
     );
-    node_row(
+    style::row(
         "browser",
         &if status.browser_answering {
             paint(style::OK, "answering")
@@ -1429,7 +1178,7 @@ fn show_status(status: &Status) {
         );
     }
     if let Some(audio) = &status.audio {
-        node_row("audio", &audio::summary(audio));
+        style::row("audio", &audio::summary(audio));
     }
     if let Some(pending) = &status.pending {
         println!(
@@ -1437,12 +1186,15 @@ fn show_status(status: &Status) {
             paint(style::WARN, "on probation"),
             pending.key,
             pending.value,
-            paint(style::CMD, "`tessaro-ctl screen confirm`"),
+            paint(style::CMD, format!("`{CONFIRM_COMMAND}`")),
             pending.seconds_left,
-            pending.previous.as_deref().unwrap_or("the default")
+            pending.previous_or_default()
         );
     }
 }
+
+/// What keeps a change that is on probation.
+const CONFIRM_COMMAND: &str = "tessaro-ctl screen confirm";
 
 fn show_applied(applied: &Applied, no_apply: bool) {
     if applied.changed.is_empty() {
@@ -1461,7 +1213,7 @@ fn show_applied(applied: &Applied, no_apply: bool) {
         paint(style::OK, applied.changed.join(", "))
     );
     if let Some(audio) = &applied.audio {
-        audio::show_applied(audio);
+        audio::show_outcome(audio);
     }
     if no_apply {
         println!("{}", paint(style::MUTED, "saved; nothing restarted"));
@@ -1487,104 +1239,10 @@ fn show_applied(applied: &Applied, no_apply: bool) {
                 style::WARN,
                 format!("{}={} is on probation.", pending.key, pending.value)
             ),
-            paint(style::CMD, "tessaro-ctl screen confirm"),
+            paint(style::CMD, CONFIRM_COMMAND),
             pending.seconds_left,
-            pending.previous.as_deref().unwrap_or("the default")
+            pending.previous_or_default()
         );
-    }
-}
-
-/// `--max-size`: one of the sizes the device offers, as `100k`, `1m`, ...
-fn parse_payload(text: &str) -> Result<u64, String> {
-    protocol::SPEEDTEST_SIZES
-        .into_iter()
-        .find(|size| size_label(*size) == text.to_ascii_lowercase())
-        .ok_or_else(|| {
-            let offered: Vec<String> = protocol::SPEEDTEST_SIZES.map(size_label).into();
-            format!("one of {}", offered.join(", "))
-        })
-}
-
-fn speedtest_line(step: &SpeedtestEvent) -> String {
-    // The headline number in `style`, a missing one muted; the spread and the
-    // sample counts are background.
-    let value = |style: anstyle::Style, v: Option<f64>, unit: &str| match v {
-        Some(v) => paint(style, format!("{v:.1} {unit}")),
-        None => paint(style::MUTED, "n/a"),
-    };
-    let mbit = |style, v| value(style, v, "Mbit/s");
-    let ms = |style, v| value(style, v, "ms");
-    let label = |text: &str| pad(style::LABEL, text, 9);
-    match step {
-        SpeedtestEvent::Server { ip, colo, country } => format!(
-            "{} Cloudflare {}, seen from {ip} ({country})",
-            label("server"),
-            paint(style::HEADING, colo)
-        ),
-        SpeedtestEvent::Latency {
-            samples,
-            avg_ms,
-            min_ms,
-            max_ms,
-        } => format!(
-            "{} {} {}",
-            label("latency"),
-            ms(style::HEADING, *avg_ms),
-            paint(
-                style::MUTED,
-                format!(
-                    "(min {}, max {}, {samples} samples)",
-                    ms(anstyle::Style::new(), *min_ms),
-                    ms(anstyle::Style::new(), *max_ms)
-                )
-            )
-        ),
-        SpeedtestEvent::Transfer {
-            direction,
-            size,
-            samples,
-            attempts,
-            median_mbit,
-            min_mbit,
-            max_mbit,
-        } => {
-            let direction = match direction {
-                Direction::Download => "download",
-                Direction::Upload => "upload",
-            };
-            // Samples short of the attempts means retries: worth noticing.
-            let counted = if samples < attempts {
-                style::WARN
-            } else {
-                style::MUTED
-            };
-            format!(
-                "{} {} {} {} {}",
-                label(direction),
-                pad(style::HEADING, size_label(*size), 5),
-                mbit(style::HEADING, *median_mbit),
-                paint(
-                    style::MUTED,
-                    format!(
-                        "(min {}, max {},",
-                        mbit(anstyle::Style::new(), *min_mbit),
-                        mbit(anstyle::Style::new(), *max_mbit)
-                    )
-                ),
-                paint(counted, format!("{samples}/{attempts} samples)"))
-            )
-        }
-        SpeedtestEvent::Result {
-            download_mbit,
-            upload_mbit,
-            latency_ms,
-        } => format!(
-            "{} download {}, upload {}, latency {}",
-            pad(style::HEADING, "result", 9),
-            mbit(style::OK, *download_mbit),
-            mbit(style::OK, *upload_mbit),
-            ms(style::OK, *latency_ms)
-        ),
     }
 }
 
@@ -1698,30 +1356,6 @@ fn forget(nodes: &mut Nodes, node: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn confirm_destructive(session: &Session, yes: bool, what: &str) -> Result<(), String> {
-    if yes {
-        return Ok(());
-    }
-    eprintln!(
-        "{} {}.",
-        paint(style::WARN, format!("This will {what} on")),
-        paint(style::HEADING, &session.node.name)
-    );
-    eprint!(
-        "{}",
-        paint(style::LABEL, "Type the device name to go ahead: ")
-    );
-    let mut typed = String::new();
-    std::io::stdin()
-        .read_line(&mut typed)
-        .map_err(|err| err.to_string())?;
-    if typed.trim() == session.node.name {
-        Ok(())
-    } else {
-        Err("not confirmed".to_string())
-    }
-}
-
 fn list_nodes(nodes: &Nodes, wait: u64, json: bool) -> Result<(), String> {
     let found = connect::browse(std::time::Duration::from_secs(wait));
     if json {
@@ -1737,11 +1371,7 @@ fn list_nodes(nodes: &Nodes, wait: u64, json: bool) -> Result<(), String> {
                 })
             })
             .collect();
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&list).map_err(|err| err.to_string())?
-        );
-        return Ok(());
+        return print_json(&list);
     }
 
     if found.is_empty() {
@@ -1777,7 +1407,6 @@ fn list_nodes(nodes: &Nodes, wait: u64, json: bool) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use anstream::adapter::strip_str;
 
     #[test]
     fn bash_completes_below_the_first_word() {
@@ -1799,34 +1428,6 @@ mod tests {
         assert!(script.contains("tessaro__ctl__subcmd__ssh__subcmd__keys)"));
     }
 
-    fn plain(step: SpeedtestEvent) -> String {
-        strip_str(&speedtest_line(&step)).to_string()
-    }
-
-    #[test]
-    fn speedtest_lines_strip_to_aligned_plain_text() {
-        assert_eq!(
-            plain(SpeedtestEvent::Transfer {
-                direction: Direction::Upload,
-                size: 1_000_000,
-                samples: 3,
-                attempts: 4,
-                median_mbit: Some(42.5),
-                min_mbit: Some(40.0),
-                max_mbit: None,
-            }),
-            "upload    1m    42.5 Mbit/s (min 40.0 Mbit/s, max n/a, 3/4 samples)"
-        );
-        assert_eq!(
-            plain(SpeedtestEvent::Result {
-                download_mbit: Some(93.14),
-                upload_mbit: None,
-                latency_ms: Some(12.0),
-            }),
-            "result    download 93.1 Mbit/s, upload n/a, latency 12.0 ms"
-        );
-    }
-
     #[test]
     fn password_set_takes_one_source() {
         let parse = |args: &[&str]| {
@@ -1843,12 +1444,5 @@ mod tests {
         assert!(parse(&["secret", "--password-stdin"]).is_err());
         assert!(parse(&["secret", "--random"]).is_err());
         assert!(parse(&["--password-stdin", "--random"]).is_err());
-    }
-
-    #[test]
-    fn max_size_takes_the_offered_sizes_only() {
-        assert_eq!(parse_payload("25M"), Ok(25_000_000));
-        assert_eq!(parse_payload("100k"), Ok(100_000));
-        assert!(parse_payload("5m").is_err());
     }
 }

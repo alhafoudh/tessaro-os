@@ -8,7 +8,7 @@
 //! broken thing, and nothing here changes anything.
 //!
 //! Everything is blocking file I/O and one syscall; call it through
-//! `control::blocking`. The one exception is the public address, which only
+//! `deadline::blocking`. The one exception is the public address, which only
 //! the outside world knows: `public_ip` asks Cloudflare over the network, and
 //! the agent keeps the answer in `/run/tessaro-kiosk/public-ip`, which is all
 //! `snapshot` reads - so the boot render and every `get` stay local.
@@ -26,6 +26,13 @@ use crate::paths::Paths;
 /// Cloudflare's trace endpoint, by address: no DNS in the way, and the
 /// certificate carries 1.1.1.1 as an IP SAN, so TLS verifies as usual.
 pub const TRACE_URL: &str = "https://1.1.1.1/cdn-cgi/trace";
+
+/// The client `public_ip` is asked through: 5s to connect, 5s to answer, and
+/// a body no bigger than the trace's few hundred bytes. Not the state
+/// machine's, so it pledges nothing to the watchdog.
+pub fn public_ip_client() -> HyperHttp {
+    HyperHttp::new(5, 5, 4096, crate::watchdog::Heartbeat::detached())
+}
 
 /// The address the internet sees this device at, from the `ip=` line of
 /// Cloudflare's trace. Every phase of the request has its own deadline.
@@ -434,8 +441,9 @@ eth0\t0000000A\t00000000\t0001\t0\t0\t100\t00FFFFFF\t0\t0\t0
     #[tokio::test]
     #[ignore = "needs the internet"]
     async fn cloudflare_answers_with_an_address() {
-        let http = HyperHttp::new(5, 5, 4096, crate::watchdog::Heartbeat::detached());
-        let ip = public_ip(&http).await.expect("the trace answers");
+        let ip = public_ip(&public_ip_client())
+            .await
+            .expect("the trace answers");
         assert!(!ip.is_loopback());
     }
 

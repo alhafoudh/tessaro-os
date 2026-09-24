@@ -14,8 +14,11 @@
 //! ```
 //!
 //! Requests on one connection are answered in order. A streaming command
-//! (`logs`, `speedtest`, `net-ping`) answers with `event` frames and ends
-//! with `end`.
+//! (`logs`, `speedtest`, `net-ping`, `storage-grow`: `Command::is_stream`)
+//! answers with `event` frames and ends with `end`. Each stream's events
+//! are tagged in their own way - `phase` for the speed test and storage,
+//! `event` for ping - and stay so: changing a tag would break every client
+//! that reads it.
 //! `token` is only looked at over TCP; the local socket is root-only and
 //! needs none.
 
@@ -77,12 +80,31 @@ pub struct Request {
     pub command: Command,
 }
 
+/// What `restart` restarts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-pub enum Target {
+pub enum RestartTarget {
     Browser,
     Weston,
     Agent,
+}
+
+impl RestartTarget {
+    /// The wire names, which are also what the command line takes.
+    pub const NAMES: [&'static str; 3] = ["browser", "weston", "agent"];
+}
+
+impl std::str::FromStr for RestartTarget {
+    type Err = String;
+    fn from_str(name: &str) -> Result<Self, String> {
+        from_name(name)
+    }
+}
+
+/// A unit-only enum from its wire name, the way serde spells it.
+fn from_name<T: DeserializeOwned>(name: &str) -> Result<T, String> {
+    serde_json::from_value(Value::String(name.to_string()))
+        .map_err(|_| format!("{name:?} is not one of the accepted values"))
 }
 
 fn yes() -> bool {
@@ -184,6 +206,18 @@ pub enum WifiSecurity {
     Sae,
 }
 
+impl WifiSecurity {
+    /// The wire names, which are also what the command line takes.
+    pub const NAMES: [&'static str; 3] = ["open", "psk", "sae"];
+}
+
+impl std::str::FromStr for WifiSecurity {
+    type Err = String;
+    fn from_str(name: &str) -> Result<Self, String> {
+        from_name(name)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "cmd", rename_all = "kebab-case")]
 pub enum Command {
@@ -224,7 +258,7 @@ pub enum Command {
         url: String,
     },
     Restart {
-        what: Target,
+        what: RestartTarget,
     },
     Reboot,
     Screenshot,
@@ -268,25 +302,7 @@ pub enum Command {
     },
     /// Start, or resume, uploading an image: the `.wic.bz2` is described
     /// here and sent in `UpdateChunk`s. The answer says where to resume.
-    UpdateBegin {
-        name: String,
-        size: u64,
-        /// SHA-256 of the whole file, lower-case hex.
-        sha256: String,
-        /// The `.wic.bmap`, verbatim.
-        bmap: String,
-        /// Check the whole upload against `sha256` before preparing it.
-        /// The bmap's per-range checksums are checked either way.
-        #[serde(default = "yes")]
-        verify: bool,
-        /// Write the whole disk (partition table, every partition, `/data`)
-        /// instead of the root partition: for a device on another disk
-        /// layout. Implies wiping `/data`; a power cut while it writes needs
-        /// a physical reflash. An older device ignores it and refuses the
-        /// layout as before.
-        #[serde(default)]
-        repartition: bool,
-    },
+    UpdateBegin(ImageUpload),
     /// The next piece of the upload, starting at `offset`, base64. At most
     /// `UPDATE_CHUNK` bytes before encoding.
     UpdateChunk {
@@ -435,10 +451,45 @@ pub enum Command {
     },
 }
 
+/// The image `update-begin` describes. Its fields sit in the command itself
+/// on the wire, next to `cmd`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImageUpload {
+    pub name: String,
+    pub size: u64,
+    /// SHA-256 of the whole file, lower-case hex.
+    pub sha256: String,
+    /// The `.wic.bmap`, verbatim.
+    pub bmap: String,
+    /// Check the whole upload against `sha256` before preparing it.
+    /// The bmap's per-range checksums are checked either way.
+    #[serde(default = "yes")]
+    pub verify: bool,
+    /// Write the whole disk (partition table, every partition, `/data`)
+    /// instead of the root partition: for a device on another disk
+    /// layout. Implies wiping `/data`; a power cut while it writes needs
+    /// a physical reflash. An older device ignores it and refuses the
+    /// layout as before.
+    #[serde(default)]
+    pub repartition: bool,
+}
+
 impl Command {
     /// Allowed over TCP without a token.
     pub fn is_public(&self) -> bool {
         matches!(self, Command::Id | Command::Claim { .. } | Command::Ping)
+    }
+
+    /// Answered with `event` frames and an `end`, not one `ok`. The device
+    /// bounds every one of them in time, `logs --follow` aside.
+    pub fn is_stream(&self) -> bool {
+        matches!(
+            self,
+            Command::Logs { .. }
+                | Command::Speedtest { .. }
+                | Command::NetPing { .. }
+                | Command::StorageGrow { .. }
+        )
     }
 }
 
@@ -459,6 +510,18 @@ pub struct Pending {
     pub value: String,
     pub previous: Option<String>,
     pub seconds_left: u64,
+}
+
+impl Pending {
+    /// What a revert goes back to, in words.
+    pub fn previous_or_default(&self) -> &str {
+        previous_or_default(self.previous.as_deref())
+    }
+}
+
+/// `previous`, or `the default` when the key was not set before.
+pub fn previous_or_default(previous: Option<&str>) -> &str {
+    previous.unwrap_or("the default")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -578,8 +641,10 @@ pub struct UpdateBegun {
     pub phase: UpdatePhase,
 }
 
+/// How much of an upload - an image, or one file - the device has, after a
+/// chunk.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct UpdateReceived {
+pub struct Received {
     pub received: u64,
     pub size: u64,
 }
@@ -1008,6 +1073,16 @@ pub struct SshKeyInfo {
     pub comment: String,
 }
 
+/// What `ssh-key-revoke` removed. `message` is what an older client prints.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SshKeyRevoked {
+    pub message: String,
+    /// The removed key's SHA256 fingerprint. `None` from an older device,
+    /// which only says it in `message`.
+    #[serde(default)]
+    pub fingerprint: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Screenshot {
     pub format: String,
@@ -1026,7 +1101,9 @@ pub const SPEEDTEST_UPLOAD_MAX: u64 = 25_000_000;
 /// `7.8 GB`, `512.0 MB`, `4.0 kB`: decimal units, one decimal, like `df -H`.
 pub fn size_label(bytes: u64) -> String {
     let value = bytes as f64;
-    if bytes >= 1_000_000_000 {
+    if bytes >= 1_000_000_000_000 {
+        format!("{:.1} TB", value / 1e12)
+    } else if bytes >= 1_000_000_000 {
         format!("{:.1} GB", value / 1e9)
     } else if bytes >= 1_000_000 {
         format!("{:.1} MB", value / 1e6)
@@ -1115,6 +1192,14 @@ pub struct Done {
     pub message: String,
 }
 
+impl Done {
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+}
+
 /// One frame, newline terminated.
 pub fn to_line<T: Serialize>(value: &T) -> String {
     let mut line = serde_json::to_string(value).expect("protocol types always serialize");
@@ -1124,6 +1209,34 @@ pub fn to_line<T: Serialize>(value: &T) -> String {
 
 pub fn from_line<T: DeserializeOwned>(line: &str) -> Result<T, String> {
     serde_json::from_str(line.trim_end()).map_err(|err| format!("malformed frame: {err}"))
+}
+
+/// Lower-case hex, the way every fingerprint, id and checksum here is
+/// written.
+pub fn hex(bytes: &[u8]) -> String {
+    data_encoding::HEXLOWER.encode(bytes)
+}
+
+/// Hex of either case back to bytes; `None` if it is not hex.
+pub fn unhex(text: &str) -> Option<Vec<u8>> {
+    data_encoding::HEXLOWER_PERMISSIVE
+        .decode(text.as_bytes())
+        .ok()
+}
+
+/// One piece of an upload (`update-chunk`, `files-chunk`): base64 of 1 to
+/// `UPDATE_CHUNK` bytes.
+pub fn decode_chunk(data: &str) -> Result<Vec<u8>, String> {
+    let bytes = data_encoding::BASE64
+        .decode(data.as_bytes())
+        .map_err(|_| "the chunk is not base64".to_string())?;
+    if bytes.is_empty() || bytes.len() > UPDATE_CHUNK {
+        return Err(format!(
+            "a chunk is 1 to {UPDATE_CHUNK} bytes, not {}",
+            bytes.len()
+        ));
+    }
+    Ok(bytes)
 }
 
 /// A root password or a token value a human may have to type. Kept here so
@@ -1169,7 +1282,7 @@ mod tests {
             id: 1,
             token: None,
             command: Command::Restart {
-                what: Target::Browser,
+                what: RestartTarget::Browser,
             },
         });
         assert_eq!(
@@ -1338,6 +1451,7 @@ mod tests {
         assert_eq!(size_label(512), "512 B");
         assert_eq!(size_label(4_096), "4.1 kB");
         assert_eq!(size_label(4_294_967_296), "4.3 GB");
+        assert_eq!(size_label(2_000_398_934_016), "2.0 TB");
         assert_eq!(size_label(0), "0 B");
     }
 
@@ -1354,6 +1468,79 @@ mod tests {
         assert_eq!(fs(1, 99).used_percent(), 1);
         assert_eq!(fs(1, 998).used_percent(), 1);
         assert_eq!(fs(0, 0).used_percent(), 0);
+    }
+
+    #[test]
+    fn the_command_line_names_are_the_wire_names() {
+        for name in RestartTarget::NAMES {
+            let target: RestartTarget = name.parse().unwrap();
+            assert_eq!(serde_json::to_value(target).unwrap(), name);
+        }
+        for name in WifiSecurity::NAMES {
+            let security: WifiSecurity = name.parse().unwrap();
+            assert_eq!(serde_json::to_value(security).unwrap(), name);
+        }
+        assert!("reboot".parse::<RestartTarget>().is_err());
+    }
+
+    #[test]
+    fn only_the_four_streams_stream() {
+        let streams = [
+            r#"{"cmd":"logs"}"#,
+            r#"{"cmd":"speedtest"}"#,
+            r#"{"cmd":"net-ping","host":"a.test"}"#,
+            r#"{"cmd":"storage-grow"}"#,
+        ];
+        for line in streams {
+            assert!(from_line::<Command>(line).unwrap().is_stream(), "{line}");
+        }
+        assert!(!Command::Status.is_stream());
+        assert!(!Command::Ping.is_stream());
+        assert!(!Command::Storage.is_stream());
+    }
+
+    #[test]
+    fn update_begin_keeps_its_fields_beside_cmd() {
+        let command = Command::UpdateBegin(ImageUpload {
+            name: "a.wic.bz2".into(),
+            size: 3,
+            sha256: "ab".into(),
+            bmap: "<bmap/>".into(),
+            verify: true,
+            repartition: false,
+        });
+        assert_eq!(
+            to_line(&command),
+            "{\"cmd\":\"update-begin\",\"name\":\"a.wic.bz2\",\"size\":3,\"sha256\":\"ab\",\
+             \"bmap\":\"<bmap/>\",\"verify\":true,\"repartition\":false}\n"
+        );
+        // What an older client sends, without the defaulted fields.
+        let old: Command = from_line(
+            r#"{"cmd":"update-begin","name":"a.wic.bz2","size":3,"sha256":"ab","bmap":"<bmap/>"}"#,
+        )
+        .unwrap();
+        assert_eq!(old, command);
+    }
+
+    #[test]
+    fn answers_from_older_devices_still_parse() {
+        let revoked: SshKeyRevoked =
+            serde_json::from_str(r#"{"message":"revoked SHA256:x"}"#).unwrap();
+        assert_eq!(revoked.fingerprint, None);
+        let received: Received = serde_json::from_str(r#"{"received":1,"size":2}"#).unwrap();
+        assert_eq!(received.size, 2);
+    }
+
+    #[test]
+    fn hex_and_chunks() {
+        assert_eq!(hex(&[0x0a, 0xff]), "0aff");
+        assert_eq!(unhex("0aFF"), Some(vec![0x0a, 0xff]));
+        assert_eq!(unhex("0"), None);
+        assert_eq!(unhex("zz"), None);
+
+        assert_eq!(decode_chunk("YWJj").unwrap(), b"abc");
+        assert_eq!(decode_chunk("!").unwrap_err(), "the chunk is not base64");
+        assert!(decode_chunk("").unwrap_err().starts_with("a chunk is 1 to"));
     }
 
     #[test]

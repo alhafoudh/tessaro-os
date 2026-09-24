@@ -18,11 +18,11 @@
 //!   torn file must never stop the kiosk from coming up.
 //!
 //! Everything here is blocking file I/O. From the runtime, call it through
-//! `spawn_blocking` - see `control::blocking`.
+//! `spawn_blocking` - see `deadline::blocking`.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
-use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 use serde::de::DeserializeOwned;
@@ -210,21 +210,48 @@ pub fn replace_if_changed(path: &Path, body: &[u8], mode: u32) -> io::Result<boo
     if fs::read(path).is_ok_and(|existing| existing == body) {
         return Ok(false);
     }
+    fs::create_dir_all(parent(path)?)?;
+    replace(path, body, mode, None)?;
+    Ok(true)
+}
 
-    let dir = path
-        .parent()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "no parent directory"))?;
-    fs::create_dir_all(dir)?;
-
+/// Replace `path` with `body` atomically, so nobody ever reads half of it: a
+/// temporary beside it, written and `fsync`ed with exactly `mode` (and
+/// `owner`, uid and gid, when given), renamed over it, the directory synced.
+/// A temporary left by a failure is removed.
+pub fn replace(path: &Path, body: &[u8], mode: u32, owner: Option<(u32, u32)>) -> io::Result<()> {
+    let dir = parent(path)?;
     let name = path
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("file");
     let temporary = dir.join(format!(".{name}.tessaro-tmp"));
-    write_synced(&temporary, body, mode)?;
-    fs::rename(&temporary, path)?;
-    sync_dir(dir)?;
-    Ok(true)
+    let written = (|| {
+        write_synced(&temporary, body, mode)?;
+        // The mode given to open() is filtered through the umask; say it again.
+        fs::set_permissions(&temporary, fs::Permissions::from_mode(mode))?;
+        if let Some((uid, gid)) = owner {
+            std::os::unix::fs::chown(&temporary, Some(uid), Some(gid)).or_else(|err| {
+                // Not root (a development host): the owner is already ours.
+                if err.kind() == io::ErrorKind::PermissionDenied {
+                    Ok(())
+                } else {
+                    Err(err)
+                }
+            })?;
+        }
+        fs::rename(&temporary, path)
+    })();
+    if written.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    written?;
+    sync_dir(dir)
+}
+
+fn parent(path: &Path) -> io::Result<&Path> {
+    path.parent()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "no parent directory"))
 }
 
 #[cfg(test)]

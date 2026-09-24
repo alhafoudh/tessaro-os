@@ -11,9 +11,9 @@ use anstream::{eprintln, println};
 use clap::Subcommand;
 use protocol::{size_label, Command, FsUsage, Partition, Storage, StorageGrowEvent};
 
-use crate::connect::{self, Session};
+use crate::connect::Session;
+use crate::print;
 use crate::style::{self, pad, paint};
-use crate::{call, print};
 
 #[derive(Subcommand)]
 pub enum StorageCmd {
@@ -38,25 +38,20 @@ pub enum StorageCmd {
     },
 }
 
-/// Commands whose answer is a stream, read with no timeout.
-pub fn streams(command: &StorageCmd) -> bool {
-    matches!(command, StorageCmd::Grow { .. })
-}
-
 pub fn run(session: &mut Session, command: StorageCmd, json: bool) -> Result<(), String> {
     match command {
         StorageCmd::Show => {
-            let storage: Storage = call(session, Command::Storage)?;
+            let storage: Storage = session.call(Command::Storage)?;
             print(json, &storage, || show(&storage))
         }
         StorageCmd::Partitions => {
-            let storage: Storage = call(session, Command::Storage)?;
+            let storage: Storage = session.call(Command::Storage)?;
             print(json, &storage.partitions, || {
                 show_partitions(&storage.partitions)
             })
         }
         StorageCmd::Usage => {
-            let storage: Storage = call(session, Command::Storage)?;
+            let storage: Storage = session.call(Command::Storage)?;
             print(json, &storage.filesystems, || {
                 show_usage(&storage.filesystems)
             })
@@ -77,7 +72,7 @@ pub fn usage_line(fs: &FsUsage) -> String {
 }
 
 fn show(storage: &Storage) {
-    let row = |label: &str, value: String| println!("{} {value}", pad(style::LABEL, label, 12));
+    let row = |label: &str, value: String| style::row(label, &value);
     let model = storage
         .model
         .as_deref()
@@ -209,30 +204,27 @@ fn grow(session: &mut Session, json: bool, check: bool, yes: bool) -> Result<(),
         return Ok(());
     }
 
-    if !yes
-        && !connect::ask(&format!(
+    crate::prompt::confirm(
+        yes,
+        &format!(
             "Grow /data on {}? It stays mounted and the kiosk keeps running.",
             session.node.name
-        ))?
-    {
-        return Err("not confirmed".to_string());
-    }
+        ),
+    )?;
 
     session
-        .stream(Command::StorageGrow { check: false }, |event| {
-            if json {
-                println!("{event}");
-                return;
-            }
-            match serde_json::from_value::<StorageGrowEvent>(event.clone()) {
-                Ok(StorageGrowEvent::Plan { .. }) => {}
-                Ok(StorageGrowEvent::Step { what, command }) => {
+        .stream_events(
+            Command::StorageGrow { check: false },
+            json,
+            |step: StorageGrowEvent| match step {
+                StorageGrowEvent::Plan { .. } => {}
+                StorageGrowEvent::Step { what, command } => {
                     println!("{} {}", what, paint(style::MUTED, format!("({command})")));
                 }
-                Ok(StorageGrowEvent::Grown {
+                StorageGrowEvent::Grown {
                     partition,
                     filesystem,
-                }) => println!(
+                } => println!(
                     "{} {}",
                     paint(
                         style::OK,
@@ -243,9 +235,8 @@ fn grow(session: &mut Session, json: bool, check: bool, yes: bool) -> Result<(),
                         format!("(partition {})", size_label(partition))
                     )
                 ),
-                Err(_) => println!("{event}"),
-            }
-        })
+            },
+        )
         .map_err(|error| {
             if json {
                 error
@@ -284,7 +275,7 @@ fn show_plan(plan: &StorageGrowEvent) {
             )
         }
     };
-    let row = |label: &str, value: String| println!("{} {value}", pad(style::LABEL, label, 12));
+    let row = |label: &str, value: String| style::row(label, &value);
     row(
         "partition",
         format!(

@@ -58,7 +58,7 @@ connector will be called, the config is generated per boot:
 
 **The generated config is kept true to what is plugged in, by the agent.**
 `tessaro-weston-config` only sees the screens and keyboards attached when
-Weston starts. So `watch_display` in `control.rs` reads `/sys/class/drm/*/`
+Weston starts. So `watch_display` in `control/watchers.rs` reads `/sys/class/drm/*/`
 `status`/`modes` and `/sys/class/input/input*` every 2s. Once a change has
 held still for 5s, it runs the generator again, as root, into
 `/run/tessaro-kiosk/weston-candidate.ini`, and compares that with

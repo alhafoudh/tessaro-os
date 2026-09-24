@@ -7,6 +7,8 @@
 //! one place. Styles decorate the text, never change it: the plain output is
 //! byte for byte what it was before there were colors.
 
+// Shadow the std macro: this strips colors when stdout is not a terminal.
+use anstream::println;
 use anstyle::{AnsiColor, Style};
 
 /// Field names in front of a value: `hostname`, `accepts`, `restarts`.
@@ -66,6 +68,22 @@ pub fn usage_level(percent: u64) -> Style {
         80..95 => WARN,
         _ => BAD,
     }
+}
+
+/// `label value` with the label in a column of its own: a row of a
+/// top-level listing, `status` or `network`.
+pub fn row(label: &str, value: &str) {
+    println!("{} {value}", pad(LABEL, label, 12));
+}
+
+/// A row inside a block, indented under its heading: one key, one interface.
+pub fn sub_row(label: &str, value: &str) {
+    println!("    {} {value}", pad(LABEL, label, 9));
+}
+
+/// The label of a one-line result: `reply`, `latency`, `upload`.
+pub fn label(text: &str) -> String {
+    pad(LABEL, text, 9)
 }
 
 pub fn yes_no(yes: bool) -> String {

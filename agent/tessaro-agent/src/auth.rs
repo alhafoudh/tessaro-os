@@ -17,6 +17,7 @@
 use openssl::memcmp;
 use openssl::rand::rand_bytes;
 use openssl::sha::sha256;
+use protocol::{hex, unhex};
 use serde::{Deserialize, Serialize};
 
 pub const FILE: &str = "auth.json";
@@ -106,20 +107,6 @@ pub fn random(len: usize) -> Result<Vec<u8>, String> {
     let mut bytes = vec![0u8; len];
     rand_bytes(&mut bytes).map_err(|err| format!("no randomness: {err}"))?;
     Ok(bytes)
-}
-
-pub fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
-fn unhex(text: &str) -> Option<Vec<u8>> {
-    if !text.len().is_multiple_of(2) {
-        return None;
-    }
-    (0..text.len())
-        .step_by(2)
-        .map(|at| u8::from_str_radix(text.get(at..at + 2)?, 16).ok())
-        .collect()
 }
 
 /// A token or client name as it will be shown in `token list`.

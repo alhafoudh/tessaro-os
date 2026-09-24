@@ -79,7 +79,7 @@ pub fn run(env: &dyn Env, log: &Log) {
             "{}={} was never confirmed; back to {}",
             pending.key,
             pending.value,
-            pending.previous.as_deref().unwrap_or("the default")
+            pending.previous_or_default()
         )),
         Ok(None) => {}
         Err(err) => log.info(format!("could not check for an unconfirmed change: {err}")),

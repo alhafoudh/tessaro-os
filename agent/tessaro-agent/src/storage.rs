@@ -14,13 +14,13 @@
 //! half way - partition grown, filesystem not - is finished by the next one.
 //!
 //! Everything here is blocking file I/O and child processes; call it
-//! through `control::blocking`, or from the grow's own thread.
+//! through `deadline::blocking`, or from the grow's own thread.
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -541,30 +541,14 @@ pub struct System;
 
 impl Run for System {
     fn run(&mut self, invocation: &Invocation) -> Result<(), String> {
-        let mut child = Command::new(&invocation.program)
-            .args(&invocation.args)
-            .stdin(if invocation.input.is_some() {
-                Stdio::piped()
-            } else {
-                Stdio::null()
-            })
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|err| format!("{}: {err}", invocation.program))?;
-        if let (Some(input), Some(mut stdin)) = (&invocation.input, child.stdin.take()) {
-            stdin
-                .write_all(input.as_bytes())
-                .map_err(|err| format!("{}: {err}", invocation.program))?;
-        }
-        let output = child
-            .wait_with_output()
-            .map_err(|err| format!("{}: {err}", invocation.program))?;
+        let output = crate::proc::run(
+            Command::new(&invocation.program).args(&invocation.args),
+            invocation.input.as_deref().map(str::as_bytes),
+        )?;
         if output.status.success() {
             return Ok(());
         }
-        let said = String::from_utf8_lossy(&output.stderr);
-        let said = said.trim();
+        let said = crate::proc::said(&output);
         Err(if said.is_empty() {
             format!("{} failed: {}", invocation.command_line(), output.status)
         } else {
@@ -581,13 +565,9 @@ pub fn start(
     lock: OwnedMutexGuard<()>,
     log: Arc<Log>,
 ) -> mpsc::Receiver<Step> {
-    let (tx, rx) = mpsc::channel(8);
-    tokio::task::spawn_blocking(move || {
-        let _lock = lock;
-        let send = |step: Step| tx.blocking_send(step).is_ok();
-        grow(&sources, check, &mut System, &send, &log);
-    });
-    rx
+    crate::sync::spawn_steps(lock, move |send| {
+        grow(&sources, check, &mut System, send, &log)
+    })
 }
 
 /// Everything on the grow's thread. Steps run to the end even if whoever

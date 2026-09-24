@@ -16,7 +16,7 @@
 //!
 //! Everything here is pure: settings in, file names and text out.
 
-use protocol::keys;
+use protocol::{keys, Secret};
 
 /// Fixed, so the agent finds them by uuid on every device and every boot.
 pub const ETHERNET_DHCP: Profile = Profile {
@@ -60,10 +60,21 @@ impl Profile {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Keyfile {
     pub name: String,
+    /// Carries the WiFi passwords in the clear, as NetworkManager wants them.
     pub body: String,
+}
+
+/// The name and the size, never the body: it holds a password.
+impl std::fmt::Debug for Keyfile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Keyfile")
+            .field("name", &self.name)
+            .field("body", &format_args!("<{} bytes>", self.body.len()))
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -95,7 +106,7 @@ pub struct Client {
     /// `wpa-psk`, `sae`, or `open`.
     pub key_mgmt: String,
     pub hidden: bool,
-    pub psk: Option<String>,
+    pub psk: Option<Secret>,
     pub fixed: Option<StaticIp>,
 }
 
@@ -104,7 +115,7 @@ pub struct Wifi {
     pub interface: String,
     pub mode: WifiMode,
     pub hotspot_ssid: String,
-    pub hotspot_psk: Option<String>,
+    pub hotspot_psk: Option<Secret>,
     /// Hotspot clients may reach the internet and the LAN through us.
     pub nat: bool,
     /// Only once there is a network to join.
@@ -157,8 +168,8 @@ impl NetConfig {
     /// and may return empty; the fallbacks above fill that in.
     pub fn from_settings(
         value: &dyn Fn(&str) -> String,
-        hotspot_psk: Option<String>,
-        wifi_psk: Option<String>,
+        hotspot_psk: Option<Secret>,
+        wifi_psk: Option<Secret>,
         node_name: &str,
     ) -> Self {
         let get = |name: &str| effective(value, name);
@@ -187,7 +198,7 @@ impl NetConfig {
             }
             .to_string(),
             hidden: get("network.wifi.hidden") == "1",
-            psk: wifi_psk.filter(|psk| !psk.is_empty()),
+            psk: wifi_psk.filter(|psk| !psk.expose().is_empty()),
             fixed: (get("network.wifi.ipv4") == "static").then(|| fixed("network.wifi")),
             ssid,
         });
@@ -205,7 +216,7 @@ impl NetConfig {
                 _ => WifiMode::Hotspot,
             },
             hotspot_ssid: hotspot_ssid(node_name),
-            hotspot_psk: hotspot_psk.filter(|psk| !psk.is_empty()),
+            hotspot_psk: hotspot_psk.filter(|psk| !psk.expose().is_empty()),
             nat: get("network.wifi.nat") != "0",
             client,
         };
@@ -400,7 +411,7 @@ fn hotspot(wifi: &Wifi) -> Keyfile {
     if let Some(psk) = &wifi.hotspot_psk {
         body.push_str(&format!(
             "\n[wifi-security]\nkey-mgmt=wpa-psk\nproto=rsn\npairwise=ccmp\ngroup=ccmp\npmf=1\npsk={}\n",
-            escape(psk)
+            escape(psk.expose())
         ));
     }
     // `shared`: NetworkManager's dnsmasq hands out 10.42.0.x and forwards
@@ -428,7 +439,7 @@ fn wifi_client(wifi: &Wifi, client: &Client) -> Keyfile {
             client.key_mgmt
         ));
         if let Some(psk) = &client.psk {
-            body.push_str(&format!("psk={}\n", escape(psk)));
+            body.push_str(&format!("psk={}\n", escape(psk.expose())));
         }
     }
     body.push_str(&ipv4(
@@ -463,8 +474,8 @@ mod tests {
         let value = move |name: &str| pairs.get(name).cloned().unwrap_or_default();
         NetConfig::from_settings(
             &value,
-            hotspot.map(str::to_string),
-            wifi.map(str::to_string),
+            hotspot.map(|psk| Secret(psk.to_string())),
+            wifi.map(|psk| Secret(psk.to_string())),
             "brave-otter-3fa2",
         )
     }
@@ -508,6 +519,22 @@ mod tests {
         assert!(hotspot.contains("key-mgmt=wpa-psk\n"));
         assert!(hotspot.contains("pmf=1\n"));
         assert!(hotspot.contains("psk=abcdefgh23456789\n"));
+    }
+
+    #[test]
+    fn debug_output_never_shows_a_password() {
+        let config = config(
+            &[("network.wifi.ssid", "Office")],
+            Some("abcdefgh23456789"),
+            Some("hunter2hunter2"),
+        );
+        let files = render(&config);
+        for shown in [format!("{config:?}"), format!("{files:?}")] {
+            assert!(
+                !shown.contains("abcdefgh") && !shown.contains("hunter2"),
+                "{shown}"
+            );
+        }
     }
 
     #[test]

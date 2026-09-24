@@ -88,19 +88,12 @@ pub type Step = Result<SpeedtestEvent, String>;
 
 /// Start the test on its own thread. `lock` is held until that thread is done.
 pub fn start(plan: Plan, lock: OwnedMutexGuard<()>, log: Arc<Log>) -> mpsc::Receiver<Step> {
-    let (tx, rx) = mpsc::channel(8);
-    tokio::task::spawn_blocking(move || {
-        let _lock = lock;
-        run(&plan, &tx, &log);
-    });
-    rx
+    crate::sync::spawn_steps(lock, move |send| run(&plan, send, &log))
 }
 
-/// Everything on the blocking thread. Returns early once `tx` has no
-/// receiver: whoever asked has gone.
-fn run(plan: &Plan, tx: &mpsc::Sender<Step>, log: &Log) {
-    let send = |step: Step| tx.blocking_send(step).is_ok();
-
+/// Everything on the blocking thread. Returns early once `send` says
+/// nobody is listening: whoever asked has gone.
+fn run(plan: &Plan, send: &dyn Fn(Step) -> bool, log: &Log) {
     let client = match reqwest::blocking::Client::builder()
         .timeout(REQUEST)
         .user_agent(USER_AGENT)

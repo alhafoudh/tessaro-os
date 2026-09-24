@@ -25,7 +25,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use protocol::{from_line, to_line, Command, Frame, Hello, Request, MAX_LINE, PROTOCOL_VERSION};
+use protocol::{from_line, to_line, Frame, Hello, Request, MAX_LINE, PROTOCOL_VERSION};
 use serde_json::Value;
 use tokio::io::{
     AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader,
@@ -34,10 +34,12 @@ use tokio::net::{TcpListener, UnixListener};
 use tokio::sync::watch;
 use tokio::time::Instant;
 
-use crate::control::{Caller, Control};
+use crate::control::{Caller, Control, Stream};
 use crate::deadline::within;
 use crate::identity::Tls;
 use crate::log::Log;
+use crate::sync::lock;
+use crate::{speedtest, storage};
 
 const HELLO: Duration = Duration::from_secs(10);
 const HANDSHAKE: Duration = Duration::from_secs(10);
@@ -254,112 +256,13 @@ async fn serve<S>(
             }
         };
 
-        if let Command::Logs {
-            follow,
-            unit,
-            lines,
-        } = &request.command
-        {
-            if stream_logs(
-                &control,
-                &mut write,
-                id,
-                *follow,
-                unit.as_deref(),
-                *lines,
-                shutdown.clone(),
-            )
-            .await // naked: stream_logs bounds its own writes, and a follow is open-ended by design
-            .is_err()
-            {
-                return;
-            }
-            continue;
-        }
-
-        if let Command::Speedtest { max_size, tests } = &request.command {
-            let steps = match control.speedtest(&caller, *max_size, *tests) {
-                Ok(steps) => steps,
-                Err(error) => {
-                    if send(&mut write, &Frame::Error { id, error }).await.is_err() {
-                        return;
-                    }
-                    continue;
-                }
+        if request.command.is_stream() {
+            let streamed = match control.stream(&caller, request.command) {
+                // naked: every stream bounds its own writes and its length, a followed log aside
+                Ok(stream) => serve_stream(&mut write, id, stream, shutdown.clone()).await,
+                Err(error) => send(&mut write, &Frame::Error { id, error }).await,
             };
-            let what = "the speed test";
-            if stream_steps(
-                &mut write,
-                id,
-                steps,
-                what,
-                crate::speedtest::TOTAL,
-                shutdown.clone(),
-            )
-            .await // naked: stream_steps bounds the whole test with speedtest::TOTAL
-            .is_err()
-            {
-                return;
-            }
-            continue;
-        }
-
-        if let Command::StorageGrow { check } = &request.command {
-            let steps = match control.storage_grow(&caller, *check) {
-                Ok(steps) => steps,
-                Err(error) => {
-                    if send(&mut write, &Frame::Error { id, error }).await.is_err() {
-                        return;
-                    }
-                    continue;
-                }
-            };
-            if stream_steps(
-                &mut write,
-                id,
-                steps,
-                "growing /data",
-                crate::storage::TOTAL,
-                shutdown.clone(),
-            )
-            .await // naked: stream_steps bounds the whole grow with storage::TOTAL
-            .is_err()
-            {
-                return;
-            }
-            continue;
-        }
-
-        if let Command::NetPing {
-            host,
-            count,
-            interval_ms,
-            timeout_ms,
-            interface,
-        } = &request.command
-        {
-            let plan = crate::ping::Plan::new(
-                host.clone(),
-                *count,
-                *interval_ms,
-                *timeout_ms,
-                interface.clone(),
-            );
-            let plan = match plan {
-                Ok(plan) => plan,
-                Err(error) => {
-                    if send(&mut write, &Frame::Error { id, error }).await.is_err() {
-                        return;
-                    }
-                    continue;
-                }
-            };
-            let total = plan.total();
-            let steps = control.net_ping(&caller, plan);
-            if stream_steps(&mut write, id, steps, "the ping", total, shutdown.clone())
-                .await // naked: stream_steps bounds the whole run with the plan's total
-                .is_err()
-            {
+            if streamed.is_err() {
                 return;
             }
             continue;
@@ -415,26 +318,53 @@ fn authenticate(
             }
         },
         None if request.command.is_public() => Ok(Caller::Anonymous { peer }),
-        None if !control.claimed() => {
-            Err("this device is unclaimed; `tessaro-ctl access claim` it first".to_string())
-        }
+        None if !control.claimed() => Err(crate::control::UNCLAIMED.to_string()),
         None => Err("a token is required; `tessaro-ctl access login` with one".to_string()),
     }
 }
 
-async fn stream_logs<W: AsyncWrite + Unpin>(
-    control: &Control,
+/// One stream, from its first event to its `end` (or its error).
+async fn serve_stream<W: AsyncWrite + Unpin>(
     write: &mut W,
     id: u64,
+    stream: Stream,
+    shutdown: watch::Receiver<bool>,
+) -> io::Result<()> {
+    match stream {
+        Stream::Journal { command, follow } => {
+            // naked: stream_logs bounds its own writes, and a follow is open-ended by design
+            stream_logs(write, id, command, follow, shutdown).await
+        }
+        Stream::Speedtest(steps) => {
+            // naked: stream_steps bounds the whole test with speedtest::TOTAL
+            stream_steps(
+                write,
+                id,
+                steps,
+                "the speed test",
+                speedtest::TOTAL,
+                shutdown,
+            )
+            .await
+        }
+        Stream::Grow(steps) => {
+            // naked: stream_steps bounds the whole grow with storage::TOTAL
+            stream_steps(write, id, steps, "growing /data", storage::TOTAL, shutdown).await
+        }
+        Stream::Ping { steps, total } => {
+            // naked: stream_steps bounds the whole run with the plan's total
+            stream_steps(write, id, steps, "the ping", total, shutdown).await
+        }
+    }
+}
+
+async fn stream_logs<W: AsyncWrite + Unpin>(
+    write: &mut W,
+    id: u64,
+    mut command: tokio::process::Command,
     follow: bool,
-    unit: Option<&str>,
-    lines: Option<u32>,
     mut shutdown: watch::Receiver<bool>,
 ) -> io::Result<()> {
-    let mut command = match control.journal(follow, unit, lines) {
-        Ok(command) => command,
-        Err(error) => return send(write, &Frame::Error { id, error }).await,
-    };
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(err) => {
@@ -558,10 +488,7 @@ struct Strikes {
 impl Limiter {
     fn refused(&self, ip: IpAddr) -> bool {
         let now = Instant::now();
-        let map = self
-            .0
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let map = lock(&self.0);
         map.get(&ip)
             .and_then(|strikes| strikes.refused_until)
             .is_some_and(|until| now < until)
@@ -569,10 +496,7 @@ impl Limiter {
 
     fn strike(&self, ip: IpAddr) {
         let now = Instant::now();
-        let mut map = self
-            .0
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut map = lock(&self.0);
         // Forget addresses that have been quiet, so the map cannot grow
         // without bound under a scan.
         map.retain(|_, strikes| {

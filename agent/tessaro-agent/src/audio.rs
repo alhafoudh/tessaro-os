@@ -28,8 +28,7 @@ use protocol::{AudioDevice, AudioSide, AudioStatus, AudioTested};
 use serde_json::Value;
 
 use crate::config::Env;
-use crate::control::blocking;
-use crate::deadline::within;
+use crate::deadline::{blocking, within};
 use crate::log::Log;
 use crate::paths::Paths;
 
@@ -776,26 +775,19 @@ impl Audio {
         program: &str,
         args: &[String],
     ) -> Result<Vec<u8>, String> {
-        let child = self
-            .command(program)
-            .args(args)
-            .spawn()
-            .map_err(|err| format!("{program}: {err}"))?;
-        match within(what, limit, child.wait_with_output()).await {
-            Ok(Ok(output)) if output.status.success() => Ok(output.stdout),
-            Ok(Ok(output)) => {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                let said = [stderr.trim(), stdout.trim()]
-                    .into_iter()
-                    .find(|s| !s.is_empty())
-                    .unwrap_or("failed")
-                    .to_string();
-                Err(format!("{program} {}: {said}", args.join(" ")))
-            }
-            Ok(Err(err)) => Err(format!("{program}: {err}")),
-            Err(expired) => Err(expired.to_string()),
+        let output =
+            crate::proc::run_async(self.command(program).args(args), None, what, limit).await?;
+        if output.status.success() {
+            return Ok(output.stdout);
         }
+        let stderr = crate::proc::said(&output);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let said = [stderr.as_str(), stdout.trim()]
+            .into_iter()
+            .find(|s| !s.is_empty())
+            .unwrap_or("failed")
+            .to_string();
+        Err(format!("{program} {}: {said}", args.join(" ")))
     }
 
     async fn wpctl(&self, args: &[String]) -> Result<(), String> {

@@ -31,6 +31,7 @@ use tokio::time::{Instant, MissedTickBehavior};
 use crate::deadline::{self, Expired};
 use crate::log::Log;
 use crate::notify::Notifier;
+use crate::sync::lock;
 
 /// The ceiling on any single pledge, so that an enormous configured timeout
 /// cannot disarm the watchdog for an hour. `config::Config::oversized_budgets`
@@ -79,9 +80,7 @@ impl Heartbeat {
 
     pub fn pledge(&self, what: &'static str, budget: Duration) {
         if let Some(pledge) = &self.0 {
-            let mut pledge = pledge
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut pledge = lock(pledge);
             *pledge = Pledge {
                 due: Instant::now() + budget.min(MAX_PLEDGE),
                 what,
@@ -91,11 +90,7 @@ impl Heartbeat {
 
     /// `Some((what, by how much))` once the current pledge has passed.
     pub fn overdue(&self) -> Option<(&'static str, Duration)> {
-        let pledge = *self
-            .0
-            .as_ref()?
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let pledge = *lock(self.0.as_ref()?);
         let now = Instant::now();
         (now >= pledge.due).then(|| (pledge.what, now - pledge.due))
     }

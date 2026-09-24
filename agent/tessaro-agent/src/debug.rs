@@ -14,6 +14,7 @@ use std::fs;
 use std::path::Path;
 
 use async_trait::async_trait;
+use protocol::keys;
 
 use crate::config::Config;
 use crate::log::Log;
@@ -53,12 +54,8 @@ impl<'a> Debug<'a> {
 
     /// The template as set, else the image default, filled in.
     fn text(&self, live: &state::Live) -> String {
-        let template = self
-            .settings
-            .get("browser.debug.template")
-            .cloned()
-            .or_else(|| self.defaults.get("KIOSK_DEBUG_TEMPLATE").cloned())
-            .unwrap_or_default();
+        let template =
+            state::setting(self.settings, self.defaults, keys::DEBUG_TEMPLATE).unwrap_or_default();
         state::expand_text(&template, self.settings, self.defaults, live).0
     }
 }
