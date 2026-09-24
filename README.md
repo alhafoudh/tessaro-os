@@ -1,255 +1,328 @@
-# tessaro-os
+# Tessaro
 
-Yocto/OpenEmbedded build for **Tessaro**, a web kiosk. It produces bootable
-Linux images for the hardware platforms Tessaro ships on.
+**A web kiosk that looks after itself.** Tessaro turns a Raspberry Pi or an
+x86 PC into a screen that boots straight into your site, fullscreen, and keeps
+it there - through crashed tabs, dead networks and power cuts - while you
+manage it from your laptop with one command.
 
-Built as a derivative of [Moonforge](https://moonforgelinux.org/), so images
-come with an immutable read-only rootfs, systemd, an overlayfs `/etc` and a
-persistent `/data` partition out of the box.
+![The self-test page a factory image opens](docs/images/selftest.jpg)
+
+```sh
+tessaro-ctl -n golden-thistle-5731 config set browser.url=https://menu.example.com/
+```
+
+That is the whole deployment step. The device restarts only what that setting
+touches, and the URL survives reboots and image updates.
+
+## What it does for you
+
+- **The page stays up.** An agent watches Chromium over the DevTools protocol.
+  A crashed tab is reloaded in seconds, a wedged browser is restarted, and
+  while your site is unreachable a local offline page is shown until it comes
+  back. The agent is itself under a systemd watchdog.
+- **It stays on your site.** If a link takes the browser to another origin,
+  it is brought back. Pages within your origin and redirects you control are
+  left alone.
+- **It cannot be broken by accident.** The system is read-only; settings,
+  your files and the browser profile live on a separate `/data` partition. A
+  factory reset is one command, or one word typed at the boot loader.
+- **Updates over the network that keep everything.** Send a new image and the
+  device checks it, writes it from its initramfs, verifies every block and
+  reboots into it, with settings, ownership and browser storage intact. A
+  power cut at any point leaves either the old system or a retry, never half
+  of one.
+- **Network changes that cannot lock you out.** A new static address or WiFi
+  network is kept only if the device still reaches the network afterwards.
+  Otherwise the device rolls it back by itself, even if the change cut you off.
+- **Built for real kiosk hardware.** Touch screens, an on-screen keyboard that
+  appears only when no keyboard is plugged in, screens plugged in after boot,
+  sound on HDMI, the jack or USB, and WebSerial and WebHID granted to your site
+  with no permission prompt, so the page can talk to serial and HID devices
+  on a screen nobody is standing at.
+- **Content that works offline.** Sync a directory of videos, images and JSON
+  to the device and your page loads them from `http://127.0.0.1/files/`, with
+  or without a network.
+- **Owned by whoever claims it first.** A fresh device has no password and
+  answers only to `claim`. Claiming gives you a token, pins the device's
+  certificate and sets a random root password. Everything after that goes over
+  TLS.
 
 ## Quick start
 
-```sh
-mise run build     # build for QEMU (the default target) plus OVMF firmware
-mise run run-vnc   # boot it in QEMU, framebuffer on localhost:5900
-mise run run       # same, but serial console only (Ctrl-a x to exit)
-```
-
-Use `run-vnc` to see the kiosk: `run` boots with `nographic`, so there is no
-display to render the browser on.
-
-## Targets
-
-Every task acts on one machine, `$TESSARO_MACHINE`, which defaults to
-`qemux86-64`:
+You build the image yourself, on a Linux machine with Docker,
+[kas](https://kas.readthedocs.io/) (`pipx install kas`, for `kas-container`)
+and [mise](https://mise.jdx.dev/):
 
 ```sh
-mise run build-qemu   # qemux86-64      - development, boots under QEMU
-mise run build-x86    # genericx86-64   - x86_64 PCs and mini PCs, UEFI
-mise run build-rpi    # raspberrypi3-64 - Raspberry Pi 3 Model B+
-
-TESSARO_MACHINE=raspberrypi3-64 mise run shell   # any task, any target
+git clone git@github.com:alhafoudh/tessaro-os.git && cd tessaro-os
+mise trust && mise install
+mise run build-rpi      # Raspberry Pi 3B/3B+; build-x86 for a UEFI PC
 ```
 
-Each target gets its own build directory, `build/<machine>/`, and images land
-in `build/<machine>/tmp/deploy/images/<machine>/`. The download and sstate
-caches in `cache/` are shared, so the second target reuses most of the first
-one's work.
-
-## Updating and flashing from a workstation
-
-The build host is a remote x86 machine; the device is on your network, or its
-card or disk is plugged into your workstation (macOS or Linux). These tasks run
-on the workstation, from its own checkout of this repo. Put the settings in
-`mise.local.toml` (gitignored):
-
-```toml
-# Optional: default machine on this workstation (a [vars] override, because
-# WIC and KAS_CONFIG are derived from it). TESSARO_MACHINE=... still wins.
-[vars]
-machine = "{{ env.TESSARO_MACHINE | default(value='raspberrypi3-64') }}"
-
-[env]
-TESSARO_BUILD_HOST = "build-host.example.com"          # SSH host that builds
-TESSARO_BUILD_HOST_DIR = "Projects/tessaro/tessaro-os" # this repo there, relative to your home
-TESSARO_NODE = "brave-otter-3fa2"                      # default device for update (tessaro-ctl --node)
-TESSARO_FLASH_DEVICE = "/dev/disk8"                    # default target for flash
-TESSARO_BUILD_HOST_CONTAINER_IP = "172.17.0.9"         # tunnel: container with VNC on 5901
-TESSARO_DEVICE_IP = "192.168.69.123"                   # tunnel: device on your network
-```
-
-Then `mise trust && mise install` (that installs `bmaptool`).
-
-**Updating a running device** is the normal way, over the network, keeping its
-settings and claim:
+The first build fetches and compiles everything, Chromium included, and takes
+hours; later ones reuse the cache. Write the image to a card or disk:
 
 ```sh
-mise run image:update                    # the device in $TESSARO_NODE
-mise run image:update brave-otter-3fa2   # or name it
-mise run image:update --wipe-data NAME   # also start /data over; it comes back unclaimed
-mise run image:update --repartition NAME # the whole disk, for a device on an older layout
+bmaptool copy build/raspberrypi3-64/tmp/deploy/images/raspberrypi3-64/tessaro-os-raspberrypi3-64.rootfs.wic.bz2 /dev/sdX
 ```
 
-`--repartition` is `image:flash` over the network: partition table, boot,
-root and an empty `/data`, written from a copy of the upload in the device's
-RAM. It comes back unclaimed, and a power cut while it writes needs a
-physical reflash. It needs the device to run an image that knows the flag.
+(From a separate workstation, `mise run image:pull` and `mise run
+image:flash` do the same - see [DEVELOPMENT.md](DEVELOPMENT.md).)
 
-It pulls the image first, builds `tessaro-ctl` from this checkout, and runs
-`tessaro-ctl --node NAME update send` with it, which shows the upload, the
-device preparing it and the reboot. A dropped connection is resumed by running
-it again. The device has to be claimed from this workstation
-(`tessaro-ctl --node NAME access claim`), and running an image with the update layout -
-see [docs/updates.md](docs/updates.md).
-
-**Flashing** is the manual path: a first install, a device that no longer
-boots, or one flashed before the update layout:
+Boot it with a network cable in. It comes up on its self-test page and
+announces itself on the local network. Build the client, find the device and
+claim it:
 
 ```sh
-TESSARO_MACHINE=raspberrypi3-64 mise run image:pull    # .wic.bz2 + .wic.bmap into the repo root
-diskutil list                                          # or lsblk - check the device twice
-TESSARO_MACHINE=raspberrypi3-64 mise run image:flash   # or: mise run image:flash /dev/disk4
+mise run build-ctl                  # build/cargo-target/release/tessaro-ctl; put it on your PATH
+tessaro-ctl nodes list              # devices answering on this network
+tessaro-ctl -n golden-thistle-5731 access claim
 ```
 
-`image:pull` rsyncs `build/<machine>/tmp/deploy/images/<machine>/tessaro-os-<machine>.rootfs.wic.*`
-from the build host and skips what is already up to date. Pass a remote path
-in single quotes to pull something else. `image:flash` unmounts the device, writes
-it with bmaptool (through `/dev/rdiskN` on macOS), syncs and ejects it. Every
-build produces a `.bmap`; for an older image without one the whole image is
-written.
+```
+...
+Pin it and continue? [y/N] y
+claimed golden-thistle-5731 (d77857317a77452baadbbde45de78ba7)
+token 4cd4cf8a saved in ~/.config/tessaro/nodes.json
 
-`mise run tunnel` keeps an autossh tunnel to the build host up (needs
-`autossh`): `localhost:5901` is the build host's QEMU VNC from `run-vnc`,
-`localhost:5902` is VNC on port 5901 of `$TESSARO_BUILD_HOST_CONTAINER_IP`,
-`localhost:7400` and `localhost:2222` are that VM's tessaro-ctl port and SSH
-(`tessaro-ctl -n 127.0.0.1 device status`,
-`tessaro-ctl -n 127.0.0.1 ssh connect --port 2222`), and on the build host `localhost:5022` reaches SSH on `$TESSARO_DEVICE_IP`.
+root password - shown this once, store it now:
 
-## Status
+    ********************
+```
 
-| Platform | Machine | State |
+Then point it at your site:
+
+```sh
+tessaro-ctl -n golden-thistle-5731 config set browser.url=https://menu.example.com/
+```
+
+```
+revision 3: browser.url
+restarting tessaro-kiosk.service, tessaro-agent.service
+```
+
+Set `TESSARO_NODE=golden-thistle-5731` and the `-n` can go. The examples
+below leave it out.
+
+## Using it
+
+### See what a device is doing
+
+```
+$ tessaro-ctl device status
+name         golden-thistle-5731
+node id      d77857317a77452baadbbde45de78ba7
+machine      qemux86-64
+agent        1.0.0
+fingerprint  d93f5f87bc4b45d9dfb36092abcf3cbe0547a3fe898092a7b0b66598bb075360
+claimed      no
+os           Tessaro OS 0.1 (main), image 0
+revision     2
+data         7.8 GB free of 8.2 GB (1% used)
+browser url  http://127.0.0.1/
+showing      http://127.0.0.1/
+browser      answering
+  tessaro-agent.service    active
+  tessaro-kiosk.service    active
+  weston.service           active
+audio        usb 80%
+```
+
+```sh
+tessaro-ctl device logs -f -u tessaro-agent.service   # the agent's journal, live
+tessaro-ctl device ping                               # latency from here to the device
+```
+
+### One image, a different page per screen
+
+Any setting can be a placeholder in the URL, and `data.*` keys are yours to
+define. Give each device its own value and they all run the same image:
+
+```sh
+tessaro-ctl config set 'browser.url=https://menu.example.com/?table={data.table}' data.table=12
+tessaro-ctl config set 'browser.url=https://{device.name}.signage.example.com/'
+```
+
+Values are percent-encoded into the URL, so a value can never change where
+the URL points.
+
+### Every setting documents itself
+
+```
+$ tessaro-ctl config keys browser.url
+browser.url
+    The page the kiosk shows (default: the self-test page, http://127.0.0.1/). A new origin also re-grants the device APIs to it.
+    value     http://127.0.0.1/  (default)
+    accepts   an http, https, file or data URL; may contain {key} placeholders - any setting's key, e.g. {data.table} or {device.name}
+    restarts  the agent (invisible on screen)
+    env       KIOSK_URL
+```
+
+`tessaro-ctl config keys` lists them all, `config get` shows what a device is
+using, and `config unset KEY` goes back to the image default.
+
+### Maintenance and debug screens
+
+```sh
+tessaro-ctl config set 'data.msg=We are restocking the shelves. Back at 14:00.' \
+  'browser.maintenance.url=http://127.0.0.1/maintenance.html?message={data.msg}'
+tessaro-ctl browser maintenance on     # `off` goes straight back to your site
+```
+
+![The maintenance page with a custom message](docs/images/maintenance.jpg)
+
+`browser debug on` replaces the page with the device's name and addresses in
+large type - the thing a technician in front of the screen needs. The
+template is yours too:
+
+```sh
+tessaro-ctl browser debug on --template '{device.name}\n\nip     {network.cidr} via {network.gateway}\nmac    {network.mac}\ndata   {storage.data_free} free\n\nurl    {browser.url}'
+```
+
+![The debug screen with that template](docs/images/debug-screen.jpg)
+
+Neither restarts the browser, and your site's device permissions stay where
+they are.
+
+### Files for offline use
+
+```
+$ tessaro-ctl files sync ./site-assets
+sent       media/promo.mp4  397.1 kB
+sent       menu.json  20 B
+done: 2 sent (0.4 MB), 0 unchanged
+
+$ tessaro-ctl files list -R
+2026-09-24 18:40             media/
+2026-09-24 18:40   397.1 kB  media/promo.mp4
+2026-09-24 18:40       20 B  menu.json
+total              397.1 kB
+```
+
+`sync` works like `rsync -r --delete` and asks before removing anything. Your
+page reads `http://127.0.0.1/files/media/promo.mp4`, and an https site can
+fetch it without a mixed-content or local-network prompt. Uploads are resumed
+if the connection drops, and a file only appears once it is complete.
+
+### The screen
+
+```sh
+tessaro-ctl screen modes                                  # what the panel offers
+tessaro-ctl config set screen.resolution=1920x1080
+tessaro-ctl screen confirm                                # within 60 s, or it reverts
+tessaro-ctl config set screen.osk=always                  # on-screen keyboard even with a keyboard attached
+```
+
+```
+screen.resolution=1920x1080 is on probation. Check the screen, then run
+
+    tessaro-ctl screen confirm
+
+within 59s, or it goes back to the default on its own.
+```
+
+A mode nobody can see never sticks: without the confirm, and after a reboot,
+the device goes back to what worked. High-resolution panels are scaled
+automatically.
+
+### The network
+
+```
+$ tessaro-ctl network show
+hostname     tessaro
+interface    enp0s1
+address      10.0.2.15/24
+gateway      10.0.2.2
+public ip    203.0.113.7
+dns          10.0.2.3
+mac          52:54:00:12:35:02
+
+interfaces:
+  enp0s1       ethernet  up       10.0.2.15/24 fec0::5054:ff:fe12:3502/64 fe80::5054:ff:fe12:3502/64 *
+  lo           loopback  unknown  127.0.0.1/8 ::1/128
+  sit0         virtual   down     -
+
+  * carries the default route. `tessaro-ctl network interfaces` for details.
+```
+
+```sh
+tessaro-ctl config set network.ethernet.mode=static \
+  network.ethernet.address=192.168.1.50/24 network.ethernet.gateway=192.168.1.1
+tessaro-ctl network wifi scan
+tessaro-ctl network wifi join Office        # prompts for the password
+tessaro-ctl network speedtest               # the device's link, not yours
+```
+
+Out of the box the WiFi radio is a hotspot, `tessaro-<device name>`: open
+until the device is claimed, then protected by a password shown with the root
+password.
+
+### Sound
+
+```
+$ tessaro-ctl audio show
+output   auto -> QEMU USB Audio Analog Stereo (usb)  80%
+input    auto -> (none)  100%
+```
+
+```sh
+tessaro-ctl audio output hdmi && tessaro-ctl audio volume 60 && tessaro-ctl audio test
+```
+
+`auto` picks the USB or Bluetooth device plugged in last, then HDMI with a
+screen on it, then the jack. Changes apply to sound already playing, and
+nothing restarts.
+
+### Updating
+
+```sh
+mise run image:update golden-thistle-5731                  # build host to device; settings stay
+tessaro-ctl update send tessaro-os-raspberrypi3-64.rootfs.wic.bz2   # the same, by hand
+tessaro-ctl update status
+```
+
+`--wipe-data` also starts `/data` over, and `--repartition` rewrites the whole
+disk for a device on an older layout. A dropped upload resumes where it
+stopped.
+
+### Getting in when you need to
+
+```sh
+tessaro-ctl ssh connect                     # root shell with your ~/.ssh key, host key pinned
+tessaro-ctl ssh connect -- journalctl -fu tessaro-kiosk
+tessaro-ctl access token create phone       # a token for a second client
+tessaro-ctl device factory-reset -y         # settings, owners and files gone
+```
+
+Tab completion: `source <(tessaro-ctl completion bash)` (also zsh and
+powershell). On the device it is already on.
+
+## Hardware
+
+| Hardware | Machine | State |
 | --- | --- | --- |
-| QEMU x86_64 | `qemux86-64` | builds and boots, used for development |
-| x86_64 hardware | `genericx86-64` | configured, first build still to be run |
-| Raspberry Pi 3B+ | `raspberrypi3-64` | builds, boots and runs the kiosk |
+| Raspberry Pi 3 Model B and B+ | `raspberrypi3-64` | builds, boots and runs the kiosk, GPU rendering |
+| x86_64 PCs and mini PCs, UEFI | `genericx86-64` | configured, not yet built on real hardware |
+| QEMU x86_64 | `qemux86-64` | for development and the end-to-end tests |
 
-Every machine builds the same image: read-only rootfs, overlayfs `/etc`,
-persistent `/data`, Weston and the Chromium kiosk.
+Every machine runs the same image. On the Pi 3, memory is the limit to plan
+around: 1 GB, shared with the GPU.
 
-## Kiosk browser
+## How it works
 
-Images boot straight into a fullscreen Chromium on Weston. A factory image
-shows the self-test page described below, served locally on
-`http://127.0.0.1/`; a deployment shows the site it is there to show. The
-build-time default is `TESSARO_KIOSK_URL` in
-`meta-tessaro-distro/conf/distro/tessaro.conf`.
+Tessaro is a Yocto Linux distribution derived from
+[Moonforge](https://moonforgelinux.org/): a read-only root filesystem with
+`/etc` as an overlay on a persistent `/data` partition, systemd, Weston as the
+compositor and Chromium 147 as the browser. `tessaro-agent`, a Rust service,
+supervises the browser over CDP and is the device's control plane;
+`tessaro-ctl` talks to it over a local socket on the device or over pinned TLS
+from anywhere else. [docs/](docs/) explains each part and the reasons behind
+it.
 
-On a running device, change the URL without rebuilding with `tessaro-ctl`,
-which restarts whatever reads the setting:
+## More
 
-```sh
-tessaro-ctl config set browser.url=https://example.com/
-```
-
-Settings live in `/data/tessaro/state.json` on the persistent `/data`
-partition, so the change survives a reboot and image updates.
-
-A site can keep its media on the device, so it plays with the network down.
-Files go into `/data/files`, which the device serves at
-`http://127.0.0.1/files/` to any origin:
-
-```sh
-tessaro-ctl files sync ./site-assets    # mirror a directory: send what changed, remove the rest
-tessaro-ctl files upload promo.mp4 /media/
-tessaro-ctl files list /media           # like ls -l (alias ls, dir); -R for the whole tree
-tessaro-ctl files move /media/promo.mp4 /archive/   # like mv (alias mv)
-```
-
-`sync` compares size and modification time only, like rsync without
-`--checksum`, and asks before it removes anything. A factory reset empties
-the store.
-
-## Checking a device
-
-A factory image boots into a static self-test page, served by nginx on the
-loopback from `/usr/share/tessaro-selftest/`. It checks rendering, fonts,
-emoji, every HTML input type, touch and mouse scrolling, WebSerial and WebHID,
-audio and video playback, and WebAudio synthesis - all from local files, so it
-works with the network down.
-
-Deploying a device means pointing `browser.url` at the site it is there to
-show. To get back to the self-test page afterwards:
-
-```sh
-tessaro-ctl config set browser.url=http://127.0.0.1/ agent.refresh_interval=0
-```
-
-`agent.refresh_interval=0` matters when working through it by hand - otherwise
-the agent reloads the page every ten minutes, closing any serial port it has
-open and wiping every field you have typed into. `tessaro-ctl config unset`
-both afterwards.
-
-It is served over http rather than opened as a file on purpose: a `file://`
-page has no origin, and Chromium's serial and HID policy grants match on
-origin, so the page could only reach a device through a chooser dialog.
-`http://127.0.0.1` is a real origin and a secure context, so the pre-grants
-apply. The on-screen keyboard only appears on a device with no hardware
-keyboard attached; `tessaro-ctl config set screen.osk=always` forces it.
-Everything else works with a finger.
-
-An agent keeps the page honest: it watches the browser over CDP (the
-DevTools protocol, on `127.0.0.1:9222`), probes the URL, re-opens it every ten
-minutes, shows a local offline page while the site is unreachable, and restarts
-the browser over systemd's D-Bus API if it stops responding. It is a native
-Rust binary, `tessaro-agent`, and also the device's control plane for
-`tessaro-ctl`. Replace the offline page by dropping a file at
-`/data/kiosk/offline.html`. Why it failed is in the journal, not on the screen:
-
-```sh
-journalctl -fu tessaro-agent    # the agent
-journalctl -fu tessaro-kiosk    # the browser
-```
-
-## Developing the agent
-
-The agent is a Rust workspace in `agent/`, tested on the host:
-
-```sh
-mise run agent-test          # cargo test for the workspace
-mise run agent-lint          # cargo fmt --check plus clippy
-mise run agent-integration   # the agent against a real headless Chromium in compose
-mise run agent-e2e           # boot the qemu image and exercise the agent on it
-```
-
-### End-to-end tests
-
-`mise run agent-e2e` boots the qemux86-64 image and provokes what the agent
-exists to handle - the site going down, the browser crashing or wedging, the
-agent itself wedging, settings, claiming, network changes, image updates -
-asserting on what the agent writes to its journal. It is an RSpec suite in
-`test/e2e/spec/`: each spec file is a lane, whose cases run in order on a VM
-of its own, and the lanes run in parallel.
-
-It tests the image as built and never builds one, so build first. It needs
-Ruby with Bundler on the host, and KVM to be quick; each VM takes 4 GB of RAM.
-
-```sh
-mise run build              # the image under test (qemux86-64)
-mise run agent-e2e:setup    # once: installs rspec and parallel_tests
-mise run agent-e2e          # every lane, three VMs at a time
-```
-
-The suite warns when the image is older than the agent's sources, since an
-old agent passes and proves nothing.
-
-Running part of it, and watching it:
-
-```sh
-E2E_JOBS=1 mise run agent-e2e                                 # one VM at a time
-mise run agent-e2e -- -o '--tag ~reboot'                      # leave out the image updates
-mise run agent-e2e:one -- spec/network_spec.rb                # one lane, plain rspec
-mise run agent-e2e:one -- spec/agent_spec.rb -e 'dns:'        # one case, by its name
-mise run agent-e2e:one -- --only-failures                     # what failed last time
-E2E_VERBOSE=1 mise run agent-e2e:one -- spec/agent_spec.rb    # each step as it happens
-```
-
-`agent-e2e:one` paths are relative to `test/e2e`. `E2E_VERBOSE=2` adds every
-agent journal line a case sees, `E2E_KEEP=1` leaves the VM up after its lane,
-and `E2E_REUSE=1` runs against a VM left up that way. Output is live, with an
-overall `== progress 12/30, 6:03 elapsed, ~9 min left` line after each case.
-A failure prints the agent's journal lines since the case began.
-
-Everything a run leaves is in `build/e2e/`: `<lane>.log` holds every step of a
-lane whatever the verbosity, `<lane>.qemu.log` its VM's console. Exit status 1
-means a case failed, 2 that the suite could not start (no image). How the
-lanes, ports and VMs fit together is in [docs/e2e.md](docs/e2e.md).
-
-## Structure
-
-`kas/common/tessaro.yml` pins every upstream repo and selects the layers shared
-by all targets, `kas/machine/<machine>.yml` adds what is board-specific, and
-`meta-tessaro-distro` holds everything specific to this product. Adding a target
-is one new file in `kas/machine/`. See [docs/build.md](docs/build.md) for the
-full layout and the gotchas worth knowing before your first build,
-[CLAUDE.md](CLAUDE.md) for the task list and the project's rules, and `docs/`
-for how each subsystem works.
+- [DEVELOPMENT.md](DEVELOPMENT.md) - building, running in QEMU, flashing from
+  a workstation, testing the agent.
+- [docs/](docs/) - how each subsystem works: the browser, settings and
+  claiming, display, networking, updates, sound, remote access.
+- `tessaro-ctl --help` - worked examples for every command group.

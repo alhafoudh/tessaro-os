@@ -20,7 +20,9 @@ rather than a count of listed things - timeouts, sizes, retries, a
 
 ## Where the details are
 
-This file holds the rules. How each subsystem works, and why, is in `docs/`.
+This file holds the rules. README.md is for people using Tessaro;
+DEVELOPMENT.md covers building, the workstation flow and running tests. How
+each subsystem works, and why, is in `docs/`.
 Read the relevant file before changing that subsystem, and update it in the
 same change as the behaviour it describes.
 
