@@ -4,15 +4,19 @@
 #   protocol/       the wire types and the key registry. No Linux-only
 #                   dependencies: tessaro-ctl builds for a technician's laptop.
 #   tessaro-agent/  the supervisor on the device (zbus, CDP, systemd).
+#   client/         talking to a device: discovery, the pinned session,
+#                   nodes.json. A library, shared with tessaro-gui.
 #   tessaro-ctl/    the client, on the device and on a laptop.
 #   update/         in-place image updates: prepared by the agent, applied
 #                   by tessaro-flash from the initramfs.
 #
 # The recipe builds the whole workspace from this directory (S is agent/), and
 # cargo.bbclass installs every binary it finds, so all of them land in /usr/bin.
+# That is why tessaro-gui is not a member: it lives in gui/, a workspace of its
+# own, and reaches protocol/ and client/ by path.
 [workspace]
 resolver = "2"
-members = ["protocol", "tessaro-agent", "tessaro-ctl", "update"]
+members = ["protocol", "client", "tessaro-agent", "tessaro-ctl", "update"]
 
 [workspace.package]
 version = "1.0.0"

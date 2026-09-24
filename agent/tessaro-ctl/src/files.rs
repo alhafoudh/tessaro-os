@@ -8,16 +8,15 @@
 //! it, holds exactly what the local directory does.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs::{self, File};
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anstream::{eprintln, println};
 use clap::Subcommand;
-use protocol::files::{self as store, FileBegun, FileData, FileEntry, FileKind, FilesListing};
-use protocol::{size_label, Command, Done, Received};
+use protocol::files::{self as store, FileEntry, FileKind, FilesListing};
+use protocol::{size_label, Command, Done};
 use serde::Serialize;
+use tessaro_client::transfer::{self, date, mtime_of};
 
 use crate::connect::Session;
 use crate::progress::{mb, step_line, Progress, Rate};
@@ -553,47 +552,11 @@ fn send(
     progress: &mut Progress,
     report: &mut Report,
 ) -> Result<(), String> {
-    let begun: FileBegun = session.call(Command::FilesBegin {
-        path: path.to_string(),
-        size: item.size,
-        mtime: item.mtime,
-    })?;
-    if begun.offset >= item.size && item.size > 0 {
-        report.unchanged.push(path.to_string());
-        return Ok(());
-    }
-
-    let mut file =
-        File::open(&item.full).map_err(|err| format!("{}: {err}", item.full.display()))?;
-    file.seek(SeekFrom::Start(begun.offset))
-        .map_err(|err| format!("{}: {err}", item.full.display()))?;
-    let mut rate = Rate::new(begun.offset);
-    let mut buffer = vec![0u8; protocol::UPDATE_CHUNK];
-    let mut offset = begun.offset;
-    while offset < item.size {
-        let want = ((item.size - offset) as usize).min(buffer.len());
-        file.read_exact(&mut buffer[..want]).map_err(|err| {
-            format!(
-                "{}: {err} (did it change while it was sent?)",
-                item.full.display()
-            )
-        })?;
-        let data = data_encoding::BASE64.encode(&buffer[..want]);
-        let received: Received = session
-            .call(Command::FilesChunk {
-                path: path.to_string(),
-                offset,
-                data,
-            })
-            .map_err(|err| {
-                format!(
-                    "{path} stopped at {}: {err}; run the same command again to resume",
-                    mb(offset)
-                )
-            })?;
-        offset = received.received;
+    let mut rate: Option<Rate> = None;
+    let sent = transfer::send_file(session, &item.full, path, item.size, item.mtime, |offset| {
         // Only a file of several chunks is worth a progress line of its own.
         if item.size > protocol::UPDATE_CHUNK as u64 {
+            let rate = rate.get_or_insert_with(|| Rate::new(offset));
             progress.show(
                 &step_line(
                     style::LABEL,
@@ -604,13 +567,17 @@ fn send(
                 item.size,
             );
         }
-    }
+    })?;
+    let Some(bytes) = sent else {
+        report.unchanged.push(path.to_string());
+        return Ok(());
+    };
     progress.done(&step_line(
         style::OK,
         "sent",
         format!("{path}  {}", paint(style::MUTED, size_label(item.size))),
     ));
-    report.bytes += item.size - begun.offset;
+    report.bytes += bytes;
     report.sent.push(path.to_string());
     Ok(())
 }
@@ -699,67 +666,26 @@ fn fetch(
     report: &mut Report,
 ) -> Result<(), String> {
     let shown = target.display().to_string();
-    if fs::metadata(target).is_ok_and(|meta| {
-        meta.is_file() && meta.len() == entry.size && mtime_of(&meta) == entry.mtime
-    }) {
-        report.unchanged.push(shown);
-        return Ok(());
-    }
-    let dir = target
-        .parent()
-        .filter(|dir| !dir.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
-    let temporary = dir.join(format!(
-        ".{}.part",
-        target
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("download")
-    ));
-    let fail = |err: std::io::Error| format!("{}: {err}", temporary.display());
-    let mut file = File::create(&temporary).map_err(fail)?;
     let mut rate = Rate::new(0);
-    let mut offset = 0u64;
-    let mut mtime = entry.mtime;
     let mut size = entry.size;
-    while offset < size {
-        let data: FileData = session.call(Command::FilesRead {
-            path: entry.path.clone(),
-            offset,
-            len: protocol::UPDATE_CHUNK as u64,
-        })?;
-        (size, mtime) = (data.size, data.mtime);
-        if data.data.is_empty() {
-            break;
-        }
-        let bytes = data_encoding::BASE64
-            .decode(data.data.as_bytes())
-            .map_err(|_| "the device sent a chunk that is not base64".to_string())?;
-        file.write_all(&bytes).map_err(fail)?;
-        offset += bytes.len() as u64;
-        if size > protocol::UPDATE_CHUNK as u64 {
+    let fetched = transfer::fetch_file(session, entry, target, |offset, total| {
+        size = total;
+        if total > protocol::UPDATE_CHUNK as u64 {
             progress.show(
                 &step_line(
                     style::LABEL,
                     "receiving",
-                    format!("{}  {}", entry.path, rate.line(offset, size)),
+                    format!("{}  {}", entry.path, rate.line(offset, total)),
                 ),
                 offset,
-                size,
+                total,
             );
         }
+    })?;
+    if !fetched {
+        report.unchanged.push(shown);
+        return Ok(());
     }
-    if offset != size {
-        let _ = fs::remove_file(&temporary);
-        return Err(format!(
-            "{} changed on the device while it was read; run it again",
-            entry.path
-        ));
-    }
-    file.set_modified(time_of(mtime)).map_err(fail)?;
-    file.sync_all().map_err(fail)?;
-    drop(file);
-    fs::rename(&temporary, target).map_err(|err| format!("{shown}: {err}"))?;
     progress.done(&step_line(
         style::OK,
         "received",
@@ -808,46 +734,6 @@ fn shown_name<'a>(base: &str, path: &'a str) -> &'a str {
     path.strip_prefix(base)
         .and_then(|rest| rest.strip_prefix('/'))
         .unwrap_or(path)
-}
-
-/// `YYYY-MM-DD HH:MM`, UTC: the device's clock may not be the local one.
-fn date(mtime: i64) -> String {
-    let days = mtime.div_euclid(86_400);
-    let seconds = mtime.rem_euclid(86_400);
-    // Howard Hinnant's days-to-civil.
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = yoe + era * 400 + i64::from(month <= 2);
-    format!(
-        "{year:04}-{month:02}-{day:02} {:02}:{:02}",
-        seconds / 3600,
-        seconds / 60 % 60
-    )
-}
-
-/// Whole seconds since the epoch, rounded down, as the device keeps them.
-fn mtime_of(meta: &fs::Metadata) -> i64 {
-    match meta.modified() {
-        Ok(time) => match time.duration_since(UNIX_EPOCH) {
-            Ok(after) => after.as_secs() as i64,
-            Err(before) => -(before.duration().as_secs_f64().ceil() as i64),
-        },
-        Err(_) => 0,
-    }
-}
-
-fn time_of(mtime: i64) -> SystemTime {
-    if mtime >= 0 {
-        UNIX_EPOCH + Duration::from_secs(mtime as u64)
-    } else {
-        UNIX_EPOCH - Duration::from_secs(mtime.unsigned_abs())
-    }
 }
 
 #[cfg(test)]
@@ -988,13 +874,5 @@ mod tests {
     fn ancestors_walk_up() {
         assert_eq!(ancestors("a/b/c").collect::<Vec<_>>(), vec!["a", "a/b"]);
         assert_eq!(ancestors("a").count(), 0);
-    }
-
-    #[test]
-    fn dates_are_utc() {
-        assert_eq!(date(0), "1970-01-01 00:00");
-        assert_eq!(date(1_700_000_000), "2023-11-14 22:13");
-        assert_eq!(date(951_782_400), "2000-02-29 00:00");
-        assert_eq!(date(-60), "1969-12-31 23:59");
     }
 }

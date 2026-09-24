@@ -10,20 +10,17 @@
 //! Every phase reports progress on stderr: one line that redraws itself on a
 //! terminal, one line per step otherwise.
 
-use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use anstream::println;
 use protocol::{
-    Command, Done, ImageUpload, Received, Status, UpdateBegun, UpdatePhase, UpdateResult,
-    UpdateStatus,
+    Command, Done, ImageUpload, Status, UpdateBegun, UpdatePhase, UpdateResult, UpdateStatus,
 };
-use sha2::{Digest, Sha256};
+use tessaro_client::nodes::Nodes;
+use tessaro_client::transfer;
 
 use crate::connect::{self, Session, Target, Trust};
-use crate::nodes::Nodes;
 use crate::progress::{clock, mb, percent, step_line, Progress, Rate};
 use crate::prompt;
 use crate::style::{self, pad, paint};
@@ -92,7 +89,7 @@ pub fn send(
     let bmap_path = options
         .bmap
         .clone()
-        .unwrap_or_else(|| bmap_for(&options.image));
+        .unwrap_or_else(|| transfer::bmap_for(&options.image));
     let bmap = std::fs::read_to_string(&bmap_path).map_err(|err| {
         format!(
             "{}: {err} (pass --bmap if it is somewhere else)",
@@ -297,27 +294,8 @@ fn show(status: &UpdateStatus) {
     }
 }
 
-/// `x.rootfs.wic.bz2` -> `x.rootfs.wic.bmap`, the same rule as `image:flash`.
-fn bmap_for(image: &Path) -> PathBuf {
-    let text = image.to_string_lossy();
-    let base = text.strip_suffix(".bz2").unwrap_or(&text);
-    PathBuf::from(format!("{base}.bmap"))
-}
-
 fn hash(path: &Path, size: u64, progress: &mut Progress) -> Result<String, String> {
-    let mut file = File::open(path).map_err(|err| format!("{}: {err}", path.display()))?;
-    let mut hasher = Sha256::new();
-    let mut buffer = vec![0u8; 1 << 20];
-    let mut done = 0u64;
-    loop {
-        let read = file
-            .read(&mut buffer)
-            .map_err(|err| format!("{}: {err}", path.display()))?;
-        if read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..read]);
-        done += read as u64;
+    let sha256 = transfer::hash(path, |done| {
         progress.show(
             &step_line(
                 style::LABEL,
@@ -327,9 +305,9 @@ fn hash(path: &Path, size: u64, progress: &mut Progress) -> Result<String, Strin
             done,
             size,
         );
-    }
+    })?;
     progress.done(&step_line(style::OK, "hashed", mb(size)));
-    Ok(protocol::hex(&hasher.finalize()))
+    Ok(sha256)
 }
 
 fn upload(
@@ -339,32 +317,13 @@ fn upload(
     from: u64,
     progress: &mut Progress,
 ) -> Result<(), String> {
-    let mut file = File::open(path).map_err(|err| format!("{}: {err}", path.display()))?;
-    file.seek(SeekFrom::Start(from))
-        .map_err(|err| format!("{}: {err}", path.display()))?;
     let resumed = if from > 0 {
         paint(style::MUTED, format!("  (resumed at {})", mb(from)))
     } else {
         String::new()
     };
     let mut rate = Rate::new(from);
-    let mut buffer = vec![0u8; protocol::UPDATE_CHUNK];
-    let mut offset = from;
-
-    while offset < size {
-        let want = ((size - offset) as usize).min(buffer.len());
-        file.read_exact(&mut buffer[..want])
-            .map_err(|err| format!("{}: {err}", path.display()))?;
-        let data = data_encoding::BASE64.encode(&buffer[..want]);
-        let received: Received = session
-            .call(Command::UpdateChunk { offset, data })
-            .map_err(|err| {
-                format!(
-                    "the upload stopped at {}: {err}; run the same command again to resume",
-                    mb(offset)
-                )
-            })?;
-        offset = received.received;
+    transfer::upload_image(session, path, size, from, |offset| {
         progress.show(
             &step_line(
                 style::LABEL,
@@ -374,7 +333,7 @@ fn upload(
             offset,
             size,
         );
-    }
+    })?;
     progress.done(&step_line(
         style::OK,
         "uploaded",
@@ -477,19 +436,5 @@ fn wait_for(
             ));
         }
         std::thread::sleep(Duration::from_secs(5));
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_bmap_is_found_next_to_the_image() {
-        assert_eq!(
-            bmap_for(Path::new("out/tessaro-os-qemux86-64.rootfs.wic.bz2")),
-            PathBuf::from("out/tessaro-os-qemux86-64.rootfs.wic.bmap")
-        );
-        assert_eq!(bmap_for(Path::new("x.wic")), PathBuf::from("x.wic.bmap"));
     }
 }

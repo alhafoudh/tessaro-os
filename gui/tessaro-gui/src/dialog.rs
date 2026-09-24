@@ -1,0 +1,55 @@
+//! Modal dialogs: a framed box over the dimmed window, which takes no input
+//! while the dialog is up.
+
+use iced::widget::{center, column, container, opaque, row, space, stack, text};
+use iced::{Element, Length};
+
+use crate::grid::bold;
+use crate::theme;
+
+/// `dialog` over `base`.
+pub fn modal<'a, M: Clone + 'a>(base: Element<'a, M>, dialog: Element<'a, M>) -> Element<'a, M> {
+    stack![base, opaque(center(opaque(dialog)).style(theme::backdrop))].into()
+}
+
+/// A dialog box: a title strip, the body, and the buttons bottom right.
+pub fn frame<'a, M: Clone + 'a>(
+    title: String,
+    body: Element<'a, M>,
+    buttons: Vec<Element<'a, M>>,
+) -> Element<'a, M> {
+    container(column![
+        container(text(title).size(theme::TEXT).font(bold()))
+            .width(Length::Fill)
+            .padding([4, 10])
+            .style(theme::title_bar),
+        container(body).padding(12),
+        container(row(buttons).spacing(6))
+            .width(Length::Fill)
+            .padding([8, 12])
+            .align_right(Length::Fill),
+    ])
+    .width(480)
+    .style(theme::panel)
+    .into()
+}
+
+/// A labelled line in a dialog body: `label` in a fixed column, then the
+/// field.
+pub fn field<'a, M: 'a>(label: &'a str, field: impl Into<Element<'a, M>>) -> Element<'a, M> {
+    row![
+        container(text(label).size(theme::SMALL)).width(110),
+        field.into()
+    ]
+    .spacing(6)
+    .align_y(iced::alignment::Vertical::Center)
+    .into()
+}
+
+/// A dialog's error line; nothing when there is none.
+pub fn error<'a, M: 'a>(error: Option<String>) -> Element<'a, M> {
+    match error {
+        Some(error) => text(error).size(theme::SMALL).style(text::danger).into(),
+        None => space().into(),
+    }
+}

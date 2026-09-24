@@ -1,0 +1,31 @@
+[package]
+name = "tessaro-client"
+description = "Talking to Tessaro devices: discovery, the pinned TLS session, nodes.json"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# Shared by tessaro-ctl and tessaro-gui (gui/, a workspace of its own), so
+# nothing here prints or prompts: a caller that needs the user's say passes
+# it in. Blocking sockets, like the ctl; the GUI runs a session on a thread.
+[dependencies]
+protocol = { path = "../protocol" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# The platform's TLS: openssl on Linux, Security.framework on macOS. Chain
+# verification is off on purpose - devices are self-signed - and replaced by
+# a pin check on the certificate's SHA-256 before a single byte is sent.
+native-tls = "0.2"
+sha2 = "0.10"
+
+# Chunks of files and images travel base64-encoded.
+data-encoding = "2"
+
+# NAME.local discovery. Blocking API, its own thread.
+mdns-sd = { version = "0.21", default-features = false }
+
+[dev-dependencies]
+tempfile = "3"

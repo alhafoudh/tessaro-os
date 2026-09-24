@@ -11,6 +11,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::connect::Session;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Node {
     pub id: String,
@@ -112,6 +114,57 @@ impl Nodes {
         let before = self.nodes.len();
         self.nodes.retain(|node| node.id != id);
         self.nodes.len() != before
+    }
+
+    /// A known device that answered, pin and id checked, somewhere other
+    /// than its cached address has moved: remember where, so the next
+    /// connection by name goes straight there instead of scanning. Returns
+    /// the address it was at, when it moved.
+    pub fn refresh(&mut self, session: &Session) -> Result<Option<String>, String> {
+        let Some((address, _)) = &session.remote else {
+            return Ok(None);
+        };
+        let address = address.to_string();
+        let Some(known) = self.by_id(&session.node.id) else {
+            return Ok(None);
+        };
+        if known.address == address {
+            return Ok(None);
+        }
+        let was = known.address.clone();
+        let moved = Node {
+            address,
+            ..known.clone()
+        };
+        self.put(moved);
+        self.save()?;
+        Ok(Some(was))
+    }
+
+    /// Pin the device this remote session talks to, with `token`, and save.
+    pub fn remember(&mut self, session: &Session, token: Option<String>) -> Result<(), String> {
+        let (address, fingerprint) = session
+            .remote
+            .clone()
+            .ok_or_else(|| "no remote session to remember".to_string())?;
+        self.put(Node {
+            id: session.node.id.clone(),
+            name: session.node.name.clone(),
+            address: address.to_string(),
+            fingerprint,
+            token,
+        });
+        self.save()
+    }
+
+    /// Drop the device this remote session talks to, and save. Whether it
+    /// was known.
+    pub fn forget_session(&mut self, session: &Session) -> Result<bool, String> {
+        if session.remote.is_some() && self.remove(&session.node.id) {
+            self.save()?;
+            return Ok(true);
+        }
+        Ok(false)
     }
 }
 

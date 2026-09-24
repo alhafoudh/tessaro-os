@@ -1,0 +1,16 @@
+# tessaro-gui, the desktop client for technicians. A workspace of its own,
+# never a member of agent/: the kiosk recipe builds every member of that one
+# into the image, and iced has no business there. The protocol and the
+# client library come from agent/ by path, so both clients speak the same
+# types.
+[workspace]
+resolver = "2"
+members = ["tessaro-gui"]
+
+[workspace.package]
+version = "1.0.0"
+edition = "2021"
+# The same toolchain as agent/ (mise.toml pins it for the whole repo).
+rust-version = "1.95"
+license = "MIT"
+publish = false

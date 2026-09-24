@@ -132,6 +132,24 @@ mise run shell                          # then, inside:
 bitbake -c update_crates tessaro-kiosk  # writes tessaro-kiosk-crates.inc
 ```
 
+## The desktop client
+
+`tessaro-gui` is the desktop client for technicians: devices found on the
+network and the known ones from `nodes.json`, an inner window per device
+with its settings, a page for every `tessaro-ctl` command group, the live
+journal and a live VNC view. It is its own workspace in `gui/`, built on the
+workstation and never part of the image. It uses `agent/protocol` and
+`agent/client` by path, so it speaks what `tessaro-ctl` speaks.
+
+```sh
+mise run gui-run             # run it from this checkout
+mise run gui-test            # its unit tests
+mise run gui-lint            # cargo fmt --check plus clippy
+mise run gui-build           # a release build for this machine
+```
+
+How it works is in [docs/gui.md](docs/gui.md).
+
 ## End-to-end tests
 
 `mise run agent-e2e` boots the qemux86-64 image and provokes what the agent
@@ -174,7 +192,8 @@ is in `build/e2e/`. Lanes, ports and the harness are explained in
 | `kas/common/tessaro.yml` | pins every upstream layer and selects the ones every target shares |
 | `kas/machine/<machine>.yml` | what is board-specific; a new target is one new file here |
 | `meta-tessaro-distro/` | the product layer: distro config, image additions, recipes, wks files |
-| `agent/` | `tessaro-agent`, `tessaro-ctl`, the protocol and the updater |
+| `agent/` | `tessaro-agent`, `tessaro-ctl`, the protocol, the client library and the updater |
+| `gui/` | `tessaro-gui`, the desktop client (a workspace of its own) |
 | `test/e2e/` | the end-to-end suite |
 | `docs/` | how each subsystem works |
 | `mise.toml` | every task |

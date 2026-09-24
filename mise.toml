@@ -76,6 +76,41 @@ cargo build --release -p tessaro-ctl
 echo "$CARGO_TARGET_DIR/release/tessaro-ctl"
 '''
 
+# tessaro-gui, the desktop client. gui/ is a workspace of its own with a lock
+# of its own, so it builds into a target dir of its own too: sharing agent/'s
+# would rebuild the crates both use every time the other one is built.
+[tasks.gui-run]
+description = "Run tessaro-gui, the desktop client, on this host"
+dir = "{{config_root}}/gui"
+env = { CARGO_TARGET_DIR = "{{config_root}}/build/gui-target" }
+run = "cargo run -p tessaro-gui"
+
+[tasks.gui-build]
+description = "Build tessaro-gui for this host, release"
+dir = "{{config_root}}/gui"
+env = { CARGO_TARGET_DIR = "{{config_root}}/build/gui-target" }
+run = '''
+set -e
+cargo build --release -p tessaro-gui
+echo "$CARGO_TARGET_DIR/release/tessaro-gui"
+'''
+
+[tasks.gui-test]
+description = "Run the unit tests of tessaro-gui"
+dir = "{{config_root}}/gui"
+env = { CARGO_TARGET_DIR = "{{config_root}}/build/gui-target" }
+run = "cargo test --workspace"
+
+[tasks.gui-lint]
+description = "Check formatting and run clippy on tessaro-gui"
+dir = "{{config_root}}/gui"
+env = { CARGO_TARGET_DIR = "{{config_root}}/build/gui-target" }
+run = '''
+set -e
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
+'''
+
 [tasks.agent-integration]
 description = "Run the agent against a real headless Chromium (Ctrl-C to stop)"
 dir = "{{config_root}}/agent"

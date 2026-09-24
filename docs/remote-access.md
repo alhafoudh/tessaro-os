@@ -75,8 +75,9 @@ through the synthetic seat described above.
   by the same bbappend, removes that check. It needs `pam-plugin-exec`, which is not in the
   image by default and is an `RDEPENDS` of weston for that reason; without it
   every login fails with a bare `PAM: authentication failed`.
-* **Client compatibility is narrow.** VeNCrypt with plain auth means TigerVNC
-  or Remmina. macOS Screen Sharing and RealVNC fail in the handshake. The cert
+* **Client compatibility is narrow.** VeNCrypt with plain auth means TigerVNC,
+  Remmina, or the viewer built into `tessaro-gui` (VNC in [gui.md](gui.md)).
+  macOS Screen Sharing and RealVNC fail in the handshake. The cert
   is self-signed and identical across an image, so the fingerprint warning
   means nothing.
 * **Sharing is not free while it is on.** `weston_output_disable_planes_incr()`

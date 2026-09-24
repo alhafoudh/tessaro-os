@@ -11,7 +11,7 @@ use anstream::{eprintln, println};
 use clap::Subcommand;
 use protocol::{size_label, Command, FsUsage, Partition, Storage, StorageGrowEvent};
 
-use crate::connect::Session;
+use crate::connect::{Session, StreamEvents};
 use crate::print;
 use crate::style::{self, pad, paint};
 

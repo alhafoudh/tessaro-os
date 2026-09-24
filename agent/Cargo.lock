@@ -2099,6 +2099,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "tessaro-client"
+version = "1.0.0"
+dependencies = [
+ "data-encoding",
+ "mdns-sd",
+ "native-tls",
+ "protocol",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+]
+
+[[package]]
 name = "tessaro-ctl"
 version = "1.0.0"
 dependencies = [
@@ -2107,14 +2121,12 @@ dependencies = [
  "clap",
  "clap_complete",
  "data-encoding",
- "mdns-sd",
- "native-tls",
  "protocol",
  "rpassword",
  "serde",
  "serde_json",
- "sha2",
  "tempfile",
+ "tessaro-client",
 ]
 
 [[package]]

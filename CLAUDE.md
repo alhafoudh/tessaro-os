@@ -39,6 +39,7 @@ same change as the behaviour it describes.
 | [docs/networking.md](docs/networking.md) | NetworkManager, the managed profiles and their transactions, hotspot, ping, speed test |
 | [docs/updates.md](docs/updates.md) | in-place updates, `--repartition`, growing `/data` |
 | [docs/e2e.md](docs/e2e.md) | the qemu RSpec suite: running it, lanes, ports, harness quirks |
+| [docs/gui.md](docs/gui.md) | `tessaro-gui`: inner windows, keyboard, the node list, device pages per command group, workers and jobs, the VNC viewer |
 
 **Writing docs** (in `docs/` and in this file):
 
@@ -87,6 +88,9 @@ Use the mise tasks rather than calling `kas-container` directly:
 | `mise run agent-lint` | `cargo fmt --check` plus clippy for the workspace |
 | `mise run agent-integration` | The agent against a real headless Chromium (`agent/compose.yaml`, needs docker compose), control plane in a sandbox |
 | `mise run build-ctl` | Release `tessaro-ctl` for this host, to manage devices remotely |
+| `mise run gui-run` | Run `tessaro-gui`, the desktop client, from this checkout |
+| `mise run gui-build` | Release `tessaro-gui` for this host |
+| `mise run gui-test` / `gui-lint` | Its unit tests; `cargo fmt --check` plus clippy |
 | `mise run agent-e2e` | Boot qemu VMs (E2E_JOBS at a time), provoke each agent behaviour, assert on its journal |
 | `mise run agent-e2e:one` | One lane or case of that suite, with plain rspec |
 | `mise run agent-e2e:setup` | `bundle install` for the suite's gems |
@@ -210,8 +214,10 @@ Builds are long. Run them in a Herdr pane, not the Bash tool.
 
 `agent/` is a plain Rust workspace built by the `tessaro-kiosk` recipe:
 `protocol/` (wire types and the settings registry, `keys.rs`),
-`tessaro-agent/` (device side), `tessaro-ctl/` (client), `update/` (the
-staging library and `tessaro-flash`, packaged separately for the initramfs).
+`client/` (discovery, the pinned session, `nodes.json`, SSH key setup and
+the chunked transfers, shared by both clients), `tessaro-agent/` (device side), `tessaro-ctl/` (client), `update/`
+(the staging library and `tessaro-flash`, packaged separately for the
+initramfs).
 The host toolchain is pinned to **rust 1.95.0** because the Chromium pin
 (`meta-lts-mixins-rust`) dictates bitbake's; do not bump it on its own.
 `CARGO_TARGET_DIR` is `build/cargo-target` so no `target/` is hashed into the
@@ -234,6 +240,12 @@ recipe.
   or `$`, because values end up in env files. Secrets live in
   `secrets.json`, never `state.json`. The VNC credential is an image
   property and must not become a setting.
+* **`agent/client` never prints or prompts.** Both clients link it; a
+  decision (pinning) is passed in, and warnings come back as
+  `Session::notes`. Terminal output stays in `tessaro-ctl`.
+* **`gui/` is its own workspace and never joins `agent/`**: the recipe builds
+  every member of that one into the image. It reaches `protocol` and `client`
+  by path, and its tasks build into `build/gui-target`.
 
 **Command-line output is colored, and any new CLI must be too.** Print through
 anstream's `println!`/`eprintln!` (imported to shadow the std macros) with the

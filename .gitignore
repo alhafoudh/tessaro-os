@@ -21,6 +21,8 @@
 # every object file in it on every build. This entry is the belt to that
 # braces, for a cargo invoked without mise.
 /agent/target/
+# The same for gui/, whose tasks build into build/gui-target.
+/gui/target/
 
 # Build output and shared caches
 /build/

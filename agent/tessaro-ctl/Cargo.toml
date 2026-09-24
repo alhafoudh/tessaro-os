@@ -16,6 +16,9 @@ path = "src/main.rs"
 # one-request-at-a-time client needs.
 [dependencies]
 protocol = { path = "../protocol" }
+# Finding a device, the pinned TLS session and nodes.json, shared with
+# tessaro-gui.
+tessaro-client = { path = "../client" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
@@ -29,15 +32,6 @@ clap_complete = "4"
 # NO_COLOR, or with --color never.
 anstream = "1"
 anstyle = "1"
-
-# The platform's TLS: openssl on Linux, Security.framework on macOS. Chain
-# verification is off on purpose - devices are self-signed - and replaced by
-# a pin check on the certificate's SHA-256 before a single byte is sent.
-native-tls = "0.2"
-sha2 = "0.10"
-
-# NAME.local discovery. Blocking API, its own thread.
-mdns-sd = { version = "0.21", default-features = false }
 
 # Password prompts without echo.
 rpassword = "7"

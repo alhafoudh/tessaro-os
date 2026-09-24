@@ -13,7 +13,6 @@ mod audio;
 mod connect;
 mod files;
 mod net;
-mod nodes;
 mod progress;
 mod prompt;
 mod ssh;
@@ -35,9 +34,9 @@ use protocol::{
     Screenshot, Settings, Source, SshKeyInfo, SshKeyRevoked, Status, TokenCreated, TokenInfo,
 };
 use serde_json::Value;
+use tessaro_client::nodes::{self, Nodes};
 
 use connect::{Session, Target, Trust};
-use nodes::{Node, Nodes};
 use style::{pad, paint};
 
 /// `--help` in the same palette as everything else.
@@ -716,7 +715,7 @@ fn run(cli: Cli) -> Result<(), String> {
             },
         ),
         Cmd::Access(AccessCmd::Claim { name, .. }) => {
-            let name = name.unwrap_or_else(default_client_name);
+            let name = name.unwrap_or_else(tessaro_client::client_name);
             // A token left over from before an unclaim means nothing now.
             session.clear_token();
             let claimed: Claimed = session.call(Command::Claim { name })?;
@@ -1248,68 +1247,31 @@ fn show_applied(applied: &Applied, no_apply: bool) {
 
 /// `unit: message`, from one journal JSON object.
 fn journal_line(event: &Value) -> String {
-    let field = |name: &str| event.get(name).and_then(Value::as_str);
-    let source = field("SYSLOG_IDENTIFIER")
-        .or_else(|| field("_SYSTEMD_UNIT"))
-        .unwrap_or("?");
-    let message = match event.get("MESSAGE") {
-        Some(Value::String(text)) => text.clone(),
-        // Non-UTF-8 messages come as a byte array.
-        Some(Value::Array(bytes)) => {
-            let bytes: Vec<u8> = bytes
-                .iter()
-                .filter_map(|b| b.as_u64().map(|b| b as u8))
-                .collect();
-            String::from_utf8_lossy(&bytes).into_owned()
-        }
-        Some(other) => other.to_string(),
-        None => event.to_string(),
-    };
-    format!("{} {message}", paint(style::SOURCE, format!("{source}:")))
-}
-
-fn default_client_name() -> String {
-    let user = std::env::var("USER").unwrap_or_else(|_| "someone".to_string());
-    let host = std::fs::read_to_string("/etc/hostname")
-        .ok()
-        .map(|host| host.trim().to_string())
-        .filter(|host| !host.is_empty())
-        .or_else(|| std::env::var("HOSTNAME").ok())
-        .unwrap_or_else(|| "a laptop".to_string());
-    format!("{user}@{host}")
+    let entry = tessaro_client::journal::Entry::parse(event);
+    format!(
+        "{} {}",
+        paint(style::SOURCE, format!("{}:", entry.source)),
+        entry.message
+    )
 }
 
 /// A known device that answered, pin and id checked, somewhere other than its
 /// cached address has moved: remember where, so the next command by name
 /// goes straight there instead of scanning.
 fn refresh_address(nodes: &mut Nodes, session: &Session) -> Result<(), String> {
-    let Some((address, _)) = &session.remote else {
-        return Ok(());
-    };
-    let address = address.to_string();
-    let Some(known) = nodes.by_id(&session.node.id) else {
-        return Ok(());
-    };
-    if known.address == address {
-        return Ok(());
-    }
-
-    eprintln!(
-        "{}",
-        paint(
-            style::WARN,
-            format!(
-                "{}: now at {address} (was {}), remembered",
-                known.name, known.address
+    if let (Some(was), Some((address, _))) = (nodes.refresh(session)?, &session.remote) {
+        eprintln!(
+            "{}",
+            paint(
+                style::WARN,
+                format!(
+                    "{}: now at {address} (was {was}), remembered",
+                    session.node.name
+                )
             )
-        )
-    );
-    let moved = Node {
-        address,
-        ..known.clone()
-    };
-    nodes.put(moved);
-    nodes.save()
+        );
+    }
+    Ok(())
 }
 
 fn remember(
@@ -1321,23 +1283,11 @@ fn remember(
     if local {
         return Ok(()); // the local socket needs neither a pin nor a token
     }
-    let (address, fingerprint) = session
-        .remote
-        .clone()
-        .ok_or_else(|| "no remote session to remember".to_string())?;
-    nodes.put(Node {
-        id: session.node.id.clone(),
-        name: session.node.name.clone(),
-        address: address.to_string(),
-        fingerprint,
-        token,
-    });
-    nodes.save()
+    nodes.remember(session, token)
 }
 
 fn forget_session(nodes: &mut Nodes, session: &Session) -> Result<(), String> {
-    if session.remote.is_some() && nodes.remove(&session.node.id) {
-        nodes.save()?;
+    if nodes.forget_session(session)? {
         println!("forgot {} on this machine", session.node.name);
     }
     Ok(())

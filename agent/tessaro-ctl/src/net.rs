@@ -22,7 +22,7 @@ use protocol::{
 };
 use serde_json::json;
 
-use crate::connect::{Answer, Session};
+use crate::connect::{Answer, Session, StreamEvents};
 use crate::style::{self, pad, paint, yes_no};
 use crate::{print, show_applied, show_once};
 

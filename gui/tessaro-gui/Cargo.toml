@@ -1,0 +1,30 @@
+[package]
+name = "tessaro-gui"
+description = "Manage Tessaro kiosks from a desktop: discovery, known nodes, settings"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "tessaro-gui"
+path = "src/main.rs"
+
+[dependencies]
+protocol = { path = "../../agent/protocol" }
+tessaro-client = { path = "../../agent/client" }
+serde = "1"
+# gui.json: the zoom.
+serde_json = "1"
+# Screenshots arrive base64-encoded.
+data-encoding = "2"
+# The VNC viewer's VeNCrypt TLS, the platform's as everywhere else.
+native-tls = "0.2"
+# The system's own open and save dialogs: uploads, downloads, images.
+rfd = "0.17"
+
+# The GUI: one window, with the node list and each device as inner windows
+# in it (mdi.rs). A device's blocking session runs on a thread of its own
+# and talks to the UI through a subscription. `image` shows screenshots.
+iced = { version = "0.14", features = ["advanced", "image"] }
