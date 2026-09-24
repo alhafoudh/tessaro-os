@@ -262,7 +262,7 @@ if [ -d /dev/dri ]; then
     GPU_OPT="egl-headless"
 else
     echo "warning: no /dev/dri on the host - Weston will start but the kiosk" >&2
-    echo "         browser will not render. See CLAUDE.md." >&2
+    echo "         browser will not render. See docs/build.md." >&2
     GPU_RUNTIME=""
     GPU_OPT="nographic"
 fi
@@ -302,7 +302,7 @@ if [ -d /dev/dri ]; then
     GPU_OPT="egl-headless"
 else
     echo "warning: no /dev/dri on the host - the kiosk browser will not" >&2
-    echo "         render over VNC. See CLAUDE.md." >&2
+    echo "         render over VNC. See docs/build.md." >&2
     GPU_RUNTIME=""
     GPU_OPT=""
 fi
@@ -349,7 +349,7 @@ done
 # over the network with tessaro-ctl, keeping its settings and claim.
 # image:flash writes a card or disk plugged in here and is the manual path:
 # a first install, a device that no longer boots, or one flashed before the
-# update layout (see "Updating a device" in CLAUDE.md).
+# update layout (see docs/updates.md).
 # TESSARO_BUILD_HOST, TESSARO_BUILD_HOST_DIR, TESSARO_NODE and
 # TESSARO_FLASH_DEVICE come from mise.local.toml, see README.md.
 

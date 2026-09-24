@@ -51,7 +51,7 @@ local_conf_header:
     # Weston's old framebuffer into whatever mode it picked, which looks like
     # squashed text. Under full KMS the kernel's vc4 driver owns it, reads the
     # EDID again and sends real hotplug uevents, which Weston and the agent's
-    # hotplug watcher (CLAUDE.md, "Display hotplug") act on. config.txt's
+    # hotplug watcher (docs/display.md, "Display hotplug") act on. config.txt's
     # hdmi_* options are ignored from here on; video= on the kernel command
     # line replaces them.
     VC4DTBO = "vc4-kms-v3d"

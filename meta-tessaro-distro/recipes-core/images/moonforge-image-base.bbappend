@@ -94,7 +94,7 @@ CORE_IMAGE_EXTRA_INSTALL += " \
 # Sound: PipeWire, WirePlumber and the Pulse server Chromium plays through,
 # with the units that run them as the weston user. Everything about which
 # output plays and how loud is the audio.* settings, applied by the agent;
-# see the Audio section in CLAUDE.md.
+# see docs/audio.md.
 CORE_IMAGE_EXTRA_INSTALL += " \
     tessaro-audio \
 "

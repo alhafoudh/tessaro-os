@@ -143,5 +143,5 @@ FILES:${PN} += "${libdir}/tessaro-vnc"
 # renderer stops Weston advertising linux-dmabuf, and WPE 2.52 has no wl_shm
 # fallback, so the browser fails with "no valid format found" instead. The
 # real answer is to give QEMU a working GPU (virtio-vga-gl + virgl), which
-# needs /dev/dri on the host - see the "QEMU needs a real GPU" note in
-# CLAUDE.md.
+# needs /dev/dri on the host - see the "real GPU" gotcha in
+# docs/build.md.

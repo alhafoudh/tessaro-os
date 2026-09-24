@@ -80,7 +80,7 @@ It pulls the image first, builds `tessaro-ctl` from this checkout, and runs
 device preparing it and the reboot. A dropped connection is resumed by running
 it again. The device has to be claimed from this workstation
 (`tessaro-ctl --node NAME access claim`), and running an image with the update layout -
-see "Updating a device" in CLAUDE.md.
+see [docs/updates.md](docs/updates.md).
 
 **Flashing** is the manual path: a first install, a device that no longer
 boots, or one flashed before the update layout:
@@ -242,13 +242,14 @@ A failure prints the agent's journal lines since the case began.
 Everything a run leaves is in `build/e2e/`: `<lane>.log` holds every step of a
 lane whatever the verbosity, `<lane>.qemu.log` its VM's console. Exit status 1
 means a case failed, 2 that the suite could not start (no image). How the
-lanes, ports and VMs fit together is in [CLAUDE.md](CLAUDE.md), under "The
-agent's end-to-end checks".
+lanes, ports and VMs fit together is in [docs/e2e.md](docs/e2e.md).
 
 ## Structure
 
 `kas/common/tessaro.yml` pins every upstream repo and selects the layers shared
 by all targets, `kas/machine/<machine>.yml` adds what is board-specific, and
 `meta-tessaro-distro` holds everything specific to this product. Adding a target
-is one new file in `kas/machine/`. See [CLAUDE.md](CLAUDE.md) for the
-full layout, the task list and the gotchas worth knowing before your first build.
+is one new file in `kas/machine/`. See [docs/build.md](docs/build.md) for the
+full layout and the gotchas worth knowing before your first build,
+[CLAUDE.md](CLAUDE.md) for the task list and the project's rules, and `docs/`
+for how each subsystem works.

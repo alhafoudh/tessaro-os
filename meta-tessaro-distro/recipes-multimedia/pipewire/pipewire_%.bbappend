@@ -1,5 +1,5 @@
 # PipeWire as the kiosk's sound server - see recipes-multimedia/tessaro-audio
-# and the Audio section in CLAUDE.md.
+# and docs/audio.md.
 #
 # A bbappend and not a `PACKAGECONFIG:pn-pipewire` in tessaro.conf, because
 # the recipe sets PACKAGECONFIG:class-target, and CLASSOVERRIDE comes after

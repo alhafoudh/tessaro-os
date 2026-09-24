@@ -19,7 +19,7 @@
 # The password is a published constant, so this file being world readable
 # gives away nothing that the documentation does not. The port is on the
 # loopback and the SSH tunnel in front of it is the real gate; see the
-# Remote access section in CLAUDE.md.
+# docs/remote-access.md.
 #
 # pam_exec hands us:
 #   PAM_USER  in the environment, the username the client sent
