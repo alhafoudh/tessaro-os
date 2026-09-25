@@ -207,11 +207,12 @@ enum Dialog {
     Edit(Edit),
     Confirm(Confirmable),
     Form(pages::Form),
-    /// Shown once: a new token, a password.
+    /// Shown once: a new token, a password. Each value with its label, an
+    /// empty one for a lone value.
     Secret {
         title: String,
         intro: String,
-        value: String,
+        values: Vec<(String, String)>,
     },
     Text {
         title: String,
@@ -672,6 +673,7 @@ impl Device {
             Event::Screenshot(Err(error)) => self.shot_error = Some(error),
             Event::Answer(tag, result) => self.answer(tag, result),
             Event::Note(note) => self.log(Tone::Warn, note),
+            Event::Pinned(note) => self.log(Tone::Ok, note),
         }
     }
 
@@ -1472,22 +1474,29 @@ impl Device {
             Dialog::Secret {
                 title,
                 intro,
-                value,
-            } => dialog::frame(
-                title.clone(),
-                column![
-                    text(intro).size(theme::SMALL).style(text::warning),
-                    row![
+                values,
+            } => {
+                let mut body =
+                    column![text(intro).size(theme::SMALL).style(text::warning)].spacing(10);
+                for (label, value) in values {
+                    let line = row![
                         text(value).size(theme::TEXT).font(iced::Font::MONOSPACE),
                         theme::tool("Copy", Some(Message::P(pages::Msg::Copy(value.clone())))),
                     ]
                     .spacing(8)
-                    .align_y(iced::alignment::Vertical::Center),
-                ]
-                .spacing(10)
-                .into(),
-                vec![theme::default_button("Done", Some(Message::Cancel))],
-            ),
+                    .align_y(iced::alignment::Vertical::Center);
+                    body = if label.is_empty() {
+                        body.push(line)
+                    } else {
+                        body.push(field(label, line))
+                    };
+                }
+                dialog::frame(
+                    title.clone(),
+                    body.into(),
+                    vec![theme::default_button("Done", Some(Message::Cancel))],
+                )
+            }
             Dialog::Text { title, body } => dialog::frame(
                 title.clone(),
                 scrollable(text(body).size(theme::SMALL).font(iced::Font::MONOSPACE))

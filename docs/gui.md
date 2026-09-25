@@ -81,7 +81,9 @@ keyed by node id** (`nodes_view::merge`).
   claim model** in [settings.md](settings.md)). A stranger is reached at the
   address it was seen at (`worker::connect`), and only while it stays
   unclaimed. Actions that make a credential show the device's refusal;
-  SSH and VNC go in by the empty root password instead of a key.
+  SSH and VNC go in by the empty root password instead of a key. Unclaim is
+  disabled instead: the device does not refuse it, and the node would be
+  forgotten here for nothing. The claim state comes from each status poll.
 
 Discovery runs for as long as the app does (`discovery.rs`). Rescan starts a
 new browse. A device mDNS cannot see (another subnet, a VM) is added by
@@ -95,6 +97,12 @@ session whose pin closure accepts only that fingerprint. If another
 certificate answers by then, nothing is sent. A login proves the token with
 `TokenList` before storing it. A claim shows the root and hotspot passwords
 once, with copy buttons, and closes only through Done.
+
+**A claim from the device window's Access page goes over the session the
+window already has** (`worker::Request::Claim`), so it pins the certificate
+that session was opened on, which the form and the Overview show. The worker
+keeps the new token for its later calls and writes the node to nodes.json,
+and the node list reloads.
 
 ## Device windows
 
@@ -156,7 +164,7 @@ applies and stays, Default unsets.**
 | Storage | `storage show`, partitions and filesystems, `storage grow` (check first) |
 | Audio | `audio show`, outputs and inputs, choosing one, volume, mute, `audio test` for the tone and the recording |
 | Time | `time show` and its servers, `time timezone` (a choice of `time zones`), `time ntp on|off` with servers, `time sync`, `time set` (this computer's clock or a typed time) |
-| Access | `access token create`, `list`, `revoke`, `access password set`, `access unclaim` |
+| Access | `access claim` (while unclaimed), `access token create`, `list`, `revoke`, `access password set`, `access unclaim` (while claimed) |
 | SSH | `ssh keys list` and `revoke`, `ssh connect` (authorize the key, open a terminal) |
 | Files | `files list` as a browser, `upload` (files or a folder), `download`, `mkdir`, `move`, `rm` |
 | Update | `update status`, `update send` with progress, `update cancel` |

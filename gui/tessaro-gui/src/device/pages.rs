@@ -23,7 +23,7 @@ use iced::{Element, Length, Task};
 use protocol::files::{self as store, FileEntry, FileKind, FilesListing};
 use protocol::keys;
 use protocol::{
-    size_label, Applied, AudioDevice, AudioStatus, AudioTested, Command, Connector, Done,
+    size_label, Applied, AudioDevice, AudioStatus, AudioTested, Claimed, Command, Connector, Done,
     HotspotCredentials, Net, NetChange, NetProfile, NetProfileDetail, Password, PingEvent, Secret,
     SpeedtestEvent, SshKeyInfo, SshKeyRevoked, Storage, StorageGrowEvent, TimeStatus, TokenCreated,
     TokenInfo, UpdatePhase, UpdateStatus, Verify, WifiNetwork, WifiSecurity, WifiStatus,
@@ -124,6 +124,7 @@ enum Action {
     TokenCreate,
     TokenRevoke(String),
     Password,
+    Claim,
     Unclaim,
     KeyRevoke(String),
     Mkdir,
@@ -187,6 +188,7 @@ pub enum Msg {
     TokenNew,
     TokenRevoke,
     Password,
+    Claim,
     Unclaim,
     // ssh
     KeyRevoke,
@@ -333,7 +335,7 @@ fn page_of(tag: &str) -> &'static str {
         "storage" => "storage",
         "audio" => "audio",
         "time" => "time",
-        "tokens" | "token" | "password" | "unclaim" => "access",
+        "tokens" | "token" | "password" | "claim" | "unclaim" => "access",
         "ssh" => "ssh",
         "files" => "files",
         "update" => "update",
@@ -497,7 +499,7 @@ impl Device {
         self.dialog = Some(Dialog::Secret {
             title: title.into(),
             intro: intro.into(),
-            value,
+            values: vec![(String::new(), value)],
         });
     }
 
@@ -644,10 +646,32 @@ impl Device {
                     None => self.log(Tone::Ok, "root password changed"),
                 }
             }
+            "claim" => {
+                let claimed: Claimed = parse(value)?;
+                let mut secrets = vec![("Root password".to_string(), claimed.root_password)];
+                let mut intro =
+                    "The new root password - shown this once, store it now.".to_string();
+                if let Some(hotspot) = claimed.hotspot {
+                    secrets.push((hotspot.ssid, hotspot.password));
+                    intro = "The new root and hotspot passwords - shown this once, store them now. Anyone on the hotspot now is dropped.".to_string();
+                }
+                self.log(Tone::Ok, format!("claimed {}", self.name()));
+                self.dialog = Some(Dialog::Secret {
+                    title: format!("Claimed {}", self.name()),
+                    intro,
+                    values: secrets,
+                });
+                self.refresh_page(Page::Access);
+            }
             "unclaim" | "factory" => {
                 let done: Done = parse(value)?;
                 self.log(Tone::Warn, done.message);
                 self.forget_here();
+                // The device stays up after an unclaim, and answers the
+                // stale token as it answers none.
+                if tag == "unclaim" {
+                    self.refresh_page(Page::Access);
+                }
             }
             "ssh.keys" => self.pages.ssh_keys = parse(value)?,
             "ssh.revoke" => {
@@ -1035,6 +1059,18 @@ impl Device {
                     .intro("The root password for the console and SSH. Leave it empty for a random one, shown once.")
                     .field(Field::secret("Password")),
             ),
+            Msg::Claim => {
+                let name = self.name().to_string();
+                let fingerprint = self
+                    .info
+                    .as_ref()
+                    .map_or_else(String::new, |info| info.fingerprint.clone());
+                self.form(
+                    Form::new(format!("Claim {name}"), "Claim", Action::Claim)
+                        .intro(format!("This machine gets the device's token and pins the certificate this window is connected on ({fingerprint}). The device sets a new root password and hotspot password, shown once."))
+                        .field(Field::text("Claim as", tessaro_client::client_name(), "who is claiming it")),
+                );
+            }
             Msg::Unclaim => {
                 let name = self.name().to_string();
                 self.form(
@@ -1545,6 +1581,15 @@ impl Device {
                 };
                 self.call("password", Command::PasswordSet { password });
             }
+            Action::Claim => {
+                let name = match form.value("Claim as").trim() {
+                    "" => tessaro_client::client_name(),
+                    name => name.to_string(),
+                };
+                if self.request(Request::Claim { name }) {
+                    *self.pages.in_flight.entry("claim").or_default() += 1;
+                }
+            }
             Action::Unclaim => self.call("unclaim", Command::Unclaim),
             Action::KeyRevoke(key) => {
                 self.call("ssh.revoke", Command::SshKeyRevoke { key: key.clone() })
@@ -1845,6 +1890,16 @@ impl Device {
         self.online().then_some(Message::P(message))
     }
 
+    /// From the last status poll, so a claim or unclaim made elsewhere
+    /// shows; the handshake's answer until the first poll.
+    fn claimed(&self) -> bool {
+        match (&self.status, &self.info) {
+            (Some((status, _)), _) => status.node.claimed,
+            (None, Some(info)) => info.claimed,
+            (None, None) => false,
+        }
+    }
+
     /// The DevTools tunnel is up already; one is all Chrome needs.
     fn devtools_open(&self) -> bool {
         self.jobs
@@ -1880,7 +1935,7 @@ impl Device {
             facts.push(("Machine", info.machine.clone()));
             facts.push(("Agent", info.version.clone()));
             facts.push(("Certificate", info.fingerprint.clone()));
-            facts.push(("Claimed", yes(info.claimed)));
+            facts.push(("Claimed", yes(self.claimed())));
         }
         let mut units = Vec::new();
         if let Some((status, _)) = &self.status {
@@ -2629,9 +2684,18 @@ impl Device {
         self.page(
             "access",
             vec![
+                action(
+                    "Claim ...",
+                    self.when(Msg::Claim).filter(|_| !self.claimed()),
+                ),
                 action("New token ...", self.when(Msg::TokenNew)),
                 action("Root password ...", self.when(Msg::Password)),
-                action("Unclaim ...", self.when(Msg::Unclaim)),
+                // The device answers unclaim even when unclaimed, and the
+                // node would then be forgotten here for nothing.
+                action(
+                    "Unclaim ...",
+                    self.when(Msg::Unclaim).filter(|_| self.claimed()),
+                ),
             ],
             vec![action(
                 "Revoke",

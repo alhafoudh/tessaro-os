@@ -156,8 +156,9 @@ impl App {
                 self.device_update(id, message)
             }
             Message::Worker(id, event) => {
-                // A device that moved was written to nodes.json by its worker.
-                let moved = matches!(event, worker::Event::Note(_));
+                // A device that moved or was claimed was written to
+                // nodes.json by its worker.
+                let moved = matches!(event, worker::Event::Note(_) | worker::Event::Pinned(_));
                 if let Some(device) = self.devices.get_mut(&id) {
                     device.event(event);
                 }
@@ -288,8 +289,18 @@ impl App {
     fn view(&self) -> Element<'_, Message> {
         let header = container(
             row![
-                text("Tessaro").size(15).font(grid::bold()),
-                text("kiosk manager").size(theme::SMALL).style(theme::muted),
+                // Bottom-aligned boxes as tall as their font: iced has no
+                // baseline alignment, and centred ones of two sizes put the
+                // smaller text's baseline higher.
+                row![
+                    text("Tessaro").size(15).line_height(1.0).font(grid::bold()),
+                    text("kiosk manager")
+                        .size(theme::SMALL)
+                        .line_height(1.0)
+                        .style(theme::muted),
+                ]
+                .spacing(8)
+                .align_y(iced::alignment::Vertical::Bottom),
                 space::horizontal(),
                 theme::tool("Devices", Some(Message::ShowNodes)),
             ]
