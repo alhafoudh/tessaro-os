@@ -140,10 +140,11 @@ pub fn dialog_button<'a, M: Clone + 'a>(label: &'a str, on_press: Option<M>) -> 
         .into()
 }
 
-/// The small flat buttons in an inner window's title bar.
-pub fn title_button<'a, M: Clone + 'a>(label: &'a str, message: M) -> Element<'a, M> {
-    button(text(label).size(SMALL))
-        .padding([0, 6])
+/// The small flat buttons in an inner window's title bar, around an icon
+/// (`icon.rs`).
+pub fn title_button<'a, M: Clone + 'a>(icon: Element<'a, M>, message: M) -> Element<'a, M> {
+    button(icon)
+        .padding([5, 6])
         .style(|_, status| button::Style {
             background: match status {
                 button::Status::Hovered | button::Status::Pressed => Some(BUTTON_HOVER.into()),
@@ -249,18 +250,19 @@ pub fn frame(focused: bool) -> impl Fn(&Theme) -> container::Style {
     }
 }
 
-/// An inner window's title bar: the one on top in the primary colour.
+/// An inner window's title bar: dark, the one with the keyboard lighter
+/// and in white. The frame's border is what marks it in colour.
 pub fn frame_title(focused: bool) -> impl Fn(&Theme) -> container::Style {
     move |_| {
         if focused {
             container::Style {
                 text_color: Some(Color::WHITE),
-                ..filled(rgb(0x2b_4f_86))
+                ..filled(CHROME)
             }
         } else {
             container::Style {
                 text_color: Some(MUTED),
-                ..filled(CHROME)
+                ..filled(PANEL)
             }
         }
     }

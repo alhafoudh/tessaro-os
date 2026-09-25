@@ -35,22 +35,40 @@ progress goes to a callback.
 
 ## One window, inner windows
 
-**The app is one window with inner windows on a desk, WinBox style**
-(`mdi.rs`). The node list, every opened device and its settings windows are
-inner windows: they
-drag by the title bar, resize from the bottom-right corner, maximize with the
-title-bar button or a double-click, and close with ×. The node list cannot be
-closed; Devices in the app header brings it back to the top. The last window
-clicked is on top.
+**The app is one window: the node list fills its desk, and every opened
+device and its settings windows float over it as inner windows, WinBox
+style** (`mdi.rs`). The node list is the main screen, not a window, so it
+cannot be closed or lost behind anything but the windows opened from it.
+The inner windows drag by the title bar, resize from the bottom-right
+corner, maximize with the title-bar button or a double-click, and close
+with ×. The last window clicked is on top. Title bars are dark; the window
+with the keyboard has the lighter one and a blue border.
 
-* Built from iced's `stack` (one layer per window, in z-order), `pin` (its
-  position) and `opaque`, so a window hides what is under it from the mouse
-  as well as the eye.
+* Built from iced's `stack` (the node list, then one layer per window, in
+  z-order), `pin` (its position) and `opaque`, so a window hides what is
+  under it from the mouse as well as the eye.
+* **A window is always kept whole on the desk** - moved, resized, opened or
+  when the app window shrinks. `pin` gives its content only what is left of
+  the desk right of and below its position, so a window past the edge would
+  be squeezed while its stored size kept growing, and the corner would stop
+  answering.
 * While a window is dragged, the app listens for the cursor itself
   (`event::listen_with`, only then). The title bar only reports where on it
   the press was.
+* **Where a window was is remembered per kind, not per device** (`DEVICE`,
+  `SETTINGS` in `main.rs`), in `gui.json` next to `nodes.json`, after every
+  move, resize and maximize. The next window of that kind opens there, cascaded
+  off any of its kind already at that spot. A maximized window is
+  remembered as maximized, next to the size it restores to, not as the
+  desk's size. Whether device windows show their Messages log is kept
+  there too, as the last window toggled it.
+* **The title-bar icons are drawn, not typed** (`icon.rs`): a `□` from a
+  fallback font lands on fractional device pixels at most zooms, so some
+  of its edges come out half as thin. The canvas snaps each edge to a whole
+  device pixel from the screen's scale times the zoom (`Desk::set_pixel`).
 
-**The keyboard talks to the window on top** (`main.rs`, `keys`):
+**The keyboard talks to the window on top** (`main.rs`, `keys`), or to the
+node list when no window is open or the list was clicked last:
 
 * Esc closes its dialog, else closes a device or settings window. It never
   closes the node list or the app.
@@ -90,7 +108,7 @@ keyed by node id** (`nodes_view::merge`).
 Discovery runs for as long as the app does (`discovery.rs`). Rescan starts a
 new browse. A device mDNS cannot see (another subnet, a VM) is added by
 address. Both are actions on the node list's own toolbar, since they act on
-that list; the app header only has Devices.
+that list; the app header only has the app's name.
 
 **Login and claim peek first, then pin exactly what was shown.** The dialog
 opens a session with `Trust::Peek`, which sends nothing secret, and shows the
@@ -185,8 +203,9 @@ applies and stays, Default unsets.**
 | Update | `update status`, `update send` with progress, `update cancel` |
 | Log | `device logs --follow`, filtered by unit on the device and by text here |
 
-The window's own toolbar has Refresh, Restart browser, weston or agent, and
-Reboot, the restarts confirmed first. **Refresh is the window's, not a
+The window's title bar, after the device's name and address, has Refresh,
+Restart browser, weston or agent, and Reboot, the restarts confirmed first,
+and the VNC and Messages toggles. There is no toolbar row under it. **Refresh is the window's, not a
 page's**: it fetches `Status`, the settings and what the page shown asks
 for, so no page or settings window has a Refresh of its own. The status bar
 shows the device's `Status`, and a guarded change's countdown with Confirm;

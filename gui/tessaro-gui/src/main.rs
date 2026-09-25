@@ -1,8 +1,9 @@
 //! tessaro-gui: Tessaro kiosks from a technician's desktop.
 //!
-//! One app window. The node list (`nodes_view.rs`) and each opened device
-//! (`device.rs`, with a worker thread behind it, `worker.rs`) are inner
-//! windows on its desk (`mdi.rs`). How it fits together is in docs/gui.md.
+//! One app window. The node list (`nodes_view.rs`) fills its desk
+//! (`mdi.rs`), and each opened device (`device.rs`, with a worker thread
+//! behind it, `worker.rs`) is an inner window on top. How it fits together
+//! is in docs/gui.md.
 
 mod blocking;
 mod copy_menu;
@@ -10,6 +11,7 @@ mod device;
 mod dialog;
 mod discovery;
 mod grid;
+mod icon;
 mod jobs;
 mod logs;
 mod mdi;
@@ -33,9 +35,11 @@ pub const CLIENT: &str = concat!("tessaro-gui ", env!("CARGO_PKG_VERSION"));
 
 /// The window the app opens with.
 const WINDOW: Size = Size::new(1400.0, 860.0);
-const NODES_SIZE: Size = Size::new(900.0, 420.0);
 const DEVICE_SIZE: Size = Size::new(1060.0, 640.0);
 const CONFIG_SIZE: Size = Size::new(760.0, 440.0);
+/// The kinds of inner window, each remembering where it was left.
+const DEVICE: mdi::Kind = "device";
+const SETTINGS: mdi::Kind = "settings";
 
 fn main() -> iced::Result {
     iced::application(App::boot, App::update, App::view)
@@ -55,7 +59,7 @@ fn main() -> iced::Result {
         .run()
 }
 
-/// Cmd + and Cmd -, in tenths, remembered in `gui.json` next to nodes.json.
+/// Cmd + and Cmd -, in tenths.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Zoom(i32);
 
@@ -71,6 +75,24 @@ impl Zoom {
         Self((self.0 + by).clamp(Self::MIN, Self::MAX))
     }
 
+    fn from_scale(scale: Option<f32>) -> Self {
+        scale.map_or(Self(10), |scale| {
+            Self((scale * 10.0).round() as i32).step(0)
+        })
+    }
+}
+
+/// What `gui.json`, next to nodes.json, keeps: the zoom, where each kind of
+/// inner window was left, and whether device windows show their messages.
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
+struct Prefs {
+    scale: Option<f32>,
+    #[serde(default)]
+    windows: BTreeMap<String, mdi::Placement>,
+    messages: Option<bool>,
+}
+
+impl Prefs {
     fn path() -> std::path::PathBuf {
         tessaro_client::nodes::dir().join("gui.json")
     }
@@ -78,15 +100,14 @@ impl Zoom {
     fn load() -> Self {
         std::fs::read(Self::path())
             .ok()
-            .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
-            .and_then(|value| value.get("scale")?.as_f64())
-            .map_or(Self(10), |scale| {
-                Self((scale * 10.0).round() as i32).step(0)
-            })
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .unwrap_or_default()
     }
 
-    fn save(self) {
-        let body = serde_json::json!({ "scale": self.scale() }).to_string();
+    fn save(&self) {
+        let Ok(body) = serde_json::to_string(self) else {
+            return;
+        };
         let path = Self::path();
         if let Some(dir) = path.parent() {
             let _ = std::fs::create_dir_all(dir);
@@ -103,6 +124,12 @@ struct App {
     desk: mdi::Desk,
     next: mdi::Id,
     zoom: Zoom,
+    /// Device pixels per point of the screen the app is on, for the desk's
+    /// pixel-snapped icons along with the zoom.
+    dpi: f32,
+    /// Whether a new device window shows its message log: as the last one
+    /// toggled it.
+    messages: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -128,29 +155,48 @@ enum Message {
     Job(mdi::Id, u64, jobs::Event),
     Desk(mdi::Message),
     Key(Key),
-    /// Show the node list, and bring it to the top.
-    ShowNodes,
+    /// The screen's device pixels per point, at start and when it changes.
+    Rescaled(f32),
 }
 
 impl App {
     fn boot() -> (Self, Task<Message>) {
-        let mut desk = mdi::Desk::new(WINDOW);
-        desk.open(NODES, NODES_SIZE);
-        let app = Self {
+        let prefs = Prefs::load();
+        let mut app = Self {
             nodes: NodesView::new(),
             devices: BTreeMap::new(),
             configs: BTreeMap::new(),
-            desk,
-            next: NODES + 1,
-            zoom: Zoom::load(),
+            desk: mdi::Desk::new(WINDOW, prefs.windows),
+            next: 1,
+            zoom: Zoom::from_scale(prefs.scale),
+            dpi: 1.0,
+            messages: prefs.messages.unwrap_or(true),
         };
-        (app, Task::none())
+        app.rescale();
+        let dpi = window::oldest()
+            .and_then(window::scale_factor)
+            .map(Message::Rescaled);
+        (app, dpi)
+    }
+
+    fn save(&self) {
+        Prefs {
+            scale: Some(self.zoom.scale()),
+            windows: self.desk.placements().clone(),
+            messages: Some(self.messages),
+        }
+        .save();
+    }
+
+    /// Tell the desk how many device pixels a point is now.
+    fn rescale(&mut self) {
+        self.desk.set_pixel(self.dpi * self.zoom.scale());
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Nodes(message) => {
-                self.desk.raise(NODES);
+                self.desk.focus_base();
                 self.nodes_update(message)
             }
             Message::Discovery(event) => {
@@ -199,15 +245,17 @@ impl App {
                 Task::none()
             }
             Message::Desk(message) => {
-                if let Some(id) = self.desk.update(message) {
-                    self.close(id);
+                match self.desk.update(message) {
+                    Some(mdi::Event::Close(id)) => self.close(id),
+                    Some(mdi::Event::Placed) => self.save(),
+                    None => {}
                 }
                 Task::none()
             }
             Message::Key(key) => self.key(key),
-            Message::ShowNodes => {
-                self.desk.open(NODES, NODES_SIZE);
-                self.desk.raise(NODES);
+            Message::Rescaled(dpi) => {
+                self.dpi = dpi;
+                self.rescale();
                 Task::none()
             }
         }
@@ -226,12 +274,18 @@ impl App {
         if let device::Message::Configure(scope) = &message {
             self.configure(id, &scope.prefix);
         }
-        match self.devices.get_mut(&id) {
-            Some(device) => device
-                .update(message)
-                .map(move |message| Message::Device(id, message)),
-            None => Task::none(),
+        let toggled = matches!(message, device::Message::ToggleLog);
+        let Some(device) = self.devices.get_mut(&id) else {
+            return Task::none();
+        };
+        let task = device
+            .update(message)
+            .map(move |message| Message::Device(id, message));
+        if toggled {
+            self.messages = device.log_open();
+            self.save();
         }
+        task
     }
 
     /// The keyboard talks to the window on top.
@@ -239,20 +293,19 @@ impl App {
         match key {
             Key::Zoom(by) => {
                 self.zoom = self.zoom.step(by);
-                self.zoom.save();
+                self.rescale();
+                self.save();
                 return Task::none();
             }
             Key::ZoomReset => {
                 self.zoom = Zoom(10);
-                self.zoom.save();
+                self.rescale();
+                self.save();
                 return Task::none();
             }
             _ => {}
         }
         let Some(top) = self.desk.top() else {
-            return Task::none();
-        };
-        if top == NODES {
             let message = match key {
                 Key::Escape => nodes_view::Message::Cancel,
                 Key::Enter => nodes_view::Message::Enter,
@@ -261,7 +314,7 @@ impl App {
                 Key::Zoom(_) | Key::ZoomReset => return Task::none(),
             };
             return self.nodes_update(message);
-        }
+        };
         if let Some((id, prefix)) = self.configs.get(&top).cloned() {
             let dialog = self.devices.get(&id).is_some_and(Device::has_dialog);
             let cfg = |cfg| device::Message::Cfg(prefix.clone(), cfg);
@@ -304,8 +357,8 @@ impl App {
         }
         let id = self.next;
         self.next += 1;
-        self.devices.insert(id, Device::new(node));
-        self.desk.open(id, DEVICE_SIZE);
+        self.devices.insert(id, Device::new(node, self.messages));
+        self.desk.open(id, DEVICE, DEVICE_SIZE);
     }
 
     /// The settings window of `prefix` on the device in window `id`, opened
@@ -322,16 +375,13 @@ impl App {
         let window = self.next;
         self.next += 1;
         self.configs.insert(window, (id, prefix.to_string()));
-        self.desk.open(window, CONFIG_SIZE);
+        self.desk.open(window, SETTINGS, CONFIG_SIZE);
     }
 
     /// Dropping a device drops its subscriptions, and with them its worker
     /// thread, its journal stream and their sessions. Its settings windows
     /// close with it.
     fn close(&mut self, id: mdi::Id) {
-        if id == NODES {
-            return;
-        }
         if let Some((device, prefix)) = self.configs.remove(&id) {
             if let Some(device) = self.devices.get_mut(&device) {
                 let _ = device.update(device::Message::Unconfigure(prefix));
@@ -367,10 +417,7 @@ impl App {
                 ]
                 .spacing(8)
                 .align_y(iced::alignment::Vertical::Bottom),
-                space::horizontal(),
-                theme::tool("Devices", Some(Message::ShowNodes)),
             ]
-            .spacing(8)
             .align_y(iced::alignment::Vertical::Center),
         )
         .height(mdi::DESK_TOP)
@@ -379,35 +426,37 @@ impl App {
         .align_y(iced::alignment::Vertical::Center)
         .style(theme::app_header);
 
+        let empty = || mdi::Window {
+            title: String::new(),
+            closable: true,
+            tools: None,
+            content: space().into(),
+        };
         let desk = self.desk.view(
+            self.nodes.view().map(Message::Nodes),
             |id| {
-                if id == NODES {
-                    (
-                        "Devices".to_string(),
-                        false,
-                        self.nodes.view().map(Message::Nodes),
-                    )
-                } else if let Some((device, prefix)) = self.configs.get(&id) {
+                if let Some((device, prefix)) = self.configs.get(&id) {
                     match self.devices.get(device) {
-                        Some(device) => (
-                            device.config_title(prefix),
-                            true,
-                            device
+                        Some(device) => mdi::Window {
+                            title: device.config_title(prefix),
+                            closable: true,
+                            tools: None,
+                            content: device
                                 .config_view(prefix)
                                 .map(move |message| Message::Settings(id, message)),
-                        ),
-                        None => (String::new(), true, space().into()),
+                        },
+                        None => empty(),
                     }
                 } else {
+                    let to_device = move |message| Message::Device(id, message);
                     match self.devices.get(&id) {
-                        Some(device) => (
-                            device.title(),
-                            true,
-                            device
-                                .view()
-                                .map(move |message| Message::Device(id, message)),
-                        ),
-                        None => (String::new(), true, space().into()),
+                        Some(device) => mdi::Window {
+                            title: device.title(),
+                            closable: true,
+                            tools: Some(device.title_tools().map(to_device)),
+                            content: device.view().map(to_device),
+                        },
+                        None => empty(),
                     }
                 }
             },
@@ -466,17 +515,15 @@ impl App {
     }
 }
 
-/// The node list's inner window: always there, never closed.
-const NODES: mdi::Id = 0;
-
-/// The keys the app handles, and the window's size for the desk. A key a
-/// widget took (Esc leaving a text field, Enter submitting one) is left to
-/// it, except the zoom.
+/// The keys the app handles, and the window's size and scale for the desk.
+/// A key a widget took (Esc leaving a text field, Enter submitting one) is
+/// left to it, except the zoom.
 fn keys(event: iced::Event, status: event::Status, _: window::Id) -> Option<Message> {
     match event {
         iced::Event::Window(window::Event::Resized(size)) => {
             Some(Message::Desk(mdi::Message::Resized(size)))
         }
+        iced::Event::Window(window::Event::Rescaled(dpi)) => Some(Message::Rescaled(dpi)),
         iced::Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => {
             if modifiers.command() {
                 return match key.as_ref() {

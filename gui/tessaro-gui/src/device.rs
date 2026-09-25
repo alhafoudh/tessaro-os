@@ -468,7 +468,9 @@ struct Vnc {
 }
 
 impl Device {
-    pub fn new(node: Node) -> Self {
+    /// A window for `node`, with the message log shown or not as the last
+    /// window left it.
+    pub fn new(node: Node, log_open: bool) -> Self {
         Self {
             node,
             link: Link::Connecting,
@@ -479,7 +481,7 @@ impl Device {
             settings: None,
             configs: BTreeMap::new(),
             log: Vec::new(),
-            log_open: true,
+            log_open,
             dialog: None,
             page: Page::Overview,
             shot: None,
@@ -587,6 +589,11 @@ impl Device {
             address if !address.is_empty() => format!("{} - {address}", self.name()),
             _ => self.name().to_string(),
         }
+    }
+
+    /// Whether the message log is shown (Messages).
+    pub fn log_open(&self) -> bool {
+        self.log_open
     }
 
     pub fn has_dialog(&self) -> bool {
@@ -1176,7 +1183,7 @@ impl Device {
             }
         };
 
-        let mut page = column![self.toolbar(), body];
+        let mut page = column![body];
         if self.log_open {
             page = page.push(self.log_view());
         }
@@ -1206,32 +1213,24 @@ impl Device {
         }
     }
 
-    fn toolbar(&self) -> Element<'_, Message> {
+    /// The device window's actions, in its title bar next to its name.
+    pub fn title_tools(&self) -> Element<'_, Message> {
         let online = self.link == Link::Online;
         let when = |message: Message| online.then_some(message);
-        container(
-            row![
-                text(self.name()).size(theme::TEXT).font(bold()),
-                text(&self.node.address)
-                    .size(theme::SMALL)
-                    .style(theme::muted),
-                space::horizontal(),
-                theme::tool("Refresh", when(Message::Refresh)),
-                rule::vertical(1),
-                theme::tool("Restart browser", when(Message::Ask(Restart::Browser))),
-                theme::tool("Restart weston", when(Message::Ask(Restart::Weston))),
-                theme::tool("Restart agent", when(Message::Ask(Restart::Agent))),
-                theme::tool("Reboot", when(Message::Ask(Restart::Reboot))),
-                rule::vertical(1),
-                theme::toggle("VNC", self.vnc.open, Message::ToggleVnc),
-                theme::toggle("Messages", self.log_open, Message::ToggleLog),
-            ]
-            .spacing(6)
-            .height(24)
-            .align_y(iced::alignment::Vertical::Center),
-        )
-        .padding([4, 8])
-        .style(theme::status_bar)
+        row![
+            theme::tool("Refresh", when(Message::Refresh)),
+            rule::vertical(1),
+            theme::tool("Restart browser", when(Message::Ask(Restart::Browser))),
+            theme::tool("Restart weston", when(Message::Ask(Restart::Weston))),
+            theme::tool("Restart agent", when(Message::Ask(Restart::Agent))),
+            theme::tool("Reboot", when(Message::Ask(Restart::Reboot))),
+            rule::vertical(1),
+            theme::toggle("VNC", self.vnc.open, Message::ToggleVnc),
+            theme::toggle("Messages", self.log_open, Message::ToggleLog),
+        ]
+        .spacing(6)
+        .height(20)
+        .align_y(iced::alignment::Vertical::Center)
         .into()
     }
 
