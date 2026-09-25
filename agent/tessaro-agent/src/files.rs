@@ -41,6 +41,9 @@ const RESERVE: u64 = 256 << 20;
 
 const META: &str = "upload.json";
 const PART: &str = "upload.part";
+/// What the agent itself stores is written here, in `state_dir`, beside the
+/// upload slot rather than in it, so it never drops an upload under way.
+const STORE_PART: &str = "files-store.part";
 
 /// The file being received.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -148,6 +151,26 @@ impl Files {
             ));
         }
         Ok(Received { received, size })
+    }
+
+    /// A file the agent made itself - the `audio test --input` recording -
+    /// put in place whole, over whatever had its name, with the time now.
+    pub async fn store(&self, caller: &str, path: &str, bytes: Vec<u8>) -> Result<(), String> {
+        let path = files::normalize(path)?;
+        if path.is_empty() {
+            return Err("a file needs a name".to_string());
+        }
+        let _writes = self.writes.lock().await;
+        let root = self.paths.files_dir.clone();
+        let part = self.paths.state_dir.join(STORE_PART);
+        let name = path.clone();
+        let size = bytes.len() as u64;
+        blocking("storing a file", move || store(&root, &part, &name, &bytes)).await?;
+        self.log.info(format!(
+            "files: stored {path} ({}) for {caller}",
+            megabytes(size)
+        ));
+        Ok(())
     }
 
     pub async fn read(&self, path: &str, offset: u64, len: u64) -> Result<FileData, String> {
@@ -371,6 +394,40 @@ fn finish(root: &Path, staging: &Path, upload: &Upload) -> Result<(), String> {
     fsutil::sync_dir(&parent).map_err(fail)?;
     fsutil::remove_if_exists(&staging.join(META)).map_err(fail)?;
     Ok(())
+}
+
+/// Written and synced beside the store, then renamed in, as an upload is.
+fn store(root: &Path, part: &Path, path: &str, bytes: &[u8]) -> Result<(), String> {
+    make_dir(root).map_err(|err| format!("{}: {err}", root.display()))?;
+    let target = resolve(root, path)?;
+    if fs::symlink_metadata(&target).is_ok_and(|meta| meta.is_dir()) {
+        return Err(format!("{path} is a directory"));
+    }
+    let free = fsutil::available(root).map_err(|err| format!("{}: {err}", root.display()))?;
+    if free < (bytes.len() as u64).saturating_add(RESERVE) {
+        return Err(format!(
+            "/data has {} free, less than the {} the kiosk keeps",
+            megabytes(free),
+            megabytes(RESERVE)
+        ));
+    }
+    let parent = target.parent().unwrap_or(root).to_path_buf();
+    let fail = |err: io::Error| format!("storing {path}: {err}");
+
+    if let Some(dir) = part.parent() {
+        fs::create_dir_all(dir).map_err(fail)?;
+    }
+    let mut file = File::create(part).map_err(fail)?;
+    file.set_permissions(fs::Permissions::from_mode(0o644))
+        .map_err(fail)?;
+    file.write_all(bytes)
+        .and_then(|()| file.sync_all())
+        .map_err(fail)?;
+    drop(file);
+
+    make_dir(&parent).map_err(fail)?;
+    fs::rename(part, &target).map_err(fail)?;
+    fsutil::sync_dir(&parent).map_err(fail)
 }
 
 fn list(root: &Path, path: &str, recursive: bool) -> Result<FilesListing, String> {
@@ -915,6 +972,33 @@ mod tests {
         assert!(files.begin("test", "a", 1, MTIME).await.is_err());
         assert!(files.begin("test", "a/x.txt/y", 1, MTIME).await.is_err());
         assert!(files.mkdir("test", "a/x.txt").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn a_file_the_agent_stores_replaces_the_last_and_leaves_an_upload_alone() {
+        let device = Device::new();
+        let files = device.files();
+        let begun = files.begin("test", "big.bin", 4, MTIME).await.unwrap();
+        files
+            .chunk("test", "big.bin", begun.offset, b64(b"ab"))
+            .await
+            .unwrap();
+
+        files
+            .store("test", "rec.wav", b"first".to_vec())
+            .await
+            .unwrap();
+        files
+            .store("test", "rec.wav", b"second".to_vec())
+            .await
+            .unwrap();
+        assert_eq!(fs::read(device.stored("rec.wav")).unwrap(), b"second");
+        let mode = fs::metadata(device.stored("rec.wav")).unwrap().mode();
+        assert_eq!(mode & 0o777, 0o644);
+
+        let received = files.chunk("test", "big.bin", 2, b64(b"cd")).await.unwrap();
+        assert_eq!(received.received, 4);
+        assert_eq!(fs::read(device.stored("big.bin")).unwrap(), b"abcd");
     }
 
     #[tokio::test]

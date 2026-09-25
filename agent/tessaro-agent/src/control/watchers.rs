@@ -19,6 +19,9 @@ use crate::nm::profiles;
 use crate::state;
 use crate::sync::lock;
 
+/// Where `audio test --input` leaves its recording in the file store.
+const AUDIO_RECORDING: &str = "audio-recording.wav";
+
 impl Control {
     /// A browser.url that uses a read-only key - `{network.ip}` - can move with no
     /// `set` at all: DHCP renews, the link changes, and at boot the render
@@ -507,12 +510,28 @@ impl Control {
         Ok(self.audio.status(&wanted).await)
     }
 
-    pub(super) async fn audio_test(&self, input: bool) -> Result<AudioTested, String> {
+    /// A recording is kept in the file store, over the one before, so it can
+    /// be downloaded and listened to. Not being able to keep it still leaves
+    /// the level worth reporting.
+    pub(super) async fn audio_test(
+        &self,
+        caller: &str,
+        input: bool,
+    ) -> Result<AudioTested, String> {
         let wanted = self.audio_wanted().await?;
-        if input {
-            self.audio.test_input(&wanted).await
-        } else {
-            self.audio.test_output(&wanted).await
+        if !input {
+            return self.audio.test_output(&wanted).await;
         }
+        let (mut tested, recording) = self.audio.test_input(&wanted).await?;
+        match self.files.store(caller, AUDIO_RECORDING, recording).await {
+            Ok(()) => {
+                tested
+                    .message
+                    .push_str(&format!("; saved as /{AUDIO_RECORDING}"));
+                tested.saved = Some(AUDIO_RECORDING.to_string());
+            }
+            Err(err) => tested.message.push_str(&format!("; not saved: {err}")),
+        }
+        Ok(tested)
     }
 }

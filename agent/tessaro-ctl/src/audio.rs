@@ -54,7 +54,8 @@ pub enum AudioCmd {
         percent: u8,
     },
     /// Play a 1s tone on the output in use. With --input, record 3s from
-    /// the input in use instead, and print how loud it was.
+    /// the input in use instead, print how loud it was, and keep the
+    /// recording in the file store as audio-recording.wav.
     Test {
         #[arg(long)]
         input: bool,
@@ -95,6 +96,13 @@ pub fn run(session: &mut Session, command: AudioCmd, json: bool) -> Result<(), S
                         "{} {peak:.1} dBFS  {} {rms:.1} dBFS",
                         paint(style::LABEL, "peak"),
                         paint(style::LABEL, "average")
+                    );
+                }
+                if let Some(saved) = &tested.saved {
+                    println!(
+                        "{} {}",
+                        paint(style::MUTED, "listen with"),
+                        paint(style::CMD, format!("tessaro-ctl files download {saved}"))
                     );
                 }
             })

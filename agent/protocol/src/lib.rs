@@ -611,6 +611,10 @@ pub struct AudioTested {
     pub peak_dbfs: Option<f64>,
     #[serde(default)]
     pub rms_dbfs: Option<f64>,
+    /// Where the recording was left in the file store, for `tessaro-ctl
+    /// files download` or `http://127.0.0.1/files/`.
+    #[serde(default)]
+    pub saved: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

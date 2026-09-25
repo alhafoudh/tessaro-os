@@ -7,7 +7,8 @@ on|off`, `audio input ...` and `audio input-volume N` are each a `config set`
 of one `audio.*` key. The agent applies it to the running sound server at
 once: nothing restarts, and a sound already playing moves over. `audio show`
 says what the settings resolved to and why, `audio test` plays a 1s tone on
-the output in use, `audio test --input` records 3s and prints the level. The
+the output in use, `audio test --input` records 3s, prints the level and
+keeps the recording in the file store. The
 logic is `agent/tessaro-agent/src/audio.rs`; the image side is
 `meta-tessaro-distro/recipes-multimedia/tessaro-audio/`.
 
@@ -79,3 +80,13 @@ logic is `agent/tessaro-agent/src/audio.rs`; the image side is
   headphone jack only, and HDMI is vc4-hdmi's own card, which takes IEC958
   frames only - PipeWire handles that through alsa-lib's `vc4-hdmi.conf`.
   `dtparam=audio=on` is already in meta-raspberrypi's `config.txt`.
+* **The test recording is kept as `audio-recording.wav` at the root of the
+  file store**, so a technician can hear what the microphone picked up, not
+  only its level: `tessaro-ctl files download audio-recording.wav`, the
+  Files page in `tessaro-gui`, or `http://127.0.0.1/files/audio-recording.wav`.
+  One name, each test replacing the last, so testing never fills `/data`.
+  It goes in through `Files::store` (`files.rs`), which writes beside the
+  upload slot rather than in it, so a test does not drop an upload under
+  way. If it cannot be kept (the space reserve, a directory of that name)
+  the test still answers with the level and says why it was not saved.
+  `files sync --delete` removes it like any file the local side lacks.

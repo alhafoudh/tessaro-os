@@ -464,7 +464,7 @@ impl Control {
                 self.files.delete(&who, paths, recursive).await.into()
             }
             Command::AudioStatus => self.audio_status().await.into(),
-            Command::AudioTest { input } => self.audio_test(input).await.into(),
+            Command::AudioTest { input } => self.audio_test(&caller.describe(), input).await.into(),
         }
     }
 

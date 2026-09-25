@@ -1065,11 +1065,13 @@ impl Audio {
             ),
             peak_dbfs: None,
             rms_dbfs: None,
+            saved: None,
         })
     }
 
     /// Record a few seconds from the input in use and say how loud it was.
-    pub async fn test_input(&self, wanted: &Wanted) -> Result<AudioTested, String> {
+    /// The recording comes back too, for the caller to keep.
+    pub async fn test_input(&self, wanted: &Wanted) -> Result<(AudioTested, Vec<u8>), String> {
         let graph = self.graph().await?;
         let choice = resolve(&Want::parse(&wanted.input), &graph, Direction::Input);
         let target = choice
@@ -1119,7 +1121,7 @@ impl Audio {
         } else {
             "sound".to_string()
         };
-        Ok(AudioTested {
+        let tested = AudioTested {
             message: format!(
                 "recorded {}s from {}: {verdict}",
                 RECORD.as_secs(),
@@ -1127,7 +1129,9 @@ impl Audio {
             ),
             peak_dbfs: Some(peak),
             rms_dbfs: Some(rms),
-        })
+            saved: None,
+        };
+        Ok((tested, recording))
     }
 }
 

@@ -25,6 +25,10 @@ shared so both ends refuse the same paths.
   path, size and mtime resumes, across an agent restart too; anything else
   drops the unfinished one. A file the store already has with the same size
   and mtime is answered as complete and never sent.
+* **The agent stores a file of its own the same way**, whole: `Files::store`
+  writes `/data/tessaro/files-store.part`, syncs it and renames it in, under
+  the same lock and space reserve as uploads but outside the upload slot. The
+  one user is the `audio test --input` recording (see [audio.md](audio.md)).
 * **Downloads are request/response, not a stream**: `files-read` of up to
   `UPDATE_CHUNK` from an offset, written to a `.part` beside the target and
   renamed, with the device's mtime.
