@@ -53,10 +53,7 @@ impl<'a, H: HttpGet> Probe<'a, H> {
                 "the local proxy is not answering - see `tessaro-ctl network proxy show`"
                     .to_string()
             }
-            HttpError::Proxy(407) => {
-                "the proxy refused it: HTTP 407, check the user and password in network.proxy.url"
-                    .to_string()
-            }
+            HttpError::Proxy(status @ (401 | 407)) => crate::http::proxy_refused(status),
             HttpError::Proxy(status) => format!(
                 "the proxy could not reach it: HTTP {status} - `tessaro-ctl network proxy test`"
             ),

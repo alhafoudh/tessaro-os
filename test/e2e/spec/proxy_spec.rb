@@ -30,9 +30,12 @@ module AgentE2E
         LogFile "#{UPSTREAM_LOG}"
         LogLevel Info
       CONF
-      guest.run("systemctl stop e2e-upstream-proxy", allow_failure: true)
-      guest.run("cat > /tmp/e2e-upstream.conf && : > #{UPSTREAM_LOG} && chown tinyproxy #{UPSTREAM_LOG}",
-                input: config)
+      stop_upstream
+      # Removed, not truncated: a log a previous case left is tinyproxy's, and
+      # root may not write to another user's file in sticky /tmp
+      # (fs.protected_regular).
+      guest.run("cat > /tmp/e2e-upstream.conf && rm -f #{UPSTREAM_LOG} && touch #{UPSTREAM_LOG} " \
+                "&& chown tinyproxy #{UPSTREAM_LOG}", input: config)
       guest.run_detached("upstream-proxy", "exec tinyproxy -d -c /tmp/e2e-upstream.conf")
       # tinyproxy logs this at info once its socket is open (sock.c); every
       # request line after it at connect, before it checks the login.
@@ -54,10 +57,7 @@ module AgentE2E
       end
     end
 
-    after(:all) do
-      guest.run("tessaro-ctl network proxy off", allow_failure: true)
-      guest.run("systemctl stop e2e-upstream-proxy", allow_failure: true)
-    end
+    def stop_upstream = guest.run("systemctl stop e2e-upstream-proxy", allow_failure: true)
 
     it "proxy: network proxy set runs the local proxy with the upstream and its login, " \
        "and the browser, the probe's path and proxy test go through it", :reconfigure do
@@ -92,15 +92,19 @@ module AgentE2E
       wait_upstream(/CONNECT.*1\.1\.1\.1:443/, timeout: 15, what: "proxy test's CONNECT")
     ensure
       guest.run("tessaro-ctl network proxy off", allow_failure: true)
+      stop_upstream
     end
 
-    it "proxy: a wrong password is the upstream's 407, and proxy test says so", :reconfigure do
+    it "proxy: a wrong password is refused by the upstream, and proxy test says it is the login", :reconfigure do
       start_upstream
       guest.run("tessaro-ctl network proxy set 'http://e2e:wrong@127.0.0.1:#{UPSTREAM_PORT}'")
       out = guest.run("tessaro-ctl network proxy test", allow_failure: true)
-      expect(out).to include("HTTP 407")
+      # tinyproxy answers wrong credentials with 401 (reqs.c), most proxies
+      # with 407: the device calls both a login problem.
+      expect(out).to include("the proxy refused the login")
     ensure
       guest.run("tessaro-ctl network proxy off", allow_failure: true)
+      stop_upstream
     end
 
     it "proxy: network proxy off stops the local proxy and takes it out of the browser's policy", :reconfigure do

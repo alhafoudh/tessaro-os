@@ -102,9 +102,9 @@ pub enum HttpError {
     /// The device's own proxy, on loopback, refused or did not answer.
     #[error("the local proxy is not answering")]
     ProxyUnreachable,
-    /// The proxy chain refused the tunnel: 407 for credentials the
+    /// The proxy chain refused the tunnel: 401 or 407 for credentials the
     /// upstream turned down, 5xx for a target it could not reach.
-    #[error("the proxy answered HTTP {0}")]
+    #[error("{}", proxy_refused(*.0))]
     Proxy(u16),
     #[error("{0}")]
     Other(String),
@@ -489,6 +489,18 @@ impl Target {
         } else {
             format!("{}:{}", self.host, self.port)
         }
+    }
+}
+
+/// A proxy's refusal in words. 407 is the standard answer to missing or
+/// wrong credentials; tinyproxy answers wrong ones with 401 (`reqs.c`), so
+/// both are a login problem.
+pub fn proxy_refused(status: u16) -> String {
+    match status {
+        401 | 407 => format!(
+            "the proxy refused the login: HTTP {status}, check the user and password in network.proxy.url"
+        ),
+        _ => format!("the proxy answered HTTP {status}"),
     }
 }
 

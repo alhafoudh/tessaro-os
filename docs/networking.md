@@ -322,7 +322,8 @@ restarts `tessaro-proxy.service`, or stops it when the URL is emptied.
   CDP client) send `CONNECT host:port` to the local proxy for http and https
   alike, then run TLS inside the tunnel; the name is resolved by the proxy,
   which on a network that allows only the proxy is the only thing that can.
-  A 407 reaches the journal as "check the user and password", a dead local
+  A 407, or the 401 tinyproxy itself answers wrong credentials with
+  (`reqs.c`), reaches the journal as "check the user and password", a dead local
   proxy as "see `tessaro-ctl network proxy show`". The proxy keys also carry
   `Consumer::Agent`, so the agent restarts and picks the proxy up.
 * **Bypass is tinyproxy's, not Chromium's**: `network.proxy.bypass` becomes
