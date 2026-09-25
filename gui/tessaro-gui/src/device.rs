@@ -1481,7 +1481,13 @@ impl Device {
                     column![text(intro).size(theme::SMALL).style(text::warning)].spacing(10);
                 for (label, value) in values {
                     let line = row![
-                        text(value).size(theme::TEXT).font(iced::Font::MONOSPACE),
+                        // A token is one long word: break it anywhere so
+                        // it wraps inside the dialog and Copy stays in view.
+                        text(value)
+                            .size(theme::TEXT)
+                            .font(iced::Font::MONOSPACE)
+                            .wrapping(text::Wrapping::WordOrGlyph)
+                            .width(Length::Fill),
                         theme::tool("Copy", Some(Message::P(pages::Msg::Copy(value.clone())))),
                     ]
                     .spacing(8)
