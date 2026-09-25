@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Tessaro bridge test</title>
+<style>
+  body { font: 16px system-ui, sans-serif; margin: 20px; background: #111; color: #eee; }
+  h1 { font-size: 22px; margin: 0 0 8px; }
+  h2 { font-size: 16px; margin: 16px 0 6px; color: #9cf; }
+  button { font: inherit; padding: 8px 12px; margin: 3px; background: #333; color: #eee; border: 1px solid #555; border-radius: 4px; }
+  button:active { background: #555; }
+  input { font: inherit; padding: 6px; width: 160px; }
+  #status { font-weight: bold; }
+  #log { white-space: pre-wrap; font: 13px monospace; background: #000; padding: 8px; height: 320px; overflow: auto; border: 1px solid #333; }
+  .ok { color: #7f7; } .err { color: #f77; } .ev { color: #fc6; }
+</style>
+</head>
+<body>
+<h1>Tessaro bridge test</h1>
+<div>Bridge: <span id="status">checking...</span></div>
+
+<h2>config mode</h2>
+<button onclick="show('tessaro.config', () => tessaro.config)">config</button>
+<button onclick="run('log info', () => tessaro.log('info', 'hello from bridge-test'))">log info</button>
+<button onclick="run('log debug', () => tessaro.log('debug', 'debug from bridge-test'))">log debug</button>
+<button onclick="run('device.status', () => tessaro.device.status())">device.status</button>
+<button onclick="run('network.status', () => tessaro.network.status())">network.status</button>
+<button onclick="run('audio.status', () => tessaro.audio.status())">audio.status</button>
+
+<h2>actions: network</h2>
+<input id="host" value="1.1.1.1">
+<button onclick="run('network.ping', () => tessaro.network.ping(val('host')))">ping</button>
+<button onclick="run('network.publicIp', () => tessaro.network.publicIp())">publicIp</button>
+<button onclick="run('network.speedTest', () => tessaro.network.speedTest())">speedTest</button>
+
+<h2>actions: audio</h2>
+<input id="volume" type="number" min="0" max="100" value="50">
+<button onclick="run('audio.volume', () => tessaro.audio.volume(Number(val('volume'))))">volume</button>
+<button onclick="run('audio.mute on', () => tessaro.audio.mute(true))">mute</button>
+<button onclick="run('audio.mute off', () => tessaro.audio.mute(false))">unmute</button>
+
+<h2>actions: keyboard and screen</h2>
+<input id="kbd" placeholder="type here">
+<button onclick="run('keyboard.show', () => tessaro.keyboard.show('#kbd'))">keyboard.show</button>
+<button onclick="run('keyboard.hide', () => tessaro.keyboard.hide())">keyboard.hide</button>
+<button onclick="screenOff()">screen off for 10s</button>
+<button onclick="run('screen.on', () => tessaro.screen.on())">screen.on</button>
+
+<h2>actions: files and data</h2>
+<input id="path" value="/">
+<button onclick="run('files.list', () => tessaro.files.list(val('path')))">files.list</button>
+<br>
+<input id="dname" value="bridge_test">
+<input id="dvalue" value="hello">
+<button onclick="run('data.set', () => tessaro.data.set(val('dname'), val('dvalue')))">data.set</button>
+<button onclick="run('data.unset', () => tessaro.data.unset(val('dname')))">data.unset</button>
+<button onclick="show('data.* in config', () => Object.fromEntries(Object.entries(tessaro.config).filter(([k]) => k.startsWith('data.'))))">show data.*</button>
+
+<h2>actions: disruptive (refused within 60s of agent start and of each other)</h2>
+<input id="murl" placeholder="maintenance url (optional)">
+<button onclick="run('browser.reload', () => tessaro.browser.reload())">reload</button>
+<button onclick="run('browser.home', () => tessaro.browser.home())">home</button>
+<button onclick="run('browser.clearCache', () => tessaro.browser.clearCache())">clearCache</button>
+<button onclick="run('browser.maintenance on', () => tessaro.browser.maintenance(true, val('murl') || undefined))">maintenance on</button>
+<button onclick="run('browser.maintenance off', () => tessaro.browser.maintenance(false))">maintenance off</button>
+<button onclick="confirm('Restart the browser?') && run('browser.restart', () => tessaro.browser.restart())">restart browser</button>
+<button onclick="confirm('Reboot the device?') && run('device.reboot', () => tessaro.device.reboot())">reboot</button>
+
+<h2>log <button onclick="document.getElementById('log').textContent = ''">clear</button></h2>
+<div id="log"></div>
+
+<script>
+  const logEl = document.getElementById("log");
+  const val = (id) => document.getElementById(id).value;
+
+  function out(cls, label, data) {
+    const line = document.createElement("div");
+    line.className = cls;
+    const text = data === undefined ? "" : typeof data === "string" ? data : JSON.stringify(data, null, 2);
+    line.textContent = `[${new Date().toLocaleTimeString()}] ${label}${text ? ": " + text : ""}`;
+    logEl.prepend(line);
+  }
+
+  async function run(label, fn) {
+    if (!window.tessaro) return out("err", label, "window.tessaro is missing");
+    out("", label, "...");
+    try {
+      out("ok", label, await fn());
+    } catch (e) {
+      out("err", label, e && e.message ? e.message : String(e));
+    }
+  }
+
+  function show(label, fn) {
+    if (!window.tessaro) return out("err", label, "window.tessaro is missing");
+    out("ok", label, fn());
+  }
+
+  async function screenOff() {
+    await run("screen.off", () => tessaro.screen.off());
+    setTimeout(() => run("screen.on", () => tessaro.screen.on()), 10000);
+  }
+
+  window.addEventListener("tessaro:config", (e) => out("ev", "tessaro:config changed", e.detail.changed));
+
+  const status = document.getElementById("status");
+  if (window.tessaro) {
+    status.textContent = `mode "${tessaro.mode}"`;
+    status.className = "ok";
+    out("ok", "bridge", `mode ${tessaro.mode}, ${Object.keys(tessaro.config).length} config keys`);
+  } else {
+    status.textContent = "window.tessaro missing (bridge off, wrong origin, or iframe)";
+    status.className = "err";
+  }
+</script>
+</body>
+</html>
