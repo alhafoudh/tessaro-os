@@ -70,6 +70,7 @@ pub struct Up {
 pub struct Nat {
     pub on: bool,
     pub was: bool,
+    /// The `iifname` it matches: `Wifi::nat_match`.
     pub interface: String,
 }
 

@@ -68,6 +68,12 @@ impl Control {
                     }
                 }
             }
+            // A timezone must be one timedated can switch to.
+            if let (keys::Kind::Timezone, Some(zone)) = (key.kind, &value) {
+                if let Err(err) = self.time.check_zone(&self.bus, zone).await {
+                    return Reply::err(err);
+                }
+            }
             if key.guarded {
                 if !apply {
                     return Reply::err(format!(
@@ -129,6 +135,7 @@ impl Control {
                 pending: self.pending(&after),
                 network: network_change,
                 audio: None,
+                time: None,
                 reboot: false,
             });
         }
@@ -280,6 +287,8 @@ impl Control {
         apply: bool,
         network: Option<protocol::NetChange>,
     ) -> Reply {
+        // The page's copy of the settings follows, if it has one.
+        self.poke_bridge();
         let rendered = match self.render(&state.settings).await {
             Ok(rendered) => rendered,
             Err(err) => {
@@ -317,6 +326,19 @@ impl Control {
             None
         };
 
+        // The clock restarts nothing but timesyncd, and only when its servers
+        // changed. A timedated that does not answer gets the settings from
+        // the watcher later, so the change is saved either way.
+        let time = if apply && reads(Consumer::Time) {
+            let wanted = self.time_wanted_from(&state.settings);
+            Some(match self.time.apply(&self.bus, &wanted).await {
+                Ok(outcome) => outcome.summary,
+                Err(err) => format!("saved, not applied yet: {err}"),
+            })
+        } else {
+            None
+        };
+
         let mut restarted = Vec::new();
         let mut after = None;
         if apply {
@@ -345,6 +367,7 @@ impl Control {
             pending: self.pending(state),
             network,
             audio,
+            time,
             // Never rebooted for: a reboot blanks a public screen, so when is
             // the operator's call. Written whether or not the change was
             // applied, since the firmware reads it only at power-on anyway.

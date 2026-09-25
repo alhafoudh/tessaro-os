@@ -23,22 +23,23 @@ local_conf_header:
     # disk name is least predictable (SATA and USB are /dev/sda*, NVMe is
     # /dev/nvme0n1p*, eMMC is /dev/mmcblk0p*), which is exactly why
     # kas/common/tessaro.yml mounts /data by label instead.
-    # WiFi drivers and firmware need nothing added here.
+    # WiFi drivers and firmware need nothing added here: packaging is
+    # handled by the BSP, and the drivers themselves by a kernel fragment.
     #
     # meta-yocto-bsp's genericx86-common.inc already carries
     #   MACHINE_EXTRA_RRECOMMENDS += "kernel-modules linux-firmware"
-    # kernel-modules installs every module linux-yocto built, which includes
-    # the whole wireless stack (cfg80211, mac80211, iwlwifi, ath*, rtw*,
-    # brcmfmac, mt76). That side is genuinely complete - 39MB for 683 modules,
-    # of which the wifi ones are 7.3MB.
+    # kernel-modules installs every module linux-yocto built. linux-yocto's
+    # own config builds only the old wifi drivers, though (ath5k/ath9k, brcm,
+    # mt7601u, rt2x00), so iwlwifi, ath10k/11k/12k, mt76, rtw88/rtw89 and the
+    # rest are turned on as modules by
+    # meta-tessaro-distro/recipes-kernel/linux/files/tessaro-x86-wireless.cfg.
     #
-    # linux-firmware is complete too, even though oe-core splits the recipe
+    # linux-firmware is complete, even though oe-core splits the recipe
     # into a few hundred packages: populate_packages:prepend in
     # linux-firmware_*.bb makes the base package RRECOMMENDS every split one,
     # so iwlwifi-8265, ath10k and the rest come in with it, and the newer
-    # Intel blobs (AX200, AX210, BE200) through ${PN}-iwlwifi-misc. Not yet
-    # confirmed on a built rootfs; `dmesg | grep -i firmware` on the first
-    # real board is the check.
+    # Intel blobs (AX200, AX210, BE200) through ${PN}-iwlwifi-misc. Confirmed
+    # on a built rootfs: /usr/lib/firmware holds every wifi vendor's blobs.
     #
     # The size is the cost: a few hundred MB, almost all of it GPU, Mellanox
     # and modem blobs a kiosk never touches. Once the hardware is fixed:

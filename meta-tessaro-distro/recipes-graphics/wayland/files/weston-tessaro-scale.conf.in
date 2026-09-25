@@ -37,5 +37,9 @@ ExecStartPre=@libexecdir@/tessaro-weston-config
 # [screen-share] section names a command, which tessaro-weston-config writes
 # only when KIOSK_VNC is on. Its other trigger, a Ctrl+Alt+S key binding, is
 # not reachable on a kiosk with no keyboard.
+#
+# tessaro-power.so (weston-tessaro-power) is `tessaro-ctl screen power`: a
+# socket in /run/weston that switches the outputs off and on, which Weston
+# offers through nothing else. See docs/display.md, "Screen power".
 ExecStart=
-ExecStart=@bindir@/weston --config=/run/weston/weston.ini --modules=systemd-notify.so,screen-share.so
+ExecStart=@bindir@/weston --config=/run/weston/weston.ini --modules=systemd-notify.so,screen-share.so,tessaro-power.so

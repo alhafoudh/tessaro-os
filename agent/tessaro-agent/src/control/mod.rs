@@ -18,13 +18,20 @@
 //! This module has the types, `handle` and the commands that only read;
 //! the rest is split by what it acts on, each an `impl Control` of its own:
 //! `settings` (changing them, and probation), `access` (the claim, tokens,
-//! passwords, SSH keys), `network` (WiFi and the profiles' inputs) and
-//! `watchers` (what is kept true with nobody asking).
+//! passwords, SSH keys), `network` (WiFi and the profiles' inputs),
+//! `watchers` (what is kept true with nobody asking), `page` (the page on
+//! screen: reload, eval, the keyboard), `screen` (its power) and `bridge`
+//! (`window.tessaro` and the injected script).
 
 mod access;
+mod bridge;
 mod network;
+mod page;
+mod screen;
 mod settings;
 mod watchers;
+
+pub use bridge::BridgeSetup;
 
 use std::collections::{BTreeMap, HashMap};
 use std::net::SocketAddr;
@@ -60,6 +67,7 @@ use crate::storage;
 use crate::store::Store;
 use crate::sync::lock;
 use crate::systemd::Bus;
+use crate::time::Time;
 use crate::updates::Updates;
 use crate::watchdog::Heartbeat;
 
@@ -79,6 +87,9 @@ pub enum Caller {
     /// TCP, no valid token: the `Command::is_public` commands, and every
     /// command while the device is unclaimed.
     Anonymous { peer: SocketAddr },
+    /// The kiosk page itself, through the page bridge: only the commands
+    /// `bridge.rs` maps its calls onto.
+    Page,
 }
 
 impl Caller {
@@ -87,6 +98,7 @@ impl Caller {
             Caller::Local => "the local socket".to_string(),
             Caller::Token { id, peer } => format!("{peer} (token {id})"),
             Caller::Anonymous { peer } => peer.to_string(),
+            Caller::Page => "the page".to_string(),
         }
     }
 }
@@ -179,6 +191,11 @@ pub struct Control {
     storage_grow: Arc<tokio::sync::Mutex<()>>,
     network: Arc<Network>,
     audio: Arc<Audio>,
+    time: Arc<Time>,
+    /// Wakes `watch_welcome` early, when the claim changes.
+    welcome: tokio::sync::Notify,
+    /// Set once, by `start_bridge`.
+    bridge: std::sync::OnceLock<Arc<bridge::Bridge>>,
 }
 
 impl Control {
@@ -200,6 +217,7 @@ impl Control {
             files: Files::new(Arc::clone(&log), paths.clone()),
             network: Network::new(Arc::clone(&log), paths.clone()),
             audio: Audio::new(Arc::clone(&log), &paths),
+            time: Time::new(Arc::clone(&log), &paths),
             state: Store::new(&paths.state_dir, state::FILE),
             auth_store: Store::new(&paths.state_dir, auth::FILE),
             secrets: Store::new(&paths.state_dir, secrets::FILE),
@@ -213,9 +231,11 @@ impl Control {
             mdns: Mutex::new(None),
             writes: tokio::sync::Mutex::new(()),
             probation: Mutex::new(None),
+            welcome: tokio::sync::Notify::new(),
             shutdown,
             speedtest: Arc::new(tokio::sync::Mutex::new(())),
             storage_grow: Arc::new(tokio::sync::Mutex::new(())),
+            bridge: std::sync::OnceLock::new(),
         })
     }
 
@@ -377,6 +397,21 @@ impl Control {
                 Reply::ok(Done::new("rebooting")).then(Some(After::Reboot))
             }
             Command::Screenshot => self.screenshot().await.into(),
+            Command::Reload => self.reload().await.into(),
+            Command::ClearCache => self.clear_cache().await.into(),
+            Command::Eval {
+                code,
+                timeout_ms,
+                await_promise,
+                user_gesture,
+            } => self
+                .eval(caller, &code, timeout_ms, await_promise, user_gesture)
+                .await
+                .into(),
+            Command::Keyboard { show, selector } => {
+                self.keyboard(show, selector.as_deref()).await.into()
+            }
+            Command::ScreenPower { on } => self.screen_power(caller, on).await.into(),
             // `Command::is_stream`: the server starts them through `stream`.
             Command::Logs { .. }
             | Command::Speedtest { .. }
@@ -465,6 +500,15 @@ impl Control {
             }
             Command::AudioStatus => self.audio_status().await.into(),
             Command::AudioTest { input } => self.audio_test(&caller.describe(), input).await.into(),
+            Command::TimeStatus => self.time_status().await.into(),
+            Command::TimeZones => self.time.zones(&self.bus).await.into(),
+            Command::TimeSync => self.time.sync(&self.bus).await.map(Done::new).into(),
+            Command::TimeSet { usec, local } => self
+                .time
+                .set_clock(&self.bus, &caller.describe(), usec, local)
+                .await
+                .map(Done::new)
+                .into(),
         }
     }
 
@@ -570,8 +614,16 @@ impl Control {
 
         let wanted = self.audio_wanted_from(&state.settings);
         let audio = self.audio.status(&wanted).await;
+        let time = self.time.summary(&self.bus).await;
+        // naked: a /proc read under blocking()'s within()
+        let devtools = self.session.others().await > 0;
+        let screen_on = crate::power::send(&self.paths.power_socket, "status")
+            .await // naked: power::send bounds itself with within()
+            .ok();
 
         Ok(Status {
+            screen_on,
+            bridge: self.bridge_status(),
             os,
             image_version,
             data,
@@ -584,7 +636,9 @@ impl Control {
             pending: self.pending(&state),
             maintenance: state::maintenance(&state.settings, &self.defaults),
             debug_screen: state::debug_screen(&state.settings, &self.defaults),
+            devtools,
             audio: Some(audio),
+            time,
         })
     }
 
@@ -769,6 +823,13 @@ impl Control {
     }
 
     async fn screenshot(&self) -> Result<Screenshot, String> {
+        // A powered-off output paints nothing, and the capture waits for a
+        // frame that never comes.
+        if self.screen_kept_off().await {
+            return Err(
+                "the screen is switched off; `tessaro-ctl screen power on` first".to_string(),
+            );
+        }
         // fromSurface:false - the surface path can hang on this stack.
         let result = self
             .session
@@ -955,6 +1016,9 @@ mod tests {
             // No PipeWire: nothing here may reach this host's sound server.
             ("KIOSK_AUDIO_RUNTIME_DIR", at("audio")),
             ("KIOSK_ASOUND_CARDS", at("asound-cards")),
+            // Never this host's clock.
+            ("KIOSK_MANAGE_CLOCK", "0".to_string()),
+            ("KIOSK_TIMESYNCD_DROPIN", at("timesyncd.conf")),
         ]
         .into_iter()
         .map(|(k, v)| (k.to_string(), v))
@@ -1104,7 +1168,7 @@ mod tests {
             .hotspot_psk
             .expect("claim sets a hotspot password");
         protocol::keys::check_psk(psk.expose()).unwrap();
-        // No wlan0 in this sandbox: nothing to show, but it is stored for a
+        // No WiFi device in this sandbox: nothing to show, but it is stored for a
         // WiFi dongle plugged in later.
         assert_eq!(claimed.hotspot, None);
 

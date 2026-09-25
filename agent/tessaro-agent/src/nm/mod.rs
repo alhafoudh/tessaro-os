@@ -120,17 +120,18 @@ impl Network {
         })
     }
 
-    /// Whether the managed WiFi interface exists right now.
-    pub async fn has_wifi(&self, interface: &str) -> bool {
+    /// The managed WiFi device as it is right now - `wanted`, or the first
+    /// one there is for `auto` (`None`); see [`profiles::wifi_device`].
+    pub async fn wifi_device(&self, wanted: Option<&str>) -> Option<String> {
         let paths = self.paths.clone();
-        let interface = interface.to_string();
+        let wanted = wanted.map(str::to_string);
         blocking("reading the network", move || {
-            Ok(interfaces(&paths)
-                .iter()
-                .any(|(name, kind)| *name == interface && kind == "wireless"))
+            let present = interfaces(&paths);
+            Ok(profiles::wifi_device(wanted.as_deref(), &present))
         })
         .await
-        .unwrap_or(false)
+        .ok()
+        .flatten()
     }
 
     // --- reading -------------------------------------------------------------
@@ -415,7 +416,7 @@ impl Network {
         let present = blocking("reading the network", move || Ok(interfaces(&paths))).await?;
         let has = |name: &str, kind: &str| present.iter().any(|(n, k)| n == name && k == kind);
         let any_ethernet = present.iter().any(|(_, kind)| kind == "ethernet");
-        let wifi_here = has(&new.wifi.interface, "wireless");
+        let wifi_here = profiles::wifi_device(new.wifi.interface.as_deref(), &present);
 
         let mut up = Vec::new();
         let mut down = Vec::new();
@@ -444,20 +445,20 @@ impl Network {
         // The NAT is its own switch: changing it alone reactivates nothing.
         let mut old_wifi = old.wifi.clone();
         old_wifi.nat = new.wifi.nat;
-        if old_wifi != new.wifi && wifi_here {
+        if let Some(wifi) = wifi_here.as_ref().filter(|_| old_wifi != new.wifi) {
             match new.wifi_profile() {
                 Some(profile) => up.push(Up {
                     profile,
-                    device: Some(new.wifi.interface.clone()),
+                    device: Some(wifi.clone()),
                 }),
                 None => down.extend([profiles::WIFI_HOTSPOT, profiles::WIFI_CLIENT]),
             }
-            devices.push(new.wifi.interface.clone());
+            devices.push(wifi.clone());
         }
         let nat = (old.wifi.nat != new.wifi.nat).then(|| Nat {
             on: new.wifi.nat,
             was: old.wifi.nat,
-            interface: new.wifi.interface.clone(),
+            interface: new.wifi.nat_match().to_string(),
         });
 
         // Going back to the hotspot, or off, gives up WiFi as an uplink on
@@ -466,7 +467,8 @@ impl Network {
         let note = match (old.wifi.mode, new.wifi.mode) {
             (WifiMode::Client, WifiMode::Hotspot) => Some(format!(
                 "{} is the hotspot {} again",
-                new.wifi.interface, new.wifi.hotspot_ssid
+                wifi_here.as_deref().unwrap_or("WiFi"),
+                new.wifi.hotspot_ssid
             )),
             _ => None,
         };
@@ -495,13 +497,16 @@ impl Network {
         let _lock = self.changing.lock().await;
         let live = self.live().await?;
         live.write_profiles(&profiles::render(config)).await?;
-        if config.wifi.mode == WifiMode::Hotspot && self.has_wifi(&config.wifi.interface).await {
-            let device = live.device_path(&config.wifi.interface).await?;
+        if config.wifi.mode != WifiMode::Hotspot {
+            return Ok(());
+        }
+        if let Some(wifi) = self.wifi_device(config.wifi.interface.as_deref()).await {
+            let device = live.device_path(&wifi).await?;
             if let Some((_, uuid)) = live.active_on(device.as_str()).await {
                 if uuid == profiles::WIFI_HOTSPOT.uuid {
                     live.activate(&Up {
                         profile: profiles::WIFI_HOTSPOT,
-                        device: Some(config.wifi.interface.clone()),
+                        device: Some(wifi),
                     })
                     .await?;
                 }
@@ -510,19 +515,35 @@ impl Network {
         Ok(())
     }
 
-    /// Whether the managed WiFi client is the connection up on `interface`,
-    /// and has finished coming up.
-    pub async fn client_up(&self, interface: &str) -> bool {
+    /// Whether the managed WiFi client is the connection up on the WiFi
+    /// device (`interface`, or the one there is for `auto`), and has
+    /// finished coming up.
+    pub async fn client_up(&self, interface: Option<&str>) -> bool {
+        self.profile_up(interface, profiles::WIFI_CLIENT.uuid).await
+    }
+
+    /// Whether the managed hotspot is the connection up on the WiFi device
+    /// (`interface`, or the one there is for `auto`), and has finished
+    /// coming up.
+    pub async fn hotspot_up(&self, interface: Option<&str>) -> bool {
+        self.profile_up(interface, profiles::WIFI_HOTSPOT.uuid)
+            .await
+    }
+
+    async fn profile_up(&self, interface: Option<&str>, profile: &str) -> bool {
+        let Some(wifi) = self.wifi_device(interface).await else {
+            return false;
+        };
         let Ok(live) = self.live().await else {
             return false;
         };
-        let Ok(device) = live.device_path(interface).await else {
+        let Ok(device) = live.device_path(&wifi).await else {
             return false;
         };
         let Some((active, uuid)) = live.active_on(device.as_str()).await else {
             return false;
         };
-        if uuid != profiles::WIFI_CLIENT.uuid {
+        if uuid != profile {
             return false;
         }
         let Ok(proxy) = live.active(active.as_str()).await else {
@@ -539,12 +560,16 @@ impl Network {
         // naked: the lock is only ever held by a change, which bounds itself
         let _lock = self.changing.lock().await;
         let live = self.live().await?;
-        let interface = config.wifi.interface.clone();
+        let wifi = self
+            .wifi_device(config.wifi.interface.as_deref())
+            .await
+            .ok_or("there is no WiFi device")?;
         live.write_profiles(&profiles::render(config)).await?;
-        live.set_nat(config.wifi.nat, &interface).await?;
+        let nat = config.wifi.nat_match();
+        live.set_nat(config.wifi.nat, nat).await?;
         let hotspot = Up {
             profile: profiles::WIFI_HOTSPOT,
-            device: Some(interface),
+            device: Some(wifi),
         };
         let up = live.activate(&hotspot).await?;
         live.activated(&up.active, txn::ACTIVATE).await
@@ -560,7 +585,7 @@ impl Network {
             let nat = Nat {
                 on: current.wifi.nat,
                 was: current.wifi.nat,
-                interface: current.wifi.interface.clone(),
+                interface: current.wifi.nat_match().to_string(),
             };
             for attempt in 0..12 {
                 if attempt > 0 {

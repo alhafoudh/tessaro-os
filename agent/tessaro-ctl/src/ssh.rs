@@ -94,7 +94,7 @@ fn finish(argv: &[String], print: bool) -> Result<(), String> {
 }
 
 /// The command as a shell would need it typed.
-fn shell_words(argv: &[String]) -> String {
+pub fn shell_words(argv: &[String]) -> String {
     argv.iter()
         .map(|word| {
             let plain = !word.is_empty()

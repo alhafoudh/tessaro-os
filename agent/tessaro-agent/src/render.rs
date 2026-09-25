@@ -81,6 +81,11 @@ pub fn env_file(
             // browser's env.
             continue;
         }
+        if key.consumers == [protocol::keys::Consumer::Time] {
+            // Applied through timedated and timesyncd by the agent, the same
+            // way. The browser follows /etc/localtime, not TZ.
+            continue;
+        }
         if let Some((env, value)) = overrides.iter().find(|(env, _)| *env == key.env) {
             out.push_str(&format!("{env}={value}\n"));
         }

@@ -5,9 +5,11 @@
 //! the UI process is alive.
 //!
 //! The transport is one persistent session (`session.rs`), found through
-//! `/json/list` (`targets.rs`), speaking `protocol.rs`. This file is only the
+//! `/json/list` (`targets.rs`), speaking `protocol.rs`; who else is connected
+//! to the port is `clients.rs`. This file is only the
 //! translation into what the state machine asks.
 
+pub mod clients;
 pub mod protocol;
 pub mod session;
 pub mod targets;
@@ -82,6 +84,18 @@ impl Cdp for CdpClient<'_> {
             Some(text) if !text.is_empty() => Err(Error::Cdp(format!("Page.navigate: {text}"))),
             _ => Ok(()),
         }
+    }
+
+    async fn inspected(&self) -> bool {
+        let others = self
+            .heartbeat
+            .within(
+                "looking for other DevTools clients",
+                self.timeout,
+                self.session.others(),
+            )
+            .await;
+        matches!(others, Ok(count) if count > 0)
     }
 
     fn generation(&self) -> u64 {

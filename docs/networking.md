@@ -50,23 +50,27 @@ Things to know:
   it is not in the recipe's default and pulls `libnewt` from oe-core.
 * **WiFi drivers and firmware are both per machine, and both handled on
   the hardware targets.** They are separate things: drivers are
-  `kernel-module-*` packages, firmware is `linux-firmware*`. `linux-yocto`
-  builds the wifi drivers as modules on every machine here - the qemu package
-  feed has `kernel-module-brcmfmac`, `-ath9k` and the rest - but a module is
+  `kernel-module-*` packages, firmware is `linux-firmware*`. A module is
   only *installed* if something recommends it.
   - `raspberrypi3-64`: `rpi-base.inc` adds `kernel-modules` (every built
     module), and `raspberrypi3-64.conf` adds the bcm43430/43455 rpidistro
     firmware. Nothing to do.
   - `genericx86-64`: meta-yocto-bsp's `genericx86-common.inc` adds
-    `kernel-modules linux-firmware`. Drivers are complete, and so is firmware:
-    oe-core splits that recipe into a few hundred packages, but
-    `populate_packages:prepend` in `linux-firmware_*.bb` makes the base
-    package `RRECOMMENDS` every split one, and nothing here sets
+    `kernel-modules linux-firmware`, but linux-yocto's own config builds only
+    the old wifi drivers (ath5k/ath9k, brcm, mt7601u, rt2x00), with no
+    Intel, ath10k/11k/12k, mt76 or rtw88/rtw89.
+    `recipes-kernel/linux/files/tessaro-x86-wireless.cfg` turns those on,
+    genericx86-64 only. **Every one is `=m`, never built in**: these chips
+    load firmware when the driver probes, a built-in driver probes from the
+    initramfs before `/lib/firmware` is mounted, and the load fails with
+    `-2`. That fragment makes btusb a module there for the same reason.
+    Firmware is complete: oe-core splits that recipe into a few hundred
+    packages, but `populate_packages:prepend` in `linux-firmware_*.bb` makes
+    the base package `RRECOMMENDS` every split one, and nothing here sets
     `BAD_RECOMMENDATIONS` for them. So every blob lands in the image (a few
     hundred MB); the newer Intel ones come through `-iwlwifi-misc`. To trim
     it, `BAD_RECOMMENDATIONS` the split packages the board does not need, or
-    list only the ones it does. Not yet confirmed on a built genericx86-64
-    rootfs.
+    list only the ones it does.
   - `qemux86-64`: neither, which is correct - QEMU emulates no wireless NIC,
     so WiFi is tested on the Pi.
 * **`NetworkManager-wait-online.service` *is* enabled** - `preset-all` at rootfs
@@ -90,7 +94,7 @@ control connection:
 | --- | --- |
 | `tessaro-ethernet-dhcp` | `network.ethernet.mode=dhcp` (the default) |
 | `tessaro-ethernet-static` | `network.ethernet.mode=static`, with `network.ethernet.address`, `.gateway`, `.dns` |
-| `tessaro-wifi-hotspot` | `network.wifi.mode=hotspot` (the default) and `network.wifi.interface` (`auto` = `wlan0`) exists |
+| `tessaro-wifi-hotspot` | `network.wifi.mode=hotspot` (the default) and a WiFi device (`network.wifi.interface`, or any for `auto`) exists |
 | `tessaro-wifi-client` | `network.wifi.mode=client`, joining `network.wifi.ssid` (`network.wifi.ipv4=dhcp\|static` like Ethernet) |
 
 `tessaro-ctl config set network.ethernet.mode=static network.ethernet.address=192.168.1.50/24
@@ -101,6 +105,24 @@ Profiles made by hand - other ports, anything nmtui saved - are listed by `netwo
 profiles list` and never touched. `network.ethernet.interface` names the managed port;
 `auto` leaves the profile unbound, so NetworkManager puts it on the first
 Ethernet device that comes up.
+
+**`network.wifi.interface=auto` means whichever WiFi device the device has,
+not a fixed name**, because the name depends on the board: the Pi's SDIO
+radio is `wlan0`, a PCIe card on x86 gets udev's predictable `wlp1s0`, a USB
+dongle `wlx<mac>`. So with `auto`:
+
+* the hotspot and client keyfiles carry no `interface-name`, and
+  NetworkManager puts them on the WiFi device there is. This also covers
+  boot, where the profiles are rendered before the WiFi driver may have
+  loaded and before udev has renamed the device;
+* the `network.wifi.nat=0` drop matches `iifname "wl*"`, every WiFi name
+  either scheme hands out (`Wifi::nat_match` in `profiles.rs`);
+* everything that needs the real device - activating a profile, the
+  fallback watch, scanning for `network wifi join` - takes the first
+  `wireless` interface in sysfs by name (`profiles::wifi_device`).
+
+With more than one WiFi device, name the one to manage: NetworkManager's
+choice and the agent's are then the same.
 
 **A network change is kept only if the device still reaches the network
 afterwards, and it is saved only then.** There is no confirm step, on purpose:

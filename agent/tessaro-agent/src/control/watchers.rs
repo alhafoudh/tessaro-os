@@ -1,14 +1,15 @@
 //! What the control plane keeps true on its own, with nobody asking: the
 //! URL a read-only key moves, the public address, Weston's config against
 //! the screens and keyboards plugged in, the WiFi client's fallback to the
-//! hotspot after boot, and the sound server against the audio.* settings.
+//! hotspot after boot, the sound server against the audio.* settings, the
+//! clock against the time.* settings, and the welcome page's `welcome.json`.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 use protocol::keys;
-use protocol::{AudioStatus, AudioTested};
+use protocol::{AudioStatus, AudioTested, TimeStatus};
 use tokio::time::Instant;
 
 use super::{After, Control};
@@ -18,6 +19,7 @@ use crate::hotplug;
 use crate::nm::profiles;
 use crate::state;
 use crate::sync::lock;
+use crate::time;
 
 /// Where `audio test --input` leaves its recording in the file store.
 const AUDIO_RECORDING: &str = "audio-recording.wav";
@@ -133,7 +135,7 @@ impl Control {
             .await;
     }
 
-    async fn store_public_ip(&self, ip: String) {
+    pub(super) async fn store_public_ip(&self, ip: String) {
         let paths = self.paths.clone();
         let body = format!("{ip}\n");
         let written = blocking("writing the public address", move || {
@@ -146,6 +148,68 @@ impl Control {
             Ok(true) => self.log.info(format!("public address is {ip}")),
             Ok(false) => {}
             Err(err) => self.log.info(format!("public address: {err}")),
+        }
+    }
+
+    // --- the welcome page --------------------------------------------------
+
+    /// Keeps `/run/tessaro-kiosk/welcome.json` on what the welcome page at
+    /// http://127.0.0.1/ shows: the node name, its IPv4 addresses, the
+    /// hotspot's SSID while the hotspot is up, and whether the device is
+    /// claimed. Looked at every 5s, and at once after a claim or an unclaim;
+    /// written only when it changes. Nothing secret goes in: nginx serves the
+    /// file to any page on the loopback.
+    pub fn watch_welcome(self: &Arc<Self>) {
+        const EVERY: Duration = Duration::from_secs(5);
+
+        let control = Arc::clone(self);
+        let mut shutdown = self.shutdown.clone();
+        tokio::spawn(async move {
+            loop {
+                // naked: every wait in it is blocking() or Network, each under within()
+                control.write_welcome().await;
+                // naked: a timer, the claim nudge and the shutdown signal, not the outside world
+                tokio::select! {
+                    _ = tokio::time::sleep(EVERY) => {}
+                    _ = control.welcome.notified() => {}
+                    _ = shutdown.changed() => return,
+                }
+            }
+        });
+    }
+
+    async fn write_welcome(&self) {
+        let paths = self.paths.clone();
+        let Ok(net) = blocking("reading the network", move || {
+            Ok(crate::net::snapshot(&paths))
+        })
+        .await
+        else {
+            return;
+        };
+        let mut hotspot = None;
+        // naked: a disk read under blocking()'s within()
+        if let Ok(config) = self.net_config().await {
+            let interface = config.wifi.interface.as_deref();
+            if self.network.hotspot_up(interface).await {
+                hotspot = Some(config.wifi.hotspot_ssid);
+            }
+        }
+        let body = welcome_json(
+            &self.identity.name,
+            &net,
+            hotspot.as_deref(),
+            self.claimed(),
+        );
+        let paths = self.paths.clone();
+        let written = blocking("writing the welcome page's values", move || {
+            let file = paths.welcome_file();
+            crate::store::replace_if_changed(&file, body.as_bytes(), 0o644)
+                .map_err(|err| format!("{}: {err}", file.display()))
+        })
+        .await;
+        if let Err(err) = written {
+            self.log.debug(format!("welcome page: {err}"));
         }
     }
 
@@ -354,7 +418,7 @@ impl Control {
                     continue;
                 };
                 // naked: Network bounds every NetworkManager call with within()
-                if control.network.client_up(&watch.interface).await {
+                if control.network.client_up(watch.interface.as_deref()).await {
                     // naked: a marker write under blocking()'s within()
                     control.wifi_client_up(&watch).await;
                     return;
@@ -374,7 +438,8 @@ impl Control {
         let state = self.read_state().await.ok()?;
         let value = profiles::value_of(&state.settings, &self.defaults);
         let watch = profiles::fallback_watch(&value)?;
-        if self.network.busy() || !self.network.has_wifi(&watch.interface).await {
+        let wanted = watch.interface.as_deref();
+        if self.network.busy() || self.network.wifi_device(wanted).await.is_none() {
             return None;
         }
         Some(watch)
@@ -490,6 +555,62 @@ impl Control {
         });
     }
 
+    // --- time --------------------------------------------------------------
+
+    /// Keeps the clock on the time.* settings - see `time.rs`. Applied as
+    /// soon as the agent starts, which is what puts the timesyncd drop-in
+    /// back in `/run` after a boot, then once a minute: that follows a DHCP
+    /// lease that brought other NTP servers, and a timesyncd restarted by
+    /// anyone, which forgets its runtime servers. Applying is idempotent
+    /// and logs real changes only.
+    pub fn watch_time(self: &Arc<Self>) {
+        const EVERY: Duration = Duration::from_secs(60);
+        /// timedated or the bus not answering yet.
+        const RETRY: Duration = Duration::from_secs(10);
+
+        let control = Arc::clone(self);
+        let mut shutdown = self.shutdown.clone();
+        tokio::spawn(async move {
+            let mut reported: Option<String> = None;
+            loop {
+                // naked: apply_time waits only on blocking() and Time, each bounded
+                let outcome = control.apply_time().await;
+                let wait = if outcome.is_ok() { EVERY } else { RETRY };
+                let problem = outcome.err();
+                if problem != reported {
+                    if let Some(err) = &problem {
+                        control.log.info(format!("time: {err}"));
+                    }
+                    reported = problem;
+                }
+                // naked: a timer and the shutdown signal, not the outside world
+                tokio::select! {
+                    _ = tokio::time::sleep(wait) => {}
+                    _ = shutdown.changed() => return,
+                }
+            }
+        });
+    }
+
+    async fn apply_time(&self) -> Result<time::Outcome, String> {
+        let wanted = self.time_wanted().await?;
+        self.time.apply(&self.bus, &wanted).await
+    }
+
+    async fn time_wanted(&self) -> Result<time::Wanted, String> {
+        let state = self.read_state().await?;
+        Ok(self.time_wanted_from(&state.settings))
+    }
+
+    pub(super) fn time_wanted_from(&self, settings: &BTreeMap<String, String>) -> time::Wanted {
+        time::Wanted::from_env(&state::Effective::new(&self.defaults, settings, &self.log))
+    }
+
+    pub(super) async fn time_status(&self) -> Result<TimeStatus, String> {
+        let wanted = self.time_wanted().await?;
+        Ok(self.time.status(&self.bus, &wanted).await)
+    }
+
     async fn apply_audio(&self) -> Result<audio::Outcome, String> {
         let wanted = self.audio_wanted().await?;
         self.audio.apply(&wanted).await
@@ -533,5 +654,122 @@ impl Control {
             Err(err) => tested.message.push_str(&format!("; not saved: {err}")),
         }
         Ok(tested)
+    }
+}
+
+/// The body of `welcome.json`. IPv4 global addresses only, with the
+/// interface each is on: those are what someone reads off the screen to reach
+/// the device. The hotspot is `null` unless it is up.
+fn welcome_json(node: &str, net: &protocol::Net, hotspot: Option<&str>, claimed: bool) -> String {
+    let addresses: Vec<_> = net
+        .interfaces
+        .iter()
+        .filter(|interface| interface.kind != "loopback")
+        .flat_map(|interface| {
+            interface
+                .addresses
+                .iter()
+                .filter(|address| address.family == "ipv4" && address.scope == "global")
+                .map(|address| {
+                    serde_json::json!({
+                        "address": address.address,
+                        "interface": interface.name,
+                    })
+                })
+        })
+        .collect();
+    let body = serde_json::json!({
+        "node": node,
+        "addresses": addresses,
+        "hotspot": hotspot.map(|ssid| serde_json::json!({ "ssid": ssid })),
+        "claimed": claimed,
+    });
+    format!("{body}\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use protocol::{Net, NetAddress, NetInterface};
+
+    fn interface(name: &str, kind: &str, addresses: &[(&str, &str, &str)]) -> NetInterface {
+        NetInterface {
+            name: name.into(),
+            kind: kind.into(),
+            mac: None,
+            state: "up".into(),
+            carrier: Some(true),
+            mtu: None,
+            speed_mbps: None,
+            default_route: false,
+            addresses: addresses
+                .iter()
+                .map(|(address, family, scope)| NetAddress {
+                    address: (*address).into(),
+                    prefix: 24,
+                    family: (*family).into(),
+                    scope: (*scope).into(),
+                })
+                .collect(),
+        }
+    }
+
+    fn net(interfaces: Vec<NetInterface>) -> Net {
+        Net {
+            hostname: "tessaro".into(),
+            interface: None,
+            gateway: None,
+            dns: vec![],
+            interfaces,
+            public_ip: None,
+        }
+    }
+
+    #[test]
+    fn the_welcome_page_gets_global_ipv4_addresses_only() {
+        let net = net(vec![
+            interface("lo", "loopback", &[("127.0.0.1", "ipv4", "loopback")]),
+            interface(
+                "eth0",
+                "ethernet",
+                &[
+                    ("192.168.1.42", "ipv4", "global"),
+                    ("fe80::1", "ipv6", "link-local"),
+                    ("2001:db8::1", "ipv6", "global"),
+                ],
+            ),
+            interface("wlan0", "wireless", &[("10.42.0.1", "ipv4", "global")]),
+        ]);
+        let body: serde_json::Value =
+            serde_json::from_str(&welcome_json("lobby", &net, None, false)).unwrap();
+        assert_eq!(
+            body,
+            serde_json::json!({
+                "node": "lobby",
+                "addresses": [
+                    { "address": "192.168.1.42", "interface": "eth0" },
+                    { "address": "10.42.0.1", "interface": "wlan0" },
+                ],
+                "hotspot": null,
+                "claimed": false,
+            })
+        );
+    }
+
+    #[test]
+    fn the_welcome_page_names_a_running_hotspot() {
+        let body: serde_json::Value = serde_json::from_str(&welcome_json(
+            "lobby",
+            &net(vec![]),
+            Some("tessaro-lobby"),
+            true,
+        ))
+        .unwrap();
+        assert_eq!(
+            body["hotspot"],
+            serde_json::json!({ "ssid": "tessaro-lobby" })
+        );
+        assert_eq!(body["claimed"], true);
+        assert_eq!(body["addresses"], serde_json::json!([]));
     }
 }

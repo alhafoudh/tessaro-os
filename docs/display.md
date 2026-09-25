@@ -189,3 +189,47 @@ can do about it. A touch-first site should keep its inputs out of the bottom of
 the viewport, or bring its own keyboard in the page, where it can reserve the
 space. That in-page route is also the only one that can react to a keyboard
 being plugged in without restarting anything.
+
+**`tessaro-ctl screen keyboard show|hide` works through the page, because the
+panel follows the focused field.** There is no way to raise weston-keyboard
+from outside: only the client Weston launched may bind `input_method`
+(`text-backend.c`), and the panel appears when Chromium sends
+`show_input_panel` for a focused field. So `show` focuses `--selector`, or the
+field that has the focus, with `Runtime.evaluate{userGesture}` and calls
+`navigator.virtualKeyboard.show()`; `hide` blurs it (`control/page.rs`). Both
+refuse when the generated `weston.ini` has an empty `[input-method] path=`:
+with `screen.osk=never`, or `auto` with a hardware keyboard plugged in, there
+is no keyboard to show until Weston restarts. The page bridge offers the same
+as `tessaro.keyboard.show()` and `hide()` (docs/bridge.md).
+
+## Screen power
+
+**`tessaro-ctl screen power off|on` switches the display itself off, not a
+black page: the CRTC is disabled and the signal stops.** Weston 13 can do
+that (`weston_output_power_off`, `libweston/compositor.c`) but offers it
+through no protocol, D-Bus call or signal, so a module of ours does:
+`tessaro-power.so`, from `weston-tessaro-power`
+(`meta-tessaro-distro/recipes-graphics/wayland/`), loaded by the `--modules=`
+in `weston-tessaro-scale.conf.in`. It is built out of tree against Weston's
+installed plugin headers (`weston.pc`), so changing it never rebuilds Weston.
+
+* **The module listens on `/run/weston/power.sock`**, in Weston's
+  `RuntimeDirectory=`, mode 0600, so only Weston's user and root can reach
+  it. One line per connection, `on`, `off` or `status`, answered with the
+  state afterwards; the agent's side is `power.rs`.
+* **Touch does not wake it.** A forced power-off keeps an output off through
+  input, unlike `weston_compositor_sleep()`, whose idle state any touch ends.
+  A kiosk that is off for the night stays off when someone taps the glass.
+* **A new output is switched off too.** A TV that drops hot-plug detection in
+  standby comes back as a new output, which starts powered on; the module
+  powers every output created while it is off.
+* **The agent puts it back after Weston restarts.** The module's state dies
+  with Weston, and a hotplug or a `screen.*` setting restarts it. The agent
+  keeps `/run/tessaro-kiosk/screen-off` while the screen is meant to be off,
+  and `watch_screen_power` checks every 10s and switches it off again. The
+  file is in `/run`, so a reboot always brings the screen back on.
+* **A screenshot is refused while it is off**: a powered-off output paints no
+  frame, and `Page.captureScreenshot` would wait for one. The VNC mirror
+  freezes on the last frame meanwhile.
+* **`device status` shows a `screen off` row**, and the page bridge offers the
+  same as `tessaro.screen.off()` and `on()`.

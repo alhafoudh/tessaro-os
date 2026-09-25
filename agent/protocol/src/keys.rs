@@ -14,11 +14,11 @@
 //! backslashes and `${...}` meanings of their own.
 //!
 //! A key starts with the `tessaro-ctl` group that acts on the same thing
-//! (`browser.*`, `screen.*`, `network.*`, `device.*`, `access.*`); a key no
+//! (`browser.*`, `screen.*`, `network.*`, `device.*`, `access.*`, `time.*`); a key no
 //! group acts on is named after the component it tunes (`agent.*`). A key
 //! that is renamed goes into `RENAMED`, so devices in the field follow.
 
-use std::net::{Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use serde::{Deserialize, Serialize};
 
@@ -46,6 +46,11 @@ pub enum Consumer {
     /// partition, which it reads only when the board powers on. Nothing
     /// restarts: the change takes effect at the next reboot.
     Firmware,
+    /// The system clock, through systemd-timedated and systemd-timesyncd:
+    /// the agent sets the timezone and the NTP servers on the running
+    /// system. Only systemd-timesyncd restarts, and only when its servers
+    /// change; the browser follows `/etc/localtime` by itself.
+    Time,
 }
 
 /// Hardware a key needs. A key that names one is left out of `config keys`
@@ -100,11 +105,19 @@ pub enum Kind {
     Addresses,
     /// A WiFi network name: 1 to 32 bytes.
     Ssid,
+    /// A file in the store, `/data/files`, from its root: `inject.js` or
+    /// `/inject.js`, stored without the leading `/`. Or empty.
+    StoreFile,
     /// Where sound plays: `auto`, `off`, a kind of output (`AUDIO_OUTPUTS`),
     /// or one output's exact PipeWire name from `tessaro-ctl audio outputs`.
     AudioOutput,
     /// Where sound is recorded from: the same, with `AUDIO_INPUTS`.
     AudioInput,
+    /// A tz database name, `Europe/Bratislava` or `UTC`, from `tessaro-ctl
+    /// time zones`. Whether the device has it is the device's check.
+    Timezone,
+    /// Host names or IP addresses, comma separated, or empty.
+    Hosts,
     /// Not a setting: something the device reports - its address, its id.
     /// Listed with `config keys`, readable with `config get`, usable in
     /// browser.url, and refused by `config set`.
@@ -143,6 +156,9 @@ impl Kind {
             Kind::Address => "an IPv4 address, or empty".to_string(),
             Kind::Addresses => "IPv4 addresses, comma separated, or empty".to_string(),
             Kind::Ssid => "a WiFi network name, 1 to 32 bytes".to_string(),
+            Kind::StoreFile => {
+                "a file in the store from its root, e.g. inject.js, or empty".to_string()
+            }
             Kind::AudioOutput => format!(
                 "one of: {}, or an output's name from `tessaro-ctl audio outputs`",
                 AUDIO_OUTPUTS.join(", ")
@@ -151,6 +167,10 @@ impl Kind {
                 "one of: {}, or an input's name from `tessaro-ctl audio inputs`",
                 AUDIO_INPUTS.join(", ")
             ),
+            Kind::Timezone => {
+                "a timezone, e.g. Europe/Bratislava or UTC, from `tessaro-ctl time zones`".to_string()
+            }
+            Kind::Hosts => "host names or IP addresses, comma separated, or empty".to_string(),
             Kind::ReadOnly => "read-only: reported by the device, cannot be set".to_string(),
         }
     }
@@ -178,6 +198,7 @@ const WESTON: &[Consumer] = &[Consumer::Weston];
 const NETWORK: &[Consumer] = &[Consumer::Network];
 const AUDIO: &[Consumer] = &[Consumer::Audio];
 const FIRMWARE: &[Consumer] = &[Consumer::Firmware];
+const TIME: &[Consumer] = &[Consumer::Time];
 /// The node name: the agent's mDNS name, and the hotspot's SSID.
 const AGENT_AND_NETWORK: &[Consumer] = &[Consumer::Agent, Consumer::Network];
 
@@ -218,7 +239,7 @@ const fn seconds(
 /// deliberately absent: it is static, an image property, not a setting.
 pub static KEYS: &[Key] = &[
     key(URL, "KIOSK_URL", Kind::Url, AGENT,
-        "The page the kiosk shows (default: the self-test page, http://127.0.0.1/). A new origin also re-grants the device APIs to it."),
+        "The page the kiosk shows (default: the welcome page, http://127.0.0.1/; the self-test is http://127.0.0.1/selftest.html). A new origin also re-grants the device APIs to it."),
     key(PROBE_URL, "KIOSK_PROBE_URL", Kind::OptionalUrl, AGENT,
         "Health endpoint to probe instead of browser.url; empty probes browser.url. Needed for a file: or data: kiosk."),
     key("browser.offline_url", "KIOSK_OFFLINE_URL", Kind::OfflineUrl, AGENT,
@@ -233,6 +254,10 @@ pub static KEYS: &[Key] = &[
         "Show browser.debug.template full screen instead of the kiosk page. Not agent.debug, which is journal verbosity. `tessaro-ctl browser debug on|off`."),
     key(DEBUG_TEMPLATE, "KIOSK_DEBUG_TEMPLATE", Kind::Template, AGENT,
         "What the debug screen shows: text with {key} placeholders, \\n for a new line, e.g. IP {network.ip}\\nGW {network.gateway}."),
+    key(INJECT_SCRIPT, "KIOSK_INJECT_SCRIPT", Kind::StoreFile, AGENT,
+        "A script from the file store run in every page before the page's own, e.g. inject.js for /data/files/inject.js. Empty for none. `tessaro-ctl browser inject on|off`."),
+    key(BRIDGE_MODE, "KIOSK_BRIDGE_MODE", Kind::Choice(BRIDGE_MODES), AGENT,
+        "What the page gets as window.tessaro: off, config (the settings, read-only) or actions (the settings and device actions). `tessaro-ctl browser bridge`."),
     key(ZOOM, "KIOSK_ZOOM", Kind::Int { min: 25, max: 500 }, BROWSER,
         "Page zoom in percent, Chrome's Ctrl+/- zoom for every site, on top of screen.scale. `tessaro-ctl browser zoom`."),
     key("browser.args_extra", "KIOSK_CHROMIUM_ARGS_EXTRA", Kind::Args, BROWSER,
@@ -254,7 +279,7 @@ pub static KEYS: &[Key] = &[
         ..key(RESOLUTION, "KIOSK_RESOLUTION", Kind::Resolution, WESTON,
             "Output mode, WIDTHxHEIGHT from `tessaro-ctl screen modes`, or preferred. Reverts unless confirmed with `tessaro-ctl screen confirm`.")
     },
-    key("screen.osk", "KIOSK_OSK", Kind::Choice(&["auto", "always", "never"]), WESTON,
+    key(OSK, "KIOSK_OSK", Kind::Choice(&["auto", "always", "never"]), WESTON,
         "On-screen keyboard: auto shows it only without a USB/Bluetooth keyboard."),
     key("screen.vnc", "KIOSK_VNC", Kind::Choice(&["on", "off"]), WESTON,
         "Mirror the screen to VNC on 127.0.0.1:5900."),
@@ -270,6 +295,14 @@ pub static KEYS: &[Key] = &[
         "Where sound is recorded from, for pages that use the microphone: auto (the latest USB or Bluetooth input, else the jack), usb, jack, bluetooth, off (the page records silence), or one input from `tessaro-ctl audio inputs`."),
     key(AUDIO_INPUT_VOLUME, "KIOSK_AUDIO_INPUT_VOLUME", Kind::Int { min: 0, max: 100 }, AUDIO,
         "Input (microphone) level in percent."),
+    // The clock, through timedated and timesyncd. Applied to the running
+    // system at once; see `tessaro-ctl time show`.
+    key(TIMEZONE, "KIOSK_TIMEZONE", Kind::Timezone, TIME,
+        "The device's timezone, e.g. Europe/Bratislava, from `tessaro-ctl time zones`. Pages and the journal show local time in it; the browser follows without a restart. `tessaro-ctl time timezone`."),
+    key(NTP_ENABLE, "KIOSK_NTP", Kind::Flag, TIME,
+        "Keep the clock in sync over NTP. 0 for a network without any time server; then `tessaro-ctl time set` sets the clock by hand. `tessaro-ctl time ntp on|off`."),
+    key(NTP_SERVERS, "KIOSK_NTP_SERVERS", Kind::Hosts, TIME,
+        "NTP servers, comma separated. Empty uses the servers the network's DHCP offers, else the image's fallback servers."),
     key("agent.enable", "KIOSK_AGENT_ENABLE", Kind::Flag, AGENT,
         "Supervise the browser at all; 0 parks the agent."),
     key("agent.debug", "KIOSK_DEBUG", Kind::Flag, AGENT,
@@ -330,7 +363,7 @@ pub static KEYS: &[Key] = &[
     key("network.ethernet.dns", "KIOSK_ETHERNET_DNS", Kind::Addresses, NETWORK,
         "DNS servers with network.ethernet.mode=static, comma separated."),
     key("network.wifi.interface", "KIOSK_WIFI_INTERFACE", Kind::Interface, NETWORK,
-        "The WiFi device the device manages; auto is wlan0. Without it, nothing WiFi ever comes up."),
+        "The WiFi device the device manages; auto is whichever there is (wlan0, wlp1s0), so name it when there is more than one. Without one, nothing WiFi ever comes up."),
     key("network.wifi.mode", "KIOSK_WIFI_MODE", Kind::Choice(&["hotspot", "client", "off"]), NETWORK,
         "hotspot (tessaro-NAME, for installation and management), client (joins network.wifi.ssid; `tessaro-ctl network wifi join`; falls back to the hotspot when it does not connect after boot, see network.wifi.fallback_after), or off."),
     key("network.wifi.nat", "KIOSK_WIFI_NAT", Kind::Flag, NETWORK,
@@ -388,6 +421,9 @@ pub const MAINTENANCE_URL: &str = "browser.maintenance.url";
 pub const DEBUG_ENABLE: &str = "browser.debug.enable";
 pub const DEBUG_TEMPLATE: &str = "browser.debug.template";
 pub const ZOOM: &str = "browser.zoom";
+pub const INJECT_SCRIPT: &str = "browser.inject.script";
+pub const BRIDGE_MODE: &str = "browser.bridge.mode";
+pub const OSK: &str = "screen.osk";
 pub const RESOLUTION: &str = "screen.resolution";
 pub const NAME: &str = "device.name";
 pub const ID: &str = "device.id";
@@ -399,6 +435,16 @@ pub const AUDIO_VOLUME: &str = "audio.volume";
 pub const AUDIO_MUTE: &str = "audio.mute";
 pub const AUDIO_INPUT: &str = "audio.input";
 pub const AUDIO_INPUT_VOLUME: &str = "audio.input_volume";
+pub const TIMEZONE: &str = "time.timezone";
+pub const NTP_ENABLE: &str = "time.ntp.enable";
+pub const NTP_SERVERS: &str = "time.ntp.servers";
+
+/// The timezone of a device where time.timezone was never set.
+pub const DEFAULT_TIMEZONE: &str = "UTC";
+
+/// browser.bridge.mode, from nothing to everything: each mode includes the
+/// one before it.
+pub const BRIDGE_MODES: &[&str] = &["off", "config", "actions"];
 
 /// The kinds of output audio.output names instead of one output. Besides
 /// these, `auto` and `off`.
@@ -871,6 +917,16 @@ pub fn validate(key: &Key, value: &str) -> Result<String, String> {
                 Ok(value.to_string())
             }
         }
+        Kind::StoreFile => {
+            if value.is_empty() {
+                return Ok(String::new());
+            }
+            match crate::files::normalize(value) {
+                Ok(path) if path.is_empty() => fail("names a directory, not a file"),
+                Ok(path) => Ok(path),
+                Err(why) => fail(&why),
+            }
+        }
         Kind::AudioOutput | Kind::AudioInput => {
             let (kinds, list) = if key.kind == Kind::AudioOutput {
                 (AUDIO_OUTPUTS, "outputs")
@@ -895,7 +951,70 @@ pub fn validate(key: &Key, value: &str) -> Result<String, String> {
                 ))
             }
         }
+        // Whether the zone exists is the device's check: it knows its tz
+        // database.
+        Kind::Timezone => {
+            if is_timezone(value) {
+                Ok(value.to_string())
+            } else {
+                fail("must be a timezone such as Europe/Bratislava or UTC, from `tessaro-ctl time zones`")
+            }
+        }
+        Kind::Hosts => parse_hosts(value)
+            .map(|hosts| hosts.join(","))
+            .or_else(|why| fail(&why)),
     }
+}
+
+/// A name as the tz database spells them: `UTC`, `Europe/Bratislava`,
+/// `America/Argentina/Buenos_Aires`, `Etc/GMT+2`. Never a path that could
+/// leave `/usr/share/zoneinfo`.
+pub fn is_timezone(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 64
+        && name.split('/').all(|part| {
+            !part.is_empty()
+                && part != "."
+                && part != ".."
+                && part
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '+' | '.'))
+        })
+}
+
+/// Host names and IP addresses, comma or space separated, lower-cased and
+/// without repeats. Empty for none.
+pub fn parse_hosts(value: &str) -> Result<Vec<String>, String> {
+    let mut hosts: Vec<String> = Vec::new();
+    for item in value.split(|ch: char| ch == ',' || ch.is_whitespace()) {
+        if item.is_empty() {
+            continue;
+        }
+        let host = item.to_ascii_lowercase();
+        if host.parse::<IpAddr>().is_err() && !is_hostname(&host) {
+            return Err(format!("{item} is not a host name or an IP address"));
+        }
+        if !hosts.contains(&host) {
+            hosts.push(host);
+        }
+    }
+    Ok(hosts)
+}
+
+/// A DNS name: dot-separated labels of letters, digits and dashes, at most
+/// 253 characters. A trailing dot is not accepted.
+pub fn is_hostname(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 253
+        && name.split('.').all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+                && label
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '-')
+        })
 }
 
 /// A value of audio.output or audio.input that names one device rather than
@@ -1505,6 +1624,54 @@ mod tests {
     }
 
     #[test]
+    fn timezones_are_tz_names_never_paths() {
+        assert_eq!(
+            check(TIMEZONE, " Europe/Bratislava ").unwrap(),
+            "Europe/Bratislava"
+        );
+        assert_eq!(check(TIMEZONE, "UTC").unwrap(), "UTC");
+        assert_eq!(check(TIMEZONE, "Etc/GMT+2").unwrap(), "Etc/GMT+2");
+        assert_eq!(
+            check(TIMEZONE, "America/Argentina/Buenos_Aires").unwrap(),
+            "America/Argentina/Buenos_Aires"
+        );
+        for bad in [
+            "",
+            "/etc/passwd",
+            "../../etc/passwd",
+            "Europe/../UTC",
+            "Europe//Paris",
+            "Europe/Bra tislava",
+        ] {
+            assert!(check(TIMEZONE, bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn ntp_servers_are_hosts_or_addresses() {
+        assert_eq!(
+            check(
+                NTP_SERVERS,
+                "Time.Example.com, 10.0.0.1 2001:db8::1,10.0.0.1"
+            )
+            .unwrap(),
+            "time.example.com,10.0.0.1,2001:db8::1"
+        );
+        assert_eq!(check(NTP_SERVERS, "").unwrap(), "");
+        for bad in ["-bad.test", "a..b", "ntp_1.test", "host.test."] {
+            assert!(check(NTP_SERVERS, bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn the_time_keys_are_applied_to_the_running_clock() {
+        assert_eq!(check(NTP_ENABLE, "off").unwrap(), "0");
+        for name in [TIMEZONE, NTP_ENABLE, NTP_SERVERS] {
+            assert_eq!(find(name).unwrap().consumers, [Consumer::Time], "{name}");
+        }
+    }
+
+    #[test]
     fn zoom_has_chromes_range_and_restarts_the_browser() {
         assert_eq!(check(ZOOM, "25").unwrap(), "25");
         assert_eq!(check(ZOOM, "500").unwrap(), "500");
@@ -1512,6 +1679,28 @@ mod tests {
         assert!(check(ZOOM, "501").is_err());
         assert!(check(ZOOM, "1.5").is_err());
         assert_eq!(find(ZOOM).unwrap().consumers, [Consumer::Browser]);
+    }
+
+    #[test]
+    fn the_injected_script_is_a_file_in_the_store_from_its_root() {
+        assert_eq!(check(INJECT_SCRIPT, "inject.js").unwrap(), "inject.js");
+        assert_eq!(check(INJECT_SCRIPT, "/inject.js").unwrap(), "inject.js");
+        assert_eq!(check(INJECT_SCRIPT, "/js/site.js").unwrap(), "js/site.js");
+        assert_eq!(check(INJECT_SCRIPT, "").unwrap(), "");
+        assert!(check(INJECT_SCRIPT, "/").is_err(), "the store itself");
+        assert!(check(INJECT_SCRIPT, "../tessaro/auth.json").is_err());
+        assert!(check(INJECT_SCRIPT, "a//b.js").is_err());
+        assert_eq!(find(INJECT_SCRIPT).unwrap().consumers, [Consumer::Agent]);
+    }
+
+    #[test]
+    fn the_bridge_mode_is_off_config_or_actions() {
+        for mode in BRIDGE_MODES {
+            assert_eq!(check(BRIDGE_MODE, mode).unwrap(), *mode);
+        }
+        assert_eq!(check(BRIDGE_MODE, "Actions").unwrap(), "actions");
+        assert!(check(BRIDGE_MODE, "on").is_err());
+        assert_eq!(find(BRIDGE_MODE).unwrap().consumers, [Consumer::Agent]);
     }
 
     #[test]

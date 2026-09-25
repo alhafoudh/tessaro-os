@@ -4,8 +4,9 @@
 //! docs/remote-access.md), so the way in is SSH: the key is sent and the
 //! host key pinned over the control connection (`tessaro_client::ssh`, the
 //! same as `tessaro-ctl ssh connect`), and the system's `ssh` forwards a
-//! free local port to it. An unclaimed device takes no key; ssh gets in by
-//! its empty root password, even in `BatchMode`.
+//! free local port to it (`tessaro_client::tunnel`). An unclaimed device
+//! takes no key; ssh gets in by its empty root password, even in
+//! `BatchMode`.
 //!
 //! Its server is neatvnc, which takes VeNCrypt with a plain login inside
 //! TLS and nothing else, so no VNC crate fits and this is a small RFB 3.8
@@ -16,8 +17,7 @@
 
 use std::hash::{Hash, Hasher};
 use std::io::{Read, Write};
-use std::net::{Shutdown, TcpListener, TcpStream};
-use std::process::{Child, Command, Stdio};
+use std::net::{Shutdown, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -27,6 +27,7 @@ use iced::widget::image;
 use iced::Subscription;
 use tessaro_client::nodes::Node;
 use tessaro_client::ssh;
+use tessaro_client::tunnel::{Prompts, Tunnel};
 
 use crate::worker;
 
@@ -36,8 +37,6 @@ const REMOTE: &str = "127.0.0.1:5900";
 /// property with no setting, per docs/remote-access.md.
 const USER: &str = "tessaro";
 const PASSWORD: &str = "tessaro";
-/// How long the tunnel may take to come up.
-const TUNNEL_UP: Duration = Duration::from_secs(15);
 /// The fastest the picture is handed to the UI.
 const FRAME_EVERY: Duration = Duration::from_millis(150);
 const RETRY: Duration = Duration::from_secs(3);
@@ -93,7 +92,11 @@ fn watch(node: &Node, out: &ui::UnboundedSender<Event>) -> Result<(), String> {
         let _ = out.unbounded_send(Event::State(text.to_string()));
     };
     state("opening the SSH tunnel");
-    let tunnel = Tunnel::open(node)?;
+    let authorized = {
+        let (mut session, _) = worker::connect(node)?;
+        ssh::authorize(&mut session, None)?
+    };
+    let tunnel = Tunnel::open(&authorized, 0, REMOTE, Prompts::Never)?;
     state("connecting to VNC");
     let tcp = TcpStream::connect(("127.0.0.1", tunnel.port))
         .map_err(|err| format!("the tunnel: {err}"))?;
@@ -113,85 +116,6 @@ fn watch(node: &Node, out: &ui::UnboundedSender<Event>) -> Result<(), String> {
     done.store(true, Ordering::Relaxed);
     drop(tunnel);
     viewed
-}
-
-/// `ssh -N -L` to the device's VNC port, for as long as it lives.
-struct Tunnel {
-    child: Child,
-    port: u16,
-}
-
-impl Tunnel {
-    fn open(node: &Node) -> Result<Self, String> {
-        let (mut session, _) = worker::connect(node)?;
-        let authorized = ssh::authorize(&mut session, None)?;
-        let port = TcpListener::bind("127.0.0.1:0")
-            .and_then(|listener| listener.local_addr())
-            .map_err(|err| format!("no local port: {err}"))?
-            .port();
-
-        // Options go before the destination: after it, ssh reads a command.
-        let mut argv = authorized.argv(22, &[]);
-        let destination = argv.pop().unwrap_or_default();
-        for option in [
-            "BatchMode=yes",
-            "ExitOnForwardFailure=yes",
-            "ServerAliveInterval=15",
-        ] {
-            argv.push("-o".into());
-            argv.push(option.into());
-        }
-        argv.extend([
-            "-N".into(),
-            "-L".into(),
-            format!("127.0.0.1:{port}:{REMOTE}"),
-        ]);
-        argv.push(destination);
-
-        let mut child = Command::new(&argv[0])
-            .args(&argv[1..])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|err| format!("{}: {err}", argv[0]))?;
-
-        let started = Instant::now();
-        loop {
-            if let Ok(Some(status)) = child.try_wait() {
-                let mut error = String::new();
-                if let Some(mut stderr) = child.stderr.take() {
-                    let _ = stderr.read_to_string(&mut error);
-                }
-                let error = error.trim();
-                return Err(if error.is_empty() {
-                    format!("ssh ended ({status})")
-                } else {
-                    format!("ssh: {error}")
-                });
-            }
-            if TcpStream::connect_timeout(
-                &([127, 0, 0, 1], port).into(),
-                Duration::from_millis(200),
-            )
-            .is_ok()
-            {
-                return Ok(Self { child, port });
-            }
-            if started.elapsed() > TUNNEL_UP {
-                let _ = child.kill();
-                return Err("the SSH tunnel did not come up".to_string());
-            }
-            std::thread::sleep(Duration::from_millis(150));
-        }
-    }
-}
-
-impl Drop for Tunnel {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
 }
 
 trait Stream: Read + Write + Send {}

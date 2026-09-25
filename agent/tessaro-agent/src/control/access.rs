@@ -90,7 +90,7 @@ impl Control {
         let issuer = match caller {
             Caller::Local => "local".to_string(),
             Caller::Token { id, .. } => id.clone(),
-            Caller::Anonymous { .. } => {
+            Caller::Anonymous { .. } | Caller::Page => {
                 return Err("a token is needed to issue a token".to_string())
             }
         };
@@ -394,5 +394,6 @@ impl Control {
         if let Some(mdns) = lock(&self.mdns).as_ref() {
             mdns.set_claimed(claimed, &self.log);
         }
+        self.welcome.notify_one();
     }
 }

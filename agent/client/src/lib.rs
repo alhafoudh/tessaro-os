@@ -7,11 +7,13 @@
 //! (`connect::Trust::Pin`), and what is worth telling the user comes back as
 //! `Session::notes`.
 
+pub mod clock;
 pub mod connect;
 pub mod journal;
 pub mod nodes;
 pub mod ssh;
 pub mod transfer;
+pub mod tunnel;
 
 /// The same mDNS library `connect::browse` uses, for a caller that browses
 /// for good instead (the GUI) and hands results to `connect::found_service`.

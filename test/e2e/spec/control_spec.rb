@@ -2,7 +2,8 @@
 
 module AgentE2E
   # The control plane: settings, the debug screen, maintenance mode, the
-  # claim model, ssh keys, the resolution probation and the file store.
+  # claim model, ssh keys, the resolution probation, the file store, eval,
+  # the page bridge and screen power.
   RSpec.describe "the control plane" do
     include_context "a booted VM"
 
@@ -32,6 +33,72 @@ module AgentE2E
       refused = guest.run("tessaro-ctl config set device.gpu_mem=128 2>&1", allow_failure: true)
       expect(refused).to include("device.gpu_mem is only available on a Raspberry Pi")
       expect(guest.run("tessaro-ctl config keys")).not_to include("device.gpu_mem")
+    end
+
+    # The page's zone is what Chromium reads from /etc/localtime, which
+    # timedated relinks: no browser restart, and no TZ anywhere.
+    it "time: tessaro-ctl time timezone moves the clock's zone and the page follows without a browser restart",
+       :reconfigure do
+      browser = guest.kiosk_pid
+      out = guest.run("tessaro-ctl time timezone Europe/Bratislava")
+      expect(out).to include("timezone Europe/Bratislava")
+      expect(out).not_to include("restarting")
+      expect(guest.run("timedatectl show -p Timezone --value").strip).to eq("Europe/Bratislava")
+
+      zone = ""
+      step "wait up to 10s for the page's Intl zone to read Europe/Bratislava"
+      deadline = Time.now + 10
+      until zone == "Europe/Bratislava" || Time.now > deadline
+        sleep 1
+        zone = quietly do
+          cdp.command("Runtime.evaluate", expression: "Intl.DateTimeFormat().resolvedOptions().timeZone",
+                                          returnByValue: true)
+        end.dig("result", "value").to_s
+      end
+      expect(zone).to eq("Europe/Bratislava")
+      expect(guest.kiosk_pid).to eq(browser)
+      expect(guest.run("tessaro-ctl time show")).to include("Europe/Bratislava")
+
+      refused = guest.run("tessaro-ctl time timezone Mars/Olympus 2>&1", allow_failure: true)
+      expect(refused).to include("this device has no timezone Mars/Olympus")
+
+      guest.run("tessaro-ctl config unset time.timezone")
+      expect(guest.run("timedatectl show -p Timezone --value").strip).to eq("UTC")
+    ensure
+      guest.run("tessaro-ctl config unset time.timezone", allow_failure: true)
+    end
+
+    # qemu's user network has no NTP server to reach; the case is about what
+    # the device is told, not whether it syncs.
+    it "time: tessaro-ctl time ntp on --server writes timesyncd's drop-in and restarts only timesyncd",
+       :reconfigure do
+      dropin = "/run/systemd/timesyncd.conf.d/50-tessaro.conf"
+      timesyncd = guest.property("systemd-timesyncd", "MainPID").to_i
+      browser = guest.kiosk_pid
+
+      out = guest.run("tessaro-ctl time ntp on --server 10.0.2.2")
+      expect(out).to include("servers 10.0.2.2")
+      expect(out).not_to include("restarting")
+      expect(guest.run("cat #{dropin}")).to include("NTP=10.0.2.2")
+      servers = guest.run("busctl get-property org.freedesktop.timesync1 /org/freedesktop/timesync1 " \
+                          "org.freedesktop.timesync1.Manager SystemNTPServers")
+      expect(servers).to include('"10.0.2.2"')
+      expect(guest.property("systemd-timesyncd", "MainPID").to_i).not_to eq(timesyncd)
+      expect(guest.kiosk_pid).to eq(browser)
+
+      status = JSON.parse(guest.run("tessaro-ctl --json time show"))
+      expect(status.dig("servers", "system")).to eq(["10.0.2.2"])
+      expect(status["setting_servers"]).to eq(["10.0.2.2"])
+      expect(status["ntp"]).to be(true)
+      expect(status["timesyncd"]).to eq("active")
+
+      refused = guest.run("tessaro-ctl time set '2030-01-01 00:00' 2>&1", allow_failure: true)
+      expect(refused).to include("switch it off first")
+
+      guest.run("tessaro-ctl config unset time.ntp.servers")
+      expect(guest.run("test -e #{dropin} && echo there || echo gone").strip).to eq("gone")
+    ensure
+      guest.run("tessaro-ctl config unset time.ntp.servers", allow_failure: true)
     end
 
     # The template's \n is typed as a backslash and an n, which the single
@@ -299,6 +366,87 @@ module AgentE2E
       guest.run("rm -rf #{local} /tmp/e2e-back; " \
                 "for path in media a.txt b.txt; do tessaro-ctl files rm -r -y $path 2>/dev/null; done",
                 allow_failure: true)
+    end
+
+    it "eval: browser eval answers with the page's value, fails on a throw, and stops a script that never ends" do
+      expect(guest.run("tessaro-ctl browser eval 'location.href'")).to include(KIOSK_URL)
+      expect(guest.run("tessaro-ctl --json browser eval '1 + 1'")).to include('"value": 2')
+
+      thrown = guest.run("tessaro-ctl browser eval 'nope' 2>&1", allow_failure: true)
+      expect(thrown).to include("ReferenceError")
+
+      stuck = guest.run("tessaro-ctl browser eval --timeout 2 'while (true) {}' 2>&1", allow_failure: true)
+      expect(stuck).to include("the script was stopped")
+      expect(guest.run("tessaro-ctl browser eval '\"still answering\"'")).to include("still answering")
+    end
+
+    # The script and the bridge both come from the agent's DevTools session,
+    # so the page is read the same way: Runtime.evaluate in its own world.
+    it "bridge: inject runs a store script in every page and a new copy reloads it; config and actions modes " \
+       "give the page window.tessaro", :reconfigure do
+      page_value = lambda do |expression|
+        quietly { cdp.command("Runtime.evaluate", expression: expression, returnByValue: true) }
+          .dig("result", "value")
+      rescue AgentE2E::Failure, SystemCallError, IOError
+        nil
+      end
+      wait_value = lambda do |expression, want, seconds|
+        step "wait up to #{seconds}s for #{expression} to be #{want.inspect}"
+        deadline = Time.now + seconds
+        seen = page_value.call(expression)
+        until seen == want || Time.now > deadline
+          sleep 1
+          seen = page_value.call(expression)
+        end
+        expect(seen).to eq(want)
+      end
+
+      guest.run("printf 'window.__e2e = \"one\";' > /tmp/inject.js && tessaro-ctl files upload /tmp/inject.js")
+      guest.run("tessaro-ctl browser inject on --script /inject.js")
+      journal.wait_for(/^page bridge: off, injecting inject\.js$/, timeout: 30)
+      wait_value.call("window.__e2e", "one", 30)
+      expect(guest.run("tessaro-ctl device status")).to include("inject.js injected")
+
+      guest.run("printf 'window.__e2e = \"second\";' > /tmp/inject.js && tessaro-ctl files upload /tmp/inject.js")
+      journal.wait_for(/^page bridge: inject\.js changed; reloading the page$/, timeout: 30)
+      wait_value.call("window.__e2e", "second", 30)
+
+      guest.run("tessaro-ctl config set data.e2e_table=12")
+      guest.run("tessaro-ctl browser bridge config")
+      journal.wait_for(/^page bridge: config, injecting inject\.js$/, timeout: 30)
+      wait_value.call("tessaro.config['data.e2e_table']", "12", 30)
+      expect(page_value.call("['device.name', 'network.public_ip', 'access.listen'].some((k) => k in tessaro.config)"))
+        .to eq(false)
+      expect(page_value.call("typeof tessaro.browser")).to eq("undefined")
+      status = guest.run("tessaro-ctl browser eval 'tessaro.device.status().then((s) => s.kioskUrl)'")
+      expect(status).to include(KIOSK_URL)
+
+      guest.run("tessaro-ctl browser bridge actions")
+      journal.wait_for(/^page bridge: actions, injecting inject\.js$/, timeout: 30)
+      wait_value.call("typeof tessaro.browser.reload", "function", 30)
+      # Right after the agent's start: a page that reloads itself on load
+      # must not loop.
+      refused = guest.run("tessaro-ctl browser eval 'tessaro.browser.reload().then(() => \"reloaded\", (e) => e.message)'")
+      expect(refused).to include("refused")
+      # No template uses it, so it is kept without restarting anything.
+      guest.run("tessaro-ctl browser eval 'tessaro.data.set(\"e2e_note\", \"kept\")'")
+      expect(guest.run("tessaro-ctl config get data.e2e_note")).to include("kept")
+      wait_value.call("tessaro.config['data.e2e_note']", "kept", 30)
+    ensure
+      guest.run("tessaro-ctl config unset browser.inject.script browser.bridge.mode data.e2e_table data.e2e_note; " \
+                "tessaro-ctl files rm -y inject.js; rm -f /tmp/inject.js",
+                allow_failure: true)
+    end
+
+    it "screen-power: screen power off and on go through the compositor and show in device status" do
+      expect(guest.run("tessaro-ctl screen power")).to include("the screen is on")
+      expect(guest.run("tessaro-ctl screen power off")).to include("screen off")
+      expect(guest.run("tessaro-ctl screen power")).to include("the screen is off")
+      expect(guest.run("tessaro-ctl device status")).to match(/screen\s+off/)
+      refused = guest.run("tessaro-ctl screen screenshot -o /tmp/e2e.jpg 2>&1", allow_failure: true)
+      expect(refused).to include("the screen is switched off")
+    ensure
+      guest.run("tessaro-ctl screen power on", allow_failure: true)
     end
   end
 end

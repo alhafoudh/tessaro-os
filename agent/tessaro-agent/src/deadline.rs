@@ -240,6 +240,10 @@ mod tests {
             "src/control/network.rs",
             "src/control/settings.rs",
             "src/control/watchers.rs",
+            "src/control/bridge.rs",
+            "src/control/page.rs",
+            "src/control/screen.rs",
+            "src/power.rs",
             "src/server.rs",
             "src/updates.rs",
             "src/files.rs",
@@ -251,6 +255,7 @@ mod tests {
             "src/nm/nat.rs",
             "src/audio.rs",
             "src/proc.rs",
+            "src/time.rs",
         ];
 
         // Helpers whose every wait is already under `within()` in their own
@@ -295,6 +300,17 @@ mod tests {
             // audio::Audio - every pw-dump, wpctl and pw-play is within(),
             // file work is blocking(); the scan of audio.rs checks that.
             "self.audio.",
+            // time.rs - its own helpers, each one within_result() inside:
+            // a property read, the timedated and timesyncd proxies, the
+            // DHCP lookup; the scan of time.rs checks them. `bus.` is
+            // systemd::Bus handed in, as `self.bus.` above.
+            "property(",
+            "timedate(",
+            "timesync(",
+            "dhcp_servers(",
+            "bus.",
+            // time::Time - every method is the above.
+            "self.time.",
         ];
 
         let mut offences = Vec::new();

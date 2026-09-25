@@ -42,18 +42,24 @@ impl Control {
             Err(err) => return Reply::err(err),
         };
         let value = profiles::value_of(&state.settings, &self.defaults);
-        let interface = match profiles::effective(&value, "network.wifi.interface").as_str() {
-            "auto" => "wlan0".to_string(),
-            name => name.to_string(),
-        };
+        let wanted = profiles::effective(&value, "network.wifi.interface");
+        let wanted = (wanted != "auto").then_some(wanted);
         let security = match security {
             Some(security) => security,
             None if hidden => {
                 return Reply::err("a hidden network needs --security psk, sae or open")
             }
-            None => match self.network.security_of_ssid(&interface, &ssid).await {
-                Ok(security) => security,
-                Err(err) => return Reply::err(err),
+            None => match self.network.wifi_device(wanted.as_deref()).await {
+                Some(interface) => match self.network.security_of_ssid(&interface, &ssid).await {
+                    Ok(security) => security,
+                    Err(err) => return Reply::err(err),
+                },
+                None => {
+                    return Reply::err(format!(
+                        "there is no WiFi device to look for {ssid} with; to store it anyway \
+                         pass --hidden --security psk|sae|open"
+                    ))
+                }
             },
         };
         let word = match security {
@@ -112,7 +118,8 @@ impl Control {
         self.update_secrets(move |secrets| secrets.hotspot_psk = Some(stored))
             .await?;
         let config = self.net_config().await?;
-        let here = self.network.has_wifi(&config.wifi.interface).await;
+        let wanted = config.wifi.interface.as_deref();
+        let here = self.network.wifi_device(wanted).await.is_some();
         Ok(here.then_some(HotspotCredentials {
             ssid: config.wifi.hotspot_ssid,
             password,

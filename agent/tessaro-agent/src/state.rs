@@ -179,8 +179,9 @@ pub fn expand(
     }
 }
 
-/// What one placeholder stands for, as `expand_url` describes.
-fn resolve(
+/// What one placeholder stands for, as `expand_url` describes. `None` for a
+/// name that is no placeholder, and for a `data.*` nobody set.
+pub fn resolve(
     name: &str,
     settings: &BTreeMap<String, String>,
     defaults: &dyn Env,

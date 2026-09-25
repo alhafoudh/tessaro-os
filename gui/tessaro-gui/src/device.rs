@@ -134,6 +134,7 @@ fn applies(consumers: &[Consumer]) -> String {
             Consumer::Network => "network",
             Consumer::Audio => "audio",
             Consumer::Firmware => "firmware (next reboot)",
+            Consumer::Time => "clock",
         })
         .collect::<Vec<_>>()
         .join(", ")
@@ -272,6 +273,7 @@ pub enum Page {
     Wifi,
     Storage,
     Audio,
+    Time,
     Access,
     Ssh,
     Files,
@@ -287,6 +289,7 @@ impl Page {
         (Page::Wifi, "WiFi"),
         (Page::Storage, "Storage"),
         (Page::Audio, "Audio"),
+        (Page::Time, "Time"),
         (Page::Access, "Access"),
         (Page::Ssh, "SSH"),
         (Page::Files, "Files"),
@@ -724,6 +727,14 @@ impl Device {
         }
         if let Some(audio) = &applied.audio {
             self.log(Tone::Info, audio.clone());
+        }
+        if let Some(time) = &applied.time {
+            let tone = if time.starts_with("saved,") {
+                Tone::Warn
+            } else {
+                Tone::Info
+            };
+            self.log(tone, time.clone());
         }
         if !applied.restarted.is_empty() {
             self.log(

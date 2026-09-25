@@ -69,6 +69,8 @@ pub struct Agent<'a> {
     accepted_origin: Option<String>,
     /// We navigated last cycle, so this cycle's URL is the landing point.
     awaiting_landing: bool,
+    /// Someone else is in DevTools, and the tab is theirs until they leave.
+    held: bool,
 }
 
 impl<'a> Agent<'a> {
@@ -107,6 +109,7 @@ impl<'a> Agent<'a> {
             seen_alive: false,
             accepted_origin: None,
             awaiting_landing: false,
+            held: false,
         }
     }
 
@@ -173,6 +176,29 @@ impl<'a> Agent<'a> {
 
     async fn cycle_inner(&mut self, now: i64) {
         let config = self.config;
+
+        // A technician in DevTools owns the tab. A breakpoint stops the
+        // renderer answering `Runtime.evaluate`, which would get the browser
+        // restarted under them, and a page they open is not drift. So no
+        // liveness check, probe, navigation or restart until they disconnect.
+        if self.cdp.inspected().await {
+            if !self.held {
+                self.held = true;
+                self.log.info(
+                    "a DevTools client is connected; leaving the browser alone until it disconnects",
+                );
+            }
+            return;
+        }
+        if self.held {
+            self.held = false;
+            // What they left on screen is not ours to vouch for, and a
+            // debugger pause is not a silent browser.
+            self.nav_state = NavState::Unknown;
+            self.ping_fails = 0;
+            self.log
+                .info("the DevTools client disconnected; watching the browser again");
+        }
 
         // Liveness first, so navigation failures below are attributed
         // correctly.
@@ -612,6 +638,8 @@ mod tests {
         redirect_to: RefCell<Option<String>>,
         /// The DevTools session generation; bumped by `reconnected`.
         generation: Cell<u64>,
+        /// A technician is connected to DevTools.
+        inspected: Cell<bool>,
     }
 
     impl Default for FakeCdp {
@@ -624,6 +652,7 @@ mod tests {
                 current_url: RefCell::new(Some("http://kiosk.test/".to_string())),
                 redirect_to: RefCell::new(None),
                 generation: Cell::new(1),
+                inspected: Cell::new(false),
             }
         }
     }
@@ -648,6 +677,10 @@ mod tests {
 
         fn generation(&self) -> u64 {
             self.generation.get()
+        }
+
+        async fn inspected(&self) -> bool {
+            self.inspected.get()
         }
 
         async fn navigate(&self, url: &str) -> Result<()> {
@@ -858,6 +891,60 @@ mod tests {
         }
 
         assert_eq!(world.units.restarts.get(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_browser_in_devtools_is_left_alone() {
+        let world = World::new(&[]);
+        let mut agent = world.agent();
+        agent.cycle(1000).await;
+
+        // Paused at a breakpoint, on a page of its own, with the site down.
+        world.cdp.inspected.set(true);
+        world.cdp.alive.set(false);
+        *world.cdp.current_url.borrow_mut() = Some("http://elsewhere.test/".to_string());
+        world.probe.fail();
+        let probes = world.probe.calls.get();
+        for now in [1010, 1020, 1030, 1040, 1700] {
+            agent.cycle(now).await;
+        }
+
+        assert_eq!(world.units.restarts.get(), 0);
+        assert_eq!(world.navigations(), vec!["http://kiosk.test/"]);
+        assert_eq!(world.probe.calls.get(), probes);
+        let held = world
+            .log
+            .lines()
+            .iter()
+            .filter(|line| line.contains("a DevTools client is connected"))
+            .count();
+        assert_eq!(held, 1);
+    }
+
+    #[tokio::test]
+    async fn the_kiosk_page_comes_back_when_devtools_disconnects() {
+        let world = World::new(&[]);
+        let mut agent = world.agent();
+        agent.cycle(1000).await;
+        world.cdp.inspected.set(true);
+        world.cdp.alive.set(false);
+        agent.cycle(1010).await;
+        agent.cycle(1020).await;
+
+        world.cdp.inspected.set(false);
+        world.cdp.alive.set(true);
+        agent.cycle(1030).await;
+
+        assert_eq!(
+            world.navigations(),
+            vec!["http://kiosk.test/", "http://kiosk.test/"]
+        );
+        assert_eq!(world.units.restarts.get(), 0);
+        assert!(world
+            .log
+            .lines()
+            .iter()
+            .any(|line| line.contains("the DevTools client disconnected")));
     }
 
     #[tokio::test]

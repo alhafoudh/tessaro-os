@@ -160,6 +160,51 @@ Things to know:
   not add `seccomp` to `DISTRO_FEATURES`: oe-core's default already has it and
   removes it per architecture, which an unconditional append would override.
 
+## Remote DevTools
+
+**`tessaro-ctl -n NAME browser devtools` puts the kiosk tab in the
+technician's own Chrome DevTools**: it sends the SSH key as `ssh connect`
+does and runs `ssh -N -L 127.0.0.1:9222:127.0.0.1:9222` until Ctrl-C
+(`tessaro_client::tunnel`, `tessaro-ctl/src/devtools.rs`). In
+`chrome://inspect` the tab is under Remote Target, because 9222 is one of the
+ports Chrome discovers without being configured; `--local-port` takes
+another, which then has to be added under Configure. tessaro-gui runs the
+same tunnel as a job from the Overview page (see [gui.md](gui.md)).
+
+* **Open it from `chrome://inspect`, not from `/json`'s
+  `devtoolsFrontendUrl` in a tab.** Chromium refuses a DevTools websocket
+  whose `Origin` it has not been told to allow (`--remote-allow-origins`,
+  unset here), and `chrome://inspect` connects from the browser process with
+  no `Origin` at all. The tunnel keeps the `Host` header at `localhost`,
+  which is the other check the DevTools HTTP server makes. The frontend
+  itself comes from `chrome-devtools-frontend.appspot.com` for the device's
+  Chromium revision, so the technician's machine needs the internet; the
+  "inspect (fallback)" link uses their local one.
+* **While another DevTools client is connected, the agent leaves the tab
+  alone**: no liveness check, probe, navigation, offline page or restart.
+  A breakpoint stops the renderer answering `Runtime.evaluate`, and without
+  this `KIOSK_PING_FAILS` cycles later the agent restarts the browser under
+  the debugger; a page the technician opens is not drift either. The cycle
+  logs `a DevTools client is connected; ...` once, and on disconnect `the
+  DevTools client disconnected; watching the browser again`, then treats the
+  screen as unknown and navigates back to the kiosk URL. `device status`
+  and the GUI show it from `Status.devtools`.
+* **"Connected" is read from the kernel, because Chromium does not say.**
+  `/json/list` has no client count and `Target.getTargets` reports
+  `attached`, which the agent's own session always makes true. So
+  `cdp/clients.rs` counts the established loopback connections whose remote
+  port is 9222 in `/proc/net/tcp` and `tcp6`, minus the agent's own sockets
+  from `/proc/self/fd`. dropbear holds the client end of a forward, so an
+  idle tunnel is not a client, and an open DevTools window is (its websocket
+  stays up). Whether `chrome://inspect` merely listing the target counts
+  depends on whether its discovery polling holds a connection open at the
+  moment a cycle looks; that is not measured yet. Anything else on the
+  device that talks to 9222 counts too, the e2e suite's one-command
+  websockets included - for the moment each one lasts.
+* **The hold has no time limit.** It lasts as long as the connection, and
+  the connection lasts as long as the technician's ssh; closing the tunnel
+  or the DevTools window ends it.
+
 ## Page zoom
 
 **`browser.zoom` (`tessaro-ctl browser zoom PERCENT`) is Chrome's own
@@ -230,20 +275,44 @@ CPU.
   accelerated, or says what disabled it; a GPU blocklist entry can be tested
   with `browser.args_extra=--ignore-gpu-blocklist` before changing the image.
 
-## Self-test page
+## The welcome page
 
 **This is what a factory image opens.** `TESSARO_KIOSK_URL` in `tessaro.conf`
-defaults to `http://127.0.0.1/`; a deployment repoints it, at build time or
-with `tessaro-ctl config set browser.url=...`.
+defaults to `http://127.0.0.1/`, which is the welcome page; a deployment
+repoints it, at build time or with `tessaro-ctl config set browser.url=...`.
 
-`meta-tessaro-distro/recipes-browser/tessaro-selftest/` ships one static page at
-`/usr/share/tessaro-selftest/index.html`, with its media beside it. It exercises
+It is `index.html` in `meta-tessaro-distro/recipes-browser/tessaro-selftest/`,
+styled like the maintenance page, and shows what someone standing at a fresh
+device needs to reach it: the node name, its IPv4 addresses, the hotspot's
+SSID while the hotspot is up, whether the device is claimed and, until it is,
+the `tessaro-ctl access claim --node NAME` that claims it.
+
+* **The values come from `/welcome.json`, which the agent keeps current.**
+  `watch_welcome` in `control/watchers.rs` writes
+  `/run/tessaro-kiosk/welcome.json` every 5s, and at once after a claim or an
+  unclaim, only when its content changes. nginx serves that one file of the
+  run directory; the page asks for it every 5s and dims the last values while
+  it gets no answer.
+* **Nothing secret goes in it.** Any page on the loopback can read it, so the
+  hotspot's password stays out. An unclaimed device's hotspot is open anyway;
+  a claimed one's password comes from
+  `tessaro-ctl network wifi hotspot-password`.
+* **Everything is inline**, for the reason the maintenance page's is: this is
+  shown before anyone set the device up, often with no network.
+
+## Self-test page
+
+**It is `http://127.0.0.1/selftest.html`**, beside the welcome page.
+
+`meta-tessaro-distro/recipes-browser/tessaro-selftest/` ships it as a static
+page at `/usr/share/tessaro-selftest/selftest.html`, with its media beside it. It exercises
 rendering, fonts, emoji, every `<input>` type, touch and mouse scrolling plus
 multi-touch, WebSerial and WebHID, audio and video playback, and WebAudio
 synthesis - from local files, with the network down. Passive checks grade
 themselves in a strip at the top; interactive ones stay `pending` until someone
-does something. To get back to it on a deployed device,
-`tessaro-ctl config set browser.url=http://127.0.0.1/`, and `config unset` it afterwards.
+does something. To open it on a device,
+`tessaro-ctl config set browser.url=http://127.0.0.1/selftest.html`, and
+`tessaro-ctl config unset browser.url` afterwards.
 
 * **It is served by nginx because the device grants need a real origin.** A
   `file://` page has a null origin, and `SerialAllowAllPortsForUrls` /
@@ -346,7 +415,11 @@ they need from us is kernel drivers and file permissions.
   into the image: `HIDRAW` (no `/dev/hidraw*` without it), `HID_MULTITOUCH`
   (hid-generic does not decode multi-finger reports), `USB_ACM` plus the CP210x
   and CH341 serial bridges, and an HCI transport for Bluetooth (`CONFIG_BT`
-  alone reaches no controller). The bbappend is `linux-yocto_%` only;
+  alone reaches no controller). btusb is the exception on genericx86-64,
+  where `tessaro-x86-wireless.cfg` makes it a module: Intel controllers load
+  `intel/ibt-*.sfi` at probe, and built in it probes before the rootfs with
+  the firmware is mounted (see the WiFi drivers bullet in
+  [networking.md](networking.md)). The bbappend is `linux-yocto_%` only;
   `raspberrypi3-64` builds `linux-raspberrypi` and has not been checked.
 * **`--touch-events` defaults to `disabled` on Linux.** Finger input still
   arrives as synthesized mouse events, but `ontouchstart` and

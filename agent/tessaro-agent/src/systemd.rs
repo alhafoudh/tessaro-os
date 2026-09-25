@@ -46,6 +46,7 @@ const METHOD_TIMEOUT: Duration = Duration::from_secs(5);
 trait Manager {
     fn get_unit(&self, name: &str) -> zbus::Result<OwnedObjectPath>;
     fn restart_unit(&self, name: &str, mode: &str) -> zbus::Result<OwnedObjectPath>;
+    fn try_restart_unit(&self, name: &str, mode: &str) -> zbus::Result<OwnedObjectPath>;
     fn reboot(&self) -> zbus::Result<()>;
 }
 
@@ -300,6 +301,27 @@ impl Bus {
         )
         .map_err(|err| Error::Systemd(format!("RestartUnit({unit}) failed: {err}")))?;
         Ok(())
+    }
+
+    /// Restart `unit` if it is running; leave it stopped if it is not.
+    pub async fn try_restart(&self, unit: &str) -> Result<()> {
+        let manager = self.manager().await?;
+        flatten(
+            crate::deadline::within(
+                "TryRestartUnit",
+                METHOD_TIMEOUT,
+                manager.try_restart_unit(unit, "replace"),
+            )
+            .await,
+        )
+        .map_err(|err| Error::Systemd(format!("TryRestartUnit({unit}) failed: {err}")))?;
+        Ok(())
+    }
+
+    /// The system bus connection, for the other services the control plane
+    /// talks to (timedated, timesyncd). `None` without a bus.
+    pub fn connection(&self) -> Option<&Connection> {
+        self.connection.as_ref()
     }
 
     pub async fn reboot(&self) -> Result<()> {
