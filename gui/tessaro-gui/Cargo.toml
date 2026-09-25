@@ -14,8 +14,8 @@ path = "src/main.rs"
 [dependencies]
 protocol = { path = "../../agent/protocol" }
 tessaro-client = { path = "../../agent/client" }
-serde = "1"
-# gui.json: the zoom.
+serde = { version = "1", features = ["derive"] }
+# gui.json: the zoom and where each kind of window was left.
 serde_json = "1"
 # Screenshots arrive base64-encoded.
 data-encoding = "2"
@@ -27,4 +27,4 @@ rfd = "0.17"
 # The GUI: one window, with the node list and each device as inner windows
 # in it (mdi.rs). A device's blocking session runs on a thread of its own
 # and talks to the UI through a subscription. `image` shows screenshots.
-iced = { version = "0.14", features = ["advanced", "image"] }
+iced = { version = "0.14", features = ["advanced", "canvas", "image"] }

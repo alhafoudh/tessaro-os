@@ -1,10 +1,12 @@
-//! A device's window: its settings, one section per group of keys, all
-//! drawn the same way (`section.rs`), with the device's state along the
-//! bottom and a log of what the changes did above it.
+//! A device's window: one nav entry per subject, each showing its settings
+//! beside its tools, all drawn the same way (`section.rs`), with the
+//! device's state along the bottom and a log of what the changes did above
+//! it.
 //!
-//! The sections are the key prefixes the device reports (`browser`,
-//! `screen`, ...), in the order it reports them, so a group a newer image
-//! adds shows up without a change here. A row is edited in a dialog, the
+//! A page shows the keys of its prefix (`Page::scope`). A prefix the device
+//! reports that no page shows gets an entry of its own, in the order the
+//! device reports it, so a group a newer image adds shows up without a
+//! change here. A row is edited in a dialog, the
 //! way `tessaro-ctl config set` would set it: validated with the registry
 //! the agent itself validates with, and sent with the revision it was read
 //! at, so an edit made against stale values is refused instead of applied.
@@ -81,8 +83,59 @@ pub fn sections(settings: &Settings) -> Vec<String> {
     sections
 }
 
+/// The sections no page shows beside its tools, in the device's order. Data
+/// is always among them, so the first custom value can be added.
+pub fn own_sections(settings: &Settings) -> Vec<String> {
+    let claimed: Vec<Scope> = std::iter::once(Page::Overview)
+        .chain(Page::TOOLS.iter().map(|(page, _)| *page))
+        .filter_map(Page::scope)
+        .collect();
+    let mut own: Vec<String> = sections(settings)
+        .into_iter()
+        .filter(|section| !claimed.iter().any(|scope| &scope.prefix == section))
+        .collect();
+    if !own.iter().any(|section| section == data_section()) {
+        own.push(data_section().to_string());
+    }
+    own
+}
+
+/// The section of the custom `data.*` values.
+fn data_section() -> &'static str {
+    keys::DATA_PREFIX.trim_end_matches('.')
+}
+
 fn group(key: &str) -> &str {
     key.split_once('.').map_or(key, |(group, _)| group)
+}
+
+/// The keys a nav entry shows: those under `prefix`, less those under
+/// `except`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Scope {
+    pub prefix: String,
+    pub except: Option<&'static str>,
+}
+
+impl Scope {
+    fn of(prefix: &str) -> Self {
+        Self {
+            prefix: prefix.to_string(),
+            except: None,
+        }
+    }
+
+    fn holds(&self, key: &str) -> bool {
+        let under = |prefix: &str| {
+            key.strip_prefix(prefix)
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with('.'))
+        };
+        under(&self.prefix) && !self.except.is_some_and(under)
+    }
+
+    fn is_data(&self) -> bool {
+        self.prefix == data_section()
+    }
 }
 
 /// What the device's registry says about `key`; a `data.*` key is
@@ -96,19 +149,19 @@ fn info<'a>(keys: &'a BTreeMap<String, KeyInfo>, key: &str) -> Option<&'a KeyInf
 pub fn rows(
     settings: &Settings,
     keys: &BTreeMap<String, KeyInfo>,
-    section: &str,
+    scope: &Scope,
 ) -> Vec<SettingRow> {
     settings
         .settings
         .iter()
-        .filter(|setting| group(&setting.key) == section)
+        .filter(|setting| scope.holds(&setting.key))
         .map(|setting| {
             let info = info(keys, &setting.key);
             SettingRow {
                 key: setting.key.clone(),
                 short: setting
                     .key
-                    .strip_prefix(section)
+                    .strip_prefix(scope.prefix.as_str())
                     .and_then(|rest| rest.strip_prefix('.'))
                     .unwrap_or(&setting.key)
                     .to_string(),
@@ -169,6 +222,9 @@ pub fn check(key: &str, value: &str) -> Result<String, String> {
 }
 
 struct Edit {
+    /// The prefix of the settings window it was opened from, and is drawn
+    /// in.
+    window: String,
     key: String,
     /// A new `data.*` key: its name is typed in the dialog.
     adding: bool,
@@ -223,14 +279,12 @@ enum Dialog {
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    Section(String),
-    Select(String),
-    Activate(String),
-    Filter(String),
-    Edit,
-    Add,
-    Reset,
-    Copy,
+    /// Open the settings window of a group, or raise it (`main.rs`).
+    Configure(Scope),
+    /// The settings window with this prefix was closed.
+    Unconfigure(String),
+    /// Something in the settings window with this prefix.
+    Cfg(String, Cfg),
     Refresh,
     EditName(String),
     EditValue(String),
@@ -260,16 +314,37 @@ pub enum Message {
     JournalFilter(String),
     ToggleVnc,
     VncReconnect,
-    /// Something on one of the pages beyond the settings.
+    /// Something on one of the pages.
     P(pages::Msg),
+}
+
+/// What a settings window does with its table.
+#[derive(Debug, Clone)]
+pub enum Cfg {
+    Select(String),
+    Activate(String),
+    Filter(String),
+    Edit,
+    Add,
+    Reset,
+    Copy,
+    /// Up (-1) or Down (1) in the table.
+    Step(i32),
+    Enter,
+}
+
+/// An open settings window: the keys it shows, and its own selection and
+/// filter.
+struct Config {
+    scope: Scope,
+    selected: Option<String>,
+    filter: String,
 }
 
 /// What the right side of a device window shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Page {
     Overview,
-    /// The settings section in `Device::section`.
-    Settings,
     Screen,
     Browser,
     Network,
@@ -285,7 +360,7 @@ pub enum Page {
 }
 
 impl Page {
-    /// The pages below the settings sections in the nav, in its order.
+    /// The pages after Overview in the nav, in its order.
     const TOOLS: &'static [(Page, &'static str)] = &[
         (Page::Screen, "Screen"),
         (Page::Browser, "Browser"),
@@ -300,6 +375,27 @@ impl Page {
         (Page::Update, "Update"),
         (Page::Log, "Log"),
     ];
+
+    /// The settings its Configure opens. The WiFi keys are on WiFi, not on
+    /// Network.
+    fn scope(self) -> Option<Scope> {
+        let (prefix, except) = match self {
+            Page::Overview => ("device", None),
+            Page::Screen => ("screen", None),
+            Page::Browser => ("browser", None),
+            Page::Network => ("network", Some("network.wifi")),
+            Page::Wifi => ("network.wifi", None),
+            Page::Storage => ("storage", None),
+            Page::Audio => ("audio", None),
+            Page::Time => ("time", None),
+            Page::Access => ("access", None),
+            Page::Ssh | Page::Files | Page::Update | Page::Log => return None,
+        };
+        Some(Scope {
+            prefix: prefix.to_string(),
+            except,
+        })
+    }
 }
 
 /// The journal kept for the Log page.
@@ -343,9 +439,8 @@ pub struct Device {
     status: Option<(Status, Instant)>,
     keys: BTreeMap<String, KeyInfo>,
     settings: Option<Settings>,
-    section: Option<String>,
-    selected: Option<String>,
-    filter: String,
+    /// The open settings windows, by their prefix.
+    configs: BTreeMap<String, Config>,
     log: Vec<Line>,
     log_open: bool,
     dialog: Option<Dialog>,
@@ -373,7 +468,9 @@ struct Vnc {
 }
 
 impl Device {
-    pub fn new(node: Node) -> Self {
+    /// A window for `node`, with the message log shown or not as the last
+    /// window left it.
+    pub fn new(node: Node, log_open: bool) -> Self {
         Self {
             node,
             link: Link::Connecting,
@@ -382,11 +479,9 @@ impl Device {
             status: None,
             keys: BTreeMap::new(),
             settings: None,
-            section: None,
-            selected: None,
-            filter: String::new(),
+            configs: BTreeMap::new(),
             log: Vec::new(),
-            log_open: true,
+            log_open,
             dialog: None,
             page: Page::Overview,
             shot: None,
@@ -496,6 +591,11 @@ impl Device {
         }
     }
 
+    /// Whether the message log is shown (Messages).
+    pub fn log_open(&self) -> bool {
+        self.log_open
+    }
+
     pub fn has_dialog(&self) -> bool {
         self.dialog.is_some()
     }
@@ -563,14 +663,14 @@ impl Device {
         }
     }
 
-    /// The rows of the settings section shown, as the table shows them.
-    fn visible_rows(&self) -> Vec<SettingRow> {
-        let (Some(settings), Some(section)) = (&self.settings, self.current_section()) else {
+    /// The rows of a settings window, as its table shows them.
+    fn visible_rows(&self, config: &Config) -> Vec<SettingRow> {
+        let Some(settings) = &self.settings else {
             return Vec::new();
         };
-        rows(settings, &self.keys, &section)
+        rows(settings, &self.keys, &config.scope)
             .into_iter()
-            .filter(|row| section::matches(&self.filter, &[&row.short, &row.value, &row.default]))
+            .filter(|row| section::matches(&config.filter, &[&row.short, &row.value, &row.default]))
             .collect()
     }
 
@@ -602,13 +702,36 @@ impl Device {
             .map_or(0, |settings| settings.revision)
     }
 
-    fn current_section(&self) -> Option<String> {
-        let settings = self.settings.as_ref()?;
-        let sections = sections(settings);
-        self.section
-            .clone()
-            .filter(|section| sections.contains(section))
-            .or_else(|| sections.first().cloned())
+    /// Whether the device has any key in `scope`.
+    fn has_keys(&self, scope: &Scope) -> bool {
+        self.settings.as_ref().is_some_and(|settings| {
+            settings
+                .settings
+                .iter()
+                .any(|setting| scope.holds(&setting.key))
+        })
+    }
+
+    /// The page's Configure: its settings window, when it has keys.
+    fn configure(&self) -> Option<Message> {
+        self.page
+            .scope()
+            .filter(|scope| self.has_keys(scope))
+            .map(Message::Configure)
+    }
+
+    /// A settings window's title: the device, and the page its keys belong
+    /// to.
+    pub fn config_title(&self, prefix: &str) -> String {
+        let label = std::iter::once((Page::Overview, "Device"))
+            .chain(Page::TOOLS.iter().copied())
+            .find(|(page, _)| page.scope().is_some_and(|scope| scope.prefix == prefix))
+            .map_or_else(|| title_case(prefix), |(_, label)| label.to_string());
+        format!("{} - {label} settings", self.name())
+    }
+
+    fn selected_in(&self, prefix: &str) -> Option<String> {
+        self.configs.get(prefix)?.selected.clone()
     }
 
     fn setting(&self, key: &str) -> Option<&Setting> {
@@ -769,18 +892,25 @@ impl Device {
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::Section(section) => {
-                self.show(Page::Settings);
-                self.section = Some(section);
-                self.selected = None;
+            Message::Configure(scope) => {
+                self.configs.entry(scope.prefix.clone()).or_insert(Config {
+                    scope,
+                    selected: None,
+                    filter: String::new(),
+                });
             }
+            Message::Unconfigure(prefix) => {
+                self.configs.remove(&prefix);
+                // Its dialog goes with it; an answer still on its way is
+                // logged all the same.
+                if matches!(&self.dialog, Some(Dialog::Edit(edit)) if edit.window == prefix) {
+                    self.dialog = None;
+                }
+            }
+            Message::Cfg(prefix, cfg) => return self.config_update(prefix, cfg),
             Message::Page(page) => self.show(page),
             Message::Step(by) => {
-                if self.dialog.is_none() && self.page == Page::Settings {
-                    let keys: Vec<String> =
-                        self.visible_rows().into_iter().map(|row| row.key).collect();
-                    self.selected = section::step(&keys, self.selected.as_ref(), by);
-                } else if self.dialog.is_none() {
+                if self.dialog.is_none() {
                     self.primary_step(by);
                 }
             }
@@ -790,9 +920,6 @@ impl Device {
                     Some(Dialog::Confirm(_)) => Some(Message::Accept),
                     Some(Dialog::Form(_)) => Some(Message::P(pages::Msg::FormOk)),
                     Some(Dialog::Secret { .. } | Dialog::Text { .. }) => Some(Message::Cancel),
-                    None if self.page == Page::Settings => {
-                        self.selected.clone().map(Message::Activate)
-                    }
                     None => self.primary_activate(),
                 };
                 if let Some(next) = next {
@@ -840,38 +967,6 @@ impl Device {
                 self.vnc.state = None;
             }
             Message::P(message) => return self.page_update(message),
-            Message::Select(key) => self.selected = Some(key),
-            Message::Activate(key) => {
-                self.selected = Some(key);
-                self.open_edit();
-            }
-            Message::Filter(filter) => self.filter = filter,
-            Message::Edit => self.open_edit(),
-            Message::Add => {
-                self.dialog = Some(Dialog::Edit(Edit {
-                    key: String::new(),
-                    adding: true,
-                    name: String::new(),
-                    value: String::new(),
-                    error: None,
-                    busy: false,
-                    close_after: false,
-                }));
-            }
-            Message::Reset => {
-                if let Some(key) = self.selected.clone() {
-                    let if_revision = self.revision();
-                    self.request(Request::Unset {
-                        keys: vec![key],
-                        if_revision,
-                    });
-                }
-            }
-            Message::Copy => {
-                if let Some(setting) = self.selected.as_deref().and_then(|key| self.setting(key)) {
-                    return iced::clipboard::write(setting.value.clone().unwrap_or_default());
-                }
-            }
             Message::Refresh => {
                 self.request(Request::Refresh);
                 self.refresh_page(self.page);
@@ -927,6 +1022,74 @@ impl Device {
         Task::none()
     }
 
+    fn config_update(&mut self, prefix: String, cfg: Cfg) -> Task<Message> {
+        let Some(config) = self.configs.get_mut(&prefix) else {
+            return Task::none();
+        };
+        match cfg {
+            Cfg::Select(key) => config.selected = Some(key),
+            Cfg::Activate(key) => {
+                config.selected = Some(key);
+                self.open_edit(&prefix);
+            }
+            Cfg::Filter(filter) => config.filter = filter,
+            Cfg::Edit => self.open_edit(&prefix),
+            Cfg::Add => {
+                self.dialog = Some(Dialog::Edit(Edit {
+                    window: prefix,
+                    key: String::new(),
+                    adding: true,
+                    name: String::new(),
+                    value: String::new(),
+                    error: None,
+                    busy: false,
+                    close_after: false,
+                }));
+            }
+            Cfg::Reset => {
+                if let Some(key) = config.selected.clone() {
+                    let if_revision = self.revision();
+                    self.request(Request::Unset {
+                        keys: vec![key],
+                        if_revision,
+                    });
+                }
+            }
+            Cfg::Copy => {
+                let selected = config.selected.clone();
+                if let Some(setting) = selected.as_deref().and_then(|key| self.setting(key)) {
+                    return iced::clipboard::write(setting.value.clone().unwrap_or_default());
+                }
+            }
+            Cfg::Step(by) => {
+                if self.dialog.is_some() {
+                    return Task::none();
+                }
+                let Some(config) = self.configs.get(&prefix) else {
+                    return Task::none();
+                };
+                let keys: Vec<String> = self
+                    .visible_rows(config)
+                    .into_iter()
+                    .map(|row| row.key)
+                    .collect();
+                let next = section::step(&keys, config.selected.as_ref(), by);
+                if let Some(config) = self.configs.get_mut(&prefix) {
+                    config.selected = next;
+                }
+            }
+            Cfg::Enter => {
+                if self.dialog.is_some() {
+                    return self.update(Message::Enter);
+                }
+                if let Some(key) = self.selected_in(&prefix) {
+                    return self.config_update(prefix, Cfg::Activate(key));
+                }
+            }
+        }
+        Task::none()
+    }
+
     fn edit(&mut self, change: impl FnOnce(&mut Edit)) {
         if let Some(Dialog::Edit(edit)) = &mut self.dialog {
             if !edit.busy {
@@ -936,9 +1099,11 @@ impl Device {
         }
     }
 
-    /// The edit dialog for the selected row, unless it is read-only.
-    fn open_edit(&mut self) {
-        let Some(setting) = self.selected.as_deref().and_then(|key| self.setting(key)) else {
+    /// The edit dialog for the row selected in the settings window of
+    /// `prefix`, unless it is read-only.
+    fn open_edit(&mut self, prefix: &str) {
+        let selected = self.selected_in(prefix);
+        let Some(setting) = selected.as_deref().and_then(|key| self.setting(key)) else {
             return;
         };
         if setting.source == Source::Live {
@@ -947,6 +1112,7 @@ impl Device {
         // A default shows as the value it is, so editing starts from it.
         let value = setting.value.clone().unwrap_or_default();
         self.dialog = Some(Dialog::Edit(Edit {
+            window: prefix.to_string(),
             key: setting.key.clone(),
             adding: false,
             name: String::new(),
@@ -999,17 +1165,11 @@ impl Device {
             .padding(12)
             .into(),
             Some(settings) => {
-                let content = match self.page {
-                    Page::Settings => self.section_view(settings),
-                    Page::Screen => column![self.modes_view(), self.screenshot_view()]
-                        .spacing(8)
-                        .into(),
-                    Page::Log => self.journal_view(),
-                    _ => self.page_view(),
-                };
                 let mut body = row![
                     self.nav(settings),
-                    container(content).padding(6).width(Length::FillPortion(3))
+                    container(self.tools_view())
+                        .padding(6)
+                        .width(Length::FillPortion(3))
                 ]
                 .height(Length::Fill);
                 if self.vnc.open {
@@ -1023,49 +1183,69 @@ impl Device {
             }
         };
 
-        let mut page = column![self.toolbar(), body];
+        let mut page = column![body];
         if self.log_open {
             page = page.push(self.log_view());
         }
         let page = page.push(self.status_bar());
 
+        // An edit is drawn in the settings window it came from.
         match &self.dialog {
-            None => page.into(),
+            None | Some(Dialog::Edit(_)) => page.into(),
             Some(dialog) => dialog::modal(page.into(), self.dialog_view(dialog)),
         }
     }
 
-    fn toolbar(&self) -> Element<'_, Message> {
+    /// The settings window with `prefix`: its table, and the edit opened
+    /// from it.
+    pub fn config_view(&self, prefix: &str) -> Element<'_, Message> {
+        let (Some(settings), Some(config)) = (&self.settings, self.configs.get(prefix)) else {
+            return container(text("connecting ...").size(theme::SMALL))
+                .padding(12)
+                .into();
+        };
+        let table = container(self.section_view(settings, config)).padding(6);
+        match &self.dialog {
+            Some(dialog @ Dialog::Edit(edit)) if edit.window == prefix => {
+                dialog::modal(table.into(), self.dialog_view(dialog))
+            }
+            _ => table.into(),
+        }
+    }
+
+    /// The device window's actions, in its title bar next to its name.
+    pub fn title_tools(&self) -> Element<'_, Message> {
         let online = self.link == Link::Online;
         let when = |message: Message| online.then_some(message);
-        container(
-            row![
-                text(self.name()).size(theme::TEXT).font(bold()),
-                text(&self.node.address)
-                    .size(theme::SMALL)
-                    .style(theme::muted),
-                space::horizontal(),
-                theme::tool("Refresh", when(Message::Refresh)),
-                rule::vertical(1),
-                theme::tool("Restart browser", when(Message::Ask(Restart::Browser))),
-                theme::tool("Restart weston", when(Message::Ask(Restart::Weston))),
-                theme::tool("Restart agent", when(Message::Ask(Restart::Agent))),
-                theme::tool("Reboot", when(Message::Ask(Restart::Reboot))),
-                rule::vertical(1),
-                theme::toggle("VNC", self.vnc.open, Message::ToggleVnc),
-                theme::toggle("Messages", self.log_open, Message::ToggleLog),
-            ]
-            .spacing(6)
-            .height(24)
-            .align_y(iced::alignment::Vertical::Center),
-        )
-        .padding([4, 8])
-        .style(theme::status_bar)
+        row![
+            theme::tool("Refresh", when(Message::Refresh)),
+            rule::vertical(1),
+            theme::tool("Restart browser", when(Message::Ask(Restart::Browser))),
+            theme::tool("Restart weston", when(Message::Ask(Restart::Weston))),
+            theme::tool("Restart agent", when(Message::Ask(Restart::Agent))),
+            theme::tool("Reboot", when(Message::Ask(Restart::Reboot))),
+            rule::vertical(1),
+            theme::toggle("VNC", self.vnc.open, Message::ToggleVnc),
+            theme::toggle("Messages", self.log_open, Message::ToggleLog),
+        ]
+        .spacing(6)
+        .height(20)
+        .align_y(iced::alignment::Vertical::Center)
         .into()
     }
 
+    /// What the page shown draws: its tools.
+    fn tools_view(&self) -> Element<'_, Message> {
+        match self.page {
+            Page::Screen => column![self.modes_view(), self.screenshot_view()]
+                .spacing(8)
+                .into(),
+            Page::Log => self.journal_view(),
+            _ => self.page_view(),
+        }
+    }
+
     fn nav(&self, settings: &Settings) -> Element<'_, Message> {
-        let current = self.current_section();
         let entry = |label: String, selected: bool, message: Message| -> Element<'_, Message> {
             button(text(label).size(theme::TEXT))
                 .width(Length::Fill)
@@ -1074,23 +1254,11 @@ impl Device {
                 .on_press(message)
                 .into()
         };
-        let heading = |label: &'static str| -> Element<'_, Message> {
-            container(text(label).size(theme::SMALL).style(theme::muted))
-                .padding([6, 10])
-                .into()
-        };
         let mut entries: Vec<Element<'_, Message>> = vec![entry(
             "Overview".to_string(),
             self.page == Page::Overview,
             Message::Page(Page::Overview),
         )];
-        entries.push(heading("Settings"));
-        entries.extend(sections(settings).into_iter().map(|section| {
-            let selected =
-                self.page == Page::Settings && current.as_deref() == Some(section.as_str());
-            entry(title_case(&section), selected, Message::Section(section))
-        }));
-        entries.push(heading("Tools"));
         for (page, label) in Page::TOOLS {
             entries.push(entry(
                 label.to_string(),
@@ -1098,6 +1266,11 @@ impl Device {
                 Message::Page(*page),
             ));
         }
+        // The sections without a page open their settings window.
+        entries.extend(own_sections(settings).into_iter().map(|section| {
+            let configure = Message::Configure(Scope::of(&section));
+            entry(title_case(&section), false, configure)
+        }));
         container(scrollable(Column::with_children(entries).spacing(1)))
             .width(140)
             .height(Length::Fill)
@@ -1237,21 +1410,26 @@ impl Device {
         column![toolbar, table].spacing(4).into()
     }
 
-    fn section_view<'a>(&'a self, settings: &'a Settings) -> Element<'a, Message> {
-        let Some(section) = self.current_section() else {
-            return text("this device reports no settings")
-                .size(theme::SMALL)
-                .into();
-        };
-        let rows: Vec<SettingRow> = rows(settings, &self.keys, &section)
+    /// The table of a settings window.
+    fn section_view<'a>(
+        &'a self,
+        settings: &'a Settings,
+        config: &'a Config,
+    ) -> Element<'a, Message> {
+        let scope = &config.scope;
+        let all = rows(settings, &self.keys, scope);
+        let empty = all.is_empty();
+        let rows: Vec<SettingRow> = all
             .into_iter()
-            .filter(|row| section::matches(&self.filter, &[&row.short, &row.value, &row.default]))
+            .filter(|row| section::matches(&config.filter, &[&row.short, &row.value, &row.default]))
             .collect();
-        let selected_at = self
+        let selected_at = config
             .selected
             .as_ref()
             .and_then(|key| rows.iter().position(|row| &row.key == key));
         let selected = selected_at.map(|at| &rows[at]);
+        let prefix = scope.prefix.clone();
+        let cfg = move |cfg: Cfg| Message::Cfg(prefix.clone(), cfg);
 
         const COLUMNS: &[Col] = &[
             col("", Length::Fixed(18.0)),
@@ -1292,34 +1470,51 @@ impl Device {
         });
         let keys: Vec<String> = rows.iter().map(|row| row.key.clone()).collect();
         let keys_too = keys.clone();
-        let table = grid(
-            COLUMNS,
-            cells.collect(),
-            selected_at,
-            move |at| Message::Select(keys[at].clone()),
-            move |at| Message::Activate(keys_too[at].clone()),
-        );
+        let (on_select, on_activate) = (cfg.clone(), cfg.clone());
+        let table = if empty && scope.is_data() {
+            container(
+                text("no custom values yet")
+                    .size(theme::SMALL)
+                    .style(theme::muted),
+            )
+            .padding(6)
+            .into()
+        } else {
+            grid(
+                COLUMNS,
+                cells.collect(),
+                selected_at,
+                move |at| on_select(Cfg::Select(keys[at].clone())),
+                move |at| on_activate(Cfg::Activate(keys_too[at].clone())),
+            )
+        };
 
         let online = self.link == Link::Online;
         let editable = selected.filter(|row| online && row.source != Source::Live);
         let mut list = Vec::new();
-        if section == keys::DATA_PREFIX.trim_end_matches('.') {
-            list.push(action("Add", online.then_some(Message::Add)));
+        if scope.is_data() {
+            list.push(action("Add", online.then(|| cfg(Cfg::Add))));
         }
+        let on_filter = cfg.clone();
         section::view(
             list,
             vec![
-                action("Edit", editable.map(|_| Message::Edit)),
+                action("Edit", editable.map(|_| cfg(Cfg::Edit))),
                 action(
-                    "Reset to default",
+                    // Unsetting a custom value removes it.
+                    if scope.is_data() {
+                        "Delete"
+                    } else {
+                        "Reset to default"
+                    },
                     editable
                         .filter(|row| row.source == Source::Set)
-                        .map(|_| Message::Reset),
+                        .map(|_| cfg(Cfg::Reset)),
                 ),
-                action("Copy value", selected.map(|_| Message::Copy)),
+                action("Copy value", selected.map(|_| cfg(Cfg::Copy))),
             ],
-            &self.filter,
-            Message::Filter,
+            &config.filter,
+            move |filter| on_filter(Cfg::Filter(filter)),
             table,
         )
     }
@@ -1658,10 +1853,43 @@ mod tests {
 
     #[test]
     fn a_section_holds_its_keys_without_the_prefix() {
-        let rows = rows(&settings(), &BTreeMap::new(), "browser");
+        let rows = rows(&settings(), &BTreeMap::new(), &Scope::of("browser"));
         let short: Vec<&str> = rows.iter().map(|row| row.short.as_str()).collect();
         assert_eq!(short, ["url", "touch"]);
         assert_eq!(rows[0].source, Source::Set);
+    }
+
+    #[test]
+    fn the_wifi_keys_are_on_wifi_not_on_network() {
+        let settings = Settings {
+            revision: 1,
+            settings: vec![
+                setting("network.ethernet.method", "auto", Source::Default),
+                setting("network.wifi.ssid", "cafe", Source::Set),
+                setting("network.wifiless", "x", Source::Set),
+            ],
+        };
+        let short = |page: Page| -> Vec<String> {
+            rows(&settings, &BTreeMap::new(), &page.scope().unwrap())
+                .into_iter()
+                .map(|row| row.short)
+                .collect()
+        };
+        assert_eq!(short(Page::Network), ["ethernet.method", "wifiless"]);
+        assert_eq!(short(Page::Wifi), ["ssid"]);
+    }
+
+    #[test]
+    fn the_sections_no_page_shows_get_entries_with_data_always_among_them() {
+        let mut settings = settings();
+        settings
+            .settings
+            .push(setting("agent.watchdog", "on", Source::Default));
+        assert_eq!(own_sections(&settings), ["data", "agent"]);
+        settings
+            .settings
+            .retain(|setting| setting.key != "data.table");
+        assert_eq!(own_sections(&settings), ["agent", "data"]);
     }
 
     #[test]
@@ -1677,7 +1905,7 @@ mod tests {
             value: None,
         };
         let keys = BTreeMap::from([(template.name.clone(), template)]);
-        let rows = rows(&settings(), &keys, "data");
+        let rows = rows(&settings(), &keys, &Scope::of("data"));
         assert_eq!(rows[0].applies, "agent");
     }
 
@@ -1691,6 +1919,7 @@ mod tests {
     #[test]
     fn a_new_data_key_needs_a_placeholder_name() {
         let mut edit = Edit {
+            window: "data".to_string(),
             key: String::new(),
             adding: true,
             name: "Table".to_string(),
