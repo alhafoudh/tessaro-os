@@ -102,6 +102,22 @@ module AgentE2E
       end
     end
 
+    # Until the agent restarted by a change made after `cursor` - a setting
+    # the agent reads, which it restarts itself for once the answer is out -
+    # listens on its socket again. The socket alone is not enough: the old
+    # agent answers on it for a moment before systemd stops it.
+    def wait_for_agent_restart(cursor, timeout: 90)
+      AgentE2E.step("wait up to #{timeout}s for the restarted agent to listen again")
+      AgentE2E.quietly do
+        deadline = Time.now + timeout
+        until journal_after(cursor).any? { _1.start_with?("control: listening on /run/tessaro-agent.sock") }
+          raise Failure, "the agent was not listening again within #{timeout}s" if Time.now > deadline
+
+          sleep 1
+        end
+      end
+    end
+
     # Until the agent has navigated at least once this boot: the kiosk is only
     # settled then.
     def wait_for_first_navigation(timeout:, what: "boot")

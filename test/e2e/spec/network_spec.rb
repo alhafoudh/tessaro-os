@@ -9,7 +9,10 @@ module AgentE2E
 
     profiles_dir = Network::PROFILES_DIR
 
-    it "net-profiles: the managed profiles are rendered at boot, DHCP is up, the hotspot waits for wlan0" do
+    # network.wifi.interface is auto: the hotspot is bound to no interface
+    # name, so NetworkManager puts it on whichever WiFi device appears
+    # (docs/networking.md). qemu has none, so it just waits.
+    it "net-profiles: the managed profiles are rendered at boot, DHCP is up, the hotspot waits for any WiFi device" do
       aggregate_failures do
         profile, = uplink(guest)
         expect(profile["name"]).to eq("tessaro-ethernet-dhcp")
@@ -21,7 +24,8 @@ module AgentE2E
           expect(listing).to include("600 #{profiles_dir}/#{id}.nmconnection")
         end
         hotspot = keyfile(guest, "tessaro-wifi-hotspot")
-        expect(hotspot).to include("interface-name=wlan0")
+        expect(hotspot).not_to include("interface-name"), "auto binds the hotspot to one name"
+        expect(hotspot).to include("type=wifi")
         expect(hotspot).not_to include("[wifi-security]"), "an unclaimed hotspot has a password"
         expect(hotspot).to match(/^ssid=tessaro-/)
 
@@ -138,7 +142,8 @@ module AgentE2E
       applied = JSON.parse(guest.run("tessaro-ctl --json config set network.wifi.nat=0", timeout: 200))
       expect(applied.dig("network", "outcome")).to eq("committed"), "not committed: #{applied}"
       expect(guest.run("nft list tables")).to include("inet tessaro-hotspot")
-      expect(guest.run("nft list table inet tessaro-hotspot")).to include('iifname "wlan0" drop')
+      # With network.wifi.interface=auto the drop matches every WiFi name.
+      expect(guest.run("nft list table inet tessaro-hotspot")).to include('iifname "wl*" drop')
 
       applied = JSON.parse(guest.run("tessaro-ctl --json config set network.wifi.nat=1", timeout: 200))
       expect(applied.dig("network", "outcome")).to eq("committed"), "not committed: #{applied}"

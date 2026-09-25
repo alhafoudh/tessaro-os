@@ -15,7 +15,13 @@ disk** below.
    it is acknowledged. The same command run again resumes from the last byte
    the device has. The partition table is checked against the device's own
    after the first chunk, so a wrong image fails in seconds, not after the
-   whole upload.
+   whole upload. `update-begin` refuses an upload `/data` has no room for:
+   the upload, 128 MiB for the profile to keep writing, and for a root
+   update the boot staging, measured as twice what the bmap maps inside
+   the device's boot partition (`boot_room` in `updates.rs`) - a few tens of
+   MB, since `boot.img` is sparse. It is measured, not the boot partition's
+   size, because an ungrown `/data` is 1 GB: a fixed 512M left an update no
+   room there. Only when the device's layout cannot be read is it 512M.
 2. **Verify, then prepare**, in the agent, on a thread of its own at idle
    CPU and I/O priority while the kiosk keeps running. `verifying` checks the
    whole file against its SHA-256 (`update send --no-verify` skips it - the

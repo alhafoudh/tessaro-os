@@ -45,8 +45,31 @@ const MARGIN: u64 = 128 << 20;
 
 /// A root update also stages the image's boot partition, sparse, to copy
 /// the kernel out of: at most its mapped bytes, and the kernel once more.
-/// The largest boot partition is the Pi's 512M.
+/// This is the room for a device whose boot partition cannot be read: the
+/// largest boot partition, the Pi's 512M. Otherwise `boot_room` measures it.
 const BOOT_ROOM: u64 = 512 << 20;
+
+/// On top of twice the boot partition's mapped bytes: the kernel copy's own
+/// filesystem blocks and rounding.
+const BOOT_SLACK: u64 = 8 << 20;
+
+/// What a root update's boot staging takes on /data: the image's boot
+/// partition as the bmap maps it - a few tens of MB, not the partition's
+/// size, since the staging is sparse - and the kernel copied out of it,
+/// which is part of those mapped bytes, so twice them covers both. The
+/// image's boot partition is where this device's is (`layout::check`
+/// refuses anything else), so the device's own offsets say where to count.
+/// Measured rather than assumed because the image's /data is 1 GB until
+/// `storage grow`: the fixed 512M left an update no room on it.
+fn boot_room(probe: &layout::Probe, bmap: &bmap::Bmap) -> u64 {
+    match layout::probe(probe) {
+        Ok(device) => {
+            let end = device.boot.start + device.boot.size;
+            2 * bmap.mapped_within(device.boot.start, end) + BOOT_SLACK
+        }
+        Err(_) => BOOT_ROOM,
+    }
+}
 
 /// RAM the running system needs beyond what the initramfs of a disk update
 /// takes: the kernel, the initramfs itself, and whatever the firmware keeps.
@@ -168,7 +191,7 @@ impl Updates {
         if size == 0 {
             return Err("the file is empty".to_string());
         }
-        bmap::parse(&upload.bmap)?;
+        let parsed = bmap::parse(&upload.bmap)?;
 
         {
             let mut job = lock(&self.job);
@@ -233,17 +256,18 @@ impl Updates {
         }
 
         let dir = self.paths.update_dir();
-        let needed = match upload.mode() {
-            Mode::Root => size + BOOT_ROOM + MARGIN,
-            Mode::Disk => size + MARGIN,
-        };
         let meminfo = self.paths.meminfo.clone();
         let meta = upload.clone();
         let mode = upload.mode();
+        let probe = self.probe();
         blocking("starting the upload", move || {
             if mode == Mode::Disk {
                 fits_in_ram(&meminfo, size)?;
             }
+            let needed = match mode {
+                Mode::Root => size + boot_room(&probe, &parsed) + MARGIN,
+                Mode::Disk => size + MARGIN,
+            };
             fs::create_dir_all(&dir).map_err(|err| format!("{}: {err}", dir.display()))?;
             flash::clean(&dir, &mut io::sink());
             let free =
@@ -958,6 +982,28 @@ mod tests {
         paths: Paths,
         image: Vec<u8>,
         bmap: String,
+    }
+
+    /// The boot staging is sized by what the bmap maps inside this device's
+    /// boot partition, sda1 at 1-2 MiB in the fixture, not by the fixed 512M;
+    /// that is what lets an update fit an ungrown 1 GB /data.
+    #[test]
+    fn boot_room_is_what_the_boot_partition_maps() {
+        let dir = tempfile::tempdir().unwrap();
+        let probe = testing::device(dir.path());
+        let (_, text) = testing::disk();
+        let parsed = bmap::parse(&text).unwrap();
+        let mapped = parsed.mapped_within(1 << 20, 2 << 20);
+        assert!(mapped > 0);
+        assert_eq!(boot_room(&probe, &parsed), 2 * mapped + BOOT_SLACK);
+        assert!(boot_room(&probe, &parsed) < BOOT_ROOM);
+
+        // A device whose layout cannot be read keeps the fixed worst case.
+        let unknown = layout::Probe {
+            cmdline: dir.path().join("missing"),
+            ..probe
+        };
+        assert_eq!(boot_room(&unknown, &parsed), BOOT_ROOM);
     }
 
     fn device() -> Device {

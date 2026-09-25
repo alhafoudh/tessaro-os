@@ -191,7 +191,9 @@ module AgentE2E
     end
 
     # A client with no pin and no token, over TLS: everything answers but
-    # what makes a credential.
+    # what makes a credential. The setting is saved without applying: a
+    # data.* key restarts the agent, and the next command would land in the
+    # gap before it listens again.
     it "unclaimed: tessaro-ctl manages an unclaimed device without claiming or pinning it" do
       guest.run(<<~SH)
         set -e
@@ -199,9 +201,9 @@ module AgentE2E
         rm -rf "$TESSARO_CONFIG_DIR"
         tessaro-ctl -n 127.0.0.1 device status 2>/tmp/e2e-notes >/dev/null
         grep -q 'unclaimed and not pinned' /tmp/e2e-notes
-        tessaro-ctl -n 127.0.0.1 config set data.e2e=1 >/dev/null
+        tessaro-ctl -n 127.0.0.1 config set data.e2e=1 --no-apply >/dev/null
         tessaro-ctl -n 127.0.0.1 config get data.e2e | grep -q 1
-        tessaro-ctl -n 127.0.0.1 config unset data.e2e >/dev/null
+        tessaro-ctl -n 127.0.0.1 config unset data.e2e --no-apply >/dev/null
         ! tessaro-ctl -n 127.0.0.1 access password set --random 2>/dev/null
         ! test -e "$TESSARO_CONFIG_DIR/nodes.json"
         grep -q '^root::' /etc/shadow

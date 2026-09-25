@@ -59,11 +59,21 @@ module AgentE2E
 
     def stop_upstream = guest.run("systemctl stop e2e-upstream-proxy", allow_failure: true)
 
+    # `tessaro-ctl network proxy ARGS`, and when it restarted the agent - the
+    # proxy keys are the agent's too - wait until the new one listens, so the
+    # next command, the next case and the harness's own configure reach it
+    # rather than the gap. With many VMs at once that gap is seconds long.
+    def proxy(args, allow_failure: false)
+      cursor = guest.cursor
+      out = guest.run("tessaro-ctl network proxy #{args}", allow_failure: allow_failure)
+      guest.wait_for_agent_restart(cursor) if out.include?("tessaro-agent.service")
+      out
+    end
+
     it "proxy: network proxy set runs the local proxy with the upstream and its login, " \
        "and the browser, the probe's path and proxy test go through it", :reconfigure do
       start_upstream
-      out = guest.run("tessaro-ctl network proxy set 'http://e2e:s3cret@127.0.0.1:#{UPSTREAM_PORT}' " \
-                      "--bypass .bypassed.test")
+      out = proxy("set 'http://e2e:s3cret@127.0.0.1:#{UPSTREAM_PORT}' --bypass .bypassed.test")
       expect(out).to include("tessaro-proxy.service")
 
       config = guest.run("cat #{LOCAL_CONFIG}")
@@ -88,30 +98,30 @@ module AgentE2E
 
       # The test goes through the whole chain; with no internet in the VM
       # only the CONNECT is certain to arrive.
-      guest.run("tessaro-ctl network proxy test", allow_failure: true)
+      proxy("test", allow_failure: true)
       wait_upstream(/CONNECT.*1\.1\.1\.1:443/, timeout: 15, what: "proxy test's CONNECT")
     ensure
-      guest.run("tessaro-ctl network proxy off", allow_failure: true)
+      proxy("off", allow_failure: true)
       stop_upstream
     end
 
     it "proxy: a wrong password is refused by the upstream, and proxy test says it is the login", :reconfigure do
       start_upstream
-      guest.run("tessaro-ctl network proxy set 'http://e2e:wrong@127.0.0.1:#{UPSTREAM_PORT}'")
-      out = guest.run("tessaro-ctl network proxy test", allow_failure: true)
+      proxy("set 'http://e2e:wrong@127.0.0.1:#{UPSTREAM_PORT}'")
+      out = proxy("test", allow_failure: true)
       # tinyproxy answers wrong credentials with 401 (reqs.c), most proxies
       # with 407: the device calls both a login problem.
       expect(out).to include("the proxy refused the login")
     ensure
-      guest.run("tessaro-ctl network proxy off", allow_failure: true)
+      proxy("off", allow_failure: true)
       stop_upstream
     end
 
     it "proxy: network proxy off stops the local proxy and takes it out of the browser's policy", :reconfigure do
-      guest.run("tessaro-ctl network proxy set http://127.0.0.1:#{UPSTREAM_PORT}")
+      proxy("set http://127.0.0.1:#{UPSTREAM_PORT}")
       expect(guest.property("tessaro-proxy", "ActiveState")).to eq("active")
 
-      out = guest.run("tessaro-ctl network proxy off")
+      out = proxy("off")
       expect(out).to include("restarting tessaro-kiosk.service")
       expect(guest.run("test -e #{LOCAL_CONFIG} && echo there || echo gone").strip).to eq("gone")
       expect(guest.property("tessaro-proxy", "ActiveState")).to eq("inactive")
