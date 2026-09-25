@@ -118,6 +118,16 @@ shared so both ends refuse the same keys.
   oneshot empties it on any device with no tokens, which heals a power cut
   in the middle of an unclaim. An unclaimed device refuses a key outright.
   Revoking a key never unclaims: only tokens decide that.
+* **An unclaimed device is reached by its empty password, not a key, and its
+  host key is not checked.** The agent refuses `SshAuthorize` until a claim,
+  and the control session to an unclaimed device is not pinned, so a host key
+  it reported would prove nothing. So when the welcome says unclaimed,
+  `tessaro_client::ssh::authorize` sends nothing, ignores `--key`, leaves
+  `known_hosts` alone and builds
+  `ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no root@<address>`.
+  There is no prompt: OpenSSH tries the `none` method first, and dropbear
+  with `-B` accepts it for a blank password - which is also why the GUI's
+  VNC tunnel works in `BatchMode`.
 * **Options are refused.** A line with `command=`, `from=`, `no-pty` and the
   like is rejected on both ends. Whoever holds a token could otherwise plant a
   forced command for root. Lines already in the file that the agent does not

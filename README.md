@@ -299,6 +299,7 @@ stopped.
 
 ```sh
 tessaro-ctl ssh connect                     # root shell with your ~/.ssh key, host key pinned
+                                            # (unclaimed: no key, empty password)
 tessaro-ctl ssh connect -- journalctl -fu tessaro-kiosk
 tessaro-ctl access token create phone       # a token for a second client
 tessaro-ctl device factory-reset -y         # settings, owners and files gone

@@ -1,4 +1,5 @@
-//! `tessaro-ctl ssh connect`: a root shell on a device, by key.
+//! `tessaro-ctl ssh connect`: a root shell on a device, by key, or by the
+//! empty password of an unclaimed one.
 //!
 //! How the key is sent and the host key pinned is in
 //! `tessaro_client::ssh`; this prints what happened and then becomes `ssh`.
@@ -40,6 +41,27 @@ pub fn run(session: &mut Session, options: Options, json: bool) -> Result<(), St
     }
 
     // Same shape as `claimed NAME (id)`: the verb, the device, the detail.
+    let Some(access) = access else {
+        anstream::eprintln!(
+            "{} {} {}",
+            paint(style::WARN, "unclaimed"),
+            paint(style::HEADING, &session.node.name),
+            paint(
+                style::MUTED,
+                "(root with an empty password, host key not checked)"
+            )
+        );
+        if options.key.is_some() {
+            anstream::eprintln!(
+                "{}",
+                paint(
+                    style::WARN,
+                    "--key is not used: an unclaimed device takes no key"
+                )
+            );
+        }
+        return finish(&argv, options.print);
+    };
     let what = if access.added {
         paint(style::OK, "authorized on")
     } else {
@@ -59,12 +81,16 @@ pub fn run(session: &mut Session, options: Options, json: bool) -> Result<(), St
             )
         );
     }
+    finish(&argv, options.print)
+}
 
-    if options.print {
-        println!("{}", paint(style::CMD, shell_words(&argv)));
+/// Print the command, or become it.
+fn finish(argv: &[String], print: bool) -> Result<(), String> {
+    if print {
+        println!("{}", paint(style::CMD, shell_words(argv)));
         return Ok(());
     }
-    exec(&argv)
+    exec(argv)
 }
 
 /// The command as a shell would need it typed.

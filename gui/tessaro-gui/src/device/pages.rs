@@ -171,7 +171,9 @@ pub enum Msg {
     // ssh
     KeyRevoke,
     Authorize(bool),
-    Authorized(bool, Result<String, String>),
+    /// Whether to open a terminal; the command, and whether a key was sent
+    /// (not for an unclaimed device).
+    Authorized(bool, Result<(String, bool), String>),
     // files
     FilesUp,
     Upload(bool),
@@ -888,13 +890,21 @@ impl Device {
                     blocking::run(move || {
                         let (mut session, _) = crate::worker::connect(&node)?;
                         let authorized = tessaro_client::ssh::authorize(&mut session, None)?;
-                        Ok(shell_words(&authorized.argv(22, &[])))
+                        let command = shell_words(&authorized.argv(22, &[]));
+                        Ok((command, authorized.access.is_some()))
                     }),
                     move |result| Message::P(Msg::Authorized(terminal, result)),
                 );
             }
-            Msg::Authorized(terminal, Ok(command)) => {
-                self.log(Tone::Ok, format!("key authorized: {command}"));
+            Msg::Authorized(terminal, Ok((command, keyed))) => {
+                if keyed {
+                    self.log(Tone::Ok, format!("key authorized: {command}"));
+                } else {
+                    self.log(
+                        Tone::Warn,
+                        format!("unclaimed, root with an empty password, host key not checked: {command}"),
+                    );
+                }
                 if terminal {
                     if let Err(error) = open_terminal(&command) {
                         self.log(Tone::Bad, error);

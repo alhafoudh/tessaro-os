@@ -261,7 +261,9 @@ enum SshCmd {
     /// A root shell on the device. Sends your SSH public key over this
     /// pinned connection, adds it to root's authorized_keys, then runs ssh
     /// with the host key the device reported - no password, no first-use
-    /// prompt. Anything after `--` goes to ssh: options or a command.
+    /// prompt. An unclaimed device takes no key: ssh logs in with its empty
+    /// root password and checks no host key. Anything after `--` goes to
+    /// ssh: options or a command.
     Connect(ssh::Options),
     /// The SSH keys that can log in as root. Unclaiming or a factory reset
     /// removes them all.

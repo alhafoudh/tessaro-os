@@ -138,6 +138,20 @@ module AgentE2E
         ! test -e "$TESSARO_CONFIG_DIR/nodes.json"
         grep -q '^root::' /etc/shadow
       SH
+
+      # ssh connect sends no key and pins nothing; the command it builds
+      # logs in by the empty password the way this harness does every step.
+      out = guest.run(<<~SH)
+        set -e
+        export TESSARO_CONFIG_DIR=/tmp/e2e-unclaimed
+        tessaro-ctl -n 127.0.0.1 --json ssh connect --print 2>/dev/null
+        ! test -e "$TESSARO_CONFIG_DIR/known_hosts"
+        ! test -s /root/.ssh/authorized_keys
+      SH
+      connect = JSON.parse(out)
+      expect(connect["access"]).to be_nil, "an unclaimed device was sent a key"
+      expect(connect["command"]).to include("StrictHostKeyChecking=no", "UserKnownHostsFile=/dev/null")
+      expect(connect["command"].grep(/HostKeyAlias/)).to be_empty
     end
 
     # Claimed, the root password is not empty any more, and this suite logs

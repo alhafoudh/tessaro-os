@@ -8,6 +8,11 @@
 //! asking on first use - and an address that moved to another device is a
 //! refusal, not a prompt. `tessaro-ctl ssh connect` then becomes `ssh`;
 //! tessaro-gui runs one to forward the device's VNC port.
+//!
+//! An unclaimed device takes no key and has an empty root password, which
+//! dropbear (`-B`) accepts as ssh's `none` login, so no prompt. Its control
+//! session is not pinned either, so there is no host key worth pinning:
+//! nothing is sent, and ssh checks no host key.
 
 use std::fs;
 use std::net::SocketAddr;
@@ -38,7 +43,9 @@ pub struct Chosen {
 /// A device that has our key, and how ssh reaches it pinned.
 #[derive(Debug)]
 pub struct Authorized {
-    pub access: SshAccess,
+    /// What the device answered. `None` for an unclaimed device, reached by
+    /// its empty root password with no host key checked.
+    pub access: Option<SshAccess>,
     pub address: SocketAddr,
     pub alias: String,
     pub known_hosts: PathBuf,
@@ -48,24 +55,57 @@ pub struct Authorized {
 impl Authorized {
     /// `ssh` with the pin, to root on the device, then `args`.
     pub fn argv(&self, port: u16, args: &[String]) -> Vec<String> {
+        let check = match &self.access {
+            None => HostKey::Unchecked,
+            Some(access) => HostKey::Pinned {
+                alias: &self.alias,
+                known_hosts: &self.known_hosts,
+                strict: !access.host_keys.is_empty(),
+            },
+        };
         ssh_argv(
             &self.address.ip().to_string(),
             port,
-            &self.alias,
-            &self.known_hosts,
-            !self.access.host_keys.is_empty(),
+            check,
             self.identity.as_deref(),
             args,
         )
     }
 }
 
+/// How ssh is told to check the device's host key.
+#[derive(Debug, Clone, Copy)]
+pub enum HostKey<'a> {
+    /// Against what the pinned channel reported; `strict` refuses anything
+    /// else, without it ssh asks on first use.
+    Pinned {
+        alias: &'a str,
+        known_hosts: &'a Path,
+        strict: bool,
+    },
+    /// Not at all: an unclaimed device, whose channel is not pinned.
+    Unchecked,
+}
+
 /// Send our public key (`key`, or the first ssh-keygen default) over
-/// `session`, and pin the host keys the device answers with.
+/// `session`, and pin the host keys the device answers with. An unclaimed
+/// device gets nothing, and `key` is not used.
 pub fn authorize(session: &mut Session, key: Option<&Path>) -> Result<Authorized, String> {
     let Some((address, _)) = session.remote.clone() else {
         return Err("this is the device itself; pass --node to reach one over ssh".to_string());
     };
+    let alias = format!("tessaro-{}", session.node.id);
+    let known_hosts = nodes::dir().join("known_hosts");
+    if !session.node.claimed {
+        return Ok(Authorized {
+            access: None,
+            address,
+            alias,
+            known_hosts,
+            identity: None,
+        });
+    }
+
     let chosen = choose_key(key, &home())?;
     let line = fs::read_to_string(&chosen.public)
         .map_err(|err| format!("{}: {err}", chosen.public.display()))?;
@@ -74,11 +114,9 @@ pub fn authorize(session: &mut Session, key: Option<&Path>) -> Result<Authorized
 
     let access: SshAccess = session.call(Command::SshAuthorize { key: public.line() })?;
 
-    let alias = format!("tessaro-{}", session.node.id);
-    let known_hosts = nodes::dir().join("known_hosts");
     write_known_hosts(&known_hosts, &alias, &access.host_keys)?;
     Ok(Authorized {
-        access,
+        access: Some(access),
         address,
         alias,
         known_hosts,
@@ -175,9 +213,7 @@ pub fn write_known_hosts(path: &Path, alias: &str, host_keys: &[String]) -> Resu
 pub fn ssh_argv(
     ip: &str,
     port: u16,
-    alias: &str,
-    known_hosts: &Path,
-    strict: bool,
+    check: HostKey,
     identity: Option<&Path>,
     args: &[String],
 ) -> Vec<String> {
@@ -186,10 +222,25 @@ pub fn ssh_argv(
         argv.push("-o".into());
         argv.push(value);
     };
-    option(format!("HostKeyAlias={alias}"));
-    option(format!("UserKnownHostsFile={}", known_hosts.display()));
-    if strict {
-        option("StrictHostKeyChecking=yes".into());
+    match check {
+        HostKey::Pinned {
+            alias,
+            known_hosts,
+            strict,
+        } => {
+            option(format!("HostKeyAlias={alias}"));
+            option(format!("UserKnownHostsFile={}", known_hosts.display()));
+            if strict {
+                option("StrictHostKeyChecking=yes".into());
+            }
+        }
+        HostKey::Unchecked => {
+            let null = if cfg!(windows) { "NUL" } else { "/dev/null" };
+            option(format!("UserKnownHostsFile={null}"));
+            option("StrictHostKeyChecking=no".into());
+            // Or ssh warns on every login that it "permanently added" the key.
+            option("LogLevel=ERROR".into());
+        }
     }
     if let Some(identity) = identity {
         option("IdentitiesOnly=yes".into());
@@ -273,12 +324,15 @@ mod tests {
 
     #[test]
     fn the_ssh_command_pins_the_host_key() {
+        let pinned = |strict| HostKey::Pinned {
+            alias: "tessaro-abc",
+            known_hosts: Path::new("/cfg/known_hosts"),
+            strict,
+        };
         let argv = ssh_argv(
             "192.0.2.7",
             22,
-            "tessaro-abc",
-            Path::new("/cfg/known_hosts"),
-            true,
+            pinned(true),
             Some(Path::new("/k/work")),
             &["journalctl".to_string(), "-f".to_string()],
         );
@@ -289,10 +343,21 @@ mod tests {
              journalctl -f"
         );
 
-        let loose = ssh_argv("::1", 2222, "a", Path::new("k"), false, None, &[]);
+        let loose = ssh_argv("::1", 2222, pinned(false), None, &[]);
         assert!(!loose
             .iter()
             .any(|arg| arg.starts_with("StrictHostKeyChecking")));
         assert_eq!(loose.last().unwrap(), "root@::1");
+    }
+
+    #[test]
+    fn an_unclaimed_device_is_reached_with_no_host_key_check() {
+        let argv = ssh_argv("192.0.2.7", 22, HostKey::Unchecked, None, &[]);
+        assert!(argv.contains(&"StrictHostKeyChecking=no".to_string()));
+        assert!(argv
+            .iter()
+            .any(|arg| arg.starts_with("UserKnownHostsFile=") && !arg.contains("known_hosts")));
+        assert!(!argv.iter().any(|arg| arg.starts_with("HostKeyAlias")));
+        assert_eq!(argv.last().unwrap(), "root@192.0.2.7");
     }
 }

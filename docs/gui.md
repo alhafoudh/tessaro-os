@@ -79,7 +79,8 @@ keyed by node id** (`nodes_view::merge`).
   (`NodesView::openable`): it answers everything without a token (see **The
   claim model** in [settings.md](settings.md)). A stranger is reached at the
   address it was seen at (`worker::connect`), and only while it stays
-  unclaimed. Actions that make a credential show the device's refusal.
+  unclaimed. Actions that make a credential show the device's refusal;
+  SSH and VNC go in by the empty root password instead of a key.
 
 Discovery runs for as long as the app does (`discovery.rs`). Rescan starts a
 new browse. A device mDNS cannot see (another subnet, a VM) is added by
@@ -186,7 +187,9 @@ dialogs (`rfd`).
   [remote-access.md](remote-access.md)). So the panel sends the SSH key and
   pins the host key over the control connection (`tessaro_client::ssh`, as
   `ssh connect` does), then runs the system's `ssh -N -L` from a free local
-  port to `127.0.0.1:5900`.
+  port to `127.0.0.1:5900`. An unclaimed device gets no key and ssh gets in
+  by its empty password (**SSH keys** in remote-access.md), so the panel
+  works before a claim too.
 * The server is neatvnc, which takes VeNCrypt with a plain login inside TLS
   and nothing else. No Rust VNC crate speaks that, so `vnc.rs` is a small RFB
   3.8 client: VeNCrypt X509Plain (or TLSPlain), the image's `tessaro` login,

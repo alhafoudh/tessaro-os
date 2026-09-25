@@ -4,7 +4,8 @@
 //! docs/remote-access.md), so the way in is SSH: the key is sent and the
 //! host key pinned over the control connection (`tessaro_client::ssh`, the
 //! same as `tessaro-ctl ssh connect`), and the system's `ssh` forwards a
-//! free local port to it.
+//! free local port to it. An unclaimed device takes no key; ssh gets in by
+//! its empty root password, even in `BatchMode`.
 //!
 //! Its server is neatvnc, which takes VeNCrypt with a plain login inside
 //! TLS and nothing else, so no VNC crate fits and this is a small RFB 3.8
@@ -91,7 +92,7 @@ fn watch(node: &Node, out: &ui::UnboundedSender<Event>) -> Result<(), String> {
     let state = |text: &str| {
         let _ = out.unbounded_send(Event::State(text.to_string()));
     };
-    state("sending the SSH key");
+    state("opening the SSH tunnel");
     let tunnel = Tunnel::open(node)?;
     state("connecting to VNC");
     let tcp = TcpStream::connect(("127.0.0.1", tunnel.port))
