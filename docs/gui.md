@@ -81,11 +81,14 @@ keyed by node id** (`nodes_view::merge`).
   claim model** in [settings.md](settings.md)). A stranger is reached at the
   address it was seen at (`worker::connect`), and only while it stays
   unclaimed. Actions that make a credential show the device's refusal;
-  SSH and VNC go in by the empty root password instead of a key.
+  SSH and VNC go in by the empty root password instead of a key. Unclaim is
+  disabled instead: the device does not refuse it, and the node would be
+  forgotten here for nothing. The claim state comes from each status poll.
 
 Discovery runs for as long as the app does (`discovery.rs`). Rescan starts a
 new browse. A device mDNS cannot see (another subnet, a VM) is added by
-address.
+address. Both are actions on the node list's own toolbar, since they act on
+that list; the app header only has Devices.
 
 **Login and claim peek first, then pin exactly what was shown.** The dialog
 opens a session with `Trust::Peek`, which sends nothing secret, and shows the
@@ -94,6 +97,12 @@ session whose pin closure accepts only that fingerprint. If another
 certificate answers by then, nothing is sent. A login proves the token with
 `TokenList` before storing it. A claim shows the root and hotspot passwords
 once, with copy buttons, and closes only through Done.
+
+**A claim from the device window's Access page goes over the session the
+window already has** (`worker::Request::Claim`), so it pins the certificate
+that session was opened on, which the form and the Overview show. The worker
+keeps the new token for its later calls and writes the node to nodes.json,
+and the node list reloads.
 
 ## Device windows
 
@@ -116,10 +125,20 @@ the subscription, and with it the thread and the connection.
   order (`device::sections`), so a group a newer image adds appears here by
   itself.
 * The tools are one page per `tessaro-ctl` command group (`device/pages.rs`).
+* **Each action is on one page only: the page of its command group.**
+  Overview is the `device` group and nothing else, so it stays a summary; a
+  `browser` command goes on Browser, not on Overview.
 
 **Every page is drawn the same way** (`section.rs`, `grid.rs`): a toolbar
 with the actions on the page first and those on the selected row after them,
 then its tables. Anything that is a list is a table.
+
+**Right-clicking a table cell selects its row and offers Copy of the cell's
+text as shown** (`copy_menu.rs`, wrapped around every cell in `grid.rs`).
+The text is read back from the cell's widgets through `operate`, so no page
+passes it in, and the clipboard is written by the widget itself. A masked or
+shortened value is copied as displayed; the full one keeps its own Copy
+button.
 
 **Settings are edited in a dialog, WinBox style: OK applies and closes, Apply
 applies and stays, Default unsets.**
@@ -137,22 +156,27 @@ applies and stays, Default unsets.**
 
 | Page | Covers |
 | --- | --- |
-| Overview | `device status` and `id`, systemd units, `device ping`, `device factory-reset`, `browser navigate`, `browser reload`, `browser clear-cache`, `browser maintenance`, `browser debug`, `browser zoom`, `browser devtools` (a job holding the tunnel until Cancel), `browser inject`, `browser bridge`, `browser eval` (results in the page's output) |
-| Screen | `screen modes` with "use this mode", `screen confirm`, `screen screenshot` with a 3s live refresh and Save, `screen power`, `screen keyboard` |
+| Overview | `device status` and `id`, systemd units, `device ping`, `device factory-reset` |
+| Screen | `screen modes` with "use this mode", `screen screenshot` with a 3s live refresh and Save, `screen power`, `screen keyboard` |
+| Browser | what the browser shows, `browser navigate`, `reload`, `clear-cache`, `maintenance`, `debug`, `zoom`, `devtools` (a job holding the tunnel until Cancel), `inject`, `bridge`, `eval` (results in the page's output) |
 | Network | `network show` and interfaces, `network last`, `network ping`, `network speedtest` (with "Bypass the proxy"), `network proxy set`, `off` and `test`, `network profiles list` and `show` |
 | WiFi | `network wifi status`, `scan`, `join`, `hotspot-password` |
 | Storage | `storage show`, partitions and filesystems, `storage grow` (check first) |
 | Audio | `audio show`, outputs and inputs, choosing one, volume, mute, `audio test` for the tone and the recording |
 | Time | `time show` and its servers, `time timezone` (a choice of `time zones`), `time ntp on|off` with servers, `time sync`, `time set` (this computer's clock or a typed time) |
-| Access | `access token create`, `list`, `revoke`, `access password set`, `access unclaim` |
+| Access | `access claim` (while unclaimed), `access token create`, `list`, `revoke`, `access password set`, `access unclaim` (while claimed) |
 | SSH | `ssh keys list` and `revoke`, `ssh connect` (authorize the key, open a terminal) |
 | Files | `files list` as a browser, `upload` (files or a folder), `download`, `mkdir`, `move`, `rm` |
 | Update | `update status`, `update send` with progress, `update cancel` |
 | Log | `device logs --follow`, filtered by unit on the device and by text here |
 
-The window's own toolbar has Restart browser, weston or agent, and Reboot,
-each confirmed first. The status bar shows the device's `Status`, and a
-guarded change's countdown with Confirm.
+The window's own toolbar has Refresh, Restart browser, weston or agent, and
+Reboot, the restarts confirmed first. **Refresh is the window's, not a
+page's**: it fetches `Status`, the settings and what the page shown asks
+for, so no page or settings section has a Refresh of its own. The status bar
+shows the device's `Status`, and a guarded change's countdown with Confirm;
+that is the one Confirm, since a guarded change can come from a setting as
+well as from the Screen page.
 
 **Dialogs are one generic form** (`pages::Form`), confirmed with Enter. A
 destructive one - factory reset, unclaim, growing `/data`, an update that

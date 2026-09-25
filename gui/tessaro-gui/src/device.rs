@@ -208,11 +208,12 @@ enum Dialog {
     Edit(Edit),
     Confirm(Confirmable),
     Form(pages::Form),
-    /// Shown once: a new token, a password.
+    /// Shown once: a new token, a password. Each value with its label, an
+    /// empty one for a lone value.
     Secret {
         title: String,
         intro: String,
-        value: String,
+        values: Vec<(String, String)>,
     },
     Text {
         title: String,
@@ -270,6 +271,7 @@ pub enum Page {
     /// The settings section in `Device::section`.
     Settings,
     Screen,
+    Browser,
     Network,
     Wifi,
     Storage,
@@ -286,6 +288,7 @@ impl Page {
     /// The pages below the settings sections in the nav, in its order.
     const TOOLS: &'static [(Page, &'static str)] = &[
         (Page::Screen, "Screen"),
+        (Page::Browser, "Browser"),
         (Page::Network, "Network"),
         (Page::Wifi, "WiFi"),
         (Page::Storage, "Storage"),
@@ -671,6 +674,7 @@ impl Device {
             Event::Screenshot(Err(error)) => self.shot_error = Some(error),
             Event::Answer(tag, result) => self.answer(tag, result),
             Event::Note(note) => self.log(Tone::Warn, note),
+            Event::Pinned(note) => self.log(Tone::Ok, note),
         }
     }
 
@@ -870,6 +874,7 @@ impl Device {
             }
             Message::Refresh => {
                 self.request(Request::Refresh);
+                self.refresh_page(self.page);
             }
             Message::EditName(name) => self.edit(|edit| edit.name = name),
             Message::EditValue(value) => self.edit(|edit| edit.value = value),
@@ -1297,7 +1302,7 @@ impl Device {
 
         let online = self.link == Link::Online;
         let editable = selected.filter(|row| online && row.source != Source::Live);
-        let mut list = vec![action("Refresh", online.then_some(Message::Refresh))];
+        let mut list = Vec::new();
         if section == keys::DATA_PREFIX.trim_end_matches('.') {
             list.push(action("Add", online.then_some(Message::Add)));
         }
@@ -1470,22 +1475,29 @@ impl Device {
             Dialog::Secret {
                 title,
                 intro,
-                value,
-            } => dialog::frame(
-                title.clone(),
-                column![
-                    text(intro).size(theme::SMALL).style(text::warning),
-                    row![
+                values,
+            } => {
+                let mut body =
+                    column![text(intro).size(theme::SMALL).style(text::warning)].spacing(10);
+                for (label, value) in values {
+                    let line = row![
                         text(value).size(theme::TEXT).font(iced::Font::MONOSPACE),
                         theme::tool("Copy", Some(Message::P(pages::Msg::Copy(value.clone())))),
                     ]
                     .spacing(8)
-                    .align_y(iced::alignment::Vertical::Center),
-                ]
-                .spacing(10)
-                .into(),
-                vec![theme::default_button("Done", Some(Message::Cancel))],
-            ),
+                    .align_y(iced::alignment::Vertical::Center);
+                    body = if label.is_empty() {
+                        body.push(line)
+                    } else {
+                        body.push(field(label, line))
+                    };
+                }
+                dialog::frame(
+                    title.clone(),
+                    body.into(),
+                    vec![theme::default_button("Done", Some(Message::Cancel))],
+                )
+            }
             Dialog::Text { title, body } => dialog::frame(
                 title.clone(),
                 scrollable(text(body).size(theme::SMALL).font(iced::Font::MONOSPACE))

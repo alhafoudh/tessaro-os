@@ -1,11 +1,13 @@
 //! The one table every list in the GUI is drawn with: a header, then rows
 //! of single-line cells in fixed columns. Click selects a row, double-click
-//! activates it (opens, edits). iced's own `table` cannot mark a selected
-//! row, so this is rows of containers in a scrollable.
+//! activates it (opens, edits), right-click selects it and offers Copy of
+//! the cell's text (`copy_menu.rs`). iced's own `table` cannot mark a
+//! selected row, so this is rows of containers in a scrollable.
 
 use iced::widget::{column, container, mouse_area, row, scrollable, text, Column};
 use iced::{Element, Length};
 
+use crate::copy_menu::copy_menu;
 use crate::theme;
 
 pub struct Col {
@@ -32,6 +34,7 @@ pub fn grid<'a, M: Clone + 'a>(
                 .style(theme::table_row(selected == Some(at), at % 2 == 1)),
         )
         .on_press(on_select(at))
+        .on_right_press(on_select(at))
         .on_double_click(on_activate(at))
         .into()
     });
@@ -56,11 +59,12 @@ pub fn grid_following<'a, M: Clone + 'a>(
 
 fn cells_row<'a, M: 'a>(columns: &[Col], cells: Vec<Element<'a, M>>) -> Element<'a, M> {
     row(cells.into_iter().zip(columns).map(|(cell, column)| {
-        container(cell)
-            .width(column.width)
-            .padding([2, 6])
-            .clip(true)
-            .into()
+        copy_menu(
+            container(cell)
+                .width(column.width)
+                .padding([2, 6])
+                .clip(true),
+        )
     }))
     .into()
 }

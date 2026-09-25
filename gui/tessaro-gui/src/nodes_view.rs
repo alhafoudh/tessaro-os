@@ -619,7 +619,10 @@ impl NodesView {
             .and_then(|row| row.id.as_deref())
             .is_some_and(|id| self.known.by_id(id).is_some());
         let list = section::view(
-            Vec::new(),
+            vec![
+                action("Add address", Some(Message::AddAddress)),
+                action("Rescan", Some(Message::Rescan)),
+            ],
             vec![
                 action(
                     "Open",

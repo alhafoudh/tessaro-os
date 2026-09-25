@@ -18,7 +18,8 @@ use iced::futures::channel::mpsc as ui;
 use iced::Subscription;
 use protocol::keys::{self, Consumer};
 use protocol::{
-    Applied, Command, Done, KeyInfo, NodeInfo, RestartTarget, Screenshot, Settings, Status, Verify,
+    Applied, Claimed, Command, Done, KeyInfo, NodeInfo, RestartTarget, Screenshot, Settings,
+    Status, Verify,
 };
 use tessaro_client::connect::{self, Answer, Session, Target, Trust};
 use tessaro_client::nodes::{Node, Nodes};
@@ -61,6 +62,12 @@ pub enum Request {
     },
     /// A screenshot every `LIVE_SHOT` from now on, or no more.
     Live(bool),
+    /// Claim the device over this session, answered as the `claim` call.
+    /// The session keeps the new token, and the node is pinned in
+    /// nodes.json to the certificate this session was opened on.
+    Claim {
+        name: String,
+    },
 }
 
 /// How often a live screenshot is taken.
@@ -84,6 +91,8 @@ pub enum Event {
     Answer(&'static str, Result<serde_json::Value, String>),
     /// Worth telling the user: the device moved, a warning from the client.
     Note(String),
+    /// The node was claimed and written to nodes.json.
+    Pinned(String),
 }
 
 /// A session with a known node, by name: its last address first, then
@@ -339,8 +348,40 @@ impl Worker {
                     }
                 }
             }
+            Request::Claim { name } => self.claim(session, name),
             Request::Refresh | Request::Live(_) => Ok(()),
         }
+    }
+
+    /// As the node list's claim does (`nodes_view::commit`), on the session
+    /// already open: the device answers only a claim without a token.
+    fn claim(&self, session: &mut Session, name: String) -> Result<(), Stop> {
+        session.clear_token();
+        let claimed = match session.request::<Claimed>(Command::Claim { name }) {
+            Answer::Ok(claimed) => claimed,
+            Answer::Refused(error) => return self.send(Event::Answer("claim", Err(error))),
+            Answer::Lost(why) => {
+                self.send(Event::Answer(
+                    "claim",
+                    Err(format!("lost the connection: {why}")),
+                ))?;
+                return Err(Stop::Lost(why));
+            }
+        };
+        session.set_token(claimed.token.clone());
+        let saved = Nodes::load()
+            .and_then(|mut nodes| nodes.remember(session, Some(claimed.token.clone())));
+        let value = serde_json::to_value(&claimed).map_err(|err| Stop::Lost(err.to_string()))?;
+        self.send(Event::Answer("claim", Ok(value)))?;
+        self.send(match saved {
+            Ok(()) => Event::Pinned(format!(
+                "{} pinned and its token saved on this machine",
+                session.node.name
+            )),
+            Err(why) => Event::Note(format!(
+                "claimed, but not saved on this machine ({why}): this window can manage it until it closes"
+            )),
+        })
     }
 
     /// A set or unset. A network change waits for the device's own verdict,
