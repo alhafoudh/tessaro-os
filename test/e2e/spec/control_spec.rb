@@ -2,7 +2,8 @@
 
 module AgentE2E
   # The control plane: settings, the debug screen, maintenance mode, the
-  # claim model, ssh keys, the resolution probation and the file store.
+  # claim model, ssh keys, the resolution probation, the file store, eval,
+  # the page bridge and screen power.
   RSpec.describe "the control plane" do
     include_context "a booted VM"
 
@@ -299,6 +300,87 @@ module AgentE2E
       guest.run("rm -rf #{local} /tmp/e2e-back; " \
                 "for path in media a.txt b.txt; do tessaro-ctl files rm -r -y $path 2>/dev/null; done",
                 allow_failure: true)
+    end
+
+    it "eval: browser eval answers with the page's value, fails on a throw, and stops a script that never ends" do
+      expect(guest.run("tessaro-ctl browser eval 'location.href'")).to include(KIOSK_URL)
+      expect(guest.run("tessaro-ctl --json browser eval '1 + 1'")).to include('"value": 2')
+
+      thrown = guest.run("tessaro-ctl browser eval 'nope' 2>&1", allow_failure: true)
+      expect(thrown).to include("ReferenceError")
+
+      stuck = guest.run("tessaro-ctl browser eval --timeout 2 'while (true) {}' 2>&1", allow_failure: true)
+      expect(stuck).to include("the script was stopped")
+      expect(guest.run("tessaro-ctl browser eval '\"still answering\"'")).to include("still answering")
+    end
+
+    # The script and the bridge both come from the agent's DevTools session,
+    # so the page is read the same way: Runtime.evaluate in its own world.
+    it "bridge: inject runs a store script in every page and a new copy reloads it; config and actions modes " \
+       "give the page window.tessaro", :reconfigure do
+      page_value = lambda do |expression|
+        quietly { cdp.command("Runtime.evaluate", expression: expression, returnByValue: true) }
+          .dig("result", "value")
+      rescue AgentE2E::Failure, SystemCallError, IOError
+        nil
+      end
+      wait_value = lambda do |expression, want, seconds|
+        step "wait up to #{seconds}s for #{expression} to be #{want.inspect}"
+        deadline = Time.now + seconds
+        seen = page_value.call(expression)
+        until seen == want || Time.now > deadline
+          sleep 1
+          seen = page_value.call(expression)
+        end
+        expect(seen).to eq(want)
+      end
+
+      guest.run("printf 'window.__e2e = \"one\";' > /tmp/inject.js && tessaro-ctl files upload /tmp/inject.js")
+      guest.run("tessaro-ctl browser inject on --script /inject.js")
+      journal.wait_for(/^page bridge: off, injecting inject\.js$/, timeout: 30)
+      wait_value.call("window.__e2e", "one", 30)
+      expect(guest.run("tessaro-ctl device status")).to include("inject.js injected")
+
+      guest.run("printf 'window.__e2e = \"second\";' > /tmp/inject.js && tessaro-ctl files upload /tmp/inject.js")
+      journal.wait_for(/^page bridge: inject\.js changed; reloading the page$/, timeout: 30)
+      wait_value.call("window.__e2e", "second", 30)
+
+      guest.run("tessaro-ctl config set data.e2e_table=12")
+      guest.run("tessaro-ctl browser bridge config")
+      journal.wait_for(/^page bridge: config, injecting inject\.js$/, timeout: 30)
+      wait_value.call("tessaro.config['data.e2e_table']", "12", 30)
+      expect(page_value.call("['device.name', 'network.public_ip', 'access.listen'].some((k) => k in tessaro.config)"))
+        .to eq(false)
+      expect(page_value.call("typeof tessaro.browser")).to eq("undefined")
+      status = guest.run("tessaro-ctl browser eval 'tessaro.device.status().then((s) => s.kioskUrl)'")
+      expect(status).to include(KIOSK_URL)
+
+      guest.run("tessaro-ctl browser bridge actions")
+      journal.wait_for(/^page bridge: actions, injecting inject\.js$/, timeout: 30)
+      wait_value.call("typeof tessaro.browser.reload", "function", 30)
+      # Right after the agent's start: a page that reloads itself on load
+      # must not loop.
+      refused = guest.run("tessaro-ctl browser eval 'tessaro.browser.reload().then(() => \"reloaded\", (e) => e.message)'")
+      expect(refused).to include("refused")
+      # No template uses it, so it is kept without restarting anything.
+      guest.run("tessaro-ctl browser eval 'tessaro.data.set(\"e2e_note\", \"kept\")'")
+      expect(guest.run("tessaro-ctl config get data.e2e_note")).to include("kept")
+      wait_value.call("tessaro.config['data.e2e_note']", "kept", 30)
+    ensure
+      guest.run("tessaro-ctl config unset browser.inject.script browser.bridge.mode data.e2e_table data.e2e_note; " \
+                "tessaro-ctl files rm -y inject.js; rm -f /tmp/inject.js",
+                allow_failure: true)
+    end
+
+    it "screen-power: screen power off and on go through the compositor and show in device status" do
+      expect(guest.run("tessaro-ctl screen power")).to include("the screen is on")
+      expect(guest.run("tessaro-ctl screen power off")).to include("screen off")
+      expect(guest.run("tessaro-ctl screen power")).to include("the screen is off")
+      expect(guest.run("tessaro-ctl device status")).to match(/screen\s+off/)
+      refused = guest.run("tessaro-ctl screen screenshot -o /tmp/e2e.jpg 2>&1", allow_failure: true)
+      expect(refused).to include("the screen is switched off")
+    ensure
+      guest.run("tessaro-ctl screen power on", allow_failure: true)
     end
   end
 end

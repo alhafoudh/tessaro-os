@@ -109,6 +109,9 @@ enum Action {
     Maintenance,
     DebugScreen,
     Zoom,
+    Inject,
+    Bridge,
+    Eval,
     ControlPing,
     FactoryReset,
     NetPing,
@@ -138,10 +141,17 @@ pub enum Msg {
     Maintenance(bool),
     DebugScreen(bool),
     Zoom,
+    Reload,
+    ClearCache,
+    Inject,
+    Bridge,
+    Eval,
     ControlPing,
     FactoryReset,
     // screen
     UseMode,
+    ScreenPower(bool),
+    Keyboard(bool),
     // network
     NetLast,
     NetPing,
@@ -300,7 +310,7 @@ fn page_of(tag: &str) -> &'static str {
         "ssh" => "ssh",
         "files" => "files",
         "update" => "update",
-        "modes" => "screen",
+        "modes" | "screen" => "screen",
         _ => "overview",
     }
 }
@@ -595,6 +605,27 @@ impl Device {
                 self.pages.files = listing.entries;
             }
             "update" => self.pages.update = Some(parse(value)?),
+            "eval" => {
+                let result: protocol::EvalResult = parse(value)?;
+                let line = match (&result.exception, &result.value, &result.description) {
+                    (Some(exception), _, _) => format!(
+                        "! {} (line {}, column {})",
+                        exception.text, exception.line, exception.column
+                    ),
+                    (None, Some(Value::String(text)), _) => text.clone(),
+                    (None, Some(value), _) => value.to_string(),
+                    (None, None, Some(description)) => format!("{description} ({})", result.kind),
+                    (None, None, None) => result.kind.clone(),
+                };
+                for part in line.lines() {
+                    self.output("overview", part.to_string());
+                }
+            }
+            "screen.power" => {
+                let power: protocol::ScreenPower = parse(value)?;
+                self.log(Tone::Ok, if power.on { "screen on" } else { "screen off" });
+                self.refresh_page(Page::Overview);
+            }
             _ => {
                 // Everything else answers with a message and changes what
                 // its page shows.
@@ -727,6 +758,40 @@ impl Device {
                         .field(Field::text("Percent", zoom, "100")),
                 );
             }
+            Msg::Reload => self.call("done", Command::Reload),
+            Msg::ClearCache => self.call("done", Command::ClearCache),
+            Msg::Inject => {
+                let script = self
+                    .setting(keys::INJECT_SCRIPT)
+                    .and_then(|setting| setting.value.clone())
+                    .unwrap_or_default();
+                self.form(
+                    Form::new("Inject a script", "Save", Action::Inject)
+                        .intro("A file from the file store, run in every page before the page's own scripts. Uploading a new copy reloads the page with it. Empty for none.")
+                        .field(Field::text("Script", script, "inject.js")),
+                );
+            }
+            Msg::Bridge => {
+                let current = self
+                    .setting(keys::BRIDGE_MODE)
+                    .and_then(|setting| setting.value.clone())
+                    .unwrap_or_default();
+                let mode = keys::BRIDGE_MODES
+                    .iter()
+                    .find(|mode| **mode == current)
+                    .copied()
+                    .unwrap_or("off");
+                self.form(
+                    Form::new("Page bridge", "Save", Action::Bridge)
+                        .intro("What the page gets as window.tessaro: nothing, the settings (config), or the settings and device actions such as reload, volume and screen power (actions).")
+                        .field(Field::choice("Mode", mode, keys::BRIDGE_MODES)),
+                );
+            }
+            Msg::Eval => self.form(
+                Form::new("Run JavaScript", "Run", Action::Eval)
+                    .intro("Runs in the page on screen now, as tessaro-ctl browser eval. What it returns goes to the output below.")
+                    .field(Field::text("Code", "", "document.title")),
+            ),
             Msg::ControlPing => self.form(
                 Form::new("Ping the device", "Ping", Action::ControlPing)
                     .intro("Round trips over the control connection, as tessaro-ctl device ping.")
@@ -746,6 +811,14 @@ impl Device {
                     self.set(&[("screen.resolution", &mode)]);
                 }
             }
+            Msg::ScreenPower(on) => self.call("screen.power", Command::ScreenPower { on: Some(on) }),
+            Msg::Keyboard(show) => self.call(
+                "screen.keyboard",
+                Command::Keyboard {
+                    show,
+                    selector: None,
+                },
+            ),
             Msg::NetLast => self.call("net.last", Command::NetLast),
             Msg::NetPing => self.form(
                 Form::new("Ping from the device", "Ping", Action::NetPing)
@@ -1236,6 +1309,31 @@ impl Device {
                 super::check(keys::ZOOM, zoom)?;
                 self.set(&[(keys::ZOOM, zoom)]);
             }
+            Action::Inject => {
+                let script = form.value("Script").trim();
+                let script = super::check(keys::INJECT_SCRIPT, script)?;
+                self.set(&[(keys::INJECT_SCRIPT, &script)]);
+            }
+            Action::Bridge => {
+                let mode = form.value("Mode");
+                self.set(&[(keys::BRIDGE_MODE, mode)]);
+            }
+            Action::Eval => {
+                let code = form.value("Code").trim().to_string();
+                if code.is_empty() {
+                    return Err("some code, please".to_string());
+                }
+                self.output("overview", format!("> {code}"));
+                self.call(
+                    "eval",
+                    Command::Eval {
+                        code,
+                        timeout_ms: None,
+                        await_promise: true,
+                        user_gesture: false,
+                    },
+                );
+            }
             Action::ControlPing => {
                 let count = count(form.value("Count"))?;
                 self.start_job("overview", "ping", jobs::Kind::ControlPing { count });
@@ -1659,6 +1757,20 @@ impl Device {
             facts.push(("Maintenance", yes(status.maintenance)));
             facts.push(("Debug screen", yes(status.debug_screen)));
             facts.push(("Page zoom", format!("{}%", self.zoom())));
+            if let Some(bridge) = &status.bridge {
+                facts.push(("Page bridge", bridge.mode.clone()));
+                let script = match (&bridge.script_problem, bridge.script.is_empty()) {
+                    (_, true) => "none".to_string(),
+                    (Some(problem), false) => {
+                        format!("{} (not injected: {problem})", bridge.script)
+                    }
+                    (None, false) => bridge.script.clone(),
+                };
+                facts.push(("Injected script", script));
+            }
+            if let Some(on) = status.screen_on {
+                facts.push(("Screen", if on { "on" } else { "off" }.to_string()));
+            }
             if let Some(data) = &status.data {
                 facts.push((
                     "/data",
@@ -1716,6 +1828,11 @@ impl Device {
                     self.when(Msg::DebugScreen(!debug)),
                 ),
                 action("Zoom", self.when(Msg::Zoom)),
+                action("Reload", self.when(Msg::Reload)),
+                action("Clear cache", self.when(Msg::ClearCache)),
+                action("Inject", self.when(Msg::Inject)),
+                action("Bridge", self.when(Msg::Bridge)),
+                action("Run JavaScript", self.when(Msg::Eval)),
                 action("Ping", self.when(Msg::ControlPing)),
                 action("Factory reset", self.when(Msg::FactoryReset)),
             ],
@@ -1764,6 +1881,10 @@ impl Device {
             .status
             .as_ref()
             .is_some_and(|(status, _)| status.pending.is_some());
+        let screen_off = self
+            .status
+            .as_ref()
+            .is_some_and(|(status, _)| status.screen_on == Some(false));
         column![
             row![
                 theme::tool("Refresh modes", self.when(Msg::Refresh)),
@@ -1772,6 +1893,16 @@ impl Device {
                     self.selected("modes").and_then(|_| self.when(Msg::UseMode))
                 ),
                 theme::tool("Confirm", pending.then_some(Message::ConfirmPending)),
+                theme::tool(
+                    if screen_off {
+                        "Screen on"
+                    } else {
+                        "Screen off"
+                    },
+                    self.when(Msg::ScreenPower(screen_off)),
+                ),
+                theme::tool("Show keyboard", self.when(Msg::Keyboard(true))),
+                theme::tool("Hide keyboard", self.when(Msg::Keyboard(false))),
                 text("A mode is guarded: it reverts on its own unless confirmed.")
                     .size(theme::SMALL)
                     .style(theme::muted),

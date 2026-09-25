@@ -18,13 +18,20 @@
 //! This module has the types, `handle` and the commands that only read;
 //! the rest is split by what it acts on, each an `impl Control` of its own:
 //! `settings` (changing them, and probation), `access` (the claim, tokens,
-//! passwords, SSH keys), `network` (WiFi and the profiles' inputs) and
-//! `watchers` (what is kept true with nobody asking).
+//! passwords, SSH keys), `network` (WiFi and the profiles' inputs),
+//! `watchers` (what is kept true with nobody asking), `page` (the page on
+//! screen: reload, eval, the keyboard), `screen` (its power) and `bridge`
+//! (`window.tessaro` and the injected script).
 
 mod access;
+mod bridge;
 mod network;
+mod page;
+mod screen;
 mod settings;
 mod watchers;
+
+pub use bridge::BridgeSetup;
 
 use std::collections::{BTreeMap, HashMap};
 use std::net::SocketAddr;
@@ -79,6 +86,9 @@ pub enum Caller {
     /// TCP, no valid token: the `Command::is_public` commands, and every
     /// command while the device is unclaimed.
     Anonymous { peer: SocketAddr },
+    /// The kiosk page itself, through the page bridge: only the commands
+    /// `bridge.rs` maps its calls onto.
+    Page,
 }
 
 impl Caller {
@@ -87,6 +97,7 @@ impl Caller {
             Caller::Local => "the local socket".to_string(),
             Caller::Token { id, peer } => format!("{peer} (token {id})"),
             Caller::Anonymous { peer } => peer.to_string(),
+            Caller::Page => "the page".to_string(),
         }
     }
 }
@@ -179,6 +190,8 @@ pub struct Control {
     storage_grow: Arc<tokio::sync::Mutex<()>>,
     network: Arc<Network>,
     audio: Arc<Audio>,
+    /// Set once, by `start_bridge`.
+    bridge: std::sync::OnceLock<Arc<bridge::Bridge>>,
 }
 
 impl Control {
@@ -216,6 +229,7 @@ impl Control {
             shutdown,
             speedtest: Arc::new(tokio::sync::Mutex::new(())),
             storage_grow: Arc::new(tokio::sync::Mutex::new(())),
+            bridge: std::sync::OnceLock::new(),
         })
     }
 
@@ -377,6 +391,21 @@ impl Control {
                 Reply::ok(Done::new("rebooting")).then(Some(After::Reboot))
             }
             Command::Screenshot => self.screenshot().await.into(),
+            Command::Reload => self.reload().await.into(),
+            Command::ClearCache => self.clear_cache().await.into(),
+            Command::Eval {
+                code,
+                timeout_ms,
+                await_promise,
+                user_gesture,
+            } => self
+                .eval(caller, &code, timeout_ms, await_promise, user_gesture)
+                .await
+                .into(),
+            Command::Keyboard { show, selector } => {
+                self.keyboard(show, selector.as_deref()).await.into()
+            }
+            Command::ScreenPower { on } => self.screen_power(caller, on).await.into(),
             // `Command::is_stream`: the server starts them through `stream`.
             Command::Logs { .. }
             | Command::Speedtest { .. }
@@ -570,8 +599,13 @@ impl Control {
 
         let wanted = self.audio_wanted_from(&state.settings);
         let audio = self.audio.status(&wanted).await;
+        let screen_on = crate::power::send(&self.paths.power_socket, "status")
+            .await // naked: power::send bounds itself with within()
+            .ok();
 
         Ok(Status {
+            screen_on,
+            bridge: self.bridge_status(),
             os,
             image_version,
             data,
@@ -769,6 +803,13 @@ impl Control {
     }
 
     async fn screenshot(&self) -> Result<Screenshot, String> {
+        // A powered-off output paints nothing, and the capture waits for a
+        // frame that never comes.
+        if self.screen_kept_off().await {
+            return Err(
+                "the screen is switched off; `tessaro-ctl screen power on` first".to_string(),
+            );
+        }
         // fromSurface:false - the surface path can hang on this stack.
         let result = self
             .session

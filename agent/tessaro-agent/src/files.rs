@@ -59,6 +59,9 @@ pub struct Files {
     /// One change at a time: two connections must not append to the same
     /// upload, or delete what the other is putting in place.
     writes: tokio::sync::Mutex<()>,
+    /// Bumped whenever a file lands, moves or goes, for whoever keeps a copy
+    /// of one: the page bridge's injected script.
+    changed: tokio::sync::watch::Sender<u64>,
 }
 
 impl Files {
@@ -67,7 +70,27 @@ impl Files {
             paths,
             log,
             writes: tokio::sync::Mutex::new(()),
+            changed: tokio::sync::watch::channel(0).0,
         })
+    }
+
+    /// Changes whenever the store's content does.
+    pub fn changes(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.changed.subscribe()
+    }
+
+    fn touched(&self) {
+        self.changed.send_modify(|count| *count += 1);
+    }
+
+    /// A whole stored file, up to `max` bytes; a bigger one is refused.
+    pub async fn read_whole(&self, path: &str, max: u64) -> Result<Vec<u8>, String> {
+        let path = files::normalize(path)?;
+        let root = self.paths.files_dir.clone();
+        blocking("reading a stored file", move || {
+            read_whole(&root, &path, max)
+        })
+        .await
     }
 
     pub async fn list(&self, path: &str, recursive: bool) -> Result<FilesListing, String> {
@@ -103,10 +126,13 @@ impl Files {
         })
         .await?;
         match begun {
-            Begun::Stored => self.log.info(format!(
-                "files: stored {path} ({}) from {caller}",
-                megabytes(size)
-            )),
+            Begun::Stored => {
+                self.touched();
+                self.log.info(format!(
+                    "files: stored {path} ({}) from {caller}",
+                    megabytes(size)
+                ))
+            }
             Begun::Unchanged => {
                 self.log
                     .debug(format!("files: {path} is already there, unchanged"));
@@ -145,6 +171,7 @@ impl Files {
         })
         .await?;
         if received == size {
+            self.touched();
             self.log.info(format!(
                 "files: stored {path} ({}) from {caller}",
                 megabytes(size)
@@ -166,6 +193,7 @@ impl Files {
         let name = path.clone();
         let size = bytes.len() as u64;
         blocking("storing a file", move || store(&root, &part, &name, &bytes)).await?;
+        self.touched();
         self.log.info(format!(
             "files: stored {path} ({}) for {caller}",
             megabytes(size)
@@ -209,6 +237,7 @@ impl Files {
             rename(&root, &source, &target)
         })
         .await?;
+        self.touched();
         self.log
             .info(format!("files: moved {from} to {landed} for {caller}"));
         Ok(Done::new(format!("moved {from} to {landed}")))
@@ -237,6 +266,7 @@ impl Files {
             delete(&root, &names, recursive)
         })
         .await?;
+        self.touched();
         self.log
             .info(format!("files: removed {} for {caller}", paths.join(", ")));
         Ok(Done::new(format!("removed {}", paths.join(", "))))
@@ -477,6 +507,36 @@ fn entry(path: &str, meta: &fs::Metadata) -> FileEntry {
         size: if dir { 0 } else { meta.len() },
         mtime: meta.mtime(),
     }
+}
+
+/// A whole file, refused when it is bigger than `max`.
+fn read_whole(root: &Path, path: &str, max: u64) -> Result<Vec<u8>, String> {
+    let target = resolve(root, path)?;
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(&target)
+        .map_err(|err| missing(path, err))?;
+    let meta = file.metadata().map_err(|err| err.to_string())?;
+    if !meta.is_file() {
+        return Err(format!("{} is not a file", display(path)));
+    }
+    if meta.len() > max {
+        return Err(format!(
+            "{} is {}, more than the {} allowed",
+            display(path),
+            megabytes(meta.len()),
+            megabytes(max)
+        ));
+    }
+    let mut data = Vec::new();
+    file.take(max + 1)
+        .read_to_end(&mut data)
+        .map_err(|err| format!("reading {path}: {err}"))?;
+    if data.len() as u64 > max {
+        return Err(format!("{} grew while it was read", display(path)));
+    }
+    Ok(data)
 }
 
 fn read(root: &Path, path: &str, offset: u64, len: u64) -> Result<FileData, String> {

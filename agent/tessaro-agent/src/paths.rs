@@ -39,6 +39,9 @@ pub struct Paths {
     /// The generator itself, which the agent runs again after a hotplug to
     /// see whether that config still holds.
     pub weston_generator: PathBuf,
+    /// The socket of Weston's `tessaro-power.so`, which switches the outputs
+    /// off and on.
+    pub power_socket: PathBuf,
     pub cmdline: PathBuf,
     /// `/sys/class/net`: every interface, its MAC, state, MTU and kind.
     pub sys_net: PathBuf,
@@ -125,6 +128,7 @@ impl Paths {
                 "KIOSK_WESTON_GENERATOR",
                 "/usr/libexec/tessaro-weston-config",
             ),
+            power_socket: path("KIOSK_POWER_SOCKET", "/run/weston/power.sock"),
             cmdline: path("KIOSK_CMDLINE", "/proc/cmdline"),
             sys_net: path("KIOSK_SYS_NET", "/sys/class/net"),
             proc_route: path("KIOSK_PROC_ROUTE", "/proc/net/route"),
@@ -179,6 +183,12 @@ impl Paths {
     /// The last public address found, written by the agent's refresher.
     pub fn public_ip_file(&self) -> PathBuf {
         self.run_dir.join("public-ip")
+    }
+
+    /// Whether the screen should be off, kept to put it back after Weston
+    /// restarts. Runtime only: a reboot turns the screen on.
+    pub fn screen_power_file(&self) -> PathBuf {
+        self.run_dir.join("screen-off")
     }
 
     pub fn tls_dir(&self) -> PathBuf {

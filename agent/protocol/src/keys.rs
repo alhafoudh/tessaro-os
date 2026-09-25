@@ -100,6 +100,9 @@ pub enum Kind {
     Addresses,
     /// A WiFi network name: 1 to 32 bytes.
     Ssid,
+    /// A file in the store, `/data/files`, from its root: `inject.js` or
+    /// `/inject.js`, stored without the leading `/`. Or empty.
+    StoreFile,
     /// Where sound plays: `auto`, `off`, a kind of output (`AUDIO_OUTPUTS`),
     /// or one output's exact PipeWire name from `tessaro-ctl audio outputs`.
     AudioOutput,
@@ -143,6 +146,9 @@ impl Kind {
             Kind::Address => "an IPv4 address, or empty".to_string(),
             Kind::Addresses => "IPv4 addresses, comma separated, or empty".to_string(),
             Kind::Ssid => "a WiFi network name, 1 to 32 bytes".to_string(),
+            Kind::StoreFile => {
+                "a file in the store from its root, e.g. inject.js, or empty".to_string()
+            }
             Kind::AudioOutput => format!(
                 "one of: {}, or an output's name from `tessaro-ctl audio outputs`",
                 AUDIO_OUTPUTS.join(", ")
@@ -233,6 +239,10 @@ pub static KEYS: &[Key] = &[
         "Show browser.debug.template full screen instead of the kiosk page. Not agent.debug, which is journal verbosity. `tessaro-ctl browser debug on|off`."),
     key(DEBUG_TEMPLATE, "KIOSK_DEBUG_TEMPLATE", Kind::Template, AGENT,
         "What the debug screen shows: text with {key} placeholders, \\n for a new line, e.g. IP {network.ip}\\nGW {network.gateway}."),
+    key(INJECT_SCRIPT, "KIOSK_INJECT_SCRIPT", Kind::StoreFile, AGENT,
+        "A script from the file store run in every page before the page's own, e.g. inject.js for /data/files/inject.js. Empty for none. `tessaro-ctl browser inject on|off`."),
+    key(BRIDGE_MODE, "KIOSK_BRIDGE_MODE", Kind::Choice(BRIDGE_MODES), AGENT,
+        "What the page gets as window.tessaro: off, config (the settings, read-only) or actions (the settings and device actions). `tessaro-ctl browser bridge`."),
     key(ZOOM, "KIOSK_ZOOM", Kind::Int { min: 25, max: 500 }, BROWSER,
         "Page zoom in percent, Chrome's Ctrl+/- zoom for every site, on top of screen.scale. `tessaro-ctl browser zoom`."),
     key("browser.args_extra", "KIOSK_CHROMIUM_ARGS_EXTRA", Kind::Args, BROWSER,
@@ -254,7 +264,7 @@ pub static KEYS: &[Key] = &[
         ..key(RESOLUTION, "KIOSK_RESOLUTION", Kind::Resolution, WESTON,
             "Output mode, WIDTHxHEIGHT from `tessaro-ctl screen modes`, or preferred. Reverts unless confirmed with `tessaro-ctl screen confirm`.")
     },
-    key("screen.osk", "KIOSK_OSK", Kind::Choice(&["auto", "always", "never"]), WESTON,
+    key(OSK, "KIOSK_OSK", Kind::Choice(&["auto", "always", "never"]), WESTON,
         "On-screen keyboard: auto shows it only without a USB/Bluetooth keyboard."),
     key("screen.vnc", "KIOSK_VNC", Kind::Choice(&["on", "off"]), WESTON,
         "Mirror the screen to VNC on 127.0.0.1:5900."),
@@ -388,6 +398,9 @@ pub const MAINTENANCE_URL: &str = "browser.maintenance.url";
 pub const DEBUG_ENABLE: &str = "browser.debug.enable";
 pub const DEBUG_TEMPLATE: &str = "browser.debug.template";
 pub const ZOOM: &str = "browser.zoom";
+pub const INJECT_SCRIPT: &str = "browser.inject.script";
+pub const BRIDGE_MODE: &str = "browser.bridge.mode";
+pub const OSK: &str = "screen.osk";
 pub const RESOLUTION: &str = "screen.resolution";
 pub const NAME: &str = "device.name";
 pub const ID: &str = "device.id";
@@ -399,6 +412,10 @@ pub const AUDIO_VOLUME: &str = "audio.volume";
 pub const AUDIO_MUTE: &str = "audio.mute";
 pub const AUDIO_INPUT: &str = "audio.input";
 pub const AUDIO_INPUT_VOLUME: &str = "audio.input_volume";
+
+/// browser.bridge.mode, from nothing to everything: each mode includes the
+/// one before it.
+pub const BRIDGE_MODES: &[&str] = &["off", "config", "actions"];
 
 /// The kinds of output audio.output names instead of one output. Besides
 /// these, `auto` and `off`.
@@ -869,6 +886,16 @@ pub fn validate(key: &Key, value: &str) -> Result<String, String> {
                 fail("must be 1 to 32 bytes")
             } else {
                 Ok(value.to_string())
+            }
+        }
+        Kind::StoreFile => {
+            if value.is_empty() {
+                return Ok(String::new());
+            }
+            match crate::files::normalize(value) {
+                Ok(path) if path.is_empty() => fail("names a directory, not a file"),
+                Ok(path) => Ok(path),
+                Err(why) => fail(&why),
             }
         }
         Kind::AudioOutput | Kind::AudioInput => {
@@ -1512,6 +1539,28 @@ mod tests {
         assert!(check(ZOOM, "501").is_err());
         assert!(check(ZOOM, "1.5").is_err());
         assert_eq!(find(ZOOM).unwrap().consumers, [Consumer::Browser]);
+    }
+
+    #[test]
+    fn the_injected_script_is_a_file_in_the_store_from_its_root() {
+        assert_eq!(check(INJECT_SCRIPT, "inject.js").unwrap(), "inject.js");
+        assert_eq!(check(INJECT_SCRIPT, "/inject.js").unwrap(), "inject.js");
+        assert_eq!(check(INJECT_SCRIPT, "/js/site.js").unwrap(), "js/site.js");
+        assert_eq!(check(INJECT_SCRIPT, "").unwrap(), "");
+        assert!(check(INJECT_SCRIPT, "/").is_err(), "the store itself");
+        assert!(check(INJECT_SCRIPT, "../tessaro/auth.json").is_err());
+        assert!(check(INJECT_SCRIPT, "a//b.js").is_err());
+        assert_eq!(find(INJECT_SCRIPT).unwrap().consumers, [Consumer::Agent]);
+    }
+
+    #[test]
+    fn the_bridge_mode_is_off_config_or_actions() {
+        for mode in BRIDGE_MODES {
+            assert_eq!(check(BRIDGE_MODE, mode).unwrap(), *mode);
+        }
+        assert_eq!(check(BRIDGE_MODE, "Actions").unwrap(), "actions");
+        assert!(check(BRIDGE_MODE, "on").is_err());
+        assert_eq!(find(BRIDGE_MODE).unwrap().consumers, [Consumer::Agent]);
     }
 
     #[test]
