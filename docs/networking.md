@@ -271,3 +271,72 @@ on purpose: its only client is a closed binary.
 * **It moves a few hundred MB.** Uploads stop at 25m whatever `--max-size`
   says, because cfspeedtest builds the body in memory. On a metered link use
   `--max-size 1m`. The start and the result go to the journal at info.
+* **It goes through the proxy while one is set**, and `--no-proxy`
+  (`Speedtest.direct`) goes straight out instead, to measure the link rather
+  than the proxy. Either way the reqwest client is told explicitly
+  (`.proxy()` or `.no_proxy()`), so an `HTTP_PROXY` in the environment never
+  decides. See **Proxy**.
+
+## Proxy
+
+**Everything the device fetches from the internet goes through one local
+proxy, tinyproxy on `127.0.0.1:3128`, and that proxy forwards to
+`network.proxy.url`.** `tessaro-ctl network proxy set URL [--bypass ...]`,
+`network proxy off`, `network proxy show` and `network proxy test`; the URL
+is `http://host:port` or `socks5://host:port`, with `user:password@` for a
+proxy that wants a login. The keys are applied by `Consumer::Proxy`: the agent
+renders `/run/tessaro-proxy/tinyproxy.conf` (`render::proxy_config`) and
+restarts `tessaro-proxy.service`, or stops it when the URL is emptied.
+
+* **Why a local proxy at all: Chromium cannot log in to one.** Its proxy
+  settings take no credentials - an HTTP proxy's 407 becomes a login dialog
+  nobody can answer on a kiosk - and it has no SOCKS5 authentication at all.
+  tinyproxy (1.11.1 from meta-networking, built `--enable-upstream`) takes
+  `Upstream http user:pass@host:port` and `Upstream socks5 ...`, so Chromium,
+  the probe, the public address lookup and the speed test all speak plain
+  HTTP to loopback and only tinyproxy knows the upstream, its scheme and its
+  credentials.
+* **What the URL can hold is what tinyproxy's `Upstream` can carry**
+  (`conf.c` in 1.11.1): a host name or an IPv4 address - no IPv6 - and a
+  port; a user without `:`, a password without `@`, neither with spaces, and
+  under 255 bytes together (its Basic auth buffer). `keys::parse_proxy`
+  checks exactly that. A password with `$ " ' \` or a backtick has to be
+  percent-encoded (`%24`), because no setting value may hold them raw (the
+  env-file rule); it is decoded for tinyproxy.
+* **The password is stored as typed, in `state.json`.** That is a deliberate
+  exception to the rule that secrets live in `secrets.json`: the operator
+  chose one URL over a separate password command. So `config get
+  network.proxy.url` shows it; `network show`, `network proxy show` and the
+  GUI mask it (`keys::masked_proxy`). It never reaches `generated.env`
+  (`render::env_file` skips every `Consumer::Proxy` key), and the tinyproxy
+  config that holds it decoded is 0600 root in `/run`.
+* **Chromium gets a fixed address through its policy**: `ProxyMode
+  fixed_servers`, `ProxyServer http://127.0.0.1:3128`, `ProxyBypassList
+  <-loopback>`, added only while a proxy is set (`render::policy`). The
+  address never changes, so only switching the proxy on or off changes the
+  policy - and restarts the browser; a new upstream or password restarts
+  tinyproxy alone. Loopback is always direct, so the self-test page,
+  `/files/` and CDP are unaffected.
+* **The agent tunnels, and does no DNS of its own through a proxy.** The
+  probe and the public address lookup (`HyperHttp::with_proxy`, never the
+  CDP client) send `CONNECT host:port` to the local proxy for http and https
+  alike, then run TLS inside the tunnel; the name is resolved by the proxy,
+  which on a network that allows only the proxy is the only thing that can.
+  A 407 reaches the journal as "check the user and password", a dead local
+  proxy as "see `tessaro-ctl network proxy show`". The proxy keys also carry
+  `Consumer::Agent`, so the agent restarts and picks the proxy up.
+* **Bypass is tinyproxy's, not Chromium's**: `network.proxy.bypass` becomes
+  `Upstream none` lines - a host name matched exactly, a `.domain` as a
+  suffix, an address or network under its mask (`hostspec.c`) - next to the
+  built-in `localhost` and `127.0.0.0/8`. Everything else goes upstream, so
+  the bypass rules are the same for every client.
+* **`network proxy test`** fetches Cloudflare's trace through the local
+  proxy from the device and says the address the internet sees it at, or
+  why not. It uses the proxy even before the agent restarted onto it.
+* **Left direct on purpose:** `network ping` (ICMP), the `--verify
+  HOST:PORT` check of a network change (it tests the link itself), NTP and
+  mDNS.
+* **tinyproxy's own unit stays off** (`SYSTEMD_AUTO_ENABLE:pn-tinyproxy =
+  "disable"`): it would read `/etc/tinyproxy.conf`, on the `/etc` overlay.
+  `tessaro-proxy.service` has `ConditionPathExists=` on the rendered config,
+  so without a proxy nothing runs.

@@ -263,7 +263,14 @@ tessaro-ctl config set network.ethernet.mode=static \
 tessaro-ctl network wifi scan
 tessaro-ctl network wifi join Office        # prompts for the password
 tessaro-ctl network speedtest               # the device's link, not yours
+tessaro-ctl network proxy set 'http://jan:s3cret@proxy.corp.test:8080' --bypass .corp.test
+tessaro-ctl network proxy test              # the address the internet sees through it
+tessaro-ctl network speedtest --no-proxy    # the link itself, around the proxy
 ```
+
+Behind a corporate proxy everything goes through it - the browser, the
+device's own checks and the speed test - over `http://` or `socks5://`, with
+a login in the URL if the proxy wants one.
 
 Out of the box the WiFi radio is a hotspot, `tessaro-<device name>`: open
 until the device is claimed, then protected by a password shown with the root

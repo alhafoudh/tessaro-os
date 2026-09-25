@@ -86,6 +86,8 @@ const HELP_STYLES: Styles = Styles::styled()
         \x20 tessaro-ctl config set network.wifi.nat=0      hotspot clients reach the device only\n\
         \x20 tessaro-ctl network last                       what the last change did, if the answer never came\n\
         \x20 tessaro-ctl network ping 192.168.1.1           from the device\n\
+        \x20 tessaro-ctl network proxy set 'http://jan:s3cret@proxy.corp.test:8080' && tessaro-ctl network proxy test\n\
+        \x20 tessaro-ctl network speedtest --no-proxy       the link itself, around the proxy\n\
         \x20 tessaro-ctl -n brave-otter-3fa2 device ping    from here to the device\n\
         \x20 tessaro-ctl storage show                       disk size, unallocated space, how full /data is\n\
         \x20 tessaro-ctl storage grow                       give /data the rest of the disk, no reboot\n\
@@ -1294,6 +1296,9 @@ fn show_key(key: &KeyInfo) {
             }
             protocol::keys::Consumer::Time => {
                 "nothing on screen: applied to the clock at once; systemd-timesyncd when its servers change"
+            }
+            protocol::keys::Consumer::Proxy => {
+                "the local proxy (tessaro-proxy.service); the browser when the proxy is switched on or off"
             }
         })
         .collect::<Vec<_>>()

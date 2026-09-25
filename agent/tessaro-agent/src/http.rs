@@ -32,6 +32,12 @@
 //! `within()`, so each reaches the journal under its own name and each pledges
 //! its own budget to the watchdog.
 //!
+//! **With network.proxy.url set, the probe and the public address go
+//! through the device's local proxy** (`with_proxy`): a `CONNECT` tunnel for
+//! http and https alike, and no DNS on the device - the proxy resolves the
+//! name. The local proxy is tinyproxy, which carries the upstream's scheme
+//! and credentials (docs/networking.md, "Proxy").
+//!
 //! **TLS is openssl, through native-tls, and there are ways to get it wrong
 //! quietly.** A missing provider used to be the silent one (ureq linked
 //! cleanly without libssl and panicked on the first https request); with
@@ -93,6 +99,13 @@ pub enum HttpError {
     CertificateVerification,
     #[error("TLS handshake failed")]
     Tls,
+    /// The device's own proxy, on loopback, refused or did not answer.
+    #[error("the local proxy is not answering")]
+    ProxyUnreachable,
+    /// The proxy chain refused the tunnel: 407 for credentials the
+    /// upstream turned down, 5xx for a target it could not reach.
+    #[error("the proxy answered HTTP {0}")]
+    Proxy(u16),
     #[error("{0}")]
     Other(String),
 }
@@ -112,6 +125,8 @@ pub struct HyperHttp {
     max_body: usize,
     heartbeat: Heartbeat,
     tls: Result<tokio_native_tls::TlsConnector, String>,
+    /// The device's local proxy, when requests go through it (`with_proxy`).
+    proxy: Option<SocketAddr>,
 }
 
 impl HyperHttp {
@@ -138,7 +153,17 @@ impl HyperHttp {
             max_body,
             heartbeat,
             tls,
+            proxy: None,
         }
+    }
+
+    /// Every request through the device's local proxy at `proxy` (tinyproxy,
+    /// `tessaro-proxy.service`), which carries the upstream's scheme and
+    /// credentials. Only for clients that reach the internet - the probe
+    /// and the public address - never CDP on loopback.
+    pub fn with_proxy(mut self, proxy: Option<SocketAddr>) -> Self {
+        self.proxy = proxy;
+        self
     }
 
     /// The whole request. An inherent method rather than only the trait's,
@@ -146,7 +171,10 @@ impl HyperHttp {
     /// calls this from a spawned task.
     pub async fn fetch(&self, url: &str) -> Result<HttpResponse, HttpError> {
         let target = Target::parse(url).ok_or(HttpError::InvalidUrl)?;
-        let stream = self.connect(&target).await?;
+        let stream = match self.proxy {
+            Some(proxy) => self.tunnel(&target, proxy).await?,
+            None => self.connect(&target).await?,
+        };
 
         let io: Box<dyn Io> = if target.https {
             self.tls_handshake(&target, stream).await?
@@ -204,6 +232,61 @@ impl HyperHttp {
             Err(_) => Err(HttpError::ConnectTimeout),
             Ok(Err(err)) => Err(classify_io(&err)),
             Ok(Ok(stream)) => Ok(stream),
+        }
+    }
+
+    /// A `CONNECT` tunnel to the target through the local proxy, for http
+    /// and https alike, so `exchange` is the same either way. No DNS here:
+    /// the proxy resolves the name, which on a network that only allows
+    /// the proxy is the only place that can.
+    async fn tunnel(&self, target: &Target, proxy: SocketAddr) -> Result<TcpStream, HttpError> {
+        let mut stream = match self
+            .heartbeat
+            .within(
+                "proxy connect",
+                self.connect_timeout,
+                TcpStream::connect(proxy),
+            )
+            .await
+        {
+            Err(_) | Ok(Err(_)) => return Err(HttpError::ProxyUnreachable),
+            Ok(Ok(stream)) => stream,
+        };
+
+        let authority = target.connect_authority();
+        let request = format!(
+            "CONNECT {authority} HTTP/1.1\r\nHost: {authority}\r\nUser-Agent: {USER_AGENT}\r\n\r\n"
+        );
+        let status = async {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            // naked: bounded by the "proxy CONNECT" within() below
+            stream.write_all(request.as_bytes()).await?;
+            // Byte by byte up to the blank line, so nothing of what the
+            // target sends after the tunnel opens is taken here.
+            let mut head = Vec::new();
+            let mut byte = [0u8; 1];
+            while !head.ends_with(b"\r\n\r\n") {
+                // naked: bounded by the "proxy CONNECT" within() below
+                if head.len() > 8192 || stream.read(&mut byte).await? == 0 {
+                    return Err(std::io::Error::new(
+                        ErrorKind::InvalidData,
+                        "the proxy's answer ended early",
+                    ));
+                }
+                head.push(byte[0]);
+            }
+            Ok(connect_status(&head))
+        };
+        match self
+            .heartbeat
+            .within("proxy CONNECT", self.connect_timeout, status)
+            .await
+        {
+            Err(_) => Err(HttpError::ConnectTimeout),
+            Ok(Err(_)) => Err(HttpError::ProxyUnreachable),
+            Ok(Ok(Some(200))) => Ok(stream),
+            Ok(Ok(Some(status))) => Err(HttpError::Proxy(status)),
+            Ok(Ok(None)) => Err(HttpError::ProxyUnreachable),
         }
     }
 
@@ -398,6 +481,28 @@ impl Target {
     }
 }
 
+impl Target {
+    /// `host:port` for a `CONNECT`, an IPv6 host in brackets.
+    fn connect_authority(&self) -> String {
+        if self.host.contains(':') {
+            format!("[{}]:{}", self.host, self.port)
+        } else {
+            format!("{}:{}", self.host, self.port)
+        }
+    }
+}
+
+/// The status of a proxy's answer to `CONNECT`: `HTTP/1.x NNN ...`.
+fn connect_status(head: &[u8]) -> Option<u16> {
+    let line = head.split(|byte| *byte == b'\n').next()?;
+    let line = std::str::from_utf8(line).ok()?;
+    let mut words = line.split_whitespace();
+    words
+        .next()
+        .filter(|version| version.starts_with("HTTP/"))?;
+    words.next()?.parse().ok()
+}
+
 fn seconds(value: i64) -> Duration {
     Duration::from_secs(value.max(0) as u64)
 }
@@ -553,6 +658,90 @@ mod tests {
             request.contains("user-agent: tessaro-agent\r\n"),
             "{request}"
         );
+    }
+
+    /// A proxy that answers the `CONNECT` with `answer` and, when that is a
+    /// 200, serves one plain HTTP response inside the tunnel. Hands back the
+    /// `CONNECT` it saw.
+    async fn proxy(
+        answer: &'static str,
+    ) -> (SocketAddr, tokio::sync::mpsc::UnboundedReceiver<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let address = listener.local_addr().expect("addr");
+        let (seen, requests) = tokio::sync::mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            let mut head = Vec::new();
+            let mut byte = [0u8; 1];
+            while !head.ends_with(b"\r\n\r\n") {
+                if socket.read(&mut byte).await.unwrap_or(0) == 0 {
+                    return;
+                }
+                head.push(byte[0]);
+            }
+            let _ = seen.send(String::from_utf8_lossy(&head).into_owned());
+            let _ = socket.write_all(answer.as_bytes()).await;
+            if answer.starts_with("HTTP/1.1 200") {
+                let mut buffer = [0u8; 1024];
+                let _ = socket.read(&mut buffer).await;
+                let _ = socket
+                    .write_all(b"HTTP/1.1 204 No Content\r\ncontent-length: 0\r\n\r\n")
+                    .await;
+                let _ = socket.read(&mut buffer).await;
+            }
+        });
+        (address, requests)
+    }
+
+    /// Through a proxy nothing is resolved here: the name goes to the proxy
+    /// in the `CONNECT`, and the request runs inside the tunnel.
+    #[tokio::test]
+    async fn a_proxy_gets_a_connect_for_the_name_and_the_request_goes_through_it() {
+        let (address, mut requests) = proxy("HTTP/1.1 200 Connection established\r\n\r\n").await;
+
+        let response = client()
+            .with_proxy(Some(address))
+            .fetch("http://kiosk.invalid:8080/health")
+            .await
+            .expect("response");
+
+        assert_eq!(response.status, 204);
+        let connect = requests.recv().await.expect("connect");
+        assert!(
+            connect.starts_with("CONNECT kiosk.invalid:8080 HTTP/1.1\r\n"),
+            "{connect}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_refused_tunnel_carries_the_proxys_status() {
+        let (address, _requests) =
+            proxy("HTTP/1.1 407 Proxy Authentication Required\r\ncontent-length: 0\r\n\r\n").await;
+
+        let result = client()
+            .with_proxy(Some(address))
+            .fetch("https://kiosk.invalid/")
+            .await;
+
+        assert_eq!(result, Err(HttpError::Proxy(407)));
+    }
+
+    #[tokio::test]
+    async fn a_proxy_that_is_not_there_says_so() {
+        let result = client()
+            .with_proxy(Some("127.0.0.1:1".parse().unwrap()))
+            .fetch("https://kiosk.invalid/")
+            .await;
+
+        assert_eq!(result, Err(HttpError::ProxyUnreachable));
+    }
+
+    #[test]
+    fn connect_answers_and_authorities() {
+        assert_eq!(connect_status(b"HTTP/1.0 200 OK\r\n\r\n"), Some(200));
+        assert_eq!(connect_status(b"garbage\r\n\r\n"), None);
+        let target = Target::parse("https://[fd00::1]/x").unwrap();
+        assert_eq!(target.connect_authority(), "[fd00::1]:443");
     }
 
     #[tokio::test]

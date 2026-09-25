@@ -38,7 +38,7 @@ same change as the behaviour it describes.
 | [docs/audio.md](docs/audio.md) | PipeWire units, how `audio.*` is applied, `auto` |
 | [docs/time.md](docs/time.md) | timedated and timesyncd, how `time.*` is applied, DHCP's NTP servers, the persistent clock, where `time show`'s numbers come from |
 | [docs/files.md](docs/files.md) | the `/data/files` store served at `/files/` |
-| [docs/networking.md](docs/networking.md) | NetworkManager, the managed profiles and their transactions, hotspot, ping, speed test |
+| [docs/networking.md](docs/networking.md) | NetworkManager, the managed profiles and their transactions, hotspot, ping, speed test, the proxy (local tinyproxy, what goes through it) |
 | [docs/updates.md](docs/updates.md) | in-place updates, `--repartition`, growing `/data` |
 | [docs/e2e.md](docs/e2e.md) | the qemu RSpec suite: running it, lanes, ports, harness quirks |
 | [docs/gui.md](docs/gui.md) | `tessaro-gui`: inner windows, keyboard, the node list, device pages per command group, workers and jobs, the VNC viewer |
@@ -249,8 +249,10 @@ recipe.
 * **Settings go through the registry** (`agent/protocol/src/keys.rs`) and are
   validated once at `config set`: no control characters, quotes, backslashes
   or `$`, because values end up in env files. Secrets live in
-  `secrets.json`, never `state.json`. The VNC credential is an image
-  property and must not become a setting.
+  `secrets.json`, never `state.json` - with the one deliberate exception of
+  `network.proxy.url`, whose password is stored as typed (see **Proxy** in
+  [docs/networking.md](docs/networking.md)); do not add a second. The VNC
+  credential is an image property and must not become a setting.
 * **`agent/client` never prints or prompts.** Both clients link it; a
   decision (pinning) is passed in, and warnings come back as
   `Session::notes`. Terminal output stays in `tessaro-ctl`.
@@ -288,7 +290,7 @@ same thing. Keep to these rules when adding a command or a setting:
   * `ssh`: shell access by key. `connect` and `keys list|revoke`.
   * `config`: the settings registry. `keys`, `get`, `set`, `unset`.
   * `network`: the device's network link. Addresses, interfaces, profiles,
-    WiFi, `ping` from the device, speed test.
+    WiFi, the proxy, `ping` from the device, speed test.
   * `storage`: the disk the device runs from. Partitions, free space,
     growing `/data`.
   * `screen`: the physical display. Screenshot, modes, confirming a mode,

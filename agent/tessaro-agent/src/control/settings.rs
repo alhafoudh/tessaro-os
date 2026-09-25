@@ -342,6 +342,27 @@ impl Control {
         let mut restarted = Vec::new();
         let mut after = None;
         if apply {
+            // The local proxy first, so a browser restarted for it below
+            // comes up with the proxy already there. Its config in /run is
+            // what decides: rendered means run it, removed means stop it.
+            if reads(Consumer::Proxy) && rendered.proxy_changed {
+                let unit = &self.paths.proxy_unit;
+                let run = self.paths.proxy_config.exists();
+                let outcome = if run {
+                    self.bus.restart(unit).await
+                } else {
+                    self.bus.stop(unit).await
+                };
+                if run && outcome.is_ok() {
+                    restarted.push(unit.clone());
+                }
+                if let Err(err) = outcome {
+                    return Reply::err(format!(
+                        "saved as revision {}, but the local proxy did not follow: {err}",
+                        state.revision
+                    ));
+                }
+            }
             if browser {
                 if let Err(err) = self.bus.restart(&self.paths.kiosk_unit).await {
                     return Reply::err(format!(

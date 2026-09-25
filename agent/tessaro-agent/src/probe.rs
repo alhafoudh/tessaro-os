@@ -49,6 +49,17 @@ impl<'a, H: HttpGet> Probe<'a, H> {
                     .to_string()
             }
             HttpError::Tls => "TLS handshake failed".to_string(),
+            HttpError::ProxyUnreachable => {
+                "the local proxy is not answering - see `tessaro-ctl network proxy show`"
+                    .to_string()
+            }
+            HttpError::Proxy(407) => {
+                "the proxy refused it: HTTP 407, check the user and password in network.proxy.url"
+                    .to_string()
+            }
+            HttpError::Proxy(status) => format!(
+                "the proxy could not reach it: HTTP {status} - `tessaro-ctl network proxy test`"
+            ),
             HttpError::Other(text) => text,
         }
     }

@@ -582,6 +582,7 @@ impl Control {
                 let command = Command::Speedtest {
                     max_size: None,
                     tests: None,
+                    direct: false,
                 };
                 // naked: collect() is under within()
                 (self.collect(command).await.map_err(fail), None)
@@ -708,7 +709,7 @@ impl Control {
             }
         }
         // naked: public_ip's every phase is under its own within()
-        match crate::net::public_ip(&crate::net::public_ip_client()).await {
+        match crate::net::public_ip(&crate::net::public_ip_client(self.proxy)).await {
             Ok(ip) => {
                 let ip = ip.to_string();
                 // naked: a file write under blocking()'s within()

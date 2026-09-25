@@ -62,6 +62,10 @@ impl BridgeMode {
 pub struct Config {
     pub kiosk_url: String,
     pub probe_url: String,
+    /// The device's local proxy, while network.proxy.url is set: what the
+    /// probe and the public address go through. A change to the setting
+    /// restarts the agent, so this holds for the life of the process.
+    pub proxy: Option<std::net::SocketAddr>,
 
     pub probe_interval: i64,
     pub probe_interval_fail: i64,
@@ -118,6 +122,8 @@ impl Config {
         Self {
             kiosk_url: string(env, "KIOSK_URL", ""),
             probe_url: string(env, "KIOSK_PROBE_URL", ""),
+            proxy: (!string(env, "KIOSK_PROXY_URL", "").trim().is_empty())
+                .then(|| crate::paths::proxy_listen(env)),
 
             probe_interval: int(env, "KIOSK_PROBE_INTERVAL", 30),
             probe_interval_fail: int(env, "KIOSK_PROBE_INTERVAL_FAIL", 10),

@@ -135,6 +135,7 @@ fn applies(consumers: &[Consumer]) -> String {
             Consumer::Audio => "audio",
             Consumer::Firmware => "firmware (next reboot)",
             Consumer::Time => "clock",
+            Consumer::Proxy => "local proxy (browser on switching)",
         })
         .collect::<Vec<_>>()
         .join(", ")

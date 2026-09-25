@@ -51,6 +51,11 @@ pub enum Consumer {
     /// system. Only systemd-timesyncd restarts, and only when its servers
     /// change; the browser follows `/etc/localtime` by itself.
     Time,
+    /// The device's local forwarding proxy, `tessaro-proxy.service`: its
+    /// config in `/run` is rendered again, and the unit restarts, or stops
+    /// when network.proxy.url is empty. The browser restarts only when the
+    /// proxy is switched on or off, which changes its policy.
+    Proxy,
 }
 
 /// Hardware a key needs. A key that names one is left out of `config keys`
@@ -118,6 +123,12 @@ pub enum Kind {
     Timezone,
     /// Host names or IP addresses, comma separated, or empty.
     Hosts,
+    /// An upstream proxy: `http://host:port` or `socks5://host:port`, with
+    /// an optional `user:password@`, or empty for none. See `parse_proxy`.
+    ProxyUrl,
+    /// What goes around the proxy, comma separated: host names, `.domain`
+    /// suffixes, IP addresses and networks (`10.0.0.0/8`).
+    Bypass,
     /// Not a setting: something the device reports - its address, its id.
     /// Listed with `config keys`, readable with `config get`, usable in
     /// browser.url, and refused by `config set`.
@@ -171,6 +182,14 @@ impl Kind {
                 "a timezone, e.g. Europe/Bratislava or UTC, from `tessaro-ctl time zones`".to_string()
             }
             Kind::Hosts => "host names or IP addresses, comma separated, or empty".to_string(),
+            Kind::ProxyUrl => {
+                "http://[user:password@]host:port or socks5://[user:password@]host:port, or empty; percent-encode $ \" ' \\ ` @ in a password"
+                    .to_string()
+            }
+            Kind::Bypass => {
+                "host names, .domain suffixes, IP addresses or networks (10.0.0.0/8), comma separated"
+                    .to_string()
+            }
             Kind::ReadOnly => "read-only: reported by the device, cannot be set".to_string(),
         }
     }
@@ -199,6 +218,9 @@ const NETWORK: &[Consumer] = &[Consumer::Network];
 const AUDIO: &[Consumer] = &[Consumer::Audio];
 const FIRMWARE: &[Consumer] = &[Consumer::Firmware];
 const TIME: &[Consumer] = &[Consumer::Time];
+/// The proxy keys: the local proxy, and the agent, whose probe and public
+/// address lookup go through it.
+const PROXY: &[Consumer] = &[Consumer::Proxy, Consumer::Agent];
 /// The node name: the agent's mDNS name, and the hotspot's SSID.
 const AGENT_AND_NETWORK: &[Consumer] = &[Consumer::Agent, Consumer::Network];
 
@@ -386,6 +408,14 @@ pub static KEYS: &[Key] = &[
     // fallback is runtime state in /run, so the saved mode stays client.
     seconds(WIFI_FALLBACK_AFTER, "KIOSK_WIFI_FALLBACK_AFTER", 0, 86400,
         "Seconds network.wifi.mode=client may go without connecting after boot before the device falls back to its hotspot until the next boot; 0 never."),
+    // The upstream proxy, through the device's local tinyproxy. The one
+    // setting that holds a password as typed: it is stored verbatim in
+    // state.json and shown by `config get`, by the operator's choice; the
+    // human-readable views mask it. Never written to generated.env.
+    key(PROXY_URL, "KIOSK_PROXY_URL", Kind::ProxyUrl, PROXY,
+        "The proxy everything reaches the internet through: http://host:port or socks5://host:port, optionally with user:password@; empty for none. `tessaro-ctl network proxy set`."),
+    key(PROXY_BYPASS, "KIOSK_PROXY_BYPASS", Kind::Bypass, PROXY,
+        "What goes around the proxy, comma separated: host names, .domain suffixes, IP addresses, networks like 192.168.0.0/16. Loopback always does."),
     // Read-only: what the device reports right now. `tessaro-ctl network
     // show` shows the same in full, per interface.
     live(ID, "The node id: systemd's app-specific machine id, never the machine id itself."),
@@ -430,6 +460,8 @@ pub const ID: &str = "device.id";
 pub const GPU_MEM: &str = "device.gpu_mem";
 pub const PUBLIC_IP: &str = "network.public_ip";
 pub const WIFI_FALLBACK_AFTER: &str = "network.wifi.fallback_after";
+pub const PROXY_URL: &str = "network.proxy.url";
+pub const PROXY_BYPASS: &str = "network.proxy.bypass";
 pub const AUDIO_OUTPUT: &str = "audio.output";
 pub const AUDIO_VOLUME: &str = "audio.volume";
 pub const AUDIO_MUTE: &str = "audio.mute";
@@ -963,7 +995,245 @@ pub fn validate(key: &Key, value: &str) -> Result<String, String> {
         Kind::Hosts => parse_hosts(value)
             .map(|hosts| hosts.join(","))
             .or_else(|why| fail(&why)),
+        Kind::ProxyUrl => {
+            if value.is_empty() {
+                return Ok(String::new());
+            }
+            parse_proxy(value)
+                .map(|proxy| proxy.to_string())
+                .or_else(|why| fail(&why))
+        }
+        Kind::Bypass => parse_bypass(value)
+            .map(|entries| entries.join(","))
+            .or_else(|why| fail(&why)),
     }
+}
+
+/// What a proxy speaks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProxyScheme {
+    Http,
+    Socks5,
+}
+
+impl ProxyScheme {
+    pub fn word(self) -> &'static str {
+        match self {
+            ProxyScheme::Http => "http",
+            ProxyScheme::Socks5 => "socks5",
+        }
+    }
+}
+
+/// network.proxy.url, taken apart. `user` and `password` are decoded; the
+/// `Display` form puts them back percent-encoded, as they are stored.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProxyUrl {
+    pub scheme: ProxyScheme,
+    pub host: String,
+    pub port: u16,
+    pub user: Option<String>,
+    pub password: Option<String>,
+}
+
+impl ProxyUrl {
+    /// The URL with the password as `***`, for anything a person reads.
+    pub fn masked(&self) -> String {
+        self.render(true)
+    }
+
+    /// `http user:pass@host:port`: the proxy as tinyproxy's `Upstream`
+    /// directive takes it, credentials decoded.
+    pub fn upstream(&self) -> String {
+        let credentials = match (&self.user, &self.password) {
+            (Some(user), Some(password)) => format!("{user}:{password}@"),
+            (Some(user), None) => format!("{user}:@"),
+            _ => String::new(),
+        };
+        format!(
+            "{} {credentials}{}:{}",
+            self.scheme.word(),
+            self.host,
+            self.port
+        )
+    }
+
+    fn render(&self, mask: bool) -> String {
+        let credentials = match (&self.user, &self.password) {
+            (Some(user), Some(_)) if mask => format!("{}:***@", userinfo_encode(user)),
+            (Some(user), Some(password)) => {
+                format!("{}:{}@", userinfo_encode(user), userinfo_encode(password))
+            }
+            (Some(user), None) => format!("{}@", userinfo_encode(user)),
+            _ => String::new(),
+        };
+        format!(
+            "{}://{credentials}{}:{}",
+            self.scheme.word(),
+            self.host,
+            self.port
+        )
+    }
+}
+
+impl std::fmt::Display for ProxyUrl {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.render(false))
+    }
+}
+
+/// The URL as a person should see it: the password masked. Anything that
+/// does not parse is shown as it is, since it has no password to hide.
+pub fn masked_proxy(value: &str) -> String {
+    parse_proxy(value)
+        .map(|proxy| proxy.masked())
+        .unwrap_or_else(|_| value.to_string())
+}
+
+/// `http://[user[:password]@]host:port` or `socks5://...`. The host is a
+/// name or an IPv4 address and the port is required: that is what
+/// tinyproxy's `Upstream` directive takes (`conf.c`: no IPv6 there). The
+/// user and password are percent-decoded; the user cannot hold `:` and
+/// neither can hold `@` or whitespace, which that directive cannot carry,
+/// and together they stay under the 255 bytes its Basic auth buffer holds.
+pub fn parse_proxy(value: &str) -> Result<ProxyUrl, String> {
+    let value = value.trim();
+    let (scheme, rest) = if let Some(rest) = value.strip_prefix("http://") {
+        (ProxyScheme::Http, rest)
+    } else if let Some(rest) = value.strip_prefix("socks5://") {
+        (ProxyScheme::Socks5, rest)
+    } else {
+        return Err("must start with http:// or socks5://".to_string());
+    };
+    let rest = rest.strip_suffix('/').unwrap_or(rest);
+    if rest.contains(['/', '?', '#']) {
+        return Err("a proxy URL has no path, only host:port".to_string());
+    }
+    let (userinfo, hostport) = match rest.rsplit_once('@') {
+        Some((userinfo, hostport)) => (Some(userinfo), hostport),
+        None => (None, rest),
+    };
+    let (host, port) = hostport
+        .rsplit_once(':')
+        .ok_or_else(|| "needs a port, as in http://10.0.0.5:3128".to_string())?;
+    let host = host.to_ascii_lowercase();
+    if host.starts_with('[') || host.contains(':') {
+        return Err("an IPv6 proxy address is not supported; use its host name".to_string());
+    }
+    if host.parse::<Ipv4Addr>().is_err() && !is_hostname(&host) {
+        return Err(format!("{host} is not a host name or an IPv4 address"));
+    }
+    let port = match port.parse::<u16>() {
+        Ok(port) if port > 0 => port,
+        _ => return Err(format!("{port} is not a port")),
+    };
+    let (user, password) = match userinfo {
+        None => (None, None),
+        Some(userinfo) => {
+            let (user, password) = match userinfo.split_once(':') {
+                Some((user, password)) => (user, Some(password)),
+                None => (userinfo, None),
+            };
+            let user = percent_decode(user)?;
+            let password = password.map(percent_decode).transpose()?;
+            if user.is_empty() {
+                return Err("the user name is empty".to_string());
+            }
+            let bad = |text: &str| {
+                text.chars()
+                    .any(|ch| ch == '@' || ch.is_whitespace() || ch.is_control())
+            };
+            if user.contains(':') || bad(&user) {
+                return Err("the user name cannot contain : @ or spaces".to_string());
+            }
+            if password.as_deref().is_some_and(bad) {
+                return Err("the password cannot contain @ or spaces".to_string());
+            }
+            if user.len() + password.as_deref().map_or(0, str::len) > 250 {
+                return Err(
+                    "the user name and password are too long together (250 bytes)".to_string(),
+                );
+            }
+            (Some(user), password)
+        }
+    };
+    Ok(ProxyUrl {
+        scheme,
+        host,
+        port,
+        user,
+        password,
+    })
+}
+
+/// `%XX` escapes to the bytes they stand for, as UTF-8.
+fn percent_decode(text: &str) -> Result<String, String> {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut at = 0;
+    while at < bytes.len() {
+        if bytes[at] == b'%' {
+            let hex = text
+                .get(at + 1..at + 3)
+                .and_then(|hex| u8::from_str_radix(hex, 16).ok())
+                .ok_or_else(|| format!("{text}: a % must be followed by two hex digits"))?;
+            out.push(hex);
+            at += 3;
+        } else {
+            out.push(bytes[at]);
+            at += 1;
+        }
+    }
+    String::from_utf8(out).map_err(|_| format!("{text}: the %-escapes are not UTF-8"))
+}
+
+/// Userinfo as it goes back into a URL: unreserved characters and the
+/// sub-delims that need no escaping pass; `%`, `:`, `@` and everything a
+/// setting value may not hold are escaped.
+fn userinfo_encode(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for byte in text.bytes() {
+        if byte.is_ascii_alphanumeric() || b"-._~!&()*+,;=".contains(&byte) {
+            out.push(byte as char);
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    out
+}
+
+/// network.proxy.bypass: host names, `.domain` suffixes, IP addresses and
+/// networks, as tinyproxy's `Upstream none` matches them (`hostspec.c`:
+/// a name exactly or, with a leading dot, as a suffix; an address under
+/// its mask). Lower-cased, without repeats.
+pub fn parse_bypass(value: &str) -> Result<Vec<String>, String> {
+    let mut entries: Vec<String> = Vec::new();
+    for item in value.split(|ch: char| ch == ',' || ch.is_whitespace()) {
+        if item.is_empty() {
+            continue;
+        }
+        let entry = item.to_ascii_lowercase();
+        let ok = if let Some(domain) = entry.strip_prefix('.') {
+            is_hostname(domain)
+        } else if let Some((address, prefix)) = entry.split_once('/') {
+            match address.parse::<IpAddr>() {
+                Ok(IpAddr::V4(_)) => prefix.parse::<u8>().is_ok_and(|bits| bits <= 32),
+                Ok(IpAddr::V6(_)) => prefix.parse::<u8>().is_ok_and(|bits| bits <= 128),
+                Err(_) => false,
+            }
+        } else {
+            entry.parse::<IpAddr>().is_ok() || is_hostname(&entry)
+        };
+        if !ok {
+            return Err(format!(
+                "{item} is not a host name, a .domain, an IP address or a network"
+            ));
+        }
+        if !entries.contains(&entry) {
+            entries.push(entry);
+        }
+    }
+    Ok(entries)
 }
 
 /// A name as the tz database spells them: `UTC`, `Europe/Bratislava`,
@@ -1660,6 +1930,73 @@ mod tests {
         assert_eq!(check(NTP_SERVERS, "").unwrap(), "");
         for bad in ["-bad.test", "a..b", "ntp_1.test", "host.test."] {
             assert!(check(NTP_SERVERS, bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn proxy_urls_are_http_or_socks5_with_optional_credentials() {
+        assert_eq!(check(PROXY_URL, "").unwrap(), "");
+        assert_eq!(
+            check(PROXY_URL, " http://10.0.0.5:3128/ ").unwrap(),
+            "http://10.0.0.5:3128"
+        );
+        assert_eq!(
+            check(PROXY_URL, "socks5://Proxy.Corp.test:1080").unwrap(),
+            "socks5://proxy.corp.test:1080"
+        );
+        let proxy = parse_proxy("http://jan:pa%24%24w0rd@proxy.test:8080").unwrap();
+        assert_eq!(proxy.scheme, ProxyScheme::Http);
+        assert_eq!(proxy.user.as_deref(), Some("jan"));
+        assert_eq!(proxy.password.as_deref(), Some("pa$$w0rd"));
+        assert_eq!(proxy.upstream(), "http jan:pa$$w0rd@proxy.test:8080");
+        assert_eq!(proxy.masked(), "http://jan:***@proxy.test:8080");
+        // Stored percent-encoded again, so the value itself never holds a $.
+        assert_eq!(
+            check(PROXY_URL, "http://jan:pa%24%24w0rd@proxy.test:8080").unwrap(),
+            "http://jan:pa%24%24w0rd@proxy.test:8080"
+        );
+        assert_eq!(
+            parse_proxy("socks5://u@h.test:1").unwrap().upstream(),
+            "socks5 u:@h.test:1"
+        );
+        assert_eq!(masked_proxy("http://h.test:1"), "http://h.test:1");
+        for bad in [
+            "https://h.test:3128",
+            "h.test:3128",
+            "http://h.test",
+            "http://h.test:0",
+            "http://h.test:3128/path",
+            "http://[::1]:3128",
+            "http://u%3Ax:p@h.test:1",
+            "http://u:p%40q@h.test:1",
+            "http://u:p%20q@h.test:1",
+            "http://:p@h.test:1",
+            "http://u:p%zz@h.test:1",
+            "http://u:pa$s@h.test:1",
+        ] {
+            assert!(check(PROXY_URL, bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn the_bypass_list_is_what_tinyproxy_matches() {
+        assert_eq!(
+            check(
+                PROXY_BYPASS,
+                "Intranet.test, .corp.test 10.0.0.0/8,192.168.1.5,fd00::/8"
+            )
+            .unwrap(),
+            "intranet.test,.corp.test,10.0.0.0/8,192.168.1.5,fd00::/8"
+        );
+        for bad in ["10.0.0.0/33", "host/8", ".", "a..b", "*.corp.test"] {
+            assert!(check(PROXY_BYPASS, bad).is_err(), "{bad}");
+        }
+        for name in [PROXY_URL, PROXY_BYPASS] {
+            assert_eq!(
+                find(name).unwrap().consumers,
+                [Consumer::Proxy, Consumer::Agent],
+                "{name}"
+            );
         }
     }
 

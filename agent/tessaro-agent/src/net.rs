@@ -29,9 +29,11 @@ pub const TRACE_URL: &str = "https://1.1.1.1/cdn-cgi/trace";
 
 /// The client `public_ip` is asked through: 5s to connect, 5s to answer, and
 /// a body no bigger than the trace's few hundred bytes. Not the state
-/// machine's, so it pledges nothing to the watchdog.
-pub fn public_ip_client() -> HyperHttp {
-    HyperHttp::new(5, 5, 4096, crate::watchdog::Heartbeat::detached())
+/// machine's, so it pledges nothing to the watchdog. Through the local proxy
+/// while there is one, so the address is the one the internet sees the
+/// device at through it.
+pub fn public_ip_client(proxy: Option<std::net::SocketAddr>) -> HyperHttp {
+    HyperHttp::new(5, 5, 4096, crate::watchdog::Heartbeat::detached()).with_proxy(proxy)
 }
 
 /// The address the internet sees this device at, from the `ip=` line of
@@ -134,6 +136,9 @@ pub fn snapshot(paths: &Paths) -> Net {
             .unwrap_or_default(),
         interfaces,
         public_ip: cached_public_ip(paths),
+        // A setting, not something the kernel knows: the control plane
+        // fills it in.
+        proxy: None,
     }
 }
 
@@ -382,6 +387,7 @@ eth0\t0000000A\t00000000\t0001\t0\t0\t100\t00FFFFFF\t0\t0\t0
                 ),
             ],
             public_ip: Some("203.0.113.9".to_string()),
+            proxy: None,
         };
 
         let values = values(&net);
@@ -421,6 +427,7 @@ eth0\t0000000A\t00000000\t0001\t0\t0\t100\t00FFFFFF\t0\t0\t0
             dns: Vec::new(),
             interfaces: Vec::new(),
             public_ip: None,
+            proxy: None,
         };
         let values = values(&net);
         assert_eq!(values["network.ip"], "");
@@ -441,7 +448,7 @@ eth0\t0000000A\t00000000\t0001\t0\t0\t100\t00FFFFFF\t0\t0\t0
     #[tokio::test]
     #[ignore = "needs the internet"]
     async fn cloudflare_answers_with_an_address() {
-        let ip = public_ip(&public_ip_client())
+        let ip = public_ip(&public_ip_client(None))
             .await
             .expect("the trace answers");
         assert!(!ip.is_loopback());

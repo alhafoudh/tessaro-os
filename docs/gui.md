@@ -139,7 +139,7 @@ applies and stays, Default unsets.**
 | --- | --- |
 | Overview | `device status` and `id`, systemd units, `device ping`, `device factory-reset`, `browser navigate`, `browser reload`, `browser clear-cache`, `browser maintenance`, `browser debug`, `browser zoom`, `browser devtools` (a job holding the tunnel until Cancel), `browser inject`, `browser bridge`, `browser eval` (results in the page's output) |
 | Screen | `screen modes` with "use this mode", `screen confirm`, `screen screenshot` with a 3s live refresh and Save, `screen power`, `screen keyboard` |
-| Network | `network show` and interfaces, `network last`, `network ping`, `network speedtest`, `network profiles list` and `show` |
+| Network | `network show` and interfaces, `network last`, `network ping`, `network speedtest` (with "Bypass the proxy"), `network proxy set`, `off` and `test`, `network profiles list` and `show` |
 | WiFi | `network wifi status`, `scan`, `join`, `hotspot-password` |
 | Storage | `storage show`, partitions and filesystems, `storage grow` (check first) |
 | Audio | `audio show`, outputs and inputs, choosing one, volume, mute, `audio test` for the tone and the recording |

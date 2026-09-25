@@ -10,15 +10,20 @@
 //! not have to be there for the end. When the change takes this very
 //! connection away, which re-addressing the link it came in on does, the
 //! answer never arrives; `network last` asks what happened.
+//!
+//! `network proxy set|off` are a plain `config set` of network.proxy.*:
+//! not a network change, so nothing is verified or rolled back.
 
+use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use anstream::{eprintln, println};
 use clap::{Args, Subcommand, ValueEnum};
 use protocol::{
-    speedtest_size_label, Applied, ChangeOutcome, Command, Direction, Done, HotspotCredentials,
-    Net, NetAddress, NetChange, NetInterface, NetProfile, NetProfileDetail, PingEvent, Secret,
-    SpeedtestEvent, Verify, WifiNetwork, WifiSecurity, WifiStatus,
+    keys, speedtest_size_label, Applied, ChangeOutcome, Command, Direction, Done,
+    HotspotCredentials, Net, NetAddress, NetChange, NetInterface, NetProfile, NetProfileDetail,
+    PingEvent, ProxyStatus, ProxyTested, Secret, SpeedtestEvent, Verify, WifiNetwork, WifiSecurity,
+    WifiStatus,
 };
 use serde_json::json;
 
@@ -65,6 +70,10 @@ pub enum NetworkCmd {
     /// `config set network.wifi.mode=hotspot` goes back to the hotspot.
     #[command(subcommand)]
     Wifi(WifiCmd),
+    /// The proxy the device reaches the internet through: the browser, the
+    /// reachability probe, the public address and the speed test.
+    #[command(subcommand)]
+    Proxy(ProxyCmd),
     /// Measure the device's internet connection against speed.cloudflare.com:
     /// latency, then download and upload at growing payload sizes.
     ///
@@ -80,7 +89,41 @@ pub enum NetworkCmd {
         /// Samples per payload size.
         #[arg(long, default_value_t = protocol::SPEEDTEST_DEFAULT_TESTS)]
         tests: u32,
+        /// Go around network.proxy.url, straight out: the link itself rather
+        /// than the proxy. Nothing without a proxy.
+        #[arg(long)]
+        no_proxy: bool,
     },
+}
+
+#[derive(Subcommand)]
+pub enum ProxyCmd {
+    /// The proxy (its password masked), what bypasses it, and the device's
+    /// local proxy that carries it.
+    Show,
+    /// Send everything through URL: http://host:port or socks5://host:port,
+    /// with user:password@ in it if the proxy wants a login. A password
+    /// with $ " ' \ ` or @ in it is written percent-encoded (%24 for $).
+    /// The same as `tessaro-ctl config set network.proxy.url=URL`; the
+    /// browser restarts when the proxy is switched on.
+    ///
+    ///   tessaro-ctl network proxy set http://10.0.0.5:3128
+    ///   tessaro-ctl network proxy set 'http://jan:s3cret@proxy.corp.test:8080' --bypass .corp.test,10.0.0.0/8
+    ///   tessaro-ctl network proxy set socks5://10.0.0.5:1080
+    Set {
+        url: String,
+        /// What goes around the proxy, comma separated: host names,
+        /// .domain suffixes, IP addresses and networks. Sets
+        /// network.proxy.bypass in the same change.
+        #[arg(long)]
+        bypass: Option<String>,
+    },
+    /// Stop using a proxy: everything goes straight out again. The browser
+    /// restarts.
+    Off,
+    /// Fetch Cloudflare's trace through the proxy, from the device: the
+    /// address the internet sees it at, or why the proxy did not get there.
+    Test,
 }
 
 #[derive(Subcommand)]
@@ -162,16 +205,23 @@ pub struct VerifyArg {
     pub verify: Verify,
 }
 
-fn speedtest(session: &mut Session, json: bool, max_size: u64, tests: u32) -> Result<(), String> {
+fn speedtest(
+    session: &mut Session,
+    json: bool,
+    max_size: u64,
+    tests: u32,
+    direct: bool,
+) -> Result<(), String> {
     if !json {
         eprintln!(
             "{}",
             paint(
                 style::MUTED,
                 format!(
-                    "{}: measuring against speed.cloudflare.com, up to {} per sample...",
+                    "{}: measuring against speed.cloudflare.com, up to {} per sample{}...",
                     session.node.name,
-                    speedtest_size_label(max_size)
+                    speedtest_size_label(max_size),
+                    if direct { ", around any proxy" } else { "" }
                 )
             )
         );
@@ -180,6 +230,7 @@ fn speedtest(session: &mut Session, json: bool, max_size: u64, tests: u32) -> Re
         Command::Speedtest {
             max_size: Some(max_size),
             tests: Some(tests),
+            direct,
         },
         json,
         |step: SpeedtestEvent| println!("{}", speedtest_line(&step)),
@@ -280,6 +331,41 @@ fn speedtest_line(step: &SpeedtestEvent) -> String {
     }
 }
 
+fn show_proxy(status: &ProxyStatus) {
+    let row = style::row;
+    match &status.url {
+        Some(url) => row("proxy", &paint(style::HEADING, url)),
+        None => row(
+            "proxy",
+            &paint(style::MUTED, "(none: everything goes straight out)"),
+        ),
+    }
+    if status.url.is_some() {
+        row(
+            "bypass",
+            &if status.bypass.is_empty() {
+                paint(style::MUTED, "(loopback only)")
+            } else {
+                status.bypass.join(", ")
+            },
+        );
+    }
+    row(
+        "local proxy",
+        &format!(
+            "{} {}",
+            status.listen,
+            paint(style::unit_state(&status.unit), &status.unit)
+        ),
+    );
+    let hint = if status.url.is_some() {
+        "tessaro-ctl network proxy test"
+    } else {
+        "tessaro-ctl network proxy set http://HOST:PORT"
+    };
+    println!("\n{}", paint(style::CMD, hint));
+}
+
 fn show_net(net: &Net) {
     let primary = net
         .interface
@@ -304,6 +390,9 @@ fn show_net(net: &Net) {
     );
     row("gateway", net.gateway.as_ref().unwrap_or(&none));
     row("public ip", net.public_ip.as_ref().unwrap_or(&none));
+    if let Some(proxy) = &net.proxy {
+        row("proxy", proxy);
+    }
     row(
         "dns",
         &if net.dns.is_empty() {
@@ -409,7 +498,44 @@ pub fn run(session: &mut Session, command: NetworkCmd, json: bool) -> Result<(),
                 }
             })
         }
-        NetworkCmd::Speedtest { max_size, tests } => speedtest(session, json, max_size, tests),
+        NetworkCmd::Speedtest {
+            max_size,
+            tests,
+            no_proxy,
+        } => speedtest(session, json, max_size, tests, no_proxy),
+        NetworkCmd::Proxy(ProxyCmd::Show) => {
+            let status: ProxyStatus = session.call(Command::ProxyStatus)?;
+            print(json, &status, || show_proxy(&status))
+        }
+        NetworkCmd::Proxy(ProxyCmd::Set { url, bypass }) => {
+            keys::parse_proxy(&url).map_err(|err| format!("{}: {err}", keys::PROXY_URL))?;
+            let mut values = BTreeMap::from([(keys::PROXY_URL.to_string(), url)]);
+            if let Some(bypass) = bypass {
+                values.insert(keys::PROXY_BYPASS.to_string(), bypass);
+            }
+            let applied = crate::set(session, values)?;
+            print(json, &applied, || show_applied(&applied, false))
+        }
+        NetworkCmd::Proxy(ProxyCmd::Off) => {
+            let values = BTreeMap::from([(keys::PROXY_URL.to_string(), String::new())]);
+            let applied = crate::set(session, values)?;
+            print(json, &applied, || show_applied(&applied, false))
+        }
+        NetworkCmd::Proxy(ProxyCmd::Test) => {
+            let tested: ProxyTested = session.call(Command::ProxyTest)?;
+            print(json, &tested, || match (&tested.ip, &tested.error) {
+                (Some(ip), _) => println!(
+                    "{} {}",
+                    paint(style::OK, "through the proxy the internet sees"),
+                    paint(style::HEADING, ip)
+                ),
+                (None, error) => println!(
+                    "{} {}",
+                    paint(style::BAD, "the proxy did not get through:"),
+                    error.as_deref().unwrap_or("no answer")
+                ),
+            })
+        }
         NetworkCmd::Profiles(ProfilesCmd::List) => {
             let profiles: Vec<NetProfile> = session.call(Command::NetProfiles)?;
             print(json, &profiles, || show_profiles(&profiles))

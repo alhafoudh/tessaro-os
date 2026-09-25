@@ -183,6 +183,9 @@ pub struct Control {
     /// The kiosk URL, expanded, that this agent process started with and is
     /// driving the browser to. It never changes: a new one needs a restart.
     agent_url: String,
+    /// The local proxy while network.proxy.url is set, as this agent process
+    /// started with it; a change restarts the agent (`Consumer::Agent`).
+    proxy: Option<SocketAddr>,
     updates: Arc<Updates>,
     files: Arc<Files>,
     /// Held by the thread running a speed test, for as long as it runs.
@@ -210,9 +213,11 @@ impl Control {
         identity: Identity,
         shutdown: watch::Receiver<bool>,
         agent_url: String,
+        proxy: Option<SocketAddr>,
     ) -> Arc<Self> {
         Arc::new(Self {
             agent_url,
+            proxy,
             updates: Updates::new(Arc::clone(&log), paths.clone()),
             files: Files::new(Arc::clone(&log), paths.clone()),
             network: Network::new(Arc::clone(&log), paths.clone()),
@@ -251,8 +256,12 @@ impl Control {
                 command: journal(follow, unit.as_deref(), lines)?,
                 follow,
             }),
-            Command::Speedtest { max_size, tests } => self
-                .speedtest(caller, max_size, tests)
+            Command::Speedtest {
+                max_size,
+                tests,
+                direct,
+            } => self
+                .speedtest(caller, max_size, tests, direct)
                 .map(Stream::Speedtest),
             Command::StorageGrow { check } => self.storage_grow(caller, check).map(Stream::Grow),
             Command::NetPing {
@@ -310,13 +319,23 @@ impl Control {
         caller: &Caller,
         max_size: Option<u64>,
         tests: Option<u32>,
+        direct: bool,
     ) -> Result<tokio::sync::mpsc::Receiver<speedtest::Step>, String> {
-        let plan = speedtest::Plan::new(max_size, tests)?;
+        let mut plan = speedtest::Plan::new(max_size, tests)?;
+        // Through the local proxy while there is one, unless asked not to.
+        plan.proxy = self.proxy.filter(|_| !direct);
         let lock = Arc::clone(&self.speedtest)
             .try_lock_owned()
             .map_err(|_| "a speed test is already running on this device".to_string())?;
-        self.log
-            .info(format!("speed test requested by {}", caller.describe()));
+        self.log.info(format!(
+            "speed test requested by {}{}",
+            caller.describe(),
+            match plan.proxy {
+                Some(_) => ", through the proxy",
+                None if direct => ", around the proxy",
+                None => "",
+            }
+        ));
         Ok(speedtest::start(plan, lock, Arc::clone(&self.log)))
     }
 
@@ -509,6 +528,8 @@ impl Control {
                 .await
                 .map(Done::new)
                 .into(),
+            Command::ProxyStatus => self.proxy_status().await.into(),
+            Command::ProxyTest => Reply::ok(self.proxy_test().await),
         }
     }
 
@@ -576,10 +597,71 @@ impl Control {
         // naked: the lookup's every phase is under its own within()
         self.refresh_public_ip_now().await;
         let paths = self.paths.clone();
-        blocking("reading the network", move || {
+        let mut net = blocking("reading the network", move || {
             Ok(crate::net::snapshot(&paths))
         })
-        .await
+        .await?;
+        net.proxy = self.proxy_setting().await?.map(|(url, _)| url);
+        Ok(net)
+    }
+
+    /// network.proxy.url masked and network.proxy.bypass, as set now;
+    /// `None` without a proxy.
+    async fn proxy_setting(&self) -> Result<Option<(String, Vec<String>)>, String> {
+        let state = self.read_state().await?;
+        let value =
+            |name: &str| state::setting(&state.settings, &self.defaults, name).unwrap_or_default();
+        let url = value(keys::PROXY_URL);
+        if url.trim().is_empty() {
+            return Ok(None);
+        }
+        let bypass = keys::parse_bypass(&value(keys::PROXY_BYPASS)).unwrap_or_default();
+        Ok(Some((keys::masked_proxy(&url), bypass)))
+    }
+
+    async fn proxy_status(&self) -> Result<protocol::ProxyStatus, String> {
+        let setting = self.proxy_setting().await?;
+        Ok(protocol::ProxyStatus {
+            bypass: setting
+                .as_ref()
+                .map(|(_, bypass)| bypass.clone())
+                .unwrap_or_default(),
+            url: setting.map(|(url, _)| url),
+            listen: self.paths.proxy_listen.to_string(),
+            unit: self.bus.active_state(&self.paths.proxy_unit).await,
+        })
+    }
+
+    /// Cloudflare's trace through the local proxy, whether or not this agent
+    /// started with one - a proxy set a moment ago is tested before the
+    /// restarted agent is up. Answered either way, with what went wrong.
+    async fn proxy_test(&self) -> protocol::ProxyTested {
+        let failed = |error: String| protocol::ProxyTested {
+            ip: None,
+            error: Some(error),
+        };
+        match self.proxy_setting().await {
+            Ok(Some(_)) => {}
+            Ok(None) => {
+                return failed("no proxy is set; `tessaro-ctl network proxy set URL`".to_string())
+            }
+            Err(err) => return failed(err),
+        }
+        let http = crate::net::public_ip_client(Some(self.paths.proxy_listen));
+        // naked: public_ip's every phase is under its own within()
+        match crate::net::public_ip(&http).await {
+            Ok(ip) => {
+                self.log.info(format!("proxy test: the internet sees {ip}"));
+                protocol::ProxyTested {
+                    ip: Some(ip.to_string()),
+                    error: None,
+                }
+            }
+            Err(err) => {
+                self.log.info(format!("proxy test failed: {err}"));
+                failed(err)
+            }
+        }
     }
 
     async fn storage(&self) -> Result<protocol::Storage, String> {
@@ -1018,6 +1100,7 @@ mod tests {
             ("KIOSK_ASOUND_CARDS", at("asound-cards")),
             // Never this host's clock.
             ("KIOSK_MANAGE_CLOCK", "0".to_string()),
+            ("KIOSK_PROXY_CONFIG", at("tinyproxy.conf")),
             ("KIOSK_TIMESYNCD_DROPIN", at("timesyncd.conf")),
         ]
         .into_iter()
@@ -1073,6 +1156,7 @@ mod tests {
             },
             shutdown,
             "http://127.0.0.1/".to_string(),
+            None,
         );
 
         Fixture {

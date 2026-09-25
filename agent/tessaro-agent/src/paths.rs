@@ -6,6 +6,7 @@
 //! `/run` are not ours to write (`mise run agent:integration` points them all
 //! into a temporary directory).
 
+use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use crate::config::Env;
@@ -108,6 +109,23 @@ pub struct Paths {
     /// rendered from the settings at every start and never lands on the
     /// `/etc` overlay.
     pub timesyncd_dropin: PathBuf,
+    /// The local proxy's config, rendered from network.proxy.url and
+    /// .bypass; absent without a proxy, which keeps its unit from starting.
+    /// In `/run`: it holds the upstream's credentials, and is rendered again
+    /// at every boot.
+    pub proxy_config: PathBuf,
+    pub proxy_unit: String,
+    /// Where the local proxy listens: what Chromium's policy, the probe and
+    /// the speed test are pointed at.
+    pub proxy_listen: SocketAddr,
+}
+
+/// The local proxy's address: `KIOSK_PROXY_LISTEN`, else 127.0.0.1:3128.
+/// Loopback always, so nothing off the device can use it.
+pub fn proxy_listen(env: &dyn Env) -> SocketAddr {
+    env.get("KIOSK_PROXY_LISTEN")
+        .and_then(|listen| listen.parse().ok())
+        .unwrap_or_else(|| SocketAddr::from(([127, 0, 0, 1], 3128)))
 }
 
 impl Paths {
@@ -175,6 +193,9 @@ impl Paths {
                 "KIOSK_TIMESYNCD_DROPIN",
                 "/run/systemd/timesyncd.conf.d/50-tessaro.conf",
             ),
+            proxy_config: path("KIOSK_PROXY_CONFIG", "/run/tessaro-proxy/tinyproxy.conf"),
+            proxy_unit: text("KIOSK_PROXY_UNIT", "tessaro-proxy.service"),
+            proxy_listen: proxy_listen(env),
         }
     }
 
