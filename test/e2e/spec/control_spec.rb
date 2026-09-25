@@ -62,37 +62,38 @@ module AgentE2E
       expect(guest.kiosk_pid).to eq(browser), "the browser was restarted"
     end
 
-    # A zoom is a smaller viewport in CSS pixels drawn at a larger scale, so
-    # the page's innerWidth is what moves, as with Ctrl+/- in Chrome.
-    it "zoom: browser zoom shrinks the page's viewport without restarting the browser; 100 puts it back",
-       :reconfigure do
-      width = -> { quietly { cdp.command("Runtime.evaluate", expression: "window.innerWidth", returnByValue: true) }
-                     .dig("result", "value").to_i }
-      base = width.call
+    # Chrome's Ctrl+/- zoom: the page sees a larger devicePixelRatio and a
+    # viewport that much smaller in CSS pixels. It is read from the profile at
+    # start, so the browser restarts each way; nil while it is down.
+    it "zoom: browser zoom restarts the browser into Chrome's page zoom; 100 puts it back", :reconfigure do
+      window = lambda do
+        quietly { cdp.command("Runtime.evaluate", expression: "[devicePixelRatio, innerWidth]", returnByValue: true) }
+          .dig("result", "value")
+      rescue AgentE2E::Failure, SystemCallError, IOError
+        nil
+      end
+      ratio, width = window.call
+      wait_for_window = lambda do |want_ratio, want_width, seconds|
+        step "wait up to #{seconds}s for devicePixelRatio #{want_ratio} and innerWidth #{want_width}"
+        deadline = Time.now + seconds
+        seen = window.call
+        until (seen && (seen[0] - want_ratio).abs < 0.01 && (seen[1] - want_width).abs <= 1) || Time.now > deadline
+          sleep 1
+          seen = window.call
+        end
+        expect(seen).not_to be_nil, "no page after the browser restart"
+        expect(seen[0]).to be_within(0.01).of(want_ratio)
+        expect(seen[1]).to be_within(1).of(want_width)
+      end
       browser = guest.kiosk_pid
 
       out = guest.run("tessaro-ctl browser zoom 150")
-      expect(out).to include("restarting tessaro-agent.service")
-      journal.wait_for(/^page zoom 150% \(viewport /, timeout: 30)
-      want = (base / 1.5).round
-      step "wait up to 10s for innerWidth #{want}"
-      deadline = Time.now + 10
-      seen = width.call
-      until seen == want || Time.now > deadline
-        sleep 1
-        seen = width.call
-      end
-      expect(seen).to eq(want)
+      expect(out).to include("restarting tessaro-kiosk.service")
+      wait_for_window.call(ratio * 1.5, (width / 1.5).round, 60)
+      expect(guest.kiosk_pid).not_to eq(browser), "the browser was not restarted"
 
       guest.run("tessaro-ctl browser zoom 100")
-      step "wait up to 30s for innerWidth #{base} again"
-      deadline = Time.now + 30
-      until seen == base || Time.now > deadline
-        sleep 1
-        seen = width.call
-      end
-      expect(seen).to eq(base)
-      expect(guest.kiosk_pid).to eq(browser), "the browser was restarted"
+      wait_for_window.call(ratio, width, 60)
     end
 
     # The probe URL points at something that does not answer, so the case

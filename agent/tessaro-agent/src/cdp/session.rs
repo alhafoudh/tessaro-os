@@ -68,8 +68,6 @@ pub struct SessionConfig {
     pub ping: Duration,
     pub reconnect_max: Duration,
     pub device_access: bool,
-    /// Page zoom in percent (`browser.zoom`); 100 sends nothing.
-    pub zoom: u16,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -205,7 +203,6 @@ pub fn spawn(
         generation: 0,
         last_target: None,
         page_gone: AtomicBool::new(false),
-        zoom_told: false,
     };
     tokio::spawn(driver.run());
 
@@ -221,13 +218,6 @@ struct Link {
     ws: WebSocketStream<TcpStream>,
     next_id: u64,
     main_frame: Option<String>,
-    /// The page's own window, before the zoom: the override's base. `None`
-    /// until asked - a session that came up on a sad tab asks once the tab
-    /// is back.
-    zoom_base: Option<protocol::Window>,
-    /// The id of that question, sent from the serve loop, whose answer
-    /// applies the zoom.
-    zoom_probe: Option<u64>,
 }
 
 struct Driver {
@@ -246,9 +236,6 @@ struct Driver {
     /// target, is on a page that is no longer what it was. Atomic only so the
     /// `&self` priming path can set it.
     page_gone: AtomicBool,
-    /// The zoom has been reported once: every later session re-applies it
-    /// quietly.
-    zoom_told: bool,
 }
 
 impl Driver {
@@ -338,8 +325,6 @@ impl Driver {
             ws,
             next_id: 0,
             main_frame: None,
-            zoom_base: None,
-            zoom_probe: None,
         };
         self.prime(&mut link).await?;
 
@@ -432,116 +417,9 @@ impl Driver {
             }
         }
 
-        if self.config.zoom != 100 {
-            self.apply_zoom(link).await;
-        }
-
         // Runtime.enable is deliberately not sent: Runtime.evaluate works
         // without it, and enabling it only puts console noise on the wire.
         Ok(())
-    }
-
-    /// `browser.zoom`, as an emulation override on this session. The override
-    /// belongs to the DevTools session - Chromium drops it when the client
-    /// goes - so every session applies it again, and the window the page
-    /// reports here is always its own, never a previous zoom. A page that
-    /// will not be zoomed stays at 100% rather than costing the session.
-    async fn apply_zoom(&mut self, link: &mut Link) {
-        let asked = self
-            .rpc(link, "Runtime.evaluate", protocol::window_query())
-            .await;
-        match self.zoom_from(link, asked) {
-            Ok(params) => {
-                let applied = self
-                    .rpc(link, "Emulation.setDeviceMetricsOverride", params.clone())
-                    .await;
-                match applied {
-                    Ok(_) => self.tell_zoom(link, &params),
-                    Err(err) => self.log.info(format!("page zoom not applied: {err}")),
-                }
-            }
-            Err(err) => self.log.info(format!("page zoom not applied: {err}")),
-        }
-    }
-
-    /// The override for the page's answer to `window_query`, remembering the
-    /// window for a later crash.
-    fn zoom_from(&self, link: &mut Link, answer: Reply) -> Result<Value, String> {
-        let result = answer.map_err(|err| format!("the page's window: {err}"))?;
-        let window = protocol::window(&result)
-            .ok_or_else(|| format!("the page reported no usable window ({result})"))?;
-        link.zoom_base = Some(window);
-        Ok(protocol::zoom_override(&window, self.config.zoom))
-    }
-
-    fn tell_zoom(&mut self, link: &Link, params: &Value) {
-        let Some(window) = link.zoom_base else {
-            return;
-        };
-        let line = format!(
-            "page zoom {}% (viewport {}x{} at scale {} -> {}x{} at scale {:.3})",
-            self.config.zoom,
-            window.width,
-            window.height,
-            window.ratio,
-            params["width"],
-            params["height"],
-            params["deviceScaleFactor"].as_f64().unwrap_or_default(),
-        );
-        if self.zoom_told {
-            self.log.debug(line);
-        } else {
-            self.zoom_told = true;
-            self.log.info(line);
-        }
-    }
-
-    /// The tab is back after a crash: put the zoom back on it, or - when the
-    /// session came up on the sad tab and never learnt the window - ask for
-    /// the window first; the answer comes through `serve`.
-    async fn rezoom(&self, link: &mut Link) -> Result<(), String> {
-        if self.config.zoom == 100 {
-            return Ok(());
-        }
-        match link.zoom_base {
-            Some(window) => {
-                let params = protocol::zoom_override(&window, self.config.zoom);
-                self.fire(link, "Emulation.setDeviceMetricsOverride", params)
-                    .await?;
-            }
-            None => {
-                let query = protocol::window_query();
-                let id = self.fire(link, "Runtime.evaluate", query).await?;
-                link.zoom_probe = Some(id);
-            }
-        }
-        Ok(())
-    }
-
-    /// The window arrived for a session that came up on a sad tab.
-    async fn zoom_probe_answered(&mut self, link: &mut Link, answer: Reply) -> Result<(), String> {
-        match self.zoom_from(link, answer) {
-            Ok(params) => {
-                self.fire(link, "Emulation.setDeviceMetricsOverride", params.clone())
-                    .await?;
-                self.tell_zoom(link, &params);
-            }
-            Err(err) => self.log.info(format!("page zoom not applied: {err}")),
-        }
-        Ok(())
-    }
-
-    /// A command from the serve loop that no caller waits for; its reply is
-    /// dropped unless the loop knows the id. `Err` ends the session.
-    async fn fire(&self, link: &mut Link, method: &str, params: Value) -> Result<u64, String> {
-        link.next_id += 1;
-        let text = protocol::request(link.next_id, method, &params);
-        let sent = link.ws.send(Message::Text(text.into()));
-        match deadline::within("cdp send", self.config.timeout, sent).await {
-            Ok(Ok(())) => Ok(link.next_id),
-            Ok(Err(err)) => Err(format!("send failed: {err}")),
-            Err(expired) => Err(expired.to_string()),
-        }
     }
 
     /// A command during priming, before the serve loop exists to route replies.
@@ -653,12 +531,7 @@ impl Driver {
                         Some(Ok(Message::Close(frame))) => return format!("websocket closed: {frame:?}"),
                         Some(Ok(Message::Text(text))) => match protocol::parse(&text) {
                             Incoming::Reply { id, result } => {
-                                if link.zoom_probe == Some(id) {
-                                    link.zoom_probe = None;
-                                    if let Err(reason) = self.zoom_probe_answered(link, result).await {
-                                        return reason;
-                                    }
-                                } else if let Some((method, reply)) = pending.remove(&id) {
+                                if let Some((method, reply)) = pending.remove(&id) {
                                     let _ = reply.send(result.map_err(|err| format!("{method}: {err}")));
                                 }
                             }
@@ -681,14 +554,14 @@ impl Driver {
                                     }
                                     // The Page domain does not survive the
                                     // crash; enable it again so URL tracking
-                                    // resumes, and put the zoom back. Fire
-                                    // and forget: no caller.
+                                    // resumes. Fire and forget: no caller.
                                     PageEvent::Reloaded => {
-                                        if let Err(reason) = self.fire(link, "Page.enable", json!({})).await {
-                                            return reason;
-                                        }
-                                        if let Err(reason) = self.rezoom(link).await {
-                                            return reason;
+                                        link.next_id += 1;
+                                        let text = protocol::request(link.next_id, "Page.enable", &json!({}));
+                                        match deadline::within("cdp send", limit, link.ws.send(Message::Text(text.into()))).await {
+                                            Ok(Ok(())) => {}
+                                            Ok(Err(err)) => return format!("send failed: {err}"),
+                                            Err(expired) => return expired.to_string(),
                                         }
                                     }
                                     PageEvent::Detached(reason) => {
@@ -809,8 +682,6 @@ mod tests {
         base_url: String,
         control: broadcast::Sender<Control>,
         page: Arc<std::sync::atomic::AtomicU32>,
-        /// Every command received, sad tab or not, in order.
-        received: Arc<std::sync::Mutex<Vec<(String, Value)>>>,
     }
 
     impl FakeChromium {
@@ -821,8 +692,6 @@ mod tests {
             let http_port = http.local_addr().unwrap().port();
             let (control, _) = broadcast::channel(4);
             let page = Arc::new(std::sync::atomic::AtomicU32::new(1));
-            let received = Arc::new(std::sync::Mutex::new(Vec::new()));
-            let log = Arc::clone(&received);
 
             let listed = Arc::clone(&page);
             tokio::spawn(async move {
@@ -848,7 +717,6 @@ mod tests {
                 while let Ok((socket, _)) = ws.accept().await {
                     let mut orders = controls.subscribe();
                     let sad = Arc::clone(&crashed);
-                    let log = Arc::clone(&log);
                     tokio::spawn(async move {
                         let Ok(mut ws) = tokio_tungstenite::accept_async(socket).await else {
                             return;
@@ -880,7 +748,6 @@ mod tests {
                                     let request: Value = serde_json::from_str(&text).unwrap();
                                     let id = request["id"].clone();
                                     let method = request["method"].as_str().unwrap();
-                                    log.lock().unwrap().push((method.to_string(), request["params"].clone()));
 
                                     // A sad tab, as Chromium 147 behaves: the
                                     // crash is replayed to a session that
@@ -915,9 +782,6 @@ mod tests {
                                         "Page.getFrameTree" => {
                                             json!({ "frameTree": { "frame": { "id": "F", "url": "http://kiosk.test/" } } })
                                         }
-                                        "Runtime.evaluate" if request["params"] == protocol::window_query() => {
-                                            json!({ "result": { "type": "object", "value": [2, 800, 600] } })
-                                        }
                                         "Runtime.evaluate" => json!({ "result": { "type": "number", "value": 2 } }),
                                         "Page.navigate" => {
                                             let url = request["params"]["url"].clone();
@@ -940,24 +804,7 @@ mod tests {
                 base_url: format!("http://127.0.0.1:{http_port}"),
                 control,
                 page,
-                received,
             }
-        }
-
-        /// The methods received so far, in order.
-        fn methods(&self) -> Vec<String> {
-            let received = self.received.lock().unwrap();
-            received.iter().map(|(method, _)| method.clone()).collect()
-        }
-
-        /// The viewport width of every zoom override received.
-        fn zooms(&self) -> Vec<Value> {
-            let received = self.received.lock().unwrap();
-            received
-                .iter()
-                .filter(|(method, _)| method == "Emulation.setDeviceMetricsOverride")
-                .map(|(_, params)| params["width"].clone())
-                .collect()
         }
 
         fn drop_the_connection(&self) {
@@ -981,7 +828,6 @@ mod tests {
             ping: Duration::from_secs(10),
             reconnect_max: Duration::from_millis(200),
             device_access: false,
-            zoom: 100,
         }
     }
 
@@ -1038,18 +884,11 @@ mod tests {
     }
 
     async fn session_on(chromium: &FakeChromium) -> SessionHandle {
-        session_zoomed(chromium, 100).await
-    }
-
-    async fn session_zoomed(chromium: &FakeChromium, zoom: u16) -> SessionHandle {
         let (stop, shutdown) = watch::channel(false);
         // Leaked on purpose: a dropped sender reads as shutdown.
         std::mem::forget(stop);
         let session = spawn(
-            SessionConfig {
-                zoom,
-                ..config(&chromium.base_url)
-            },
+            config(&chromium.base_url),
             Arc::new(Log::buffered(true)),
             shutdown,
         );
@@ -1148,90 +987,6 @@ mod tests {
             "a sad tab found while priming is a new page"
         );
         assert_eq!(session.current_url(), None);
-    }
-
-    #[tokio::test]
-    async fn every_session_puts_the_zoom_on_the_page_it_primed() {
-        // The fake page is 800x600, so 150% is a 533-pixel-wide viewport.
-        let chromium = FakeChromium::start().await;
-        let session = session_zoomed(&chromium, 150).await;
-
-        assert_eq!(chromium.zooms(), [json!(533)]);
-        let methods = chromium.methods();
-        let tree = methods.iter().position(|m| m == "Page.getFrameTree");
-        let zoom = methods
-            .iter()
-            .position(|m| m == "Emulation.setDeviceMetricsOverride");
-        assert!(tree < zoom, "the zoom comes after priming: {methods:?}");
-
-        chromium.drop_the_connection();
-        reconnected(&session).await;
-        assert_eq!(chromium.zooms().len(), 2, "a reconnect is a new session");
-
-        chromium.restart_the_browser();
-        reconnected(&session).await;
-        assert_eq!(chromium.zooms().len(), 3, "so is a new browser");
-    }
-
-    #[tokio::test]
-    async fn no_zoom_sends_nothing() {
-        let chromium = FakeChromium::start().await;
-        let session = session_on(&chromium).await;
-        chromium.drop_the_connection();
-        reconnected(&session).await;
-
-        let methods = chromium.methods();
-        let zoomed = |m: &String| m.starts_with("Emulation.") || m == "Runtime.evaluate";
-        assert!(!methods.iter().any(zoomed), "{methods:?}");
-    }
-
-    #[tokio::test]
-    async fn a_tab_back_from_a_crash_gets_its_zoom_again() {
-        let chromium = FakeChromium::start().await;
-        let session = session_zoomed(&chromium, 150).await;
-
-        chromium.crash_the_page();
-        until("the crash", || session.generation() == 2).await;
-        session
-            .call(
-                &Heartbeat::detached(),
-                "Page.navigate",
-                json!({ "url": "http://kiosk.test/" }),
-                Duration::from_secs(2),
-            )
-            .await
-            .expect("navigate reloads the tab");
-
-        until("the zoom after the reload", || chromium.zooms().len() == 2).await;
-        assert_eq!(chromium.zooms()[1], json!(533));
-    }
-
-    #[tokio::test]
-    async fn a_session_that_came_up_on_a_sad_tab_zooms_once_it_is_back() {
-        // Priming a sad tab stops before the zoom, so the base is unknown
-        // until the tab reloads; the serve loop asks for it then.
-        let chromium = FakeChromium::start().await;
-        let session = session_zoomed(&chromium, 150).await;
-
-        chromium.crash_the_page();
-        until("the crash", || session.generation() == 2).await;
-        chromium.drop_the_connection();
-        reconnected(&session).await;
-        assert_eq!(chromium.zooms().len(), 1, "nothing to zoom on a sad tab");
-
-        session
-            .call(
-                &Heartbeat::detached(),
-                "Page.navigate",
-                json!({ "url": "http://kiosk.test/" }),
-                Duration::from_secs(2),
-            )
-            .await
-            .expect("navigate reloads the tab");
-
-        until("the zoom after the reload", || chromium.zooms().len() == 2).await;
-        assert_eq!(chromium.zooms()[1], json!(533));
-        assert!(session.state().up);
     }
 
     #[tokio::test]

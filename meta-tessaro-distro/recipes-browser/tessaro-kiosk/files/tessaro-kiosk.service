@@ -236,6 +236,12 @@ Environment=PULSE_SERVER=unix:/run/tessaro-audio/pulse/native
 # *system* bus (chrome_browser_main_linux.cc initialises BluezDBusManager from
 # the shared system bus), which this does not touch and which BlueZ's shipped
 # policy already opens to any user.
+#
+# browser.zoom goes into the profile's Preferences before every start, as the
+# weston user so the file keeps its owner: it is Chromium's own Ctrl+/- zoom,
+# which the DevTools protocol cannot set and Chromium reads only at start
+# (docs/kiosk-browser.md, Page zoom). "-": a zoom never blocks the browser.
+ExecStartPre=-/usr/bin/tessaro-agent zoom
 ExecStart=/usr/bin/dbus-run-session -- /usr/bin/chromium \
     --hide-crash-restore-bubble \
     --remote-debugging-port=9222 \

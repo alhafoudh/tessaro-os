@@ -59,8 +59,6 @@ pub struct Config {
     pub debug: bool,
     /// Show the debug screen instead of the kiosk page (`browser.debug.enable`).
     pub debug_screen: bool,
-    /// Page zoom in percent (`browser.zoom`), within Chrome's 25 to 500.
-    pub zoom: u16,
 
     pub cdp_url: String,
     /// The whole budget for one DevTools command. Used to be
@@ -115,7 +113,6 @@ impl Config {
             enforce_origin: flag(env, "KIOSK_ENFORCE_ORIGIN", true),
             debug: flag(env, "KIOSK_DEBUG", false),
             debug_screen: flag(env, "KIOSK_DEBUG_SCREEN", false),
-            zoom: int(env, "KIOSK_ZOOM", 100).clamp(25, 500) as u16,
 
             cdp_url: string(env, "KIOSK_CDP_URL", "http://127.0.0.1:9222"),
             cdp_timeout: int(env, "KIOSK_CDP_TIMEOUT", 5),
@@ -289,14 +286,6 @@ mod tests {
         assert_eq!(config.cdp_reconnect_max, 15);
         assert!(!config.device_access);
         assert!(config.watchdog);
-    }
-
-    #[test]
-    fn zoom_defaults_to_100_and_stays_in_chromes_range() {
-        assert_eq!(config_with(&[]).zoom, 100);
-        assert_eq!(config_with(&[("KIOSK_ZOOM", "150")]).zoom, 150);
-        assert_eq!(config_with(&[("KIOSK_ZOOM", "5")]).zoom, 25);
-        assert_eq!(config_with(&[("KIOSK_ZOOM", "9000")]).zoom, 500);
     }
 
     #[test]

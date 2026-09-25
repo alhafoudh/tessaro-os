@@ -191,8 +191,8 @@ they are.
 tessaro-ctl browser zoom 125     # like Ctrl+/- in Chrome, 25 to 500; 100 is no zoom
 ```
 
-The page reflows as it would in a desktop Chrome, on top of `screen.scale`,
-and the browser keeps running.
+It is the same zoom Ctrl+/- sets in a desktop Chrome, for every site and on
+top of `screen.scale`. The browser restarts to take it, so the page reloads.
 
 ### Files for offline use
 

@@ -364,9 +364,9 @@ enum BrowserCmd {
         #[arg(long)]
         template: Option<String>,
     },
-    /// Page zoom in percent, 25 to 500 like Chrome's: the page reflows as
-    /// with Ctrl+/-, on top of screen.scale; 100 is no zoom. The same as
-    /// `tessaro-ctl config set browser.zoom=...`.
+    /// Page zoom in percent, 25 to 500: Chrome's Ctrl+/- zoom for every
+    /// site, on top of screen.scale; 100 is no zoom. Restarts the browser.
+    /// The same as `tessaro-ctl config set browser.zoom=...`.
     ///
     ///   tessaro-ctl browser zoom 125
     Zoom {

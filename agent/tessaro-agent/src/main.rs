@@ -58,6 +58,7 @@ mod systemd;
 mod updates;
 mod url;
 mod watchdog;
+mod zoom;
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -100,12 +101,16 @@ fn main() -> ExitCode {
             boot::run(&SystemEnv, &Log::new(false));
             return ExitCode::SUCCESS;
         }
+        Some("zoom") => {
+            zoom::run(&SystemEnv, &Log::new(false));
+            return ExitCode::SUCCESS;
+        }
         Some("--version") => {
             println!("tessaro-agent {}", env!("CARGO_PKG_VERSION"));
             return ExitCode::SUCCESS;
         }
         Some(other) => {
-            eprintln!("usage: tessaro-agent [boot | --version] (got {other:?})");
+            eprintln!("usage: tessaro-agent [boot | zoom | --version] (got {other:?})");
             return ExitCode::FAILURE;
         }
     }
@@ -344,7 +349,6 @@ async fn run(
             ping: seconds(config.cdp_ping.max(1)),
             reconnect_max: seconds(config.cdp_reconnect_max.max(1)),
             device_access: config.device_access,
-            zoom: config.zoom,
         },
         Arc::clone(&log),
         stop.subscribe(),

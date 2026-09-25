@@ -723,7 +723,7 @@ impl Device {
                 let zoom = self.zoom();
                 self.form(
                     Form::new("Page zoom", "Zoom", Action::Zoom)
-                        .intro("Percent, 25 to 500 like Chrome's: the page reflows as with Ctrl+/-. 100 is no zoom.")
+                        .intro("Percent, 25 to 500: Chrome's Ctrl+/- zoom for every site. 100 is no zoom. The browser restarts.")
                         .field(Field::text("Percent", zoom, "100")),
                 );
             }

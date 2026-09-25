@@ -162,46 +162,35 @@ Things to know:
 
 ## Page zoom
 
-**`browser.zoom` (`tessaro-ctl browser zoom PERCENT`) zooms the page the way
-Ctrl+/- does in Chrome, and the agent keeps it applied.** The range is
-Chrome's own, 25 to 500; 100 is no zoom. It is an `AGENT` key: a change
-restarts only the agent, and the browser keeps running.
+**`browser.zoom` (`tessaro-ctl browser zoom PERCENT`) is Chrome's own
+Ctrl+/- zoom, set for every site, and a change restarts the browser.** The
+range is Chrome's, 25 to 500; 100 is no zoom. It stacks on `screen.scale`: at
+Weston scale 1 and 150% the page sees `devicePixelRatio` 1.5 and a viewport
+1.5 times smaller in CSS pixels, drawn over the whole window.
 
-* **It is a DevTools emulation override:** `Emulation.setDeviceMetricsOverride`
-  with a viewport the zoom's factor smaller in CSS pixels, drawn at a
-  `deviceScaleFactor` that same factor larger, so it still fills the window
-  pixel for pixel (`zoom_override` in `cdp/protocol.rs`). The page reflows,
-  `innerWidth` shrinks or grows, and media queries see the change, as with
-  browser zoom. The scale factor is worked out from the rounded width, so the
-  page ends exactly at the window's edge.
-* **The scale factor alone is not a zoom.** With `width`/`height` 0 the
-  viewport keeps its CSS size and is only drawn at a higher resolution:
-  measured on headless Chromium 151, an 800x600 window stays 800 CSS pixels
-  wide and renders 1200x900 at 150%. `Emulation.setPageScaleFactor` is pinch
-  zoom: the layout stays and the page overflows. `--force-device-scale-factor`
-  has no effect on this stack (see **Display scaling** in
-  [display.md](display.md)).
-* **The window is asked from the page, not worked out:** `Runtime.evaluate`
-  of `devicePixelRatio`, `innerWidth` and `innerHeight` before the override.
-  The ratio is the Weston output scale, so the zoom stacks on `screen.scale`,
-  and the agent does not have to guess which connector the browser is on.
-  The emulated size is fixed, which holds because the window changes size
-  only with a Weston restart, which restarts the browser and so starts a new
-  session. The on-screen keyboard does not resize the surface (see
-  **On-screen keyboard** in [display.md](display.md)).
-* **The override belongs to the DevTools session, so every session applies
-  it again.** Chromium drops it when the client goes away. That is also why
-  the window read at connect time is always the page's own and never a
-  previous zoom. `Driver::prime` in `cdp/session.rs` applies it on every
-  connect, reconnect and browser restart. After a renderer crash,
-  `Inspector.targetReloadedAfterCrash` puts it back. A session that came up
-  on a sad tab never learnt the window, so it asks for it once the tab is
-  back. A page that refuses the override stays at 100% and the session
-  carries on.
-* **While the agent restarts, the page is briefly at 100%.** That happens
-  after any `AGENT` key change and after a watchdog restart; the page then
-  reflows back. A zoom that outlives the agent would need Chromium's profile
-  preferences and a browser restart, which on a public screen is worse.
+* **It lives in the profile, not in the DevTools session.** Ctrl+/- is
+  Chromium's `HostZoomMap`, which the profile keeps in
+  `/data/kiosk/chromium/Default/Preferences` as
+  `partition.default_zoom_level` (every site) and
+  `partition.per_host_zoom_levels` (one site each), keyed by storage
+  partition, `x` for the default one. The level is log base 1.2 of the
+  factor, so 120% is 1.
+* **`tessaro-agent zoom` writes it, as `ExecStartPre` of
+  `tessaro-kiosk.service`,** before every start, as the `weston` user
+  (`zoom.rs`). Chromium reads the file only at start and writes its own copy
+  back, so the key is a `BROWSER` key, and the step runs every time rather
+  than once. The per-site levels are dropped at the same time, so a Ctrl+/-
+  typed on the device lasts until the next browser start. A file that is not
+  JSON is left alone, and every failure logs and lets the browser start.
+* **The DevTools protocol cannot set this zoom, and emulation is a different
+  thing.** `Emulation.setDeviceMetricsOverride` with only a
+  `deviceScaleFactor` keeps the CSS viewport and draws it at a higher
+  resolution. With a width and height as well, the fixed viewport outlives
+  the session that set it: on Chromium 147 the next agent found the page
+  still 1707x960 after the scale reverted, leaving white space on a
+  2560x1440 screen until the browser restarted. `Emulation.setPageScaleFactor`
+  is pinch zoom, and `--force-device-scale-factor` has no effect on this
+  stack (see **Display scaling** in [display.md](display.md)).
 
 ## Hardware video decode
 

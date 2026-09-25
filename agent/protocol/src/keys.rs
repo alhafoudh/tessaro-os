@@ -233,8 +233,8 @@ pub static KEYS: &[Key] = &[
         "Show browser.debug.template full screen instead of the kiosk page. Not agent.debug, which is journal verbosity. `tessaro-ctl browser debug on|off`."),
     key(DEBUG_TEMPLATE, "KIOSK_DEBUG_TEMPLATE", Kind::Template, AGENT,
         "What the debug screen shows: text with {key} placeholders, \\n for a new line, e.g. IP {network.ip}\\nGW {network.gateway}."),
-    key(ZOOM, "KIOSK_ZOOM", Kind::Int { min: 25, max: 500 }, AGENT,
-        "Page zoom in percent, like Chrome's Ctrl+/-: the page reflows. On top of screen.scale. `tessaro-ctl browser zoom`."),
+    key(ZOOM, "KIOSK_ZOOM", Kind::Int { min: 25, max: 500 }, BROWSER,
+        "Page zoom in percent, Chrome's Ctrl+/- zoom for every site, on top of screen.scale. `tessaro-ctl browser zoom`."),
     key("browser.args_extra", "KIOSK_CHROMIUM_ARGS_EXTRA", Kind::Args, BROWSER,
         "Extra Chromium flags after the fixed set, e.g. --disable-pinch. Features go in browser.*_features."),
     key("browser.touch", "KIOSK_TOUCH", Kind::Choice(&["auto", "enabled", "disabled"]), BROWSER,
@@ -1505,13 +1505,13 @@ mod tests {
     }
 
     #[test]
-    fn zoom_has_chromes_range_and_restarts_only_the_agent() {
+    fn zoom_has_chromes_range_and_restarts_the_browser() {
         assert_eq!(check(ZOOM, "25").unwrap(), "25");
         assert_eq!(check(ZOOM, "500").unwrap(), "500");
         assert!(check(ZOOM, "24").is_err());
         assert!(check(ZOOM, "501").is_err());
         assert!(check(ZOOM, "1.5").is_err());
-        assert_eq!(find(ZOOM).unwrap().consumers, [Consumer::Agent]);
+        assert_eq!(find(ZOOM).unwrap().consumers, [Consumer::Browser]);
     }
 
     #[test]
