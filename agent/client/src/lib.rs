@@ -12,6 +12,7 @@ pub mod journal;
 pub mod nodes;
 pub mod ssh;
 pub mod transfer;
+pub mod tunnel;
 
 /// The same mDNS library `connect::browse` uses, for a caller that browses
 /// for good instead (the GUI) and hands results to `connect::found_service`.

@@ -22,6 +22,7 @@ into both. So `gui/` has its own `Cargo.lock` and builds into
 * `agent/client` (`tessaro-client`) - what both clients do the same way:
   finding a device and the pinned session (`connect.rs`), `nodes.json`
   (`nodes.rs`), sending the SSH key and pinning the host key (`ssh.rs`),
+  the `ssh -N -L` forwards to the device's loopback (`tunnel.rs`),
   moving files and images in acknowledged chunks (`transfer.rs`), and
   reading a journal entry (`journal.rs`).
 
@@ -136,7 +137,7 @@ applies and stays, Default unsets.**
 
 | Page | Covers |
 | --- | --- |
-| Overview | `device status` and `id`, systemd units, `device ping`, `device factory-reset`, `browser navigate`, `browser maintenance`, `browser debug`, `browser zoom` |
+| Overview | `device status` and `id`, systemd units, `device ping`, `device factory-reset`, `browser navigate`, `browser maintenance`, `browser debug`, `browser zoom`, `browser devtools` (a job holding the tunnel until Cancel) |
 | Screen | `screen modes` with "use this mode", `screen confirm`, `screen screenshot` with a 3s live refresh and Save |
 | Network | `network show` and interfaces, `network last`, `network ping`, `network speedtest`, `network profiles list` and `show` |
 | WiFi | `network wifi status`, `scan`, `join`, `hotspot-password` |
@@ -163,8 +164,9 @@ After unclaim or a factory reset, the node is forgotten on this machine.
 
 **Long work runs as a job on a second connection, so the worker keeps
 polling** (`jobs.rs`). The jobs are the streams (`network ping`, the speed
-test, `storage grow`), `device ping`, files going up or down, and an image
-update. A job is a subscription keyed by its id: it reports progress, lines
+test, `storage grow`), `device ping`, files going up or down, an image
+update, and the DevTools tunnel (localhost:9222, or a free port when 9222 is
+taken here). A job is a subscription keyed by its id: it reports progress, lines
 and a result to its page. Cancel drops it, and a watcher thread shuts its
 socket down, which ends whatever call it was in.
 

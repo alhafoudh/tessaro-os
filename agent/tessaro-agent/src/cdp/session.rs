@@ -95,6 +95,8 @@ pub struct SessionHandle {
     state: watch::Receiver<State>,
     url: watch::Receiver<Option<String>>,
     events: broadcast::Sender<Value>,
+    /// The DevTools port, for `others`; `None` if the base URL names none.
+    port: Option<u16>,
 }
 
 impl SessionHandle {
@@ -160,6 +162,19 @@ impl SessionHandle {
         self.url.borrow().clone()
     }
 
+    /// How many DevTools clients besides this agent are connected to the
+    /// browser right now (`clients.rs`). 0 when that cannot be told.
+    pub async fn others(&self) -> usize {
+        let Some(port) = self.port else {
+            return 0;
+        };
+        deadline::blocking("looking for other DevTools clients", move || {
+            Ok(super::clients::foreign(port))
+        })
+        .await
+        .unwrap_or(0)
+    }
+
     /// Every event the browser sends. Nothing listens yet; this is where TODO
     /// item 5's `DeviceAccess.deviceRequestPrompted` handler attaches.
     #[allow(dead_code)]
@@ -190,6 +205,7 @@ pub fn spawn(
     let (events, _) = broadcast::channel(64);
 
     let seconds = config.timeout.as_secs() as i64;
+    let port = super::clients::port_of(&config.base_url);
     let driver = Driver {
         // /json/list can list many targets; a megabyte is plenty.
         http: HyperHttp::new(seconds, seconds, 1 << 20, Heartbeat::detached()),
@@ -211,6 +227,7 @@ pub fn spawn(
         state: state_rx,
         url: url_rx,
         events,
+        port,
     }
 }
 

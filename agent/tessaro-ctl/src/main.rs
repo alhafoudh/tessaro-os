@@ -12,6 +12,7 @@
 
 mod audio;
 mod connect;
+mod devtools;
 mod files;
 mod net;
 mod progress;
@@ -92,6 +93,7 @@ const HELP_STYLES: Styles = Styles::styled()
         \x20 tessaro-ctl browser maintenance on             show the maintenance page; `off` goes back\n\
         \x20 tessaro-ctl browser debug on                   name and addresses full screen; `off` goes back\n\
         \x20 tessaro-ctl browser zoom 125                   page zoom, like Ctrl+/- in Chrome\n\
+        \x20 tessaro-ctl -n brave-otter-3fa2 browser devtools   the kiosk tab in chrome://inspect, over ssh\n\
         \x20 tessaro-ctl audio show                         where sound plays, how loud, what is plugged in\n\
         \x20 tessaro-ctl audio output hdmi && tessaro-ctl audio volume 60 && tessaro-ctl audio test\n\
         \x20 tessaro-ctl config unset browser.url           back to the image default\n\
@@ -373,6 +375,15 @@ enum BrowserCmd {
         #[arg(value_parser = clap::value_parser!(u16).range(25..=500))]
         percent: u16,
     },
+    /// The kiosk tab in Chrome DevTools on this machine: forwards
+    /// localhost:9222 over ssh to the device's DevTools port, until Ctrl-C.
+    /// Open chrome://inspect and the tab is under Remote Target. While a
+    /// DevTools window is connected the agent leaves the tab alone - no
+    /// restart, reload or navigation - so a breakpoint can sit. The key is
+    /// sent as for `tessaro-ctl ssh connect`.
+    ///
+    ///   tessaro-ctl -n brave-otter-3fa2 browser devtools
+    Devtools(devtools::Options),
 }
 
 #[derive(Subcommand)]
@@ -695,6 +706,7 @@ fn run(cli: Cli) -> Result<(), String> {
             let applied = set(&mut session, values)?;
             print(json, &applied, || show_applied(&applied, false))
         }
+        Cmd::Browser(BrowserCmd::Devtools(options)) => devtools::run(&mut session, options, json),
         Cmd::Audio(command) => audio::run(&mut session, command, json),
         Cmd::Device(DeviceCmd::Restart { what }) => {
             done(&mut session, Command::Restart { what }, json)
@@ -1190,6 +1202,19 @@ fn show_status(status: &Status) {
             paint(style::BAD, "not answering")
         },
     );
+    if status.devtools {
+        style::row(
+            "devtools",
+            &format!(
+                "{} {}",
+                paint(style::WARN, "connected"),
+                paint(
+                    style::MUTED,
+                    "- the agent leaves the tab alone until it disconnects"
+                )
+            ),
+        );
+    }
     for (unit, state) in &status.units {
         println!(
             "  {} {}",

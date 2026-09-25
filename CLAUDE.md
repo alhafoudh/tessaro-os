@@ -29,7 +29,7 @@ same change as the behaviour it describes.
 | File | Covers |
 | --- | --- |
 | [docs/build.md](docs/build.md) | kas layout and config chains, platform gotchas (wks, fstab, QEMU, GPU, Pi), target status |
-| [docs/kiosk-browser.md](docs/kiosk-browser.md) | Chromium units and flags, CDP supervision, origin enforcement, TLS, page zoom, self-test page, WebSerial/HID/USB/Bluetooth |
+| [docs/kiosk-browser.md](docs/kiosk-browser.md) | Chromium units and flags, CDP supervision, origin enforcement, TLS, remote DevTools, page zoom, self-test page, WebSerial/HID/USB/Bluetooth |
 | [docs/agent.md](docs/agent.md) | deadlines, the pledge-fed watchdog, the CDP session |
 | [docs/settings.md](docs/settings.md) | `state.json`, templates and placeholders, read-only keys, the protocol, the claim model, names, completion, maintenance mode, debug screen |
 | [docs/display.md](docs/display.md) | Weston scaling and resolution, hotplug, on-screen keyboard |
@@ -289,7 +289,8 @@ same thing. Keep to these rules when adding a command or a setting:
   * `storage`: the disk the device runs from. Partitions, free space,
     growing `/data`.
   * `screen`: the physical display. Screenshot, modes, confirming a mode.
-  * `browser`: what the browser shows. Navigate, maintenance, debug screen.
+  * `browser`: what the browser shows. Navigate, maintenance, debug screen,
+    zoom, remote DevTools.
   * `audio`: sound. Which output plays and which input records, volume,
     mute, a test tone and a recording level.
   * `update`: putting an image on the device.

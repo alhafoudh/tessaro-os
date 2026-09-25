@@ -1,6 +1,7 @@
 //! Long work on a device, each on a connection of its own so the window's
 //! worker keeps polling: the streams (`network ping`, the speed test,
-//! growing `/data`), files going up or down, and an image update.
+//! growing `/data`), files going up or down, an image update, and the
+//! DevTools tunnel.
 //!
 //! A job is a subscription keyed by its id. Cancelling it drops the
 //! subscription; a watcher thread then shuts the connection down, which
@@ -21,7 +22,9 @@ use protocol::files::{self as store, FileEntry, FileKind, FilesListing};
 use protocol::{Command, Done, ImageUpload, UpdateBegun, UpdatePhase, UpdateStatus};
 use tessaro_client::connect::Session;
 use tessaro_client::nodes::Node;
+use tessaro_client::ssh;
 use tessaro_client::transfer::{self, mb, mtime_of};
+use tessaro_client::tunnel::{self, Prompts, Tunnel};
 
 use crate::worker;
 
@@ -37,6 +40,9 @@ pub enum Kind {
     Update(Update),
     /// `tessaro-ctl device ping`: round trips over the control connection.
     ControlPing { count: u32 },
+    /// `tessaro-ctl browser devtools`: the device's DevTools port forwarded
+    /// to this machine until the job is cancelled.
+    DevTools,
 }
 
 #[derive(Debug, Clone)]
@@ -130,6 +136,7 @@ fn run(spec: &Spec, out: &ui::UnboundedSender<Event>) -> Result<String, String> 
         Kind::Download { entry, into } => download(&mut session, entry, into, &report),
         Kind::Update(update) => update_send(&mut session, update, &report),
         Kind::ControlPing { count } => control_ping(&mut session, *count, &report),
+        Kind::DevTools => devtools(&mut session, &report),
     };
     done.store(true, Ordering::Relaxed);
     if out.is_closed() {
@@ -343,6 +350,34 @@ fn control_ping(session: &mut Session, count: u32, report: &Report) -> Result<St
         "{}/{count} replies, min {min:.1} / avg {average:.1} / max {max:.1} ms",
         rtts.len()
     ))
+}
+
+/// What `tessaro-ctl browser devtools` does: the tunnel, open until the job
+/// is cancelled or ssh ends. The device reports a connected DevTools window
+/// in its `Status`, which the Overview page shows.
+fn devtools(session: &mut Session, report: &Report) -> Result<String, String> {
+    let authorized = ssh::authorize(session, None)?;
+    let port = tunnel::free_port(tunnel::DEVTOOLS_LOCAL)?;
+    let mut forward = Tunnel::open(&authorized, port, tunnel::DEVTOOLS, Prompts::Never)?;
+    report.progress(format!("forwarding localhost:{port}"), 1, 1);
+    report.line(format!(
+        "DevTools on localhost:{port}: open chrome://inspect in Chrome, the kiosk tab is under Remote Target"
+    ));
+    if port != tunnel::DEVTOOLS_LOCAL {
+        report.line(format!(
+            "9222 is taken here: add localhost:{port} under Discover network targets, Configure"
+        ));
+    }
+    report.line(
+        "while DevTools is connected the agent leaves the tab alone; Cancel closes the tunnel",
+    );
+    while !report.out.is_closed() {
+        if let Some(why) = forward.ended() {
+            return Err(why);
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    Ok("closed".to_string())
 }
 
 fn file_name(path: &Path) -> Result<String, String> {

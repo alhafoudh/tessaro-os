@@ -30,6 +30,11 @@ pub trait Cdp {
     /// Point the page target at a URL.
     async fn navigate(&self, url: &str) -> Result<()>;
 
+    /// Is a DevTools client other than the agent connected - a technician
+    /// with the tab open in DevTools? Never fails: "cannot tell" is `false`,
+    /// so the browser is never left unwatched on a guess.
+    async fn inspected(&self) -> bool;
+
     /// Bumped when the page itself is new - a new browser or page target, or
     /// the same target after it crashed - so nothing about what is on screen
     /// can be assumed. A reconnect to the same live page does not bump it.

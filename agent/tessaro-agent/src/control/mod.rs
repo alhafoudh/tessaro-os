@@ -570,6 +570,8 @@ impl Control {
 
         let wanted = self.audio_wanted_from(&state.settings);
         let audio = self.audio.status(&wanted).await;
+        // naked: a /proc read under blocking()'s within()
+        let devtools = self.session.others().await > 0;
 
         Ok(Status {
             os,
@@ -584,6 +586,7 @@ impl Control {
             pending: self.pending(&state),
             maintenance: state::maintenance(&state.settings, &self.defaults),
             debug_screen: state::debug_screen(&state.settings, &self.defaults),
+            devtools,
             audio: Some(audio),
         })
     }

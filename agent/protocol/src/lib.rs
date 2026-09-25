@@ -547,6 +547,11 @@ pub struct Status {
     /// way.
     #[serde(default)]
     pub debug_screen: bool,
+    /// A DevTools client other than the agent is connected to the browser,
+    /// so the agent leaves the tab alone (docs/kiosk-browser.md). Defaulted
+    /// the same way.
+    #[serde(default)]
+    pub devtools: bool,
     /// Where sound plays and at what volume. `None` from a device that
     /// predates audio.
     #[serde(default)]

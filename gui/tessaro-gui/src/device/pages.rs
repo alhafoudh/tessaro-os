@@ -138,6 +138,7 @@ pub enum Msg {
     Maintenance(bool),
     DebugScreen(bool),
     Zoom,
+    DevTools,
     ControlPing,
     FactoryReset,
     // screen
@@ -726,6 +727,11 @@ impl Device {
                         .intro("Percent, 25 to 500: Chrome's Ctrl+/- zoom for every site. 100 is no zoom. The browser restarts.")
                         .field(Field::text("Percent", zoom, "100")),
                 );
+            }
+            Msg::DevTools => {
+                if !self.devtools_open() {
+                    self.start_job("overview", "DevTools tunnel", jobs::Kind::DevTools);
+                }
             }
             Msg::ControlPing => self.form(
                 Form::new("Ping the device", "Ping", Action::ControlPing)
@@ -1618,6 +1624,13 @@ impl Device {
         self.online().then_some(Message::P(message))
     }
 
+    /// The DevTools tunnel is up already; one is all Chrome needs.
+    fn devtools_open(&self) -> bool {
+        self.jobs
+            .iter()
+            .any(|job| job.running && matches!(job.kind, jobs::Kind::DevTools))
+    }
+
     /// A two-column table of facts.
     fn facts<'a>(
         &self,
@@ -1659,6 +1672,14 @@ impl Device {
             facts.push(("Maintenance", yes(status.maintenance)));
             facts.push(("Debug screen", yes(status.debug_screen)));
             facts.push(("Page zoom", format!("{}%", self.zoom())));
+            facts.push((
+                "DevTools",
+                if status.devtools {
+                    "connected - the agent leaves the tab alone".to_string()
+                } else {
+                    "not connected".to_string()
+                },
+            ));
             if let Some(data) = &status.data {
                 facts.push((
                     "/data",
@@ -1716,6 +1737,10 @@ impl Device {
                     self.when(Msg::DebugScreen(!debug)),
                 ),
                 action("Zoom", self.when(Msg::Zoom)),
+                action(
+                    "DevTools",
+                    self.when(Msg::DevTools).filter(|_| !self.devtools_open()),
+                ),
                 action("Ping", self.when(Msg::ControlPing)),
                 action("Factory reset", self.when(Msg::FactoryReset)),
             ],

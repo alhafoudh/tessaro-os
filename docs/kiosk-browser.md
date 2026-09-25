@@ -160,6 +160,51 @@ Things to know:
   not add `seccomp` to `DISTRO_FEATURES`: oe-core's default already has it and
   removes it per architecture, which an unconditional append would override.
 
+## Remote DevTools
+
+**`tessaro-ctl -n NAME browser devtools` puts the kiosk tab in the
+technician's own Chrome DevTools**: it sends the SSH key as `ssh connect`
+does and runs `ssh -N -L 127.0.0.1:9222:127.0.0.1:9222` until Ctrl-C
+(`tessaro_client::tunnel`, `tessaro-ctl/src/devtools.rs`). In
+`chrome://inspect` the tab is under Remote Target, because 9222 is one of the
+ports Chrome discovers without being configured; `--local-port` takes
+another, which then has to be added under Configure. tessaro-gui runs the
+same tunnel as a job from the Overview page (see [gui.md](gui.md)).
+
+* **Open it from `chrome://inspect`, not from `/json`'s
+  `devtoolsFrontendUrl` in a tab.** Chromium refuses a DevTools websocket
+  whose `Origin` it has not been told to allow (`--remote-allow-origins`,
+  unset here), and `chrome://inspect` connects from the browser process with
+  no `Origin` at all. The tunnel keeps the `Host` header at `localhost`,
+  which is the other check the DevTools HTTP server makes. The frontend
+  itself comes from `chrome-devtools-frontend.appspot.com` for the device's
+  Chromium revision, so the technician's machine needs the internet; the
+  "inspect (fallback)" link uses their local one.
+* **While another DevTools client is connected, the agent leaves the tab
+  alone**: no liveness check, probe, navigation, offline page or restart.
+  A breakpoint stops the renderer answering `Runtime.evaluate`, and without
+  this `KIOSK_PING_FAILS` cycles later the agent restarts the browser under
+  the debugger; a page the technician opens is not drift either. The cycle
+  logs `a DevTools client is connected; ...` once, and on disconnect `the
+  DevTools client disconnected; watching the browser again`, then treats the
+  screen as unknown and navigates back to the kiosk URL. `device status`
+  and the GUI show it from `Status.devtools`.
+* **"Connected" is read from the kernel, because Chromium does not say.**
+  `/json/list` has no client count and `Target.getTargets` reports
+  `attached`, which the agent's own session always makes true. So
+  `cdp/clients.rs` counts the established loopback connections whose remote
+  port is 9222 in `/proc/net/tcp` and `tcp6`, minus the agent's own sockets
+  from `/proc/self/fd`. dropbear holds the client end of a forward, so an
+  idle tunnel is not a client, and an open DevTools window is (its websocket
+  stays up). Whether `chrome://inspect` merely listing the target counts
+  depends on whether its discovery polling holds a connection open at the
+  moment a cycle looks; that is not measured yet. Anything else on the
+  device that talks to 9222 counts too, the e2e suite's one-command
+  websockets included - for the moment each one lasts.
+* **The hold has no time limit.** It lasts as long as the connection, and
+  the connection lasts as long as the technician's ssh; closing the tunnel
+  or the DevTools window ends it.
+
 ## Page zoom
 
 **`browser.zoom` (`tessaro-ctl browser zoom PERCENT`) is Chrome's own
