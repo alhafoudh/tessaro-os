@@ -85,7 +85,8 @@ keyed by node id** (`nodes_view::merge`).
 
 Discovery runs for as long as the app does (`discovery.rs`). Rescan starts a
 new browse. A device mDNS cannot see (another subnet, a VM) is added by
-address.
+address. Both are actions on the node list's own toolbar, since they act on
+that list; the app header only has Devices.
 
 **Login and claim peek first, then pin exactly what was shown.** The dialog
 opens a session with `Trust::Peek`, which sends nothing secret, and shows the
@@ -116,6 +117,9 @@ the subscription, and with it the thread and the connection.
   order (`device::sections`), so a group a newer image adds appears here by
   itself.
 * The tools are one page per `tessaro-ctl` command group (`device/pages.rs`).
+* **Each action is on one page only: the page of its command group.**
+  Overview is the `device` group and nothing else, so it stays a summary; a
+  `browser` command goes on Browser, not on Overview.
 
 **Every page is drawn the same way** (`section.rs`, `grid.rs`): a toolbar
 with the actions on the page first and those on the selected row after them,
@@ -144,8 +148,9 @@ applies and stays, Default unsets.**
 
 | Page | Covers |
 | --- | --- |
-| Overview | `device status` and `id`, systemd units, `device ping`, `device factory-reset`, `browser navigate`, `browser reload`, `browser clear-cache`, `browser maintenance`, `browser debug`, `browser zoom`, `browser devtools` (a job holding the tunnel until Cancel), `browser inject`, `browser bridge`, `browser eval` (results in the page's output) |
-| Screen | `screen modes` with "use this mode", `screen confirm`, `screen screenshot` with a 3s live refresh and Save, `screen power`, `screen keyboard` |
+| Overview | `device status` and `id`, systemd units, `device ping`, `device factory-reset` |
+| Screen | `screen modes` with "use this mode", `screen screenshot` with a 3s live refresh and Save, `screen power`, `screen keyboard` |
+| Browser | what the browser shows, `browser navigate`, `reload`, `clear-cache`, `maintenance`, `debug`, `zoom`, `devtools` (a job holding the tunnel until Cancel), `inject`, `bridge`, `eval` (results in the page's output) |
 | Network | `network show` and interfaces, `network last`, `network ping`, `network speedtest`, `network profiles list` and `show` |
 | WiFi | `network wifi status`, `scan`, `join`, `hotspot-password` |
 | Storage | `storage show`, partitions and filesystems, `storage grow` (check first) |
@@ -157,9 +162,13 @@ applies and stays, Default unsets.**
 | Update | `update status`, `update send` with progress, `update cancel` |
 | Log | `device logs --follow`, filtered by unit on the device and by text here |
 
-The window's own toolbar has Restart browser, weston or agent, and Reboot,
-each confirmed first. The status bar shows the device's `Status`, and a
-guarded change's countdown with Confirm.
+The window's own toolbar has Refresh, Restart browser, weston or agent, and
+Reboot, the restarts confirmed first. **Refresh is the window's, not a
+page's**: it fetches `Status`, the settings and what the page shown asks
+for, so no page or settings section has a Refresh of its own. The status bar
+shows the device's `Status`, and a guarded change's countdown with Confirm;
+that is the one Confirm, since a guarded change can come from a setting as
+well as from the Screen page.
 
 **Dialogs are one generic form** (`pages::Form`), confirmed with Enter. A
 destructive one - factory reset, unclaim, growing `/data`, an update that

@@ -269,6 +269,7 @@ pub enum Page {
     /// The settings section in `Device::section`.
     Settings,
     Screen,
+    Browser,
     Network,
     Wifi,
     Storage,
@@ -285,6 +286,7 @@ impl Page {
     /// The pages below the settings sections in the nav, in its order.
     const TOOLS: &'static [(Page, &'static str)] = &[
         (Page::Screen, "Screen"),
+        (Page::Browser, "Browser"),
         (Page::Network, "Network"),
         (Page::Wifi, "WiFi"),
         (Page::Storage, "Storage"),
@@ -869,6 +871,7 @@ impl Device {
             }
             Message::Refresh => {
                 self.request(Request::Refresh);
+                self.refresh_page(self.page);
             }
             Message::EditName(name) => self.edit(|edit| edit.name = name),
             Message::EditValue(value) => self.edit(|edit| edit.value = value),
@@ -1296,7 +1299,7 @@ impl Device {
 
         let online = self.link == Link::Online;
         let editable = selected.filter(|row| online && row.source != Source::Live);
-        let mut list = vec![action("Refresh", online.then_some(Message::Refresh))];
+        let mut list = Vec::new();
         if section == keys::DATA_PREFIX.trim_end_matches('.') {
             list.push(action("Add", online.then_some(Message::Add)));
         }

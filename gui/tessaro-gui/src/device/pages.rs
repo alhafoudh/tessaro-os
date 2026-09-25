@@ -138,7 +138,6 @@ enum Action {
 
 #[derive(Debug, Clone)]
 pub enum Msg {
-    Refresh,
     Select(&'static str, String),
     Activate(&'static str, String),
     // device and browser
@@ -339,6 +338,7 @@ fn page_of(tag: &str) -> &'static str {
         "files" => "files",
         "update" => "update",
         "modes" | "screen" => "screen",
+        "browser" => "browser",
         _ => "overview",
     }
 }
@@ -545,7 +545,7 @@ impl Device {
                 );
             }
             Page::Update => self.call("update", Command::UpdateStatus),
-            Page::Overview | Page::Settings | Page::Log => {}
+            Page::Overview | Page::Browser | Page::Settings | Page::Log => {}
         }
     }
 
@@ -660,7 +660,7 @@ impl Device {
                 self.pages.files = listing.entries;
             }
             "update" => self.pages.update = Some(parse(value)?),
-            "eval" => {
+            "browser.eval" => {
                 let result: protocol::EvalResult = parse(value)?;
                 let line = match (&result.exception, &result.value, &result.description) {
                     (Some(exception), _, _) => format!(
@@ -673,7 +673,7 @@ impl Device {
                     (None, None, None) => result.kind.clone(),
                 };
                 for part in line.lines() {
-                    self.output("overview", part.to_string());
+                    self.output("browser", part.to_string());
                 }
             }
             "screen.power" => {
@@ -692,6 +692,7 @@ impl Device {
                     "update" => Page::Update,
                     "net" => Page::Network,
                     "time" => Page::Time,
+                    "browser" => Page::Browser,
                     _ => self.page,
                 };
                 self.refresh_page(page);
@@ -762,7 +763,6 @@ impl Device {
     pub(super) fn page_update(&mut self, message: Msg) -> Task<Message> {
         let online = self.link == Link::Online;
         match message {
-            Msg::Refresh => self.refresh_page(self.page),
             Msg::Select(table, key) => {
                 self.pages.selected.insert(table, key);
             }
@@ -816,11 +816,11 @@ impl Device {
             }
             Msg::DevTools => {
                 if !self.devtools_open() {
-                    self.start_job("overview", "DevTools tunnel", jobs::Kind::DevTools);
+                    self.start_job("browser", "DevTools tunnel", jobs::Kind::DevTools);
                 }
             }
-            Msg::Reload => self.call("done", Command::Reload),
-            Msg::ClearCache => self.call("done", Command::ClearCache),
+            Msg::Reload => self.call("browser", Command::Reload),
+            Msg::ClearCache => self.call("browser", Command::ClearCache),
             Msg::Inject => {
                 let script = self
                     .setting(keys::INJECT_SCRIPT)
@@ -1378,7 +1378,7 @@ impl Device {
                 if url.is_empty() {
                     return Err("a URL, please".to_string());
                 }
-                self.call("done", Command::Navigate { url });
+                self.call("browser", Command::Navigate { url });
             }
             Action::Maintenance => {
                 let url = form.value("Page").trim();
@@ -1417,9 +1417,9 @@ impl Device {
                 if code.is_empty() {
                     return Err("some code, please".to_string());
                 }
-                self.output("overview", format!("> {code}"));
+                self.output("browser", format!("> {code}"));
                 self.call(
-                    "eval",
+                    "browser.eval",
                     Command::Eval {
                         code,
                         timeout_ms: None,
@@ -1689,6 +1689,7 @@ impl Device {
     pub(super) fn page_view(&self) -> Element<'_, Message> {
         let content = match self.page {
             Page::Overview => self.overview_view(),
+            Page::Browser => self.browser_view(),
             Page::Network => self.network_view(),
             Page::Wifi => self.wifi_view(),
             Page::Storage => self.storage_view(),
@@ -1886,11 +1887,6 @@ impl Device {
             facts.push(("OS", status.os.clone().unwrap_or_default()));
             facts.push(("Image", status.image_version.clone().unwrap_or_default()));
             facts.push(("Revision", status.revision.to_string()));
-            facts.push(("Kiosk page", status.kiosk_url.clone()));
-            facts.push(("Showing", status.current_url.clone().unwrap_or_default()));
-            facts.push(("Browser answers", yes(status.browser_answering)));
-            facts.push(("Maintenance", yes(status.maintenance)));
-            facts.push(("Debug screen", yes(status.debug_screen)));
             if let Some(time) = &status.time {
                 let sync = match (time.ntp, time.synchronized) {
                     (Some(false), _) => "NTP off",
@@ -1902,26 +1898,6 @@ impl Device {
                     "Time",
                     format!("{}, {sync}", time.timezone.clone().unwrap_or_default()),
                 ));
-            }
-            facts.push(("Page zoom", format!("{}%", self.zoom())));
-            facts.push((
-                "DevTools",
-                if status.devtools {
-                    "connected - the agent leaves the tab alone".to_string()
-                } else {
-                    "not connected".to_string()
-                },
-            ));
-            if let Some(bridge) = &status.bridge {
-                facts.push(("Page bridge", bridge.mode.clone()));
-                let script = match (&bridge.script_problem, bridge.script.is_empty()) {
-                    (_, true) => "none".to_string(),
-                    (Some(problem), false) => {
-                        format!("{} (not injected: {problem})", bridge.script)
-                    }
-                    (None, false) => bridge.script.clone(),
-                };
-                facts.push(("Injected script", script));
             }
             if let Some(on) = status.screen_on {
                 facts.push(("Screen", if on { "on" } else { "off" }.to_string()));
@@ -1950,6 +1926,55 @@ impl Device {
                 })
                 .collect();
         }
+        const UNITS: &[Col] = &[
+            col("Unit", Length::Fixed(260.0)),
+            col("State", Length::Fill),
+        ];
+        self.page(
+            "overview",
+            vec![
+                action("Ping", self.when(Msg::ControlPing)),
+                action("Factory reset", self.when(Msg::FactoryReset)),
+            ],
+            Vec::new(),
+            vec![
+                self.facts("facts", facts),
+                self.table("units", UNITS, units, Length::Fill),
+            ],
+        )
+    }
+
+    /// What the browser shows, and the `browser` commands.
+    fn browser_view(&self) -> Element<'_, Message> {
+        let yes = |on: bool| if on { "yes" } else { "no" }.to_string();
+        let mut facts = Vec::new();
+        if let Some((status, _)) = &self.status {
+            facts.push(("Kiosk page", status.kiosk_url.clone()));
+            facts.push(("Showing", status.current_url.clone().unwrap_or_default()));
+            facts.push(("Browser answers", yes(status.browser_answering)));
+            facts.push(("Maintenance", yes(status.maintenance)));
+            facts.push(("Debug screen", yes(status.debug_screen)));
+            facts.push(("Page zoom", format!("{}%", self.zoom())));
+            facts.push((
+                "DevTools",
+                if status.devtools {
+                    "connected - the agent leaves the tab alone".to_string()
+                } else {
+                    "not connected".to_string()
+                },
+            ));
+            if let Some(bridge) = &status.bridge {
+                facts.push(("Page bridge", bridge.mode.clone()));
+                let script = match (&bridge.script_problem, bridge.script.is_empty()) {
+                    (_, true) => "none".to_string(),
+                    (Some(problem), false) => {
+                        format!("{} (not injected: {problem})", bridge.script)
+                    }
+                    (None, false) => bridge.script.clone(),
+                };
+                facts.push(("Injected script", script));
+            }
+        }
         let maintenance = self
             .status
             .as_ref()
@@ -1958,12 +1983,8 @@ impl Device {
             .status
             .as_ref()
             .is_some_and(|(status, _)| status.debug_screen);
-        const UNITS: &[Col] = &[
-            col("Unit", Length::Fixed(260.0)),
-            col("State", Length::Fill),
-        ];
         self.page(
-            "overview",
+            "browser",
             vec![
                 action("Navigate", self.when(Msg::Navigate)),
                 action(
@@ -1992,14 +2013,9 @@ impl Device {
                 action("Inject", self.when(Msg::Inject)),
                 action("Bridge", self.when(Msg::Bridge)),
                 action("Run JavaScript", self.when(Msg::Eval)),
-                action("Ping", self.when(Msg::ControlPing)),
-                action("Factory reset", self.when(Msg::FactoryReset)),
             ],
             Vec::new(),
-            vec![
-                self.facts("facts", facts),
-                self.table("units", UNITS, units, Length::Fill),
-            ],
+            vec![self.facts("browserfacts", facts)],
         )
     }
 
@@ -2036,22 +2052,16 @@ impl Device {
                 })
             })
             .collect();
-        let pending = self
-            .status
-            .as_ref()
-            .is_some_and(|(status, _)| status.pending.is_some());
         let screen_off = self
             .status
             .as_ref()
             .is_some_and(|(status, _)| status.screen_on == Some(false));
         column![
             row![
-                theme::tool("Refresh modes", self.when(Msg::Refresh)),
                 theme::tool(
                     "Use this mode",
                     self.selected("modes").and_then(|_| self.when(Msg::UseMode))
                 ),
-                theme::tool("Confirm", pending.then_some(Message::ConfirmPending)),
                 theme::tool(
                     if screen_off {
                         "Screen on"
@@ -2062,9 +2072,11 @@ impl Device {
                 ),
                 theme::tool("Show keyboard", self.when(Msg::Keyboard(true))),
                 theme::tool("Hide keyboard", self.when(Msg::Keyboard(false))),
-                text("A mode is guarded: it reverts on its own unless confirmed.")
-                    .size(theme::SMALL)
-                    .style(theme::muted),
+                text(
+                    "A mode is guarded: it reverts on its own unless confirmed in the status bar."
+                )
+                .size(theme::SMALL)
+                .style(theme::muted),
             ]
             .spacing(4)
             .align_y(iced::alignment::Vertical::Center),
@@ -2178,7 +2190,6 @@ impl Device {
         self.page(
             "net",
             vec![
-                action("Refresh", self.when(Msg::Refresh)),
                 action("Last change", self.when(Msg::NetLast)),
                 action("Ping ...", self.when(Msg::NetPing)),
                 action("Speed test ...", self.when(Msg::Speedtest)),
@@ -2276,7 +2287,6 @@ impl Device {
         self.page(
             "wifi",
             vec![
-                action("Refresh", self.when(Msg::Refresh)),
                 if self.waiting("wifi.scan") {
                     action("Scanning ...", None)
                 } else {
@@ -2382,7 +2392,6 @@ impl Device {
         self.page(
             "storage",
             vec![
-                action("Refresh", self.when(Msg::Refresh)),
                 action("Check growing /data", self.when(Msg::GrowCheck)),
                 action(
                     "Grow /data ...",
@@ -2411,7 +2420,6 @@ impl Device {
             .and_then(|time| time.ntp)
             .unwrap_or(true);
         let actions = vec![
-            action("Refresh", self.when(Msg::Refresh)),
             action("Timezone ...", self.when(Msg::Timezone)),
             action("NTP ...", self.when(Msg::Ntp)),
             action(
@@ -2465,12 +2473,7 @@ impl Device {
 
     fn audio_view(&self) -> Element<'_, Message> {
         let Some(audio) = &self.pages.audio else {
-            return self.page(
-                "audio",
-                vec![action("Refresh", self.when(Msg::Refresh))],
-                Vec::new(),
-                Vec::new(),
-            );
+            return self.page("audio", Vec::new(), Vec::new(), Vec::new());
         };
         const DEVICES: &[Col] = &[
             col("Name", Length::Fixed(110.0)),
@@ -2583,7 +2586,6 @@ impl Device {
         self.page(
             "audio",
             vec![
-                action("Refresh", self.when(Msg::Refresh)),
                 action("Test tone", self.when(Msg::Test(false))),
                 action("Test recording", self.when(Msg::Test(true))),
             ],
@@ -2627,7 +2629,6 @@ impl Device {
         self.page(
             "access",
             vec![
-                action("Refresh", self.when(Msg::Refresh)),
                 action("New token ...", self.when(Msg::TokenNew)),
                 action("Root password ...", self.when(Msg::Password)),
                 action("Unclaim ...", self.when(Msg::Unclaim)),
@@ -2665,7 +2666,6 @@ impl Device {
         self.page(
             "ssh",
             vec![
-                action("Refresh", self.when(Msg::Refresh)),
                 action("Open terminal", self.when(Msg::Authorize(true))),
                 action("Authorize my key", self.when(Msg::Authorize(false))),
             ],
@@ -2731,7 +2731,6 @@ impl Device {
                         .then_some(())
                         .and_then(|()| self.when(Msg::FilesUp)),
                 ),
-                action("Refresh", self.when(Msg::Refresh)),
                 action("Upload files ...", self.when(Msg::Upload(false))),
                 action("Upload folder ...", self.when(Msg::Upload(true))),
                 action("New folder ...", self.when(Msg::Mkdir)),
@@ -2838,7 +2837,6 @@ impl Device {
         self.page(
             "update",
             vec![
-                action("Refresh", self.when(Msg::Refresh)),
                 action(
                     "Send image ...",
                     (!sending)
@@ -2862,6 +2860,7 @@ impl Device {
 pub(super) fn page_key(page: Page) -> &'static str {
     match page {
         Page::Overview => "overview",
+        Page::Browser => "browser",
         Page::Network => "net",
         Page::Wifi => "wifi",
         Page::Storage => "storage",

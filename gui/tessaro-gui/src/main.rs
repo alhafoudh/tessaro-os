@@ -292,11 +292,6 @@ impl App {
                 text("kiosk manager").size(theme::SMALL).style(theme::muted),
                 space::horizontal(),
                 theme::tool("Devices", Some(Message::ShowNodes)),
-                theme::tool(
-                    "Add address",
-                    Some(Message::Nodes(nodes_view::Message::AddAddress))
-                ),
-                theme::tool("Rescan", Some(Message::Nodes(nodes_view::Message::Rescan))),
             ]
             .spacing(8)
             .align_y(iced::alignment::Vertical::Center),

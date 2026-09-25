@@ -354,7 +354,7 @@ fn control_ping(session: &mut Session, count: u32, report: &Report) -> Result<St
 
 /// What `tessaro-ctl browser devtools` does: the tunnel, open until the job
 /// is cancelled or ssh ends. The device reports a connected DevTools window
-/// in its `Status`, which the Overview page shows.
+/// in its `Status`, which the Browser page shows.
 fn devtools(session: &mut Session, report: &Report) -> Result<String, String> {
     let authorized = ssh::authorize(session, None)?;
     let port = tunnel::free_port(tunnel::DEVTOOLS_LOCAL)?;

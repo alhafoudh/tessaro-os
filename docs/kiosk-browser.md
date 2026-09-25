@@ -169,7 +169,7 @@ does and runs `ssh -N -L 127.0.0.1:9222:127.0.0.1:9222` until Ctrl-C
 `chrome://inspect` the tab is under Remote Target, because 9222 is one of the
 ports Chrome discovers without being configured; `--local-port` takes
 another, which then has to be added under Configure. tessaro-gui runs the
-same tunnel as a job from the Overview page (see [gui.md](gui.md)).
+same tunnel as a job from the Browser page (see [gui.md](gui.md)).
 
 * **Open it from `chrome://inspect`, not from `/json`'s
   `devtoolsFrontendUrl` in a tab.** Chromium refuses a DevTools websocket
