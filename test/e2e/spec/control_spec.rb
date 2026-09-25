@@ -35,6 +35,72 @@ module AgentE2E
       expect(guest.run("tessaro-ctl config keys")).not_to include("device.gpu_mem")
     end
 
+    # The page's zone is what Chromium reads from /etc/localtime, which
+    # timedated relinks: no browser restart, and no TZ anywhere.
+    it "time: tessaro-ctl time timezone moves the clock's zone and the page follows without a browser restart",
+       :reconfigure do
+      browser = guest.kiosk_pid
+      out = guest.run("tessaro-ctl time timezone Europe/Bratislava")
+      expect(out).to include("timezone Europe/Bratislava")
+      expect(out).not_to include("restarting")
+      expect(guest.run("timedatectl show -p Timezone --value").strip).to eq("Europe/Bratislava")
+
+      zone = ""
+      step "wait up to 10s for the page's Intl zone to read Europe/Bratislava"
+      deadline = Time.now + 10
+      until zone == "Europe/Bratislava" || Time.now > deadline
+        sleep 1
+        zone = quietly do
+          cdp.command("Runtime.evaluate", expression: "Intl.DateTimeFormat().resolvedOptions().timeZone",
+                                          returnByValue: true)
+        end.dig("result", "value").to_s
+      end
+      expect(zone).to eq("Europe/Bratislava")
+      expect(guest.kiosk_pid).to eq(browser)
+      expect(guest.run("tessaro-ctl time show")).to include("Europe/Bratislava")
+
+      refused = guest.run("tessaro-ctl time timezone Mars/Olympus 2>&1", allow_failure: true)
+      expect(refused).to include("this device has no timezone Mars/Olympus")
+
+      guest.run("tessaro-ctl config unset time.timezone")
+      expect(guest.run("timedatectl show -p Timezone --value").strip).to eq("UTC")
+    ensure
+      guest.run("tessaro-ctl config unset time.timezone", allow_failure: true)
+    end
+
+    # qemu's user network has no NTP server to reach; the case is about what
+    # the device is told, not whether it syncs.
+    it "time: tessaro-ctl time ntp on --server writes timesyncd's drop-in and restarts only timesyncd",
+       :reconfigure do
+      dropin = "/run/systemd/timesyncd.conf.d/50-tessaro.conf"
+      timesyncd = guest.property("systemd-timesyncd", "MainPID").to_i
+      browser = guest.kiosk_pid
+
+      out = guest.run("tessaro-ctl time ntp on --server 10.0.2.2")
+      expect(out).to include("servers 10.0.2.2")
+      expect(out).not_to include("restarting")
+      expect(guest.run("cat #{dropin}")).to include("NTP=10.0.2.2")
+      servers = guest.run("busctl get-property org.freedesktop.timesync1 /org/freedesktop/timesync1 " \
+                          "org.freedesktop.timesync1.Manager SystemNTPServers")
+      expect(servers).to include('"10.0.2.2"')
+      expect(guest.property("systemd-timesyncd", "MainPID").to_i).not_to eq(timesyncd)
+      expect(guest.kiosk_pid).to eq(browser)
+
+      status = JSON.parse(guest.run("tessaro-ctl --json time show"))
+      expect(status.dig("servers", "system")).to eq(["10.0.2.2"])
+      expect(status["setting_servers"]).to eq(["10.0.2.2"])
+      expect(status["ntp"]).to be(true)
+      expect(status["timesyncd"]).to eq("active")
+
+      refused = guest.run("tessaro-ctl time set '2030-01-01 00:00' 2>&1", allow_failure: true)
+      expect(refused).to include("switch it off first")
+
+      guest.run("tessaro-ctl config unset time.ntp.servers")
+      expect(guest.run("test -e #{dropin} && echo there || echo gone").strip).to eq("gone")
+    ensure
+      guest.run("tessaro-ctl config unset time.ntp.servers", allow_failure: true)
+    end
+
     # The template's \n is typed as a backslash and an n, which the single
     # quotes carry through the guest shell.
     it "debug-screen: debug on swaps the site for the filled-in debug text without restarting the browser; " \

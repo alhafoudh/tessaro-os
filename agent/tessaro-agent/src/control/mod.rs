@@ -67,6 +67,7 @@ use crate::storage;
 use crate::store::Store;
 use crate::sync::lock;
 use crate::systemd::Bus;
+use crate::time::Time;
 use crate::updates::Updates;
 use crate::watchdog::Heartbeat;
 
@@ -190,6 +191,7 @@ pub struct Control {
     storage_grow: Arc<tokio::sync::Mutex<()>>,
     network: Arc<Network>,
     audio: Arc<Audio>,
+    time: Arc<Time>,
     /// Wakes `watch_welcome` early, when the claim changes.
     welcome: tokio::sync::Notify,
     /// Set once, by `start_bridge`.
@@ -215,6 +217,7 @@ impl Control {
             files: Files::new(Arc::clone(&log), paths.clone()),
             network: Network::new(Arc::clone(&log), paths.clone()),
             audio: Audio::new(Arc::clone(&log), &paths),
+            time: Time::new(Arc::clone(&log), &paths),
             state: Store::new(&paths.state_dir, state::FILE),
             auth_store: Store::new(&paths.state_dir, auth::FILE),
             secrets: Store::new(&paths.state_dir, secrets::FILE),
@@ -497,6 +500,15 @@ impl Control {
             }
             Command::AudioStatus => self.audio_status().await.into(),
             Command::AudioTest { input } => self.audio_test(&caller.describe(), input).await.into(),
+            Command::TimeStatus => self.time_status().await.into(),
+            Command::TimeZones => self.time.zones(&self.bus).await.into(),
+            Command::TimeSync => self.time.sync(&self.bus).await.map(Done::new).into(),
+            Command::TimeSet { usec, local } => self
+                .time
+                .set_clock(&self.bus, &caller.describe(), usec, local)
+                .await
+                .map(Done::new)
+                .into(),
         }
     }
 
@@ -602,6 +614,7 @@ impl Control {
 
         let wanted = self.audio_wanted_from(&state.settings);
         let audio = self.audio.status(&wanted).await;
+        let time = self.time.summary(&self.bus).await;
         // naked: a /proc read under blocking()'s within()
         let devtools = self.session.others().await > 0;
         let screen_on = crate::power::send(&self.paths.power_socket, "status")
@@ -625,6 +638,7 @@ impl Control {
             debug_screen: state::debug_screen(&state.settings, &self.defaults),
             devtools,
             audio: Some(audio),
+            time,
         })
     }
 
@@ -1002,6 +1016,9 @@ mod tests {
             // No PipeWire: nothing here may reach this host's sound server.
             ("KIOSK_AUDIO_RUNTIME_DIR", at("audio")),
             ("KIOSK_ASOUND_CARDS", at("asound-cards")),
+            // Never this host's clock.
+            ("KIOSK_MANAGE_CLOCK", "0".to_string()),
+            ("KIOSK_TIMESYNCD_DROPIN", at("timesyncd.conf")),
         ]
         .into_iter()
         .map(|(k, v)| (k.to_string(), v))

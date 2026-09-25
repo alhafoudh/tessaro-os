@@ -25,10 +25,11 @@ use protocol::keys;
 use protocol::{
     size_label, Applied, AudioDevice, AudioStatus, AudioTested, Command, Connector, Done,
     HotspotCredentials, Net, NetChange, NetProfile, NetProfileDetail, Password, PingEvent, Secret,
-    SpeedtestEvent, SshKeyInfo, SshKeyRevoked, Storage, StorageGrowEvent, TokenCreated, TokenInfo,
-    UpdatePhase, UpdateStatus, Verify, WifiNetwork, WifiSecurity, WifiStatus,
+    SpeedtestEvent, SshKeyInfo, SshKeyRevoked, Storage, StorageGrowEvent, TimeStatus, TokenCreated,
+    TokenInfo, UpdatePhase, UpdateStatus, Verify, WifiNetwork, WifiSecurity, WifiStatus,
 };
 use serde_json::Value;
+use tessaro_client::clock;
 use tessaro_client::transfer::date;
 
 use super::{Device, Dialog, Link, Message, Page, Tone};
@@ -50,6 +51,7 @@ pub struct State {
     /// A volume slider being dragged: shown, not yet sent.
     volume: Option<u8>,
     input_volume: Option<u8>,
+    time: Option<TimeStatus>,
     tokens: Vec<TokenInfo>,
     ssh_keys: Vec<SshKeyInfo>,
     files_dir: String,
@@ -129,6 +131,9 @@ enum Action {
     Delete(Vec<String>),
     UpdateSend(PathBuf),
     UpdateCancel,
+    Timezone,
+    Ntp,
+    SetClock,
 }
 
 #[derive(Debug, Clone)]
@@ -174,6 +179,11 @@ pub enum Msg {
     Mute(bool),
     InputMute(bool),
     Test(bool),
+    // time
+    Timezone,
+    Ntp,
+    TimeSync,
+    SetClock,
     // access
     TokenNew,
     TokenRevoke,
@@ -300,6 +310,22 @@ impl Form {
     }
 }
 
+/// The tz database's names, as the first device asked listed them. Kept
+/// for the life of the program, since a choice field holds `&'static str`s;
+/// it is one list, fetched once.
+static ZONES: std::sync::OnceLock<&'static [&'static str]> = std::sync::OnceLock::new();
+
+/// `ZONES`, filled from a `TimeZones` answer the first time.
+fn zones(list: Vec<String>) -> &'static [&'static str] {
+    ZONES.get_or_init(|| {
+        let names: Vec<&'static str> = list
+            .into_iter()
+            .map(|zone| &*Box::leak(zone.into_boxed_str()))
+            .collect();
+        Box::leak(names.into_boxed_slice())
+    })
+}
+
 /// The page a tag's answer belongs to, for its error line.
 fn page_of(tag: &str) -> &'static str {
     match tag.split('.').next().unwrap_or("") {
@@ -307,6 +333,7 @@ fn page_of(tag: &str) -> &'static str {
         "wifi" => "wifi",
         "storage" => "storage",
         "audio" => "audio",
+        "time" => "time",
         "tokens" | "token" | "password" | "unclaim" => "access",
         "ssh" => "ssh",
         "files" => "files",
@@ -445,6 +472,27 @@ impl Device {
         self.dialog = Some(Dialog::Form(form));
     }
 
+    /// The timezone dialog: a choice of every zone the device knows, on the
+    /// one it has now.
+    fn timezone_form(&mut self, zones: &'static [&'static str]) {
+        let current = self
+            .pages
+            .time
+            .as_ref()
+            .map(|time| time.setting_timezone.as_str())
+            .unwrap_or(keys::DEFAULT_TIMEZONE);
+        let current = zones
+            .iter()
+            .find(|zone| **zone == current)
+            .copied()
+            .unwrap_or(keys::DEFAULT_TIMEZONE);
+        self.form(
+            Form::new("Timezone", "Set", Action::Timezone)
+                .intro("Pages and the journal show local time in it. The browser follows without a restart.")
+                .field(Field::choice("Timezone", current, zones)),
+        );
+    }
+
     fn secret(&mut self, title: impl Into<String>, intro: impl Into<String>, value: String) {
         self.dialog = Some(Dialog::Secret {
             title: title.into(),
@@ -483,6 +531,7 @@ impl Device {
             }
             Page::Storage => self.call("storage", Command::Storage),
             Page::Audio => self.call("audio", Command::AudioStatus),
+            Page::Time => self.call("time", Command::TimeStatus),
             Page::Access => self.call("tokens", Command::TokenList),
             Page::Ssh => self.call("ssh.keys", Command::SshKeyList),
             Page::Files => {
@@ -569,6 +618,11 @@ impl Device {
                 }
                 self.log(Tone::Ok, line);
             }
+            "time" => self.pages.time = Some(parse(value)?),
+            "time.zones" => {
+                let zones = zones(parse(value)?);
+                self.timezone_form(zones);
+            }
             "tokens" => self.pages.tokens = parse(value)?,
             "token.new" => {
                 let created: TokenCreated = parse(value)?;
@@ -637,6 +691,7 @@ impl Device {
                     "access" => Page::Access,
                     "update" => Page::Update,
                     "net" => Page::Network,
+                    "time" => Page::Time,
                     _ => self.page,
                 };
                 self.refresh_page(page);
@@ -928,6 +983,39 @@ impl Device {
                     },
                 );
                 self.call_long("audio.test", Command::AudioTest { input });
+            }
+            Msg::Timezone => match ZONES.get() {
+                Some(zones) => self.timezone_form(zones),
+                None => self.call("time.zones", Command::TimeZones),
+            },
+            Msg::Ntp => {
+                let (on, servers) = self
+                    .pages
+                    .time
+                    .as_ref()
+                    .map(|time| (time.ntp.unwrap_or(true), time.setting_servers.join(", ")))
+                    .unwrap_or((true, String::new()));
+                self.form(
+                    Form::new("NTP", "Apply", Action::Ntp)
+                        .intro("Keep the clock in sync over NTP. With no servers the device uses the ones the network's DHCP offers, else the image's fallback. Only systemd-timesyncd restarts.")
+                        .field(Field::check("Sync over NTP", on))
+                        .field(Field::text("Servers", servers, "from DHCP, else the fallback")),
+                );
+            }
+            Msg::TimeSync => self.call("time.sync", Command::TimeSync),
+            Msg::SetClock => {
+                let now = self
+                    .pages
+                    .time
+                    .as_ref()
+                    .and_then(|time| time.local_time.clone())
+                    .unwrap_or_default();
+                self.form(
+                    Form::new("Set the clock", "Set", Action::SetClock)
+                        .intro("With NTP off only. Either this computer's clock, or a time in the device's timezone as YYYY-MM-DD HH:MM[:SS].")
+                        .field(Field::check("Use this computer's clock", true))
+                        .field(Field::text("Time", now, "YYYY-MM-DD HH:MM")),
+                );
             }
             Msg::TokenNew => self.form(
                 Form::new("New token", "Create", Action::TokenCreate)
@@ -1340,6 +1428,39 @@ impl Device {
                     },
                 );
             }
+            Action::Timezone => {
+                let zone = form.value("Timezone").trim();
+                super::check(keys::TIMEZONE, zone)?;
+                self.set(&[(keys::TIMEZONE, zone)]);
+                self.call("time", Command::TimeStatus);
+            }
+            Action::Ntp => {
+                let servers = form.value("Servers").trim();
+                super::check(keys::NTP_SERVERS, servers)?;
+                let on = flag(form.checked("Sync over NTP"));
+                self.set(&[(keys::NTP_ENABLE, on), (keys::NTP_SERVERS, servers)]);
+                self.call("time", Command::TimeStatus);
+            }
+            Action::SetClock => {
+                let command = if form.checked("Use this computer's clock") {
+                    let usec = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map_err(|_| "this computer's clock is before 1970".to_string())?
+                        .as_micros() as u64;
+                    Command::TimeSet {
+                        usec: Some(usec),
+                        local: None,
+                    }
+                } else {
+                    let local = form.value("Time").trim().to_string();
+                    protocol::parse_local_time(&local)?;
+                    Command::TimeSet {
+                        usec: None,
+                        local: Some(local),
+                    }
+                };
+                self.call("time.set", command);
+            }
             Action::ControlPing => {
                 let count = count(form.value("Count"))?;
                 self.start_job("overview", "ping", jobs::Kind::ControlPing { count });
@@ -1572,6 +1693,7 @@ impl Device {
             Page::Wifi => self.wifi_view(),
             Page::Storage => self.storage_view(),
             Page::Audio => self.audio_view(),
+            Page::Time => self.time_view(),
             Page::Access => self.access_view(),
             Page::Ssh => self.ssh_view(),
             Page::Files => self.files_view(),
@@ -1769,6 +1891,18 @@ impl Device {
             facts.push(("Browser answers", yes(status.browser_answering)));
             facts.push(("Maintenance", yes(status.maintenance)));
             facts.push(("Debug screen", yes(status.debug_screen)));
+            if let Some(time) = &status.time {
+                let sync = match (time.ntp, time.synchronized) {
+                    (Some(false), _) => "NTP off",
+                    (_, Some(true)) => "in sync",
+                    (_, Some(false)) => "not in sync",
+                    (_, None) => "sync unknown",
+                };
+                facts.push((
+                    "Time",
+                    format!("{}, {sync}", time.timezone.clone().unwrap_or_default()),
+                ));
+            }
             facts.push(("Page zoom", format!("{}%", self.zoom())));
             facts.push((
                 "DevTools",
@@ -2269,6 +2403,66 @@ impl Device {
         )
     }
 
+    fn time_view(&self) -> Element<'_, Message> {
+        let ntp_on = self
+            .pages
+            .time
+            .as_ref()
+            .and_then(|time| time.ntp)
+            .unwrap_or(true);
+        let actions = vec![
+            action("Refresh", self.when(Msg::Refresh)),
+            action("Timezone ...", self.when(Msg::Timezone)),
+            action("NTP ...", self.when(Msg::Ntp)),
+            action(
+                "Sync now",
+                ntp_on.then_some(()).and_then(|()| self.when(Msg::TimeSync)),
+            ),
+            action(
+                "Set the clock ...",
+                (!ntp_on)
+                    .then_some(())
+                    .and_then(|()| self.when(Msg::SetClock)),
+            ),
+        ];
+        let Some(time) = &self.pages.time else {
+            return self.page("time", actions, Vec::new(), Vec::new());
+        };
+        const SERVERS: &[Col] = &[
+            col("Source", Length::Fixed(150.0)),
+            col("Servers", Length::Fill),
+        ];
+        let servers = [
+            ("runtime (DHCP's)", &time.servers.runtime),
+            ("system (time.ntp.servers)", &time.servers.system),
+            ("fallback (the image's)", &time.servers.fallback),
+            ("offered by DHCP", &time.servers.dhcp),
+        ]
+        .into_iter()
+        .map(|(source, names)| {
+            (
+                source.to_string(),
+                vec![
+                    cell(source).style(theme::muted).into(),
+                    cell(names.join(" ")).into(),
+                ],
+            )
+        })
+        .collect();
+        let mut body = Vec::new();
+        if let Some(error) = &time.error {
+            body.push(
+                text(error.clone())
+                    .size(theme::SMALL)
+                    .style(text::danger)
+                    .into(),
+            );
+        }
+        body.push(self.facts("timefacts", time_facts(time)));
+        body.push(self.table("timeservers", SERVERS, servers, Length::Shrink));
+        self.page("time", actions, Vec::new(), body)
+    }
+
     fn audio_view(&self) -> Element<'_, Message> {
         let Some(audio) = &self.pages.audio else {
             return self.page(
@@ -2672,6 +2866,7 @@ pub(super) fn page_key(page: Page) -> &'static str {
         Page::Wifi => "wifi",
         Page::Storage => "storage",
         Page::Audio => "audio",
+        Page::Time => "time",
         Page::Access => "access",
         Page::Ssh => "ssh",
         Page::Files => "files",
@@ -2679,6 +2874,89 @@ pub(super) fn page_key(page: Page) -> &'static str {
         Page::Screen => "screen",
         Page::Settings | Page::Log => "",
     }
+}
+
+/// The Time page's facts: what `tessaro-ctl time show` prints, in rows.
+fn time_facts(time: &TimeStatus) -> Vec<(&'static str, String)> {
+    let reported = |value: Option<String>| value.unwrap_or_else(|| "(not reported)".to_string());
+    let yes_no = |value: Option<bool>| value.map(|on| if on { "yes" } else { "no" }.to_string());
+    let mut facts = Vec::new();
+    let zone = time.timezone.clone().map(|zone| {
+        match (&time.zone_abbreviation, time.utc_offset_seconds) {
+            (Some(abbreviation), Some(offset)) => {
+                format!("{zone} ({abbreviation}, {})", clock::utc_offset(offset))
+            }
+            _ => zone,
+        }
+    });
+    facts.push(("Timezone", reported(zone)));
+    if time
+        .timezone
+        .as_deref()
+        .is_some_and(|zone| zone != time.setting_timezone)
+    {
+        facts.push((
+            "Setting",
+            format!(
+                "time.timezone is {}, not applied yet",
+                time.setting_timezone
+            ),
+        ));
+    }
+    facts.push(("Local time", reported(time.local_time.clone())));
+    facts.push(("In sync", reported(yes_no(time.synchronized))));
+    facts.push((
+        "NTP",
+        reported(time.ntp.map(|on| if on { "on" } else { "off" }.to_string())),
+    ));
+    facts.push(("timesyncd", reported(time.timesyncd.clone())));
+    if time.timesyncd.as_deref() == Some("active") {
+        let server = match (&time.server_name, &time.server_address) {
+            (Some(name), Some(address)) if name != address => format!("{name} ({address})"),
+            (Some(name), _) => name.clone(),
+            (None, Some(address)) => address.clone(),
+            (None, None) => "none yet".to_string(),
+        };
+        facts.push(("Server", server));
+        if let Some(poll) = time.poll_interval_usec {
+            facts.push(("Poll interval", format!("every {}", clock::span(poll))));
+        }
+        match &time.last {
+            Some(last) => {
+                facts.push(("Offset", clock::offset(last.offset_usec)));
+                facts.push(("Delay", clock::span(last.delay_usec.unsigned_abs())));
+                facts.push(("Jitter", clock::span(last.jitter_usec)));
+                if let Some(ppm) = time.frequency_ppm() {
+                    facts.push(("Drift", clock::drift(ppm)));
+                }
+                facts.push((
+                    "Root distance",
+                    clock::span(last.root_delay_usec / 2 + last.root_dispersion_usec),
+                ));
+                facts.push((
+                    "Stratum",
+                    format!(
+                        "{} (reference {}, precision {})",
+                        last.stratum,
+                        last.reference,
+                        clock::precision(last.precision)
+                    ),
+                ));
+                if last.leap != 0 {
+                    facts.push(("Leap", clock::leap(last.leap).to_string()));
+                }
+                facts.push(("Answers", last.packet_count.to_string()));
+            }
+            None => facts.push(("Answers", "none yet".to_string())),
+        }
+    }
+    if let (Some(rtc), Some(now)) = (time.rtc_usec, time.now_usec) {
+        facts.push((
+            "Hardware clock",
+            format!("{} from the system clock", clock::offset_between(rtc, now)),
+        ));
+    }
+    facts
 }
 
 /// A stream event as a line, the way `tessaro-ctl` prints it.

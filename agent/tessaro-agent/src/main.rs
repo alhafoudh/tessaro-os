@@ -56,6 +56,7 @@ mod storage;
 mod store;
 mod sync;
 mod systemd;
+mod time;
 mod updates;
 mod url;
 mod watchdog;
@@ -301,6 +302,7 @@ async fn start_control(
     control.watch_public_ip();
     control.watch_display();
     control.watch_audio();
+    control.watch_time();
     control.watch_welcome();
     control.watch_screen_power();
     // Before the agent's first navigation, so the page it opens already

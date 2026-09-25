@@ -99,6 +99,13 @@ CORE_IMAGE_EXTRA_INSTALL += " \
     tessaro-audio \
 "
 
+# The clock: timezone data for time.timezone and a saved timesyncd clock that
+# survives a reboot. The time.* settings are applied by the agent; see
+# docs/time.md.
+CORE_IMAGE_EXTRA_INSTALL += " \
+    tessaro-time \
+"
+
 # Remote access, on every image rather than only development ones.
 #
 # Until now an SSH server came exclusively from debug-tweaks, which

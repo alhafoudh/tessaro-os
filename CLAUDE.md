@@ -36,6 +36,7 @@ same change as the behaviour it describes.
 | [docs/bridge.md](docs/bridge.md) | the injected script, `window.tessaro` and its modes, who may call, `browser eval` |
 | [docs/remote-access.md](docs/remote-access.md) | VNC mirror and its PAM auth, SSH and `ssh connect` keys |
 | [docs/audio.md](docs/audio.md) | PipeWire units, how `audio.*` is applied, `auto` |
+| [docs/time.md](docs/time.md) | timedated and timesyncd, how `time.*` is applied, DHCP's NTP servers, the persistent clock, where `time show`'s numbers come from |
 | [docs/files.md](docs/files.md) | the `/data/files` store served at `/files/` |
 | [docs/networking.md](docs/networking.md) | NetworkManager, the managed profiles and their transactions, hotspot, ping, speed test |
 | [docs/updates.md](docs/updates.md) | in-place updates, `--repartition`, growing `/data` |
@@ -296,6 +297,8 @@ same thing. Keep to these rules when adding a command or a setting:
     `eval`.
   * `audio`: sound. Which output plays and which input records, volume,
     mute, a test tone and a recording level.
+  * `time`: the clock. Timezone, NTP servers and sync, its status, setting
+    it by hand.
   * `update`: putting an image on the device.
   * `files`: the file store in `/data/files`. Upload, download, sync, list,
     move, rm.
@@ -314,7 +317,7 @@ same thing. Keep to these rules when adding a command or a setting:
   belongs to (`device factory-reset` wipes the device, `access unclaim` only
   removes its owners).
 * **Setting keys are prefixed by the command group that acts on the same
-  thing**: `browser.*`, `screen.*`, `audio.*`, `network.*`, `device.*`, `access.*`. A key
+  thing**: `browser.*`, `screen.*`, `audio.*`, `time.*`, `network.*`, `device.*`, `access.*`. A key
   that no command group matches is named after the component it tunes
   (`agent.*`), and `data.*` is the user's namespace. A sub-feature with its own
   on/off gets a third level that mirrors its command (`browser maintenance on

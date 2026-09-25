@@ -131,7 +131,7 @@ applies and stays, Default unsets.**
   (`if_revision`), so a change against stale values is refused and the
   settings are fetched again.
 * What a change did goes to Messages: the revision, restarted units, network
-  checks and the audio outcome.
+  checks and the audio and time outcomes.
 
 **What the tool pages cover, by command group:**
 
@@ -143,6 +143,7 @@ applies and stays, Default unsets.**
 | WiFi | `network wifi status`, `scan`, `join`, `hotspot-password` |
 | Storage | `storage show`, partitions and filesystems, `storage grow` (check first) |
 | Audio | `audio show`, outputs and inputs, choosing one, volume, mute, `audio test` for the tone and the recording |
+| Time | `time show` and its servers, `time timezone` (a choice of `time zones`), `time ntp on|off` with servers, `time sync`, `time set` (this computer's clock or a typed time) |
 | Access | `access token create`, `list`, `revoke`, `access password set`, `access unclaim` |
 | SSH | `ssh keys list` and `revoke`, `ssh connect` (authorize the key, open a terminal) |
 | Files | `files list` as a browser, `upload` (files or a folder), `download`, `mkdir`, `move`, `rm` |

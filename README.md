@@ -128,6 +128,7 @@ browser      answering
   tessaro-kiosk.service    active
   weston.service           active
 audio        usb 80%
+time         UTC, in sync
 ```
 
 ```sh
@@ -283,6 +284,19 @@ tessaro-ctl audio output hdmi && tessaro-ctl audio volume 60 && tessaro-ctl audi
 `auto` picks the USB or Bluetooth device plugged in last, then HDMI with a
 screen on it, then the jack. Changes apply to sound already playing, and
 nothing restarts.
+
+### Time
+
+```sh
+tessaro-ctl time show                                  # timezone, in sync or not, server, offset, drift
+tessaro-ctl time timezone Europe/Bratislava            # `time zones` lists them; no restart
+tessaro-ctl time ntp on --server ntp1.corp.test --server ntp2.corp.test
+tessaro-ctl time ntp off && tessaro-ctl time set       # no time server: this computer's clock
+```
+
+Devices start on UTC and take their NTP servers from the network's DHCP,
+else a public fallback. A network that blocks outside NTP needs its own
+servers named, or TLS fails once the clock drifts.
 
 ### Updating
 

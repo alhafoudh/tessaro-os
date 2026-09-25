@@ -7,6 +7,7 @@
 //! (`connect::Trust::Pin`), and what is worth telling the user comes back as
 //! `Session::notes`.
 
+pub mod clock;
 pub mod connect;
 pub mod journal;
 pub mod nodes;
