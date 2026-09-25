@@ -97,6 +97,12 @@ TESSARO_DEVICE_ORIGINS = "${@tessaro_device_origins(d)}"
 # with a bundled initramfs (KERNEL_IMAGETYPE-INITRAMFS_LINK_NAME.bin).
 TESSARO_KERNEL_FILE ?= "${KERNEL_IMAGETYPE}-initramfs-${MACHINE}.bin"
 
+# Where the Raspberry Pi firmware's config.txt is, on a machine that boots
+# through that firmware; empty everywhere else. The agent writes the settings
+# the firmware reads (tessaro.txt) there, and offers those settings only when
+# this is set. Set per machine in the kas config.
+TESSARO_BOOT_CONFIG_DIR ?= ""
+
 # tessaro-flash applies an image update from the initramfs, which must not
 # pull in the agent, Chromium and everything else ${PN} depends on. cargo
 # installs every binary in the workspace into ${bindir}; this takes that one
@@ -130,6 +136,7 @@ do_install:append() {
         -e "s|@selftest-origin@|${TESSARO_SELFTEST_ORIGIN}|g" \
         -e "s|@machine@|${MACHINE}|g" \
         -e "s|@kernel-file@|${TESSARO_KERNEL_FILE}|g" \
+        -e "s|@boot-config-dir@|${TESSARO_BOOT_CONFIG_DIR}|g" \
         ${WORKDIR}/tessaro-kiosk.env.in > ${WORKDIR}/tessaro-kiosk.env
     install -Dm0644 ${WORKDIR}/tessaro-kiosk.env \
         ${D}${nonarch_libdir}/tessaro-kiosk/tessaro-kiosk.env

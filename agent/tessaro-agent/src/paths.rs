@@ -87,6 +87,10 @@ pub struct Paths {
     pub kernel_file: String,
     /// The MACHINE the image was built for, for `id` and the mDNS TXT record.
     pub machine: String,
+    /// The Raspberry Pi firmware's boot partition, with its `config.txt`,
+    /// where the agent writes `tessaro.txt`. `None` on a device without that
+    /// firmware. Set by the build per machine, never probed.
+    pub boot_config_dir: Option<PathBuf>,
     /// The self-test page's origin, always granted the device APIs.
     pub selftest_origin: String,
     pub kiosk_unit: String,
@@ -144,11 +148,28 @@ impl Paths {
             asound_cards: path("KIOSK_ASOUND_CARDS", "/proc/asound/cards"),
             kernel_file: text("KIOSK_KERNEL_FILE", "bzImage"),
             machine: text("KIOSK_MACHINE", "unknown"),
+            boot_config_dir: env
+                .get("KIOSK_BOOT_CONFIG_DIR")
+                .filter(|dir| !dir.is_empty())
+                .map(PathBuf::from),
             selftest_origin: text("KIOSK_SELFTEST_ORIGIN", "http://127.0.0.1"),
             kiosk_unit: text("KIOSK_UNIT", "tessaro-kiosk.service"),
             weston_unit: text("KIOSK_WESTON_UNIT", "weston.service"),
             agent_unit: text("KIOSK_AGENT_UNIT", "tessaro-agent.service"),
         }
+    }
+
+    /// Whether this device has `hardware`.
+    pub fn has(&self, hardware: protocol::keys::Hardware) -> bool {
+        match hardware {
+            protocol::keys::Hardware::PiFirmware => self.boot_config_dir.is_some(),
+        }
+    }
+
+    /// Whether `key` exists on this device: every key does, but one that
+    /// needs hardware the device lacks.
+    pub fn offers(&self, key: &protocol::keys::Key) -> bool {
+        key.only.is_none_or(|hardware| self.has(hardware))
     }
 
     pub fn generated_env(&self) -> PathBuf {

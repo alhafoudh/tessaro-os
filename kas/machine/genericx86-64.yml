@@ -10,6 +10,7 @@ header:
   includes:
     - kas/common/tessaro.yml
     - kas/repo/meta-yocto.yml
+    - kas/repo/meta-intel.yml
 
 local_conf_header:
   25_tessaro-machine: |
@@ -43,6 +44,16 @@ local_conf_header:
     # and modem blobs a kiosk never touches. Once the hardware is fixed:
     #   BAD_RECOMMENDATIONS += "linux-firmware"
     # plus the split packages the board needs.
+    #
+    # Hardware video decode (docs/kiosk-browser.md, "Hardware video decode").
+    # Chromium decodes through VA-API here, and libva picks the driver for
+    # the GPU it finds at runtime, so one image carries a driver for each:
+    # intel-media-driver (iHD, from meta-intel) for Intel GPUs from Broadwell
+    # on; intel-vaapi-driver (i965, also meta-intel) for the older ones and for
+    # Braswell/Cherry Trail Atoms, which iHD does not support - the Dell Wyse
+    # 3040's Atom x5-Z8350 among them; and Mesa's radeonsi VA driver for AMD,
+    # which comes in with mesa-megadriver (tessaro.conf).
+    MACHINE_EXTRA_RRECOMMENDS += "libva intel-media-driver intel-vaapi-driver"
 
 # Both keys belong in the entry point of the config chain: an include cannot
 # set them, because meta-moonforge-distro.yml sets distro too and wins by

@@ -98,20 +98,27 @@ pub fn run(env: &dyn Env, log: &Log) {
 
     let state: State = state_store.read(log);
     match render::all(&paths, &defaults, &state.settings, log) {
-        Ok(rendered) => log.info(format!(
-            "rendered settings revision {} (env {}, policy {})",
-            state.revision,
-            if rendered.env_changed {
-                "updated"
-            } else {
-                "unchanged"
-            },
-            if rendered.policy_changed {
-                "updated"
-            } else {
-                "unchanged"
-            },
-        )),
+        Ok(rendered) => {
+            log.info(format!(
+                "rendered settings revision {} (env {}, policy {})",
+                state.revision,
+                if rendered.env_changed {
+                    "updated"
+                } else {
+                    "unchanged"
+                },
+                if rendered.policy_changed {
+                    "updated"
+                } else {
+                    "unchanged"
+                },
+            ));
+            // The firmware has already read its files for this boot: a
+            // factory reset, or the include just added, reaches it next time.
+            if rendered.firmware_changed {
+                log.info("the firmware settings changed; they apply at the next reboot");
+            }
+        }
         Err(err) => log.info(format!("render failed, the image defaults apply: {err}")),
     }
 

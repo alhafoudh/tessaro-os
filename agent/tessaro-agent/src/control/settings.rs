@@ -10,7 +10,7 @@ use protocol::keys::{self, Consumer, Key};
 use protocol::{Applied, Done, Secret};
 use tokio::time::Instant;
 
-use super::{unknown, After, Caller, Control, Reply};
+use super::{not_offered, unknown, After, Caller, Control, Reply};
 use crate::audio;
 use crate::deadline::blocking;
 use crate::display;
@@ -42,6 +42,11 @@ impl Control {
             let Some(key) = keys::find(&name) else {
                 return Reply::err(unknown(&name));
             };
+            // Unset stays allowed, so a value copied over from a device that
+            // has the hardware can still be taken out.
+            if value.is_some() && !self.paths.offers(key) {
+                return Reply::err(not_offered(key));
+            }
             let value = match value {
                 Some(value) => match keys::validate(key, &value) {
                     Ok(value) => Some(value),
@@ -124,6 +129,7 @@ impl Control {
                 pending: self.pending(&after),
                 network: network_change,
                 audio: None,
+                reboot: false,
             });
         }
 
@@ -339,6 +345,10 @@ impl Control {
             pending: self.pending(state),
             network,
             audio,
+            // Never rebooted for: a reboot blanks a public screen, so when is
+            // the operator's call. Written whether or not the change was
+            // applied, since the firmware reads it only at power-on anyway.
+            reboot: rendered.firmware_changed,
         })
         .then(after)
     }

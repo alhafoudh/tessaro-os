@@ -160,6 +160,44 @@ Things to know:
   not add `seccomp` to `DISTRO_FEATURES`: oe-core's default already has it and
   removes it per architecture, which an unconditional append would override.
 
+## Hardware video decode
+
+**Chromium decodes video on the GPU's decoder where the hardware has one: V4L2
+on the Raspberry Pi, VA-API on x86.** It only does so with the
+`AcceleratedVideoDecoder`, `AcceleratedVideoDecodeLinuxGL` and
+`AcceleratedVideoDecodeLinuxZeroCopyGL` features, which are the default of
+`KIOSK_ENABLE_FEATURES`. Without them every frame is decoded by ffmpeg on the
+CPU.
+
+* **The features are meta-chromium's own, moved.** The recipe selects them
+  and `--use-angle=gles-egl` into `CHROMIUM_EXTRA_ARGS` for its default
+  `use-v4l2` and `use-egl` PACKAGECONFIG options. `tessaro.conf` replaces that
+  variable to keep `--incognito` out, which drops them too, so the features
+  live in the env file and `--use-angle` in `tessaro-kiosk.service`. Setting
+  `browser.enable_features` replaces the whole list: keep them in it.
+* **On the Pi the decoder is `bcm2835-codec`**, a V4L2 memory-to-memory device
+  (`/dev/video10` and up, group `video`, which the unit is in). Chromium's V4L2
+  support is compiled in by meta-chromium's default `use-v4l2`. The decoder
+  runs on the VideoCore firmware and takes its memory from `gpu_mem`, not from
+  the CMA pool the rest of the GPU uses, so `device.gpu_mem` (Pi only, applied
+  at the next reboot, see [settings.md](settings.md)) is the knob when decoding
+  fails for memory. Every megabyte of it is taken from the browser.
+* **On x86 it is VA-API**, which needs Chromium built with `use-vaapi` and
+  without `use-v4l2` (`tessaro.conf`, x86-64 only, so the Pi's Chromium keeps
+  its hash; Chromium's `media/gpu/BUILD.gn` refuses both at once), libva, and
+  a driver for the GPU, which libva picks at runtime.
+  Intel's come from meta-intel (`kas/repo/meta-intel.yml`, genericx86-64
+  only): `intel-media-driver` (iHD) for Broadwell and newer, and
+  `intel-vaapi-driver` (i965) for older GPUs and for the Braswell and Cherry
+  Trail Atoms iHD does not support, such as the Dell Wyse 3040's. AMD's is Mesa's radeonsi VA
+  driver, from mesa's `va` PACKAGECONFIG; H.264 in it needs `VIDEO_CODECS =
+  "all"`, because oe-core's `all_free` leaves out every patented codec.
+* **Check it on the device** with `chrome://media-internals` on the page's
+  player: the decoder is `V4L2VideoDecoder` or `VaapiVideoDecoder`, not
+  `FFmpegVideoDecoder`. `chrome://gpu` lists "Video Decode" as hardware
+  accelerated, or says what disabled it; a GPU blocklist entry can be tested
+  with `browser.args_extra=--ignore-gpu-blocklist` before changing the image.
+
 ## Self-test page
 
 **This is what a factory image opens.** `TESSARO_KIOSK_URL` in `tessaro.conf`

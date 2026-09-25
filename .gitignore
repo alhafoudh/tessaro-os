@@ -14,6 +14,7 @@
 /meta-browser/
 /meta-clang/
 /meta-lts-mixins-rust/
+/meta-intel/
 
 # Cargo's build tree for agent/. CARGO_TARGET_DIR in mise.toml points it at
 # build/, out of the source tree, because the tessaro-kiosk recipe fetches

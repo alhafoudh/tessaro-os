@@ -1071,6 +1071,9 @@ fn show_key(key: &KeyInfo) {
                 "nothing: the network profiles are switched, and checked before it is saved"
             }
             protocol::keys::Consumer::Audio => "nothing: applied to the sound server at once",
+            protocol::keys::Consumer::Firmware => {
+                "nothing: the Pi firmware reads it at the next reboot"
+            }
         })
         .collect::<Vec<_>>()
         .join(", ");
@@ -1194,6 +1197,8 @@ fn show_status(status: &Status) {
 
 /// What keeps a change that is on probation.
 const CONFIRM_COMMAND: &str = "tessaro-ctl screen confirm";
+/// What applies a change the firmware reads at power-on.
+const REBOOT_COMMAND: &str = "tessaro-ctl device reboot";
 
 fn show_applied(applied: &Applied, no_apply: bool) {
     if applied.changed.is_empty() {
@@ -1217,7 +1222,7 @@ fn show_applied(applied: &Applied, no_apply: bool) {
     if no_apply {
         println!("{}", paint(style::MUTED, "saved; nothing restarted"));
     } else if applied.restarted.is_empty() {
-        if applied.audio.is_none() {
+        if applied.audio.is_none() && !applied.reboot {
             println!("{}", paint(style::MUTED, "nothing to restart"));
         }
     } else {
@@ -1227,6 +1232,13 @@ fn show_applied(applied: &Applied, no_apply: bool) {
                 style::WARN,
                 format!("restarting {}", applied.restarted.join(", "))
             )
+        );
+    }
+    if applied.reboot {
+        println!(
+            "{} {}",
+            paint(style::WARN, "takes effect at the next reboot:"),
+            paint(style::CMD, REBOOT_COMMAND)
         );
     }
     if let Some(pending) = &applied.pending {

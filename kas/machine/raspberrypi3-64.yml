@@ -56,11 +56,17 @@ local_conf_header:
     # line replaces them.
     VC4DTBO = "vc4-kms-v3d"
     # The 3B+ has 1GB of RAM shared with the GPU, and Chromium is the heaviest
-    # thing in the image. If the kiosk gets OOM-killed or renders slowly:
-    #   GPU_MEM = "128"            # rpi-base.inc defaults to 64
-    # Under full KMS the GPU draws from the kernel's CMA pool (the overlay's
-    # default, 256M) rather than from GPU_MEM, which now only feeds the
-    # firmware's own needs.
+    # thing in the image. Under full KMS the GPU draws from the kernel's CMA
+    # pool (the overlay's default, 256M). What the firmware keeps for itself,
+    # gpu_mem, still feeds its hardware video decoder, and that is a device
+    # setting, device.gpu_mem, not a build constant: GPU_MEM stays unset, and
+    # the agent writes gpu_mem= into tessaro.txt on the boot partition, which
+    # the line below makes config.txt include last. [all] first, so a
+    # conditional section above it cannot confine the include to one board.
+    # Devices flashed without the line get it from the agent at boot.
+    RPI_EXTRA_CONFIG = "[all]\ninclude tessaro.txt"
+    # Where that config.txt is on the running device, for the agent.
+    TESSARO_BOOT_CONFIG_DIR = "/boot"
 
 # Both keys belong in the entry point of the config chain: an include cannot
 # set them, because meta-moonforge-distro.yml sets distro too and wins by

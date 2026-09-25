@@ -42,6 +42,18 @@ pub enum Consumer {
     /// input and their volumes on the running sound server at once. Nothing
     /// restarts, and a sound that is playing moves over.
     Audio,
+    /// The Raspberry Pi firmware, through `tessaro.txt` on the boot
+    /// partition, which it reads only when the board powers on. Nothing
+    /// restarts: the change takes effect at the next reboot.
+    Firmware,
+}
+
+/// Hardware a key needs. A key that names one is left out of `config keys`
+/// and `config get`, and refused by `config set`, on a device without it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Hardware {
+    /// The Raspberry Pi firmware and its `config.txt`.
+    PiFirmware,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -154,6 +166,8 @@ pub struct Key {
     /// unless confirmed, because a wrong value can leave nobody able to see
     /// the screen to put it right.
     pub guarded: bool,
+    /// The hardware the key needs, if it is not every device's.
+    pub only: Option<Hardware>,
     pub doc: &'static str,
 }
 
@@ -163,6 +177,7 @@ const BROWSER: &[Consumer] = &[Consumer::Browser];
 const WESTON: &[Consumer] = &[Consumer::Weston];
 const NETWORK: &[Consumer] = &[Consumer::Network];
 const AUDIO: &[Consumer] = &[Consumer::Audio];
+const FIRMWARE: &[Consumer] = &[Consumer::Firmware];
 /// The node name: the agent's mDNS name, and the hotspot's SSID.
 const AGENT_AND_NETWORK: &[Consumer] = &[Consumer::Agent, Consumer::Network];
 
@@ -179,6 +194,7 @@ const fn key(
         kind,
         consumers,
         guarded: false,
+        only: None,
         doc,
     }
 }
@@ -222,7 +238,7 @@ pub static KEYS: &[Key] = &[
     key("browser.touch", "KIOSK_TOUCH", Kind::Choice(&["auto", "enabled", "disabled"]), BROWSER,
         "Touch event feature detection."),
     key("browser.enable_features", "KIOSK_ENABLE_FEATURES", Kind::Features, BROWSER,
-        "Chromium features to enable, comma separated, e.g. WebBluetooth,WebBluetoothNewPermissionsBackend."),
+        "Chromium features to enable, comma separated, e.g. WebBluetooth,WebBluetoothNewPermissionsBackend. Replaces the default: keep the AcceleratedVideoDecode* features (hardware video decode)."),
     key("browser.disable_features", "KIOSK_DISABLE_FEATURES", Kind::Features, BROWSER,
         "Chromium features to disable. Replaces the default: keep FallbackToSWIfGLES3NotSupported (Pi 3 GPU)."),
     key("browser.fps_counter", "KIOSK_FPS_COUNTER", Kind::Flag, BROWSER,
@@ -288,6 +304,11 @@ pub static KEYS: &[Key] = &[
         "Ceiling on the DevTools reconnect backoff, seconds."),
     key(NAME, "KIOSK_NODE_NAME", Kind::Name, AGENT_AND_NETWORK,
         "The device's name on the network (NAME.local, and the hotspot tessaro-NAME); empty derives one from the node id."),
+    Key {
+        only: Some(Hardware::PiFirmware),
+        ..key(GPU_MEM, "KIOSK_GPU_MEM", Kind::Int { min: 16, max: 512 }, FIRMWARE,
+            "Raspberry Pi only: megabytes of RAM the firmware keeps for the GPU, which its hardware video decoder draws from; unset keeps the firmware's default. Taken from the browser's RAM. Takes effect at the next reboot, `tessaro-ctl device reboot`.")
+    },
     key("access.listen", "KIOSK_API_LISTEN", Kind::Listen, AGENT,
         "Where the TLS control API listens, address:port, or off."),
     key("access.mdns", "KIOSK_MDNS", Kind::Choice(&["on", "off"]), AGENT,
@@ -367,6 +388,7 @@ pub const DEBUG_TEMPLATE: &str = "browser.debug.template";
 pub const RESOLUTION: &str = "screen.resolution";
 pub const NAME: &str = "device.name";
 pub const ID: &str = "device.id";
+pub const GPU_MEM: &str = "device.gpu_mem";
 pub const PUBLIC_IP: &str = "network.public_ip";
 pub const WIFI_FALLBACK_AFTER: &str = "network.wifi.fallback_after";
 pub const AUDIO_OUTPUT: &str = "audio.output";
@@ -494,6 +516,7 @@ pub static DATA: Key = Key {
     kind: Kind::Param,
     consumers: AGENT,
     guarded: false,
+    only: None,
     doc: "Custom values with names you choose, for browser.url: data.table=12 fills {data.table}, as in \
           https://menu.test/?table={data.table}. The kiosk gives them no meaning of its own. Set them \
           before or together with a browser.url that uses them. A placeholder is always a full key, so \
@@ -1161,6 +1184,17 @@ mod tests {
         assert!(check("device.name", "-x").is_err());
         assert!(check("device.name", "a.b").is_err());
         assert_eq!(check("device.name", "").unwrap(), "");
+    }
+
+    #[test]
+    fn gpu_mem_is_a_pi_firmware_key_in_megabytes() {
+        let key = find(GPU_MEM).unwrap();
+        assert_eq!(key.only, Some(Hardware::PiFirmware));
+        assert_eq!(key.consumers, [Consumer::Firmware]);
+        assert_eq!(check(GPU_MEM, "128").unwrap(), "128");
+        assert!(check(GPU_MEM, "8").is_err());
+        assert!(check(GPU_MEM, "1024").is_err());
+        assert!(check(GPU_MEM, "128M").is_err());
         assert_eq!(
             check("access.listen", "0.0.0.0:7400").unwrap(),
             "0.0.0.0:7400"

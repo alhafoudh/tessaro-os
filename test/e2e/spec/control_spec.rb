@@ -27,6 +27,13 @@ module AgentE2E
       expect(guest.run("cat /run/tessaro-kiosk/generated.env")).to include("KIOSK_PROBE_INTERVAL=7")
     end
 
+    # qemu has no Raspberry Pi firmware, so the key that feeds it is not there.
+    it "settings: device.gpu_mem is only offered on a Raspberry Pi" do
+      refused = guest.run("tessaro-ctl config set device.gpu_mem=128 2>&1", allow_failure: true)
+      expect(refused).to include("device.gpu_mem is only available on a Raspberry Pi")
+      expect(guest.run("tessaro-ctl config keys")).not_to include("device.gpu_mem")
+    end
+
     # The template's \n is typed as a backslash and an n, which the single
     # quotes carry through the guest shell.
     it "debug-screen: debug on swaps the site for the filled-in debug text without restarting the browser; " \

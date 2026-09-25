@@ -130,8 +130,19 @@ is how Chromium's `PACKAGECONFIG` and `CHROMIUM_EXTRA_ARGS` are set.
   constraint to plan the Pi target around.
   `VC4DTBO` is set to `vc4-kms-v3d` (full KMS, see **Display hotplug** in
   [display.md](display.md));
-  `GPU_MEM` is noted in the fragment and left at `rpi-base.inc`'s 64, since
-  under full KMS the GPU draws from the CMA pool instead.
+  `GPU_MEM` stays unset. Under full KMS the GPU draws from the CMA pool, and
+  what `gpu_mem` still sizes - the firmware's own share, which its hardware
+  video decoder uses - is a device setting, `device.gpu_mem`, written into
+  `tessaro.txt` on the boot partition. `RPI_EXTRA_CONFIG` makes `config.txt`
+  include that file last, and the agent adds the include at boot to a
+  `config.txt` that lacks it (`render_firmware` in `render.rs`), since an
+  update never rewrites `config.txt`.
+* **An AMD board has no GPU driver unless mesa has `gallium-llvm`.** radeonsi
+  is only in mesa's gallium drivers with `gallium-llvm` and `r600`
+  (`GALLIUMDRIVERS_RADEONSI` in `mesa.inc`); without them the x86 set is
+  Intel's, virgl and swrast, and Weston and Chromium render in software on an
+  AMD GPU. `tessaro.conf` enables them for x86-64, with the VA driver. Check
+  the built drivers in `build/<machine>/tmp/work/*/mesa/*/image/usr/lib/dri`.
 * **runqemu needs a file path, not an image name.** `runqemu ... qemux86-64
   moonforge-image-base wic` fails with `IMAGE_LINK_NAME wasn't set`: the image
   name is treated as a lazy rootfs, and the machine argument makes runqemu run
@@ -203,7 +214,7 @@ kiosk.
 | Machine | Purpose | State |
 | --- | --- | --- |
 | `qemux86-64` | development, boots through `mise run qemu:vnc` | builds and boots |
-| `genericx86-64` | shipping x86_64 hardware (UEFI) | configured, never built end to end |
+| `genericx86-64` | shipping x86_64 hardware (UEFI), Intel or AMD GPU | configured, never built end to end |
 | `raspberrypi3-64` | Raspberry Pi 3 Model B+ | builds, boots and runs the kiosk on a 3B+, rendering on the GPU (ES 2.0) |
 
 "Configured" means the kas chain resolves and bitbake parses it with the right

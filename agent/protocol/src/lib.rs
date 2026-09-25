@@ -725,6 +725,11 @@ pub struct Applied {
     /// applied (the setting is saved either way).
     #[serde(default)]
     pub audio: Option<String>,
+    /// A setting the firmware reads at power-on changed on disk, so it takes
+    /// effect at the next reboot, which the device leaves to the operator.
+    /// Defaulted for older devices.
+    #[serde(default)]
+    pub reboot: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

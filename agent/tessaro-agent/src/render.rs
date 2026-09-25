@@ -12,6 +12,10 @@
 //!   the device-API grants rewritten for the kiosk origin *as set*, not as
 //!   built. Generated through serde, because Chromium drops the whole file
 //!   on one syntax error with a single `SYSLOG(WARNING)`.
+//! * `tessaro.txt` on a Raspberry Pi's boot partition: the settings the
+//!   firmware reads at power-on (`device.gpu_mem`), pulled in by an
+//!   `include` line at the end of `config.txt`. The image's `config.txt` has
+//!   that line; one flashed before it gets it added here, once.
 //!
 //! Values need no quoting in the env file: the registry has already refused
 //! every character systemd's parser would treat specially.
@@ -65,6 +69,10 @@ pub fn env_file(
         if key.consumers == [protocol::keys::Consumer::Network] {
             // The network keys become NetworkManager keyfiles, never env:
             // no unit reads them, and an SSID has no business in an env file.
+            continue;
+        }
+        if key.consumers == [protocol::keys::Consumer::Firmware] {
+            // tessaro.txt, for the Pi firmware; no unit reads them.
             continue;
         }
         if key.consumers == [protocol::keys::Consumer::Audio] {
@@ -226,9 +234,11 @@ pub fn strict_json(text: &str) -> String {
 pub struct Rendered {
     pub env_changed: bool,
     pub policy_changed: bool,
+    /// What the Pi firmware reads at power-on changed: a reboot applies it.
+    pub firmware_changed: bool,
 }
 
-/// Render both files from `settings` over the image `defaults`.
+/// Render every file from `settings` over the image `defaults`.
 pub fn all(
     paths: &Paths,
     defaults: &dyn Env,
@@ -248,11 +258,82 @@ pub fn all(
 
     let effective = state::Effective::new(defaults, settings, log).with_live(live);
     let policy_changed = render_policy(paths, &effective)?;
+    let firmware_changed = match &paths.boot_config_dir {
+        Some(dir) => render_firmware(dir, &effective, log)?,
+        None => false,
+    };
 
     Ok(Rendered {
         env_changed,
         policy_changed,
+        firmware_changed,
     })
+}
+
+/// The file `config.txt` includes, beside it on the boot partition.
+const FIRMWARE_FILE: &str = "tessaro.txt";
+/// What `config.txt` has to end with. `[all]` first, because an include
+/// inside a conditional section (`[pi4]`) would apply to that board only.
+const FIRMWARE_INCLUDE: &str = "[all]\ninclude tessaro.txt\n";
+
+/// `tessaro.txt` from the settings, and the `include` for it in
+/// `config.txt` if that lacks one. Whether either changed.
+fn render_firmware(dir: &Path, effective: &state::Effective, log: &Log) -> Result<bool, String> {
+    let file = dir.join(FIRMWARE_FILE);
+    let body = firmware_file(effective);
+    let written = store::replace_if_changed_on_vfat(&file, body.as_bytes())
+        .map_err(|err| format!("{}: {err}", file.display()))?;
+
+    let config = dir.join("config.txt");
+    let included = match std::fs::read_to_string(&config) {
+        Ok(text) => match with_include(&text) {
+            Some(text) => {
+                store::replace_if_changed_on_vfat(&config, text.as_bytes())
+                    .map_err(|err| format!("{}: {err}", config.display()))?;
+                log.info(format!(
+                    "added `include {FIRMWARE_FILE}` to {}",
+                    config.display()
+                ));
+                true
+            }
+            None => false,
+        },
+        // No config.txt means no firmware reading it: nothing to wire up.
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => false,
+        Err(err) => return Err(format!("{}: {err}", config.display())),
+    };
+    Ok(written || included)
+}
+
+/// The settings the firmware reads, one `config.txt` line each. Depends on
+/// the settings only, so an unchanged render writes nothing.
+fn firmware_file(effective: &state::Effective) -> String {
+    let mut out = String::from(
+        "# Written by tessaro-agent from the device's settings and read by the\n\
+         # firmware at power-on, through the include at the end of config.txt.\n\
+         # Change it with `tessaro-ctl config set`; edits here are overwritten.\n",
+    );
+    let gpu_mem = crate::config::Env::get(effective, "KIOSK_GPU_MEM").unwrap_or_default();
+    if !gpu_mem.is_empty() {
+        out.push_str(&format!("gpu_mem={gpu_mem}\n"));
+    }
+    out
+}
+
+/// `config.txt` with the include appended, or `None` if it has one. The
+/// firmware applies lines in order and a later one wins, so it goes last.
+/// Nothing else in the file is touched.
+fn with_include(config: &str) -> Option<String> {
+    let include = format!("include {FIRMWARE_FILE}");
+    if config.lines().any(|line| line.trim() == include) {
+        return None;
+    }
+    let mut out = config.to_string();
+    if !out.is_empty() && !out.ends_with('\n') {
+        out.push('\n');
+    }
+    out.push_str(FIRMWARE_INCLUDE);
+    Some(out)
 }
 
 /// The name derived from the node id, or `None` without a machine id (a
@@ -526,7 +607,8 @@ mod tests {
             all(&paths, &defaults, &set, &log).unwrap(),
             Rendered {
                 env_changed: true,
-                policy_changed: true
+                policy_changed: true,
+                firmware_changed: false
             }
         );
         assert_eq!(
@@ -539,7 +621,8 @@ mod tests {
             all(&paths, &defaults, &same_origin, &log).unwrap(),
             Rendered {
                 env_changed: true,
-                policy_changed: false
+                policy_changed: false,
+                firmware_changed: false
             }
         );
 
@@ -555,13 +638,101 @@ mod tests {
             all(&paths, &defaults, &maintenance, &log).unwrap(),
             Rendered {
                 env_changed: true,
-                policy_changed: false
+                policy_changed: false,
+                firmware_changed: false
             }
         );
         let env = std::fs::read_to_string(paths.generated_env()).unwrap();
         assert!(
             env.contains("KIOSK_URL=http://127.0.0.1/maintenance.html\n"),
             "{env}"
+        );
+    }
+
+    /// Paths with a Pi boot partition in `dir`, holding `config`.
+    fn pi(dir: &Path, config: &str) -> Paths {
+        let boot = dir.join("boot");
+        std::fs::create_dir_all(&boot).unwrap();
+        std::fs::write(boot.join("config.txt"), config).unwrap();
+        let env: HashMap<String, String> = [
+            ("KIOSK_RUN_DIR", dir.join("run")),
+            ("KIOSK_POLICY", dir.join("policy.json")),
+            ("KIOSK_POLICY_BASE", dir.join("missing-base.json")),
+            ("KIOSK_BOOT_CONFIG_DIR", boot),
+        ]
+        .into_iter()
+        .map(|(name, path)| (name.to_string(), path.display().to_string()))
+        .collect();
+        Paths::load(&env)
+    }
+
+    #[test]
+    fn gpu_mem_is_written_for_the_firmware_and_only_when_it_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = Log::buffered(true);
+        let paths = pi(dir.path(), "enable_uart=1\ndtoverlay=vc4-kms-v3d\n");
+        let boot = paths.boot_config_dir.clone().unwrap();
+        let defaults: HashMap<String, String> = HashMap::new();
+        let set = settings(&[("device.gpu_mem", "128")]);
+
+        assert!(all(&paths, &defaults, &set, &log).unwrap().firmware_changed);
+        let file = std::fs::read_to_string(boot.join("tessaro.txt")).unwrap();
+        assert!(file.ends_with("\ngpu_mem=128\n"), "{file}");
+        assert!(!file.contains("KIOSK_"), "{file}");
+        let env = std::fs::read_to_string(paths.generated_env()).unwrap();
+        assert!(!env.contains("GPU_MEM"), "{env}");
+
+        assert!(!all(&paths, &defaults, &set, &log).unwrap().firmware_changed);
+
+        // Unset: the firmware's own default, so no line at all.
+        assert!(
+            all(&paths, &defaults, &BTreeMap::new(), &log)
+                .unwrap()
+                .firmware_changed
+        );
+        let file = std::fs::read_to_string(boot.join("tessaro.txt")).unwrap();
+        assert!(!file.contains("gpu_mem"), "{file}");
+    }
+
+    #[test]
+    fn config_txt_gets_the_include_once_and_nothing_else() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = Log::buffered(true);
+        let paths = pi(dir.path(), "enable_uart=1\n[pi4]\narm_boost=1");
+        let config = paths.boot_config_dir.clone().unwrap().join("config.txt");
+        let defaults: HashMap<String, String> = HashMap::new();
+
+        all(&paths, &defaults, &BTreeMap::new(), &log).unwrap();
+        let text = std::fs::read_to_string(&config).unwrap();
+        assert_eq!(
+            text,
+            "enable_uart=1\n[pi4]\narm_boost=1\n[all]\ninclude tessaro.txt\n"
+        );
+
+        all(&paths, &defaults, &BTreeMap::new(), &log).unwrap();
+        assert_eq!(std::fs::read_to_string(&config).unwrap(), text);
+    }
+
+    #[test]
+    fn a_config_txt_from_the_image_is_left_alone() {
+        assert_eq!(with_include("a=1\n[all]\ninclude tessaro.txt\n"), None);
+        assert_eq!(with_include("a=1\n  include tessaro.txt  \n"), None);
+    }
+
+    #[test]
+    fn without_pi_firmware_nothing_is_written_to_a_boot_partition() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = Log::buffered(true);
+        let mut paths = pi(dir.path(), "enable_uart=1\n");
+        let boot = paths.boot_config_dir.take().unwrap();
+        let set = settings(&[("device.gpu_mem", "128")]);
+
+        let rendered = all(&paths, &HashMap::<String, String>::new(), &set, &log).unwrap();
+        assert!(!rendered.firmware_changed);
+        assert!(!boot.join("tessaro.txt").exists());
+        assert_eq!(
+            std::fs::read_to_string(boot.join("config.txt")).unwrap(),
+            "enable_uart=1\n"
         );
     }
 }

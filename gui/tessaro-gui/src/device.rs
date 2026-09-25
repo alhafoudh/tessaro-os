@@ -133,6 +133,7 @@ fn applies(consumers: &[Consumer]) -> String {
             Consumer::Weston => "weston",
             Consumer::Network => "network",
             Consumer::Audio => "audio",
+            Consumer::Firmware => "firmware (next reboot)",
         })
         .collect::<Vec<_>>()
         .join(", ")
@@ -721,6 +722,12 @@ impl Device {
             self.log(
                 Tone::Warn,
                 format!("restarting {}", applied.restarted.join(", ")),
+            );
+        }
+        if applied.reboot {
+            self.log(
+                Tone::Warn,
+                "takes effect at the next reboot: Reboot the device".to_string(),
             );
         }
         if let Some(pending) = &applied.pending {

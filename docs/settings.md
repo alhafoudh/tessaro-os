@@ -27,6 +27,22 @@ kiosk origin, Weston restarts - taking the browser and agent with it - for a
   the device (`Kind::describe` plus each key's `doc`), so a client never
   documents settings a device does not have. `tessaro-ctl --help` carries
   worked examples.
+* **A key can need hardware** (`Key::only`). One whose hardware a device
+  lacks is left out of `config keys` and `config get` there, and `config
+  set` refuses it by name ("only available on a Raspberry Pi") rather than as
+  unknown; `config unset` always works, so a value copied from another device
+  can be taken out. What the device has comes from the build
+  (`KIOSK_BOOT_CONFIG_DIR` for the Pi firmware, `Paths::offers`), never from
+  probing.
+* **Firmware keys apply at the next reboot, and the device never reboots for
+  them.** `device.gpu_mem` is read by the Raspberry Pi firmware at power-on,
+  from `tessaro.txt` on the boot partition, which `config.txt` includes last
+  and the renderer writes like `generated.env`. `config set` saves it, writes
+  the file and answers `reboot` (`Applied::reboot`), which the ctl prints as a
+  hint to run `tessaro-ctl device reboot`: a reboot blanks a public screen, so
+  when is the operator's call. A factory reset empties the file at the boot
+  that performs it, which the firmware has already read, so it reaches the
+  firmware one boot later.
 * **Custom values and URL placeholders.** `data.NAME=VALUE` defines a custom
   value - the NAME is whatever the site needs, the kiosk gives it no meaning.
   **A placeholder is always a setting's full key in braces**, custom or

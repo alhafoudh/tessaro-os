@@ -215,11 +215,31 @@ pub fn replace_if_changed(path: &Path, body: &[u8], mode: u32) -> io::Result<boo
     Ok(true)
 }
 
+/// `replace_if_changed` for a filesystem with no Unix permissions: the Pi's
+/// vfat boot partition, where a chmod fails with EPERM. No mode is set, so
+/// the file gets whatever the mount gives every file.
+pub fn replace_if_changed_on_vfat(path: &Path, body: &[u8]) -> io::Result<bool> {
+    if fs::read(path).is_ok_and(|existing| existing == body) {
+        return Ok(false);
+    }
+    replace_as(path, body, None, None)?;
+    Ok(true)
+}
+
 /// Replace `path` with `body` atomically, so nobody ever reads half of it: a
 /// temporary beside it, written and `fsync`ed with exactly `mode` (and
 /// `owner`, uid and gid, when given), renamed over it, the directory synced.
 /// A temporary left by a failure is removed.
 pub fn replace(path: &Path, body: &[u8], mode: u32, owner: Option<(u32, u32)>) -> io::Result<()> {
+    replace_as(path, body, Some(mode), owner)
+}
+
+fn replace_as(
+    path: &Path,
+    body: &[u8],
+    mode: Option<u32>,
+    owner: Option<(u32, u32)>,
+) -> io::Result<()> {
     let dir = parent(path)?;
     let name = path
         .file_name()
@@ -227,9 +247,11 @@ pub fn replace(path: &Path, body: &[u8], mode: u32, owner: Option<(u32, u32)>) -
         .unwrap_or("file");
     let temporary = dir.join(format!(".{name}.tessaro-tmp"));
     let written = (|| {
-        write_synced(&temporary, body, mode)?;
-        // The mode given to open() is filtered through the umask; say it again.
-        fs::set_permissions(&temporary, fs::Permissions::from_mode(mode))?;
+        write_synced(&temporary, body, mode.unwrap_or(0o644))?;
+        if let Some(mode) = mode {
+            // The mode given to open() is filtered through the umask; say it again.
+            fs::set_permissions(&temporary, fs::Permissions::from_mode(mode))?;
+        }
         if let Some((uid, gid)) = owner {
             std::os::unix::fs::chown(&temporary, Some(uid), Some(gid)).or_else(|err| {
                 // Not root (a development host): the owner is already ours.

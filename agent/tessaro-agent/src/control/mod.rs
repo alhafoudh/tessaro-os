@@ -601,6 +601,7 @@ impl Control {
         let live = self.live().await;
         let mut out: Vec<KeyInfo> = keys::KEYS
             .iter()
+            .filter(|key| self.paths.offers(key))
             .map(|key| KeyInfo {
                 default: self.defaults.get(key.env).cloned(),
                 // A read-only key's value is what the device reports now.
@@ -691,9 +692,16 @@ impl Control {
         let state = self.read_state().await?;
         // The registry, then every custom data.* that is set, by its name.
         let wanted: Vec<(String, &Key)> = match &key {
-            Some(name) => vec![(name.clone(), keys::find(name).ok_or_else(|| unknown(name))?)],
+            Some(name) => {
+                let key = keys::find(name).ok_or_else(|| unknown(name))?;
+                if !self.paths.offers(key) {
+                    return Err(not_offered(key));
+                }
+                vec![(name.clone(), key)]
+            }
             None => keys::KEYS
                 .iter()
+                .filter(|key| self.paths.offers(key))
                 .map(|key| (key.name.to_string(), key))
                 .chain(
                     state
@@ -880,6 +888,16 @@ fn os_release_fields(path: &std::path::Path) -> (Option<String>, Option<String>)
 
 fn unknown(name: &str) -> String {
     keys::unknown(name)
+}
+
+/// For a key this device lacks the hardware for (`Paths::offers`).
+fn not_offered(key: &Key) -> String {
+    match key.only {
+        Some(keys::Hardware::PiFirmware) => {
+            format!("{} is only available on a Raspberry Pi", key.name)
+        }
+        None => unknown(key.name),
+    }
 }
 
 #[cfg(test)]
@@ -1620,6 +1638,46 @@ mod tests {
         )
         .await;
         assert!(stale.contains("revision 1"), "{stale}");
+    }
+
+    #[tokio::test]
+    async fn a_pi_firmware_key_does_not_exist_without_the_pi_firmware() {
+        let fx = fixture();
+        assert!(fx.paths.boot_config_dir.is_none());
+
+        let listed: Vec<KeyInfo> = ok(&fx.control, &Caller::Local, Command::Keys).await;
+        assert!(listed.iter().all(|key| key.name != keys::GPU_MEM));
+        let all: Settings = ok(&fx.control, &Caller::Local, Command::Get { key: None }).await;
+        assert!(all
+            .settings
+            .iter()
+            .all(|setting| setting.key != keys::GPU_MEM));
+
+        for command in [
+            set(&[(keys::GPU_MEM, "128")]),
+            Command::Get {
+                key: Some(keys::GPU_MEM.into()),
+            },
+        ] {
+            let refused = err(&fx.control, &Caller::Local, command).await;
+            assert!(
+                refused.contains("only available on a Raspberry Pi"),
+                "{refused}"
+            );
+        }
+
+        // Taking a stray value out is always allowed.
+        let _: Applied = ok(
+            &fx.control,
+            &Caller::Local,
+            Command::Unset {
+                keys: vec![keys::GPU_MEM.into()],
+                if_revision: None,
+                apply: true,
+                verify: Default::default(),
+            },
+        )
+        .await;
     }
 
     #[tokio::test]

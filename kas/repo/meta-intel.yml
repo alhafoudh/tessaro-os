@@ -1,0 +1,18 @@
+# meta-intel, for Intel's VA-API driver (intel-media-driver, and gmmlib under
+# it) and nothing else: it is how an Intel GPU decodes video in hardware.
+# Mesa has no VA driver for Intel's current GPUs; it covers AMD and virtio.
+#
+# Only the layer's recipes are wanted. The machine stays meta-yocto-bsp's
+# genericx86-64 and the kernel stays linux-yocto: every bbappend in the layer
+# (linux-yocto, ovmf, formfactor, the initramfs) only acts under the
+# intel-x86-common override, which only meta-intel's own machines set. Check
+# after a bump that it still does not reach chromium-ozone-wayland or mesa:
+#   bitbake -S printdiff chromium-ozone-wayland
+header:
+  version: 16
+
+repos:
+  meta-intel:
+    url: https://git.yoctoproject.org/meta-intel
+    commit: 5d153e35b4e752505efeae368f188fac5e31cf33
+    branch: scarthgap

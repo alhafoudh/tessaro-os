@@ -152,6 +152,14 @@ Environment=PULSE_SERVER=unix:/run/tessaro-audio/pulse/native
 #   registration line at startup, which is harmless and left alone.
 # --autoplay-policy=no-user-gesture-required lets the kiosk page autoplay
 #   video with sound - nobody is there to click first.
+# --use-angle=gles-egl runs ANGLE, which Chromium draws everything through, on
+#   the driver's EGL and GLES instead of its default desktop OpenGL backend.
+#   Every target here is a GLES driver first (the Pi 3's VideoCore IV offers
+#   desktop GL 2.1 at most), and the hardware video decoders hand their frames
+#   over as EGL images. It is meta-chromium's own default for the use-egl
+#   PACKAGECONFIG, lost with the rest of CHROMIUM_EXTRA_ARGS when tessaro.conf
+#   replaces it. The last --use-angle wins, so KIOSK_CHROMIUM_ARGS_EXTRA can
+#   counter it.
 # --touch-events tells Chromium whether to expose ontouchstart and
 #   navigator.maxTouchPoints to the page. Its default on Linux is *disabled*,
 #   not auto, so a real touch panel is invisible to feature detection without
@@ -238,6 +246,7 @@ ExecStart=/usr/bin/dbus-run-session -- /usr/bin/chromium \
     --password-store=basic \
     --disable-background-networking \
     --autoplay-policy=no-user-gesture-required \
+    --use-angle=gles-egl \
     --touch-events=${KIOSK_TOUCH} \
     --enable-wayland-ime \
     --wayland-text-input-version=1 \

@@ -30,7 +30,16 @@ local_conf_header:
     # volatile-binds bbappend in meta-tessaro-distro maps it to
     # /data/overlay-home) and the Chromium profile with its caches all live on
     # this partition. The profile is what dominates.
-    IMAGE_DATA_MIN_SIZE = "4096M"
+    #
+    # This is only the size the image is written with, and it is kept small
+    # so the image fits the smallest disk a target ships on (an 8 GB eMMC, next
+    # to the fixed root and ESP). The rest of the disk goes to /data on the
+    # device with `tessaro-ctl storage grow` (docs/updates.md, "Storage"). An
+    # ungrown 1 GB still holds the profile, its 200 MB disk cache and an
+    # update's upload, but not much more: grow it on any disk that has room.
+    # Changing this does not change the layout updates check, which covers
+    # the boot and root partitions only.
+    IMAGE_DATA_MIN_SIZE = "1024M"
     # Find /data by filesystem label rather than by device node, so one image
     # boots off SATA, USB, NVMe and SD without a rebuild. Every wks in use
     # labels that partition "data" (wic passes it to mkfs.ext4 -L), and the
