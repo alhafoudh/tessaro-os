@@ -101,6 +101,6 @@ pub fn cell<'a>(value: impl text::IntoFragment<'a>) -> text::Text<'a> {
 pub fn bold() -> iced::Font {
     iced::Font {
         weight: iced::font::Weight::Bold,
-        ..iced::Font::DEFAULT
+        ..theme::FONT
     }
 }

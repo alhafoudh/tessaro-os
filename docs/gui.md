@@ -84,7 +84,11 @@ left to it; the zoom always works.
 
 **One dark look** (`theme.rs`). There is no light variant, and it does not
 follow the system. Every colour and style is a named constant or function
-there, so windows cannot drift apart.
+there, so windows cannot drift apart. The UI font is Manrope, bundled in
+`gui/tessaro-gui/fonts/` (SIL OFL, `OFL.txt` beside it) as static Regular
+and Bold files, so the GUI reads the same on every OS; iced alone would take
+whatever sans the host has. Monospace text (`Font::MONOSPACE`) is left to
+the host.
 
 ## The node list
 

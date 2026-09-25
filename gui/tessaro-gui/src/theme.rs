@@ -3,7 +3,12 @@
 //! style the views use comes from here, so the windows cannot drift apart.
 
 use iced::widget::{button, container, text};
-use iced::{border, Border, Color, Element, Theme};
+use iced::{border, Border, Color, Element, Font, Theme};
+
+/// Manrope, bundled in `fonts/` and loaded in `main.rs`, so the GUI reads the
+/// same on every OS instead of taking whatever sans the host has. Monospace
+/// text keeps `Font::MONOSPACE`, the host's.
+pub const FONT: Font = Font::with_name("Manrope");
 
 /// The size of ordinary text; `default_text_size` in `main.rs`.
 pub const TEXT: f32 = 13.0;
