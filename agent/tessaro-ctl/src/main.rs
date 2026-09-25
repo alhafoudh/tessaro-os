@@ -32,8 +32,9 @@ use clap::builder::{PossibleValuesParser, TypedValueParser};
 use clap::{Args, ColorChoice, CommandFactory, Parser, Subcommand, ValueEnum};
 use protocol::keys;
 use protocol::{
-    Applied, Claimed, Command, Connector, Done, KeyInfo, NodeInfo, Password, RestartTarget,
-    Screenshot, Settings, Source, SshKeyInfo, SshKeyRevoked, Status, TokenCreated, TokenInfo,
+    Applied, Claimed, Command, Connector, Done, EvalResult, KeyInfo, NodeInfo, Password,
+    RestartTarget, ScreenPower, Screenshot, Settings, Source, SshKeyInfo, SshKeyRevoked, Status,
+    TokenCreated, TokenInfo,
 };
 use serde_json::Value;
 use tessaro_client::nodes::{self, Nodes};
@@ -159,10 +160,12 @@ enum Cmd {
     /// The device's disk: partitions, free space, growing /data.
     #[command(subcommand)]
     Storage(storage::StorageCmd),
-    /// The physical display: what is on it, and its modes.
+    /// The physical display: what is on it, its modes, its power and the
+    /// on-screen keyboard.
     #[command(subcommand)]
     Screen(ScreenCmd),
-    /// What the browser shows: a URL, maintenance mode, the debug screen.
+    /// What the browser shows: a URL, maintenance mode, the debug screen, and
+    /// what the page runs: the injected script, the page bridge, eval.
     #[command(subcommand)]
     Browser(BrowserCmd),
     /// Sound: which output plays and which input records, volume, a test.
@@ -338,6 +341,29 @@ enum ScreenCmd {
     Modes,
     /// Keep a change that is on probation (screen.resolution).
     Confirm,
+    /// Switch the display off or on, or with neither say which it is. Off
+    /// stays off through touches and a restart of the compositor, until
+    /// `on` or a reboot.
+    ///
+    ///   tessaro-ctl screen power off
+    Power { state: Option<Toggle> },
+    /// Show or hide the on-screen keyboard. It follows a focused field, so
+    /// `show` focuses --selector, or the field that has the focus. Needs
+    /// screen.osk=always, or auto with no hardware keyboard.
+    ///
+    ///   tessaro-ctl screen keyboard show --selector '#search'
+    Keyboard {
+        action: KeyboardAction,
+        /// With `show`: a CSS selector for the field to type into.
+        #[arg(long)]
+        selector: Option<String>,
+    },
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum KeyboardAction {
+    Show,
+    Hide,
 }
 
 #[derive(Subcommand)]
@@ -384,6 +410,55 @@ enum BrowserCmd {
     ///
     ///   tessaro-ctl -n brave-otter-3fa2 browser devtools
     Devtools(devtools::Options),
+    /// Reload the page on screen, past the cache.
+    Reload,
+    /// Empty the browser's HTTP cache.
+    ClearCache,
+    /// Run a script from the file store in every page, before the page's
+    /// own scripts: browser.inject.script. Uploading a new copy of the file
+    /// reloads the page with it.
+    ///
+    ///   tessaro-ctl files upload inject.js
+    ///   tessaro-ctl browser inject on --script inject.js
+    Inject {
+        state: Toggle,
+        /// With `on`: the file, from the store's root.
+        #[arg(long)]
+        script: Option<String>,
+    },
+    /// What the page gets as window.tessaro: off, config (the settings,
+    /// read-only) or actions (the settings and device actions such as
+    /// reload, volume and screen power). browser.bridge.mode.
+    ///
+    ///   tessaro-ctl browser bridge config
+    Bridge {
+        #[arg(value_parser = PossibleValuesParser::new(keys::BRIDGE_MODES))]
+        mode: String,
+    },
+    /// Run JavaScript in the page on screen now and print what it returns.
+    /// A returned Promise is waited for.
+    ///
+    ///   tessaro-ctl browser eval 'document.title'
+    ///   tessaro-ctl browser eval --file fix.js
+    ///   echo 'location.reload()' | tessaro-ctl browser eval -
+    Eval {
+        /// The code, or - to read it from stdin.
+        #[arg(required_unless_present = "file", conflicts_with = "file")]
+        code: Option<String>,
+        /// Read the code from a file.
+        #[arg(long)]
+        file: Option<String>,
+        /// Seconds to wait, at most 60.
+        #[arg(long, default_value_t = 10, value_parser = clap::value_parser!(u64).range(1..=60))]
+        timeout: u64,
+        /// Do not wait for a returned Promise.
+        #[arg(long)]
+        no_await: bool,
+        /// Run as if the screen had just been touched: for audio,
+        /// fullscreen and the keyboard.
+        #[arg(long)]
+        gesture: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -707,6 +782,112 @@ fn run(cli: Cli) -> Result<(), String> {
             print(json, &applied, || show_applied(&applied, false))
         }
         Cmd::Browser(BrowserCmd::Devtools(options)) => devtools::run(&mut session, options, json),
+        Cmd::Browser(BrowserCmd::Reload) => done(&mut session, Command::Reload, json),
+        Cmd::Browser(BrowserCmd::ClearCache) => done(&mut session, Command::ClearCache, json),
+        Cmd::Browser(BrowserCmd::Inject { state, script }) => {
+            let value = match (state, script) {
+                (Toggle::On, Some(script)) => script,
+                (Toggle::On, None) => {
+                    return Err("`tessaro-ctl browser inject on` needs --script FILE".to_string())
+                }
+                (Toggle::Off, None) => String::new(),
+                (Toggle::Off, Some(_)) => {
+                    return Err("--script goes with `tessaro-ctl browser inject on`".to_string())
+                }
+            };
+            let values = BTreeMap::from([(keys::INJECT_SCRIPT.to_string(), value.clone())]);
+            let applied = set(&mut session, values)?;
+            print(json, &applied, || {
+                let line = match (value.is_empty(), applied.changed.is_empty()) {
+                    (false, false) => {
+                        paint(style::OK, format!("injecting {value} into every page"))
+                    }
+                    (false, true) => paint(style::OK, format!("{value} was already injected")),
+                    (true, false) => paint(style::OK, "no script injected any more"),
+                    (true, true) => paint(style::OK, "no script was injected"),
+                };
+                println!("{line}");
+                show_applied(&applied, false)
+            })
+        }
+        Cmd::Browser(BrowserCmd::Bridge { mode }) => {
+            let values = BTreeMap::from([(keys::BRIDGE_MODE.to_string(), mode.clone())]);
+            let applied = set(&mut session, values)?;
+            print(json, &applied, || {
+                let what = match mode.as_str() {
+                    "config" => "window.tessaro has the settings, read-only",
+                    "actions" => "window.tessaro has the settings and the device actions",
+                    _ => "the page gets no window.tessaro",
+                };
+                println!(
+                    "{} {}",
+                    paint(style::OK, format!("bridge {mode}")),
+                    paint(style::MUTED, format!("- {what}"))
+                );
+                show_applied(&applied, false)
+            })
+        }
+        Cmd::Browser(BrowserCmd::Eval {
+            code,
+            file,
+            timeout,
+            no_await,
+            gesture,
+        }) => {
+            let code = match (code.as_deref(), file) {
+                (_, Some(path)) => {
+                    std::fs::read_to_string(&path).map_err(|err| format!("{path}: {err}"))?
+                }
+                (Some("-"), None) => {
+                    let mut code = String::new();
+                    std::io::Read::read_to_string(&mut std::io::stdin(), &mut code)
+                        .map_err(|err| format!("stdin: {err}"))?;
+                    code
+                }
+                (Some(code), None) => code.to_string(),
+                (None, None) => unreachable!("clap requires the code or --file"),
+            };
+            let result: EvalResult = session.call(Command::Eval {
+                code,
+                timeout_ms: Some(timeout * 1000),
+                await_promise: !no_await,
+                user_gesture: gesture,
+            })?;
+            print(json, &result, || show_eval(&result))?;
+            match &result.exception {
+                Some(_) => Err("the script threw".to_string()),
+                None => Ok(()),
+            }
+        }
+        Cmd::Screen(ScreenCmd::Power { state }) => {
+            let on = state.map(|state| state == Toggle::On);
+            let power: ScreenPower = session.call(Command::ScreenPower { on })?;
+            print(json, &power, || {
+                let (label, note) = match (power.on, on.is_some()) {
+                    (true, true) => (paint(style::OK, "screen on"), String::new()),
+                    (false, true) => (
+                        paint(style::WARN, "screen off"),
+                        format!(
+                            "until {} or a reboot",
+                            paint(style::CMD, "tessaro-ctl screen power on")
+                        ),
+                    ),
+                    (true, false) => (paint(style::OK, "the screen is on"), String::new()),
+                    (false, false) => (paint(style::WARN, "the screen is off"), String::new()),
+                };
+                println!("{label} {}", paint(style::MUTED, note));
+            })
+        }
+        Cmd::Screen(ScreenCmd::Keyboard { action, selector }) => {
+            if selector.is_some() && action == KeyboardAction::Hide {
+                return Err("--selector goes with `tessaro-ctl screen keyboard show`".to_string());
+            }
+            let command = Command::Keyboard {
+                show: action == KeyboardAction::Show,
+                selector,
+            };
+            done(&mut session, command, json)
+        }
         Cmd::Audio(command) => audio::run(&mut session, command, json),
         Cmd::Device(DeviceCmd::Restart { what }) => {
             done(&mut session, Command::Restart { what }, json)
@@ -1225,6 +1406,29 @@ fn show_status(status: &Status) {
     if let Some(audio) = &status.audio {
         style::row("audio", &audio::summary(audio));
     }
+    if status.screen_on == Some(false) {
+        style::row(
+            "screen",
+            &format!(
+                "{} {} {}",
+                paint(style::WARN, "off"),
+                paint(style::MUTED, "-"),
+                paint(style::CMD, "tessaro-ctl screen power on")
+            ),
+        );
+    }
+    if let Some(bridge) = &status.bridge {
+        if bridge.mode != "off" {
+            style::row("page bridge", &bridge.mode);
+        }
+        if !bridge.script.is_empty() {
+            let state = match &bridge.script_problem {
+                Some(problem) => paint(style::BAD, format!("not injected: {problem}")),
+                None => paint(style::OK, "injected"),
+            };
+            style::row("inject", &format!("{} {state}", bridge.script));
+        }
+    }
     if let Some(pending) = &status.pending {
         println!(
             "{} {}={} - {} within {}s or it goes back to {}",
@@ -1235,6 +1439,40 @@ fn show_status(status: &Status) {
             pending.seconds_left,
             pending.previous_or_default()
         );
+    }
+}
+
+/// What `browser eval` came to: the value as JSON, what JavaScript calls it
+/// when JSON cannot hold it, or the exception with where it was thrown.
+fn show_eval(result: &EvalResult) {
+    if let Some(exception) = &result.exception {
+        eprintln!(
+            "{} {}",
+            paint(style::BAD, &exception.text),
+            paint(
+                style::MUTED,
+                format!("(line {}, column {})", exception.line, exception.column)
+            )
+        );
+        return;
+    }
+    match (&result.value, &result.description) {
+        (Some(Value::String(text)), _) => println!("{text}"),
+        // Chromium hands a function or a DOM node over as `{}`: its type
+        // says more.
+        (Some(Value::Object(map)), _) if map.is_empty() && result.kind != "object" => {
+            println!("{}", paint(style::MUTED, format!("({})", result.kind)))
+        }
+        (Some(value), _) => println!(
+            "{}",
+            serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string())
+        ),
+        (None, Some(description)) => println!(
+            "{} {}",
+            description,
+            paint(style::MUTED, format!("({})", result.kind))
+        ),
+        (None, None) => println!("{}", paint(style::MUTED, &result.kind)),
     }
 }
 

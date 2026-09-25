@@ -273,3 +273,12 @@ env name is `KIOSK_DEBUG_SCREEN` because `KIOSK_DEBUG` was taken.
   `watch_public_ip` treats the debug template as in use only while
   `browser.debug.enable` is on, so the default template costs no request on a
   device that is not in debug mode.
+
+## The page bridge
+
+**`browser.inject.script` and `browser.bridge.mode` put a script from the file
+store and `window.tessaro` into every page**, the latter with the same keys a
+template can use as `tessaro.config`. Both are agent keys, and
+`tessaro-ctl browser inject` and `browser bridge` are their shorthands. How it
+works, what the page may call and who may call it is
+[bridge.md](bridge.md).

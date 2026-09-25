@@ -262,6 +262,37 @@ pub enum Command {
     },
     Reboot,
     Screenshot,
+    /// Reload the page on screen, past the cache.
+    Reload,
+    /// Empty the browser's HTTP cache.
+    ClearCache,
+    /// Run JavaScript in the page on screen, now. At most `EVAL_MAX` bytes;
+    /// `timeout_ms` defaults to `EVAL_TIMEOUT_MS` and is held to
+    /// `EVAL_TIMEOUT_MAX_MS`.
+    Eval {
+        code: String,
+        #[serde(default)]
+        timeout_ms: Option<u64>,
+        /// Wait for a returned Promise and answer with what it settles to.
+        #[serde(default = "yes")]
+        await_promise: bool,
+        /// Run as if the user had just touched the page: what audio,
+        /// fullscreen and a focused field's keyboard need.
+        #[serde(default)]
+        user_gesture: bool,
+    },
+    /// Show or hide the on-screen keyboard. Showing focuses `selector`, or
+    /// the field that already has the focus.
+    Keyboard {
+        show: bool,
+        #[serde(default)]
+        selector: Option<String>,
+    },
+    /// Switch the display off or on; `None` only reports which it is.
+    ScreenPower {
+        #[serde(default)]
+        on: Option<bool>,
+    },
     Logs {
         #[serde(default)]
         follow: bool,
@@ -559,6 +590,23 @@ pub struct Status {
     /// How full `/data` is. Defaulted the same way.
     #[serde(default)]
     pub data: Option<FsUsage>,
+    /// Whether the display is on; `None` when the compositor cannot say.
+    #[serde(default)]
+    pub screen_on: Option<bool>,
+    /// The page bridge: `browser.bridge.mode`, and the injected script with
+    /// its state. Defaulted the same way.
+    #[serde(default)]
+    pub bridge: Option<BridgeStatus>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BridgeStatus {
+    pub mode: String,
+    /// `browser.inject.script`, empty for none.
+    pub script: String,
+    /// Why the script is not in the page, when it is not.
+    #[serde(default)]
+    pub script_problem: Option<String>,
 }
 
 /// One output or input as PipeWire has it.
@@ -1203,6 +1251,41 @@ pub enum StorageGrowEvent {
     Step { what: String, command: String },
     /// The sizes afterwards, read back from the kernel and the filesystem.
     Grown { partition: u64, filesystem: u64 },
+}
+
+/// The largest script `eval` takes, and the largest the page bridge injects.
+pub const EVAL_MAX: usize = 1 << 20;
+/// How long `eval` waits by default, and at most.
+pub const EVAL_TIMEOUT_MS: u64 = 10_000;
+pub const EVAL_TIMEOUT_MAX_MS: u64 = 60_000;
+
+/// What `eval` came to: the value, as JSON, or what it threw.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EvalResult {
+    /// `None` for `undefined`, and for a value JSON cannot hold (a
+    /// function, a DOM node): `description` says what it was.
+    #[serde(default)]
+    pub value: Option<Value>,
+    /// The value's type as JavaScript names it, `undefined` included.
+    pub kind: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub exception: Option<EvalException>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EvalException {
+    pub text: String,
+    /// 1-based, in the code as sent.
+    pub line: u64,
+    pub column: u64,
+}
+
+/// Whether the display is on, as the compositor has it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScreenPower {
+    pub on: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

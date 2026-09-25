@@ -134,7 +134,7 @@ impl Control {
             .await;
     }
 
-    async fn store_public_ip(&self, ip: String) {
+    pub(super) async fn store_public_ip(&self, ip: String) {
         let paths = self.paths.clone();
         let body = format!("{ip}\n");
         let written = blocking("writing the public address", move || {

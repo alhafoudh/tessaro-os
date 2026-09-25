@@ -90,7 +90,7 @@ impl Control {
         let issuer = match caller {
             Caller::Local => "local".to_string(),
             Caller::Token { id, .. } => id.clone(),
-            Caller::Anonymous { .. } => {
+            Caller::Anonymous { .. } | Caller::Page => {
                 return Err("a token is needed to issue a token".to_string())
             }
         };

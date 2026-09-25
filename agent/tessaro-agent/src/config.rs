@@ -29,6 +29,35 @@ impl Env for HashMap<String, String> {
     }
 }
 
+/// `browser.bridge.mode`. Ordered: each mode includes the one before it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum BridgeMode {
+    Off,
+    /// `window.tessaro.config` and the read-only calls.
+    Config,
+    /// Everything in `Config`, and the device actions.
+    Actions,
+}
+
+impl BridgeMode {
+    /// Anything unknown is `Off`: a page never gets more than was asked for.
+    pub fn parse(value: &str) -> Self {
+        match value.trim() {
+            "config" => BridgeMode::Config,
+            "actions" => BridgeMode::Actions,
+            _ => BridgeMode::Off,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            BridgeMode::Off => "off",
+            BridgeMode::Config => "config",
+            BridgeMode::Actions => "actions",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Config {
     pub kiosk_url: String,
@@ -59,6 +88,11 @@ pub struct Config {
     pub debug: bool,
     /// Show the debug screen instead of the kiosk page (`browser.debug.enable`).
     pub debug_screen: bool,
+    /// A file in the store run in every page (`browser.inject.script`),
+    /// normalized, empty for none.
+    pub inject_script: String,
+    /// What the page gets as `window.tessaro` (`browser.bridge.mode`).
+    pub bridge: BridgeMode,
 
     pub cdp_url: String,
     /// The whole budget for one DevTools command. Used to be
@@ -113,6 +147,10 @@ impl Config {
             enforce_origin: flag(env, "KIOSK_ENFORCE_ORIGIN", true),
             debug: flag(env, "KIOSK_DEBUG", false),
             debug_screen: flag(env, "KIOSK_DEBUG_SCREEN", false),
+            inject_script: string(env, "KIOSK_INJECT_SCRIPT", "")
+                .trim_matches('/')
+                .to_string(),
+            bridge: BridgeMode::parse(&string(env, "KIOSK_BRIDGE_MODE", "off")),
 
             cdp_url: string(env, "KIOSK_CDP_URL", "http://127.0.0.1:9222"),
             cdp_timeout: int(env, "KIOSK_CDP_TIMEOUT", 5),

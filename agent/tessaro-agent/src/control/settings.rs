@@ -280,6 +280,8 @@ impl Control {
         apply: bool,
         network: Option<protocol::NetChange>,
     ) -> Reply {
+        // The page's copy of the settings follows, if it has one.
+        self.poke_bridge();
         let rendered = match self.render(&state.settings).await {
             Ok(rendered) => rendered,
             Err(err) => {

@@ -42,6 +42,7 @@ mod offline;
 mod paths;
 mod ping;
 mod ports;
+mod power;
 mod probe;
 mod proc;
 mod render;
@@ -239,6 +240,7 @@ async fn start_control(
     device: Device,
     kiosk_url: &str,
     session: cdp::session::SessionHandle,
+    bridge: control::BridgeSetup,
     log: &Arc<Log>,
     stop: &Arc<watch::Sender<bool>>,
 ) {
@@ -300,6 +302,10 @@ async fn start_control(
     control.watch_display();
     control.watch_audio();
     control.watch_welcome();
+    control.watch_screen_power();
+    // Before the agent's first navigation, so the page it opens already
+    // runs the bridge and the injected script.
+    control.start_bridge(bridge).await; // naked: blocking() reads and the session's own within()
 }
 
 async fn run(
@@ -343,7 +349,11 @@ async fn run(
         config.probe_timeout,
     );
 
-    let session = cdp::session::spawn(
+    // The page bridge: the session registers what the control plane puts in
+    // `scripts`, and passes the page's calls back through `calls`.
+    let (scripts, scripts_rx) = watch::channel(cdp::session::PageScripts::default());
+    let (calls_tx, calls) = tokio::sync::mpsc::channel(32);
+    let session = cdp::session::spawn_with(
         cdp::session::SessionConfig {
             base_url: config.cdp_url.trim_end_matches('/').to_string(),
             timeout: seconds(config.cdp_timeout.max(1)),
@@ -351,9 +361,19 @@ async fn run(
             reconnect_max: seconds(config.cdp_reconnect_max.max(1)),
             device_access: config.device_access,
         },
+        cdp::session::PageHooks {
+            scripts: scripts_rx,
+            calls: calls_tx,
+        },
         Arc::clone(&log),
         stop.subscribe(),
     );
+    let bridge = control::BridgeSetup {
+        mode: config.bridge,
+        script: config.inject_script.clone(),
+        scripts,
+        calls,
+    };
     let first_attempt = session.clone();
     let control_session = session.clone();
     let cdp = cdp::CdpClient::new(&log, session, heartbeat.clone(), config.cdp_timeout);
@@ -362,7 +382,15 @@ async fn run(
     // settings this agent started with and the device as it is then.
     let paths = device.paths.clone();
     let defaults = device.defaults.clone();
-    start_control(device, &config.kiosk_url, control_session, &log, &stop).await;
+    start_control(
+        device,
+        &config.kiosk_url,
+        control_session,
+        bridge,
+        &log,
+        &stop,
+    )
+    .await;
 
     let units = systemd::Systemd::connect(&config.unit, &log, heartbeat.clone()).await;
     let offline = offline::Offline::new(&log, &config);

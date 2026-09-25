@@ -138,6 +138,10 @@ do_install:append() {
 FILES:${PN} += "${systemd_system_unitdir}/weston.service.d"
 FILES:${PN} += "${libdir}/tessaro-vnc"
 
+# The drop-in names tessaro-power.so in --modules, and Weston will not start
+# with a module it cannot load.
+RDEPENDS:${PN} += "weston-tessaro-power"
+
 # NOTE: do not add "use-pixman" here. It was tried while chasing the blank
 # kiosk under QEMU, and it makes things worse rather than better: the pixman
 # renderer stops Weston advertising linux-dmabuf, and WPE 2.52 has no wl_shm
