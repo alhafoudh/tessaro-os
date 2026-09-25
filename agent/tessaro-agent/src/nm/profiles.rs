@@ -4,7 +4,8 @@
 //! * `tessaro-ethernet-dhcp` and `tessaro-ethernet-static`: the managed
 //!   Ethernet port (`network.ethernet.interface`, or the first one up for `auto`).
 //! * `tessaro-wifi-hotspot` (`tessaro-NAME`, open until claimed) and
-//!   `tessaro-wifi-client` (`network.wifi.ssid`): the managed WiFi device.
+//!   `tessaro-wifi-client` (`network.wifi.ssid`): the managed WiFi device
+//!   (`network.wifi.interface`, or whichever there is for `auto`).
 //!
 //! Only the selected mode of each pair autoconnects, at priority 100, so it
 //! wins over anything made by hand. The files go to
@@ -112,7 +113,10 @@ pub struct Client {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Wifi {
-    pub interface: String,
+    /// `None` for `auto`: whichever WiFi device the device has. The kernel
+    /// names it `wlan0`, udev's predictable names `wlp1s0` or `wlx...`, so
+    /// the profiles bind no name and live operations ask [`wifi_device`].
+    pub interface: Option<String>,
     pub mode: WifiMode,
     pub hotspot_ssid: String,
     pub hotspot_psk: Option<Secret>,
@@ -206,11 +210,7 @@ impl NetConfig {
 
         let interface = get("network.wifi.interface");
         let wifi = Wifi {
-            interface: if interface == "auto" {
-                "wlan0".to_string()
-            } else {
-                interface
-            },
+            interface: (interface != "auto").then_some(interface),
             mode: match get("network.wifi.mode").as_str() {
                 "client" => WifiMode::Client,
                 "off" => WifiMode::Off,
@@ -261,10 +261,37 @@ impl NetConfig {
     }
 }
 
+impl Wifi {
+    /// What the hotspot NAT's `iifname` matches: the named interface, or for
+    /// `auto` every `wl` name - `wlan0` from the kernel and `wlp1s0`/`wlx...`
+    /// from udev alike. The boot oneshot sets it before any WiFi driver may
+    /// have loaded, so it cannot wait for the real name.
+    pub fn nat_match(&self) -> &str {
+        self.interface.as_deref().unwrap_or("wl*")
+    }
+}
+
+/// The managed WiFi device among `present`, the kernel's interfaces as
+/// (name, kind): the named one if it is there, else for `auto` the first
+/// `wireless` one by name. `None` when there is none.
+pub fn wifi_device(wanted: Option<&str>, present: &[(String, String)]) -> Option<String> {
+    let mut wireless: Vec<&String> = present
+        .iter()
+        .filter(|(_, kind)| kind == "wireless")
+        .map(|(name, _)| name)
+        .collect();
+    wireless.sort();
+    match wanted {
+        Some(wanted) => wireless.into_iter().find(|name| *name == wanted).cloned(),
+        None => wireless.first().map(|name| name.to_string()),
+    }
+}
+
 /// The client the WiFi fallback waits on after boot.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FallbackWatch {
-    pub interface: String,
+    /// As `Wifi::interface`: `None` for `auto`.
+    pub interface: Option<String>,
     pub ssid: String,
     /// How long the client may go without connecting.
     pub after: std::time::Duration,
@@ -447,7 +474,7 @@ fn ethernet(
 
 fn hotspot(wifi: &Wifi) -> Keyfile {
     let autoconnect = wifi.mode == WifiMode::Hotspot;
-    let mut body = connection(WIFI_HOTSPOT, "wifi", autoconnect, Some(&wifi.interface));
+    let mut body = connection(WIFI_HOTSPOT, "wifi", autoconnect, wifi.interface.as_deref());
     body.push_str(&format!(
         "\n[wifi]\nmode=ap\nband=bg\nssid={}\n",
         ssid_value(&wifi.hotspot_ssid)
@@ -471,7 +498,7 @@ fn hotspot(wifi: &Wifi) -> Keyfile {
 
 fn wifi_client(wifi: &Wifi, client: &Client) -> Keyfile {
     let autoconnect = wifi.mode == WifiMode::Client;
-    let mut body = connection(WIFI_CLIENT, "wifi", autoconnect, Some(&wifi.interface));
+    let mut body = connection(WIFI_CLIENT, "wifi", autoconnect, wifi.interface.as_deref());
     body.push_str(&format!(
         "\n[wifi]\nmode=infrastructure\nssid={}\n",
         ssid_value(&client.ssid)
@@ -549,13 +576,45 @@ mod tests {
 
         let hotspot = file(&files, WIFI_HOTSPOT);
         assert!(hotspot.contains("autoconnect=true\n"));
-        assert!(hotspot.contains("interface-name=wlan0\n"));
+        assert!(!hotspot.contains("interface-name"), "auto binds none");
         assert!(hotspot.contains("mode=ap\n"));
         assert!(hotspot.contains("ssid=tessaro-brave-otter-3fa2\n"));
         assert!(!hotspot.contains("[wifi-security]"), "open while unclaimed");
         assert!(hotspot.contains("method=shared"));
         assert_eq!(config.wifi_profile(), Some(WIFI_HOTSPOT));
         assert_eq!(config.ethernet_profile(), ETHERNET_DHCP);
+    }
+
+    #[test]
+    fn a_named_wifi_interface_is_bound_and_auto_matches_every_wl_name() {
+        let auto = config(&[], None, None);
+        assert_eq!(auto.wifi.interface, None);
+        assert_eq!(auto.wifi.nat_match(), "wl*");
+
+        let named = config(&[("network.wifi.interface", "wlp1s0")], None, None);
+        let hotspot = file(&render(&named), WIFI_HOTSPOT).to_string();
+        assert!(hotspot.contains("interface-name=wlp1s0\n"));
+        assert_eq!(named.wifi.nat_match(), "wlp1s0");
+    }
+
+    #[test]
+    fn the_wifi_device_is_the_named_one_or_the_first_wireless_one() {
+        let present: Vec<(String, String)> = [
+            ("enp0s31f6", "ethernet"),
+            ("wlx00c0ca", "wireless"),
+            ("wlp1s0", "wireless"),
+        ]
+        .iter()
+        .map(|(name, kind)| (name.to_string(), kind.to_string()))
+        .collect();
+        assert_eq!(wifi_device(None, &present).as_deref(), Some("wlp1s0"));
+        assert_eq!(
+            wifi_device(Some("wlx00c0ca"), &present).as_deref(),
+            Some("wlx00c0ca")
+        );
+        assert_eq!(wifi_device(Some("wlan0"), &present), None);
+        assert_eq!(wifi_device(Some("enp0s31f6"), &present), None);
+        assert_eq!(wifi_device(None, &present[..1]), None);
     }
 
     #[test]
@@ -664,7 +723,7 @@ mod tests {
         assert_eq!(
             watch(&client),
             Some(FallbackWatch {
-                interface: "wlan0".to_string(),
+                interface: None,
                 ssid: "Office".to_string(),
                 after: std::time::Duration::from_secs(120),
             }),

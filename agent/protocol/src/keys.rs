@@ -330,7 +330,7 @@ pub static KEYS: &[Key] = &[
     key("network.ethernet.dns", "KIOSK_ETHERNET_DNS", Kind::Addresses, NETWORK,
         "DNS servers with network.ethernet.mode=static, comma separated."),
     key("network.wifi.interface", "KIOSK_WIFI_INTERFACE", Kind::Interface, NETWORK,
-        "The WiFi device the device manages; auto is wlan0. Without it, nothing WiFi ever comes up."),
+        "The WiFi device the device manages; auto is whichever there is (wlan0, wlp1s0), so name it when there is more than one. Without one, nothing WiFi ever comes up."),
     key("network.wifi.mode", "KIOSK_WIFI_MODE", Kind::Choice(&["hotspot", "client", "off"]), NETWORK,
         "hotspot (tessaro-NAME, for installation and management), client (joins network.wifi.ssid; `tessaro-ctl network wifi join`; falls back to the hotspot when it does not connect after boot, see network.wifi.fallback_after), or off."),
     key("network.wifi.nat", "KIOSK_WIFI_NAT", Kind::Flag, NETWORK,

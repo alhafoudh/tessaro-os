@@ -354,7 +354,7 @@ impl Control {
                     continue;
                 };
                 // naked: Network bounds every NetworkManager call with within()
-                if control.network.client_up(&watch.interface).await {
+                if control.network.client_up(watch.interface.as_deref()).await {
                     // naked: a marker write under blocking()'s within()
                     control.wifi_client_up(&watch).await;
                     return;
@@ -374,7 +374,8 @@ impl Control {
         let state = self.read_state().await.ok()?;
         let value = profiles::value_of(&state.settings, &self.defaults);
         let watch = profiles::fallback_watch(&value)?;
-        if self.network.busy() || !self.network.has_wifi(&watch.interface).await {
+        let wanted = watch.interface.as_deref();
+        if self.network.busy() || self.network.wifi_device(wanted).await.is_none() {
             return None;
         }
         Some(watch)

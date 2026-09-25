@@ -391,7 +391,11 @@ they need from us is kernel drivers and file permissions.
   into the image: `HIDRAW` (no `/dev/hidraw*` without it), `HID_MULTITOUCH`
   (hid-generic does not decode multi-finger reports), `USB_ACM` plus the CP210x
   and CH341 serial bridges, and an HCI transport for Bluetooth (`CONFIG_BT`
-  alone reaches no controller). The bbappend is `linux-yocto_%` only;
+  alone reaches no controller). btusb is the exception on genericx86-64,
+  where `tessaro-x86-wireless.cfg` makes it a module: Intel controllers load
+  `intel/ibt-*.sfi` at probe, and built in it probes before the rootfs with
+  the firmware is mounted (see the WiFi drivers bullet in
+  [networking.md](networking.md)). The bbappend is `linux-yocto_%` only;
   `raspberrypi3-64` builds `linux-raspberrypi` and has not been checked.
 * **`--touch-events` defaults to `disabled` on Linux.** Finger input still
   arrives as synthesized mouse events, but `ontouchstart` and

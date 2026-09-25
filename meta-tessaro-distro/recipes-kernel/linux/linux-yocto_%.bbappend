@@ -1,5 +1,10 @@
 # Kernel options for touch panels and the WebHID/WebSerial/WebBluetooth device
-# APIs. See the comments in the fragment for what each one is for.
+# APIs, and on genericx86-64 the WiFi drivers linux-yocto leaves out. See the
+# comments in each fragment for what each option is for.
+#
+# The wireless fragment comes after tessaro-devices.cfg, so its =m for btusb
+# wins over the =y there. It is genericx86-64 only: qemux86-64 has no wireless
+# NIC and installs no module set.
 #
 # linux-yocto is the kernel on qemux86-64 and genericx86-64. raspberrypi3-64
 # builds linux-raspberrypi instead, which this bbappend does not touch - check
@@ -21,3 +26,4 @@
 FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
 
 SRC_URI += "file://tessaro-devices.cfg"
+SRC_URI:append:genericx86-64 = " file://tessaro-x86-wireless.cfg"

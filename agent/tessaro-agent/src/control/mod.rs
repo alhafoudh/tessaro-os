@@ -1107,7 +1107,7 @@ mod tests {
             .hotspot_psk
             .expect("claim sets a hotspot password");
         protocol::keys::check_psk(psk.expose()).unwrap();
-        // No wlan0 in this sandbox: nothing to show, but it is stored for a
+        // No WiFi device in this sandbox: nothing to show, but it is stored for a
         // WiFi dongle plugged in later.
         assert_eq!(claimed.hotspot, None);
 

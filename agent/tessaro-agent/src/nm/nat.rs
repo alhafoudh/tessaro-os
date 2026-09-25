@@ -24,7 +24,8 @@ const NFT: Duration = Duration::from_secs(10);
 
 const BINARY: &str = "/usr/sbin/nft";
 
-/// The ruleset `nft -f` is fed. Declaring the table before deleting it makes
+/// The ruleset `nft -f` is fed. `interface` is an `iifname` match, so the
+/// `wl*` of `network.wifi.interface=auto` works as a wildcard. Declaring the table before deleting it makes
 /// the delete succeed whether it existed or not, in one atomic transaction.
 pub fn script(nat: bool, interface: &str) -> String {
     let mut text = format!("table inet {TABLE}\ndelete table inet {TABLE}\n");
@@ -85,5 +86,10 @@ mod tests {
         assert!(text.starts_with("table inet tessaro-hotspot\ndelete table inet tessaro-hotspot\n"));
         assert!(text.contains("type filter hook forward priority 0; policy accept;"));
         assert!(text.contains("iifname \"wlan0\" drop"));
+    }
+
+    #[test]
+    fn nat_off_on_auto_drops_every_wl_interface() {
+        assert!(script(false, "wl*").contains("iifname \"wl*\" drop"));
     }
 }

@@ -163,7 +163,7 @@ fn network(
             paths.nm_run_dir.display()
         )),
     }
-    if let Err(err) = nat::apply_blocking(config.wifi.nat, &config.wifi.interface) {
+    if let Err(err) = nat::apply_blocking(config.wifi.nat, config.wifi.nat_match()) {
         log.info(format!("hotspot NAT: {err}"));
     }
 }
