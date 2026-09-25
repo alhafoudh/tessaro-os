@@ -42,10 +42,11 @@ touches, and the URL survives reboots and image updates.
 - **Content that works offline.** Sync a directory of videos, images and JSON
   to the device and your page loads them from `http://127.0.0.1/files/`, with
   or without a network.
-- **Owned by whoever claims it first.** A fresh device has no password and
-  answers only to `claim`. Claiming gives you a token, pins the device's
-  certificate and sets a random root password. Everything after that goes over
-  TLS.
+- **Owned by whoever claims it first.** A fresh device has no password, and
+  until it is claimed anyone on its network can manage it with `tessaro-ctl`
+  or `tessaro-gui`. Claiming gives you a token, pins the device's certificate
+  and sets a random root password; from then on only token holders get in.
+  Everything goes over TLS.
 
 ## Quick start
 

@@ -130,7 +130,14 @@ kiosk origin, Weston restarts - taking the browser and agent with it - for a
 **The claim model:**
 
 * A fresh device is **unclaimed**: no tokens, empty root password. Over TCP it
-  answers only `id`, `claim` and `ping`.
+  answers every command without a token (a stale one is ignored), because
+  whoever can reach it could claim it and do the same anyway. What makes a
+  credential still needs the claim first (`require_claimed` in
+  `control/access.rs`): a token, the root password, an ssh key, the hotspot
+  password. Both clients talk to an unclaimed device they have no pin for
+  without pinning it (`Trust::KnownOnly` in `agent/client/src/connect.rs`),
+  with a note saying so; once it is claimed, they refuse it again until
+  `access login`.
 * **The first `claim` wins.** It gets a token and the root password becomes a
   random 20-character one, which `tessaro-ctl` shows exactly once. Order
   matters for power loss: the password is set first, then the token
@@ -149,8 +156,9 @@ kiosk origin, Weston restarts - taking the browser and agent with it - for a
   claimed device; an unclaimed one keeps it empty.
 * Failed tokens are rate-limited per address, but a valid token always gets
   in - the tokens are 256 bits, the limiter only keeps scans quiet.
-* **Accepted exposure**: whoever reaches a fresh or reset device first owns it,
-  and the mDNS record says which devices are unclaimed.
+* **Accepted exposure**: until it is claimed, anyone who reaches a fresh or
+  reset device manages it, the first to claim owns it, and the mDNS record
+  says which devices are unclaimed.
 
 **Names.** The node id is systemd's app-specific machine id (HMAC-SHA256 of
 `/etc/machine-id` over a fixed Tessaro app id, stamped v4) - it matches

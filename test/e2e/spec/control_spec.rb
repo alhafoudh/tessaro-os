@@ -89,6 +89,24 @@ module AgentE2E
       expect(guest.kiosk_pid).to eq(browser), "the browser was restarted"
     end
 
+    # A client with no pin and no token, over TLS: everything answers but
+    # what makes a credential.
+    it "unclaimed: tessaro-ctl manages an unclaimed device without claiming or pinning it" do
+      guest.run(<<~SH)
+        set -e
+        export TESSARO_CONFIG_DIR=/tmp/e2e-unclaimed
+        rm -rf "$TESSARO_CONFIG_DIR"
+        tessaro-ctl -n 127.0.0.1 device status 2>/tmp/e2e-notes >/dev/null
+        grep -q 'unclaimed and not pinned' /tmp/e2e-notes
+        tessaro-ctl -n 127.0.0.1 config set data.e2e=1 >/dev/null
+        tessaro-ctl -n 127.0.0.1 config get data.e2e | grep -q 1
+        tessaro-ctl -n 127.0.0.1 config unset data.e2e >/dev/null
+        ! tessaro-ctl -n 127.0.0.1 access password set --random 2>/dev/null
+        ! test -e "$TESSARO_CONFIG_DIR/nodes.json"
+        grep -q '^root::' /etc/shadow
+      SH
+    end
+
     # Claimed, the root password is not empty any more, and this suite logs
     # in with an empty one - so the whole round trip is one guest command,
     # with a local-socket unclaim on the way out whatever happens.
@@ -104,6 +122,7 @@ module AgentE2E
         grep -q '"root_password"' /tmp/e2e-claim.json
         grep -q '^root:[$]6[$]' /etc/shadow
         ! TESSARO_CONFIG_DIR=/tmp/e2e-other tessaro-ctl -n 127.0.0.1 access claim --yes 2>/dev/null
+        ! TESSARO_CONFIG_DIR=/tmp/e2e-other tessaro-ctl -n 127.0.0.1 device status 2>/dev/null
         tessaro-ctl -n 127.0.0.1 access token list | grep -q 'e2e'
         tessaro-ctl -n 127.0.0.1 access unclaim --yes
         grep -q '^root::' /etc/shadow

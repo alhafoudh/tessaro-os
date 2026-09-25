@@ -234,13 +234,25 @@ impl NodesView {
         self.rows().into_iter().find(|row| &row.key == key)
     }
 
-    /// The known node behind a row, if it can be opened: pinned, the pin
-    /// holding, and a token to send.
+    /// The node behind a row, if it can be opened: pinned, the pin holding,
+    /// and a token to send - or unclaimed, which needs neither.
     fn openable(&self, row: &Row) -> Option<Node> {
-        if row.pin == Pin::Mismatch || !row.token {
+        if row.pin == Pin::Mismatch {
             return None;
         }
-        self.known.by_id(row.id.as_deref()?).cloned()
+        let id = row.id.as_deref()?;
+        let unclaimed = row.claimed == Some(false);
+        match self.known.by_id(id) {
+            Some(node) if row.token || unclaimed => Some(node.clone()),
+            None if unclaimed && row.online => Some(Node {
+                id: id.to_string(),
+                name: row.name.clone(),
+                address: row.address.clone(),
+                fingerprint: String::new(),
+                token: None,
+            }),
+            _ => None,
+        }
     }
 
     pub fn discovered(&mut self, event: discovery::Event) {
@@ -944,6 +956,51 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert!(!rows[0].online && rows[0].pin == Pin::Known);
         assert!(rows[1].online && rows[1].pin == Pin::New && !rows[1].token);
+    }
+
+    #[test]
+    fn an_unclaimed_device_opens_without_a_pin_or_a_token() {
+        let pin = "a".repeat(64);
+        let unclaimed = |id: &str, name: &str| Found {
+            claimed: Some(false),
+            ..found(id, name, &pin)
+        };
+        let view = NodesView {
+            known: Nodes {
+                nodes: vec![node("n1", "kiosk-1", false), node("n3", "kiosk-3", false)],
+            },
+            seen: [
+                ("kiosk-1".to_string(), unclaimed("n1", "kiosk-1")),
+                ("kiosk-2".to_string(), unclaimed("n2", "kiosk-2")),
+                ("kiosk-4".to_string(), found("n4", "kiosk-4", &pin)),
+            ]
+            .into(),
+            added: Vec::new(),
+            selected: None,
+            filter: String::new(),
+            dialog: None,
+            discovery: None,
+            message: None,
+            generation: 0,
+        };
+        let openable = |name: &str| {
+            let row = view
+                .rows()
+                .into_iter()
+                .find(|row| row.name == name)
+                .unwrap();
+            view.openable(&row)
+        };
+
+        // Known, and a stranger: both open, the stranger at its live address.
+        assert!(openable("kiosk-1").is_some());
+        let stranger = openable("kiosk-2").unwrap();
+        assert_eq!(stranger.address, "10.0.0.9:7400");
+        assert!(stranger.token.is_none());
+        // Known without a token, and claim state unknown: a login first.
+        assert!(openable("kiosk-3").is_none());
+        // A claimed stranger: a claim or login first.
+        assert!(openable("kiosk-4").is_none());
     }
 
     #[test]

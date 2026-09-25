@@ -76,7 +76,8 @@ pub enum Caller {
     Local,
     /// TCP, with a valid token.
     Token { id: String, peer: SocketAddr },
-    /// TCP, no token. Only ever reaches `Command::is_public` commands.
+    /// TCP, no valid token: the `Command::is_public` commands, and every
+    /// command while the device is unclaimed.
     Anonymous { peer: SocketAddr },
 }
 
@@ -900,6 +901,10 @@ fn not_offered(key: &Key) -> String {
     }
 }
 
+/// A `Control` in a sandbox, for the server's tests.
+#[cfg(test)]
+pub(crate) use tests::fixture;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -914,9 +919,9 @@ mod tests {
     use crate::secrets::Secrets;
     use crate::{shadow, ssh};
 
-    struct Fixture {
+    pub(crate) struct Fixture {
         _dir: tempfile::TempDir,
-        control: Arc<Control>,
+        pub(crate) control: Arc<Control>,
         paths: Paths,
         _stop: watch::Sender<bool>,
     }
@@ -929,7 +934,7 @@ mod tests {
         Caller::Anonymous { peer: peer() }
     }
 
-    fn fixture() -> Fixture {
+    pub(crate) fn fixture() -> Fixture {
         let dir = tempfile::tempdir().unwrap();
         let at = |name: &str| dir.path().join(name).display().to_string();
         let env: HashMap<String, String> = [

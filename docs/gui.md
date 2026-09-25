@@ -75,6 +75,11 @@ keyed by node id** (`nodes_view::merge`).
   and cannot be opened: it was reinstalled, its `/data` was wiped, or someone
   is in the middle. Forget it to pin it again.
 * An unknown device gets a row of its own.
+* **An unclaimed device opens without a claim, a login or a pin**
+  (`NodesView::openable`): it answers everything without a token (see **The
+  claim model** in [settings.md](settings.md)). A stranger is reached at the
+  address it was seen at (`worker::connect`), and only while it stays
+  unclaimed. Actions that make a credential show the device's refusal.
 
 Discovery runs for as long as the app does (`discovery.rs`). Rescan starts a
 new browse. A device mDNS cannot see (another subnet, a VM) is added by

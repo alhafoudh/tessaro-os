@@ -194,7 +194,7 @@ pub type Decide<'a> = &'a mut dyn FnMut(&PinAsk) -> Result<bool, String>;
 
 /// What the caller wants to happen if the node has no pin yet.
 pub enum Trust<'a> {
-    /// Refuse: only known nodes.
+    /// Only known nodes, and unclaimed ones, which are not pinned.
     KnownOnly,
     /// Allowed without pinning (`id`): nothing secret is sent.
     Peek,
@@ -214,7 +214,7 @@ pub struct Session {
     /// How long the TCP connect and the TLS handshake plus the welcome took.
     pub timing: Option<Timing>,
     /// Worth telling the user, though the session opened: a pinned device
-    /// that was not at its last address.
+    /// that was not at its last address, an unclaimed one left unpinned.
     pub notes: Vec<String>,
 }
 
@@ -373,6 +373,14 @@ fn open_remote(
         }
         Some(_) => {}
         None => match trust {
+            // An unclaimed device answers every command without a token, and
+            // no token is sent to it: talk to it without pinning.
+            Trust::KnownOnly if !session.node.claimed => {
+                session.notes.push(format!(
+                    "{} is unclaimed and not pinned; `tessaro-ctl access claim` it to keep it",
+                    session.node.name
+                ));
+            }
             Trust::KnownOnly => {
                 return Err(Failure::Refused(format!(
                     "{label} ({address}) is not a known node; `tessaro-ctl access claim` or `tessaro-ctl access login` it first"
@@ -470,6 +478,7 @@ fn open_named(
                 CONNECT,
             )
             .map_err(Failure::message)?;
+            notes.append(&mut session.notes);
             session.notes = notes;
             Ok(session)
         }

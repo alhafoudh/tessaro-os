@@ -305,9 +305,11 @@ fn authenticate(
         // scanner's NAT.
         Some(token) => match control.verify(token) {
             Some(id) => Ok(Caller::Token { id, peer }),
-            // A stale token on `id` or `claim` - a client that still holds one
-            // from before an unclaim - is no reason to refuse what needs none.
-            None if request.command.is_public() => Ok(Caller::Anonymous { peer }),
+            // A stale token - a client that still holds one from before an
+            // unclaim - is no reason to refuse what needs none.
+            None if request.command.is_public() || !control.claimed() => {
+                Ok(Caller::Anonymous { peer })
+            }
             None if limiter.refused(peer.ip()) => {
                 Err("too many failed attempts from this address; try again in a minute".to_string())
             }
@@ -317,8 +319,10 @@ fn authenticate(
                 Err("invalid token".to_string())
             }
         },
-        None if request.command.is_public() => Ok(Caller::Anonymous { peer }),
-        None if !control.claimed() => Err(crate::control::UNCLAIMED.to_string()),
+        // Until the first claim, anyone who reaches the device manages it:
+        // they could claim it and do the same. What makes a credential still
+        // refuses on an unclaimed device (`Control::require_claimed`).
+        None if request.command.is_public() || !control.claimed() => Ok(Caller::Anonymous { peer }),
         None => Err("a token is required; `tessaro-ctl access login` with one".to_string()),
     }
 }
@@ -525,6 +529,7 @@ impl Limiter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use protocol::Command;
 
     #[tokio::test(start_paused = true)]
     async fn an_address_that_keeps_failing_is_refused_for_a_while() {
@@ -553,6 +558,40 @@ mod tests {
             tokio::time::advance(WINDOW).await;
         }
         assert!(!limiter.refused(ip));
+    }
+
+    #[tokio::test]
+    async fn an_unclaimed_device_answers_everything_without_a_token() {
+        let fx = crate::control::fixture();
+        let limiter = Limiter::default();
+        let log = Log::buffered(true);
+        let peer: SocketAddr = "192.0.2.10:50000".parse().unwrap();
+        let request = |token: Option<&str>| Request {
+            id: 1,
+            token: token.map(str::to_string),
+            command: Command::Status,
+        };
+        let admitted = |token: Option<&str>| {
+            authenticate(
+                &fx.control,
+                &limiter,
+                &log,
+                Origin::Remote(peer),
+                &request(token),
+            )
+        };
+
+        assert_eq!(admitted(None), Ok(Caller::Anonymous { peer }));
+        assert_eq!(admitted(Some("stale")), Ok(Caller::Anonymous { peer }));
+
+        let claim = Command::Claim {
+            name: "laptop".into(),
+        };
+        let reply = fx.control.handle(&Caller::Anonymous { peer }, claim).await;
+        assert!(reply.result.is_ok(), "{:?}", reply.result);
+
+        assert!(admitted(None).is_err());
+        assert_eq!(admitted(Some("stale")), Err("invalid token".to_string()));
     }
 
     #[tokio::test]

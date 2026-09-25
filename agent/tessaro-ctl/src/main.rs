@@ -5,7 +5,8 @@
 //! the device by IP, `name.local` or plain name, and the conversation is TLS
 //! with a pinned certificate and a token.
 //!
-//! A fresh device is unclaimed: `tessaro-ctl --node NAME access claim` takes it,
+//! A fresh device is unclaimed and answers every command without a token or
+//! a pin, credentials aside. `tessaro-ctl --node NAME access claim` takes it,
 //! stores the token in ~/.config/tessaro/nodes.json, and prints the device's
 //! new root password - once.
 

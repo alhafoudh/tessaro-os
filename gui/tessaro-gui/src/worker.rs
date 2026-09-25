@@ -90,18 +90,33 @@ pub enum Event {
 /// mDNS, and held to its pin either way. nodes.json is read again each time,
 /// so a login from the main window counts at the next try, and a device
 /// found elsewhere is remembered there. Also what is worth telling the user.
+///
+/// A node nobody pinned - an unclaimed device opened from the list - is
+/// reached at the address it was seen at, and only while it stays unclaimed.
 pub fn connect(node: &Node) -> Result<(Session, Vec<String>), String> {
     let mut nodes = Nodes::load()?;
-    let known = nodes
-        .by_id(&node.id)
-        .cloned()
-        .ok_or_else(|| format!("{} is no longer a known node", node.name))?;
-    let target = Target::Named {
-        name: known.name.clone(),
-        port: None,
-        known: Some(known),
+    let target = match nodes.by_id(&node.id).cloned() {
+        Some(known) => Target::Named {
+            name: known.name.clone(),
+            port: None,
+            known: Some(known),
+        },
+        None => Target::Remote {
+            address: node
+                .address
+                .parse()
+                .map_err(|_| format!("{} is no longer a known node", node.name))?,
+            expected: Some(node.id.clone()),
+            label: node.name.clone(),
+        },
     };
     let session = connect::open(&target, &nodes, &mut Trust::KnownOnly, CLIENT)?;
+    if session.node.id != node.id {
+        return Err(format!(
+            "{}: a different device answers at {} (node {} {})",
+            node.name, node.address, session.node.name, session.node.id
+        ));
+    }
     let mut notes = session.notes.clone();
     if let (Some(was), Some((address, _))) = (nodes.refresh(&session)?, &session.remote) {
         notes.push(format!(
