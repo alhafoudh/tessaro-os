@@ -36,7 +36,8 @@ progress goes to a callback.
 ## One window, inner windows
 
 **The app is one window with inner windows on a desk, WinBox style**
-(`mdi.rs`). The node list and every opened device are inner windows: they
+(`mdi.rs`). The node list, every opened device and its settings windows are
+inner windows: they
 drag by the title bar, resize from the bottom-right corner, maximize with the
 title-bar button or a double-click, and close with ×. The node list cannot be
 closed; Devices in the app header brings it back to the top. The last window
@@ -51,11 +52,12 @@ clicked is on top.
 
 **The keyboard talks to the window on top** (`main.rs`, `keys`):
 
-* Esc closes its dialog, else closes a device window. It never closes the
-  node list or the app.
+* Esc closes its dialog, else closes a device or settings window. It never
+  closes the node list or the app.
 * Enter presses the dialog's default button, else opens or edits the
   selected row.
-* Up and Down move the selection in the page's main table.
+* Up and Down move the selection in the page's main table, or in a
+  settings window's table.
 * Cmd + / Cmd - / Cmd 0 (Ctrl elsewhere) zoom every window, in tenths from
   0.6 to 2.0, and the zoom is kept in `gui.json` next to `nodes.json`.
 
@@ -119,12 +121,25 @@ the subscription, and with it the thread and the connection.
 * Pages ask through one generic call, `Request::Call`: any `Command`,
   answered as `Event::Answer` with a tag naming the page that asked.
 
-**The nav lists Overview, then the settings sections, then the tools.**
+**The nav has one entry per subject; a page shows its tools, and its
+settings open in a window of their own** from Configure, the first button
+on its toolbar. So one subject is never in two places, and the settings
+table keeps its full width.
 
-* The settings sections are the key prefixes the device reports, in its
-  order (`device::sections`), so a group a newer image adds appears here by
-  itself.
-* The tools are one page per `tessaro-ctl` command group (`device/pages.rs`).
+* The pages are Overview and one per `tessaro-ctl` command group
+  (`device/pages.rs`). Configure opens the keys of the page's prefix
+  (`Page::scope`): Overview the `device.*` keys, WiFi the `network.wifi.*`
+  keys, which Network leaves out. A page whose prefix the device has no
+  keys for has no Configure.
+* A prefix no page shows gets an entry after the pages, in the device's
+  order (`device::own_sections`), and clicking it opens its settings window,
+  so a group a newer image adds appears by itself. Data is always listed,
+  empty or not, so the first custom value can be added there; unsetting
+  one is its Delete.
+* A settings window belongs to its device window (`main.rs`, `configs`):
+  one per group, Configure again raises it, and it closes with its device.
+  It keeps its own selection and filter, and the edit dialog opens inside
+  it; what a change did still goes to the device window's Messages.
 * **Each action is on one page only: the page of its command group.**
   Overview is the `device` group and nothing else, so it stays a summary; a
   `browser` command goes on Browser, not on Overview.
@@ -173,7 +188,7 @@ applies and stays, Default unsets.**
 The window's own toolbar has Refresh, Restart browser, weston or agent, and
 Reboot, the restarts confirmed first. **Refresh is the window's, not a
 page's**: it fetches `Status`, the settings and what the page shown asks
-for, so no page or settings section has a Refresh of its own. The status bar
+for, so no page or settings window has a Refresh of its own. The status bar
 shows the device's `Status`, and a guarded change's countdown with Confirm;
 that is the one Confirm, since a guarded change can come from a setting as
 well as from the Screen page.
@@ -228,7 +243,8 @@ dialogs (`rfd`).
 
 ## Adding a page
 
-1. Add the page to `Page` and `Page::TOOLS` in `device.rs`.
+1. Add the page to `Page` and `Page::TOOLS` in `device.rs`, and give it a
+   `Page::scope` if settings belong to it (its Configure).
 2. Ask for its data in `refresh_page` with a tag, and keep the answer in
    `take_answer`.
 3. Draw it with `page`, `table` and `facts` in `device/pages.rs`, with its

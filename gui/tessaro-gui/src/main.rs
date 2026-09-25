@@ -35,6 +35,7 @@ pub const CLIENT: &str = concat!("tessaro-gui ", env!("CARGO_PKG_VERSION"));
 const WINDOW: Size = Size::new(1400.0, 860.0);
 const NODES_SIZE: Size = Size::new(900.0, 420.0);
 const DEVICE_SIZE: Size = Size::new(1060.0, 640.0);
+const CONFIG_SIZE: Size = Size::new(760.0, 440.0);
 
 fn main() -> iced::Result {
     iced::application(App::boot, App::update, App::view)
@@ -97,6 +98,8 @@ impl Zoom {
 struct App {
     nodes: NodesView,
     devices: BTreeMap<mdi::Id, Device>,
+    /// The settings windows: each one's device window and prefix.
+    configs: BTreeMap<mdi::Id, (mdi::Id, String)>,
     desk: mdi::Desk,
     next: mdi::Id,
     zoom: Zoom,
@@ -117,6 +120,8 @@ enum Message {
     Nodes(nodes_view::Message),
     Discovery(discovery::Event),
     Device(mdi::Id, device::Message),
+    /// From a settings window, for its device.
+    Settings(mdi::Id, device::Message),
     Worker(mdi::Id, worker::Event),
     Journal(mdi::Id, logs::Event),
     Vnc(mdi::Id, vnc::Event),
@@ -134,6 +139,7 @@ impl App {
         let app = Self {
             nodes: NodesView::new(),
             devices: BTreeMap::new(),
+            configs: BTreeMap::new(),
             desk,
             next: NODES + 1,
             zoom: Zoom::load(),
@@ -154,6 +160,13 @@ impl App {
             Message::Device(id, message) => {
                 self.desk.raise(id);
                 self.device_update(id, message)
+            }
+            Message::Settings(window, message) => {
+                self.desk.raise(window);
+                match self.configs.get(&window) {
+                    Some(&(id, _)) => self.device_update(id, message),
+                    None => Task::none(),
+                }
             }
             Message::Worker(id, event) => {
                 // A device that moved or was claimed was written to
@@ -210,6 +223,9 @@ impl App {
     }
 
     fn device_update(&mut self, id: mdi::Id, message: device::Message) -> Task<Message> {
+        if let device::Message::Configure(scope) = &message {
+            self.configure(id, &scope.prefix);
+        }
         match self.devices.get_mut(&id) {
             Some(device) => device
                 .update(message)
@@ -246,6 +262,22 @@ impl App {
             };
             return self.nodes_update(message);
         }
+        if let Some((id, prefix)) = self.configs.get(&top).cloned() {
+            let dialog = self.devices.get(&id).is_some_and(Device::has_dialog);
+            let cfg = |cfg| device::Message::Cfg(prefix.clone(), cfg);
+            let message = match key {
+                Key::Escape if dialog => device::Message::Cancel,
+                Key::Escape => {
+                    self.close(top);
+                    return Task::none();
+                }
+                Key::Enter => cfg(device::Cfg::Enter),
+                Key::Up => cfg(device::Cfg::Step(-1)),
+                Key::Down => cfg(device::Cfg::Step(1)),
+                Key::Zoom(_) | Key::ZoomReset => return Task::none(),
+            };
+            return self.device_update(id, message);
+        }
         let dialog = self.devices.get(&top).is_some_and(Device::has_dialog);
         let message = match key {
             Key::Escape if dialog => device::Message::Cancel,
@@ -276,11 +308,45 @@ impl App {
         self.desk.open(id, DEVICE_SIZE);
     }
 
+    /// The settings window of `prefix` on the device in window `id`, opened
+    /// or raised; the device keeps its table's state.
+    fn configure(&mut self, id: mdi::Id, prefix: &str) {
+        let open = self
+            .configs
+            .iter()
+            .find(|(_, (device, open))| *device == id && open == prefix)
+            .map(|(&window, _)| window);
+        if let Some(window) = open {
+            return self.desk.raise(window);
+        }
+        let window = self.next;
+        self.next += 1;
+        self.configs.insert(window, (id, prefix.to_string()));
+        self.desk.open(window, CONFIG_SIZE);
+    }
+
     /// Dropping a device drops its subscriptions, and with them its worker
-    /// thread, its journal stream and their sessions.
+    /// thread, its journal stream and their sessions. Its settings windows
+    /// close with it.
     fn close(&mut self, id: mdi::Id) {
         if id == NODES {
             return;
+        }
+        if let Some((device, prefix)) = self.configs.remove(&id) {
+            if let Some(device) = self.devices.get_mut(&device) {
+                let _ = device.update(device::Message::Unconfigure(prefix));
+            }
+            return self.desk.close(id);
+        }
+        let windows: Vec<mdi::Id> = self
+            .configs
+            .iter()
+            .filter(|(_, (device, _))| *device == id)
+            .map(|(&window, _)| window)
+            .collect();
+        for window in windows {
+            self.configs.remove(&window);
+            self.desk.close(window);
         }
         self.devices.remove(&id);
         self.desk.close(id);
@@ -321,6 +387,17 @@ impl App {
                         false,
                         self.nodes.view().map(Message::Nodes),
                     )
+                } else if let Some((device, prefix)) = self.configs.get(&id) {
+                    match self.devices.get(device) {
+                        Some(device) => (
+                            device.config_title(prefix),
+                            true,
+                            device
+                                .config_view(prefix)
+                                .map(move |message| Message::Settings(id, message)),
+                        ),
+                        None => (String::new(), true, space().into()),
+                    }
                 } else {
                     match self.devices.get(&id) {
                         Some(device) => (

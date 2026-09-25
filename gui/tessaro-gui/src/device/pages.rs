@@ -552,7 +552,7 @@ impl Device {
                 );
             }
             Page::Update => self.call("update", Command::UpdateStatus),
-            Page::Overview | Page::Browser | Page::Settings | Page::Log => {}
+            Page::Overview | Page::Browser | Page::Log => {}
         }
     }
 
@@ -1822,7 +1822,7 @@ impl Device {
             Page::Ssh => self.ssh_view(),
             Page::Files => self.files_view(),
             Page::Update => self.update_view(),
-            Page::Screen | Page::Settings | Page::Log => space().into(),
+            Page::Screen | Page::Log => space().into(),
         };
         let key = page_key(self.page);
         let mut page = column![content].spacing(6).height(Length::Fill);
@@ -1907,8 +1907,12 @@ impl Device {
         record: Vec<section::Action<Message>>,
         body: Vec<Element<'a, Message>>,
     ) -> Element<'a, Message> {
-        let toolbar = row(list
+        // Configure comes first: the page's settings, in their own window.
+        let toolbar = row(self
+            .configure()
+            .map(|configure| section::action("Configure", Some(configure)))
             .into_iter()
+            .chain(list)
             .map(|action| theme::tool(action.label, action.message)))
         .spacing(4);
         let mut toolbar = row![toolbar].spacing(8);
@@ -2191,6 +2195,7 @@ impl Device {
             .is_some_and(|(status, _)| status.screen_on == Some(false));
         column![
             row![
+                theme::tool("Configure", self.configure()),
                 theme::tool(
                     "Use this mode",
                     self.selected("modes").and_then(|_| self.when(Msg::UseMode))
@@ -3035,7 +3040,7 @@ pub(super) fn page_key(page: Page) -> &'static str {
         Page::Files => "files",
         Page::Update => "update",
         Page::Screen => "screen",
-        Page::Settings | Page::Log => "",
+        Page::Log => "",
     }
 }
 
