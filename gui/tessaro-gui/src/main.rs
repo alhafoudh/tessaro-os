@@ -5,6 +5,7 @@
 //! windows on its desk (`mdi.rs`). How it fits together is in docs/gui.md.
 
 mod blocking;
+mod copy_menu;
 mod device;
 mod dialog;
 mod discovery;

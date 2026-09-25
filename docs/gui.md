@@ -121,6 +121,13 @@ the subscription, and with it the thread and the connection.
 with the actions on the page first and those on the selected row after them,
 then its tables. Anything that is a list is a table.
 
+**Right-clicking a table cell selects its row and offers Copy of the cell's
+text as shown** (`copy_menu.rs`, wrapped around every cell in `grid.rs`).
+The text is read back from the cell's widgets through `operate`, so no page
+passes it in, and the clipboard is written by the widget itself. A masked or
+shortened value is copied as displayed; the full one keeps its own Copy
+button.
+
 **Settings are edited in a dialog, WinBox style: OK applies and closes, Apply
 applies and stays, Default unsets.**
 

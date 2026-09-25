@@ -33,7 +33,8 @@ pub const TEXT_COLOR: Color = rgb(0xdc_dc_dc);
 pub const MUTED: Color = rgb(0x8a_8d_93);
 pub const PRIMARY: Color = rgb(0x3d_7b_d9);
 const BUTTON: Color = rgb(0x3a_3d_42);
-const BUTTON_HOVER: Color = rgb(0x46_49_4f);
+/// A hovered button, and the hovered entry of a cell's Copy menu.
+pub const BUTTON_HOVER: Color = rgb(0x46_49_4f);
 const BUTTON_BORDER: Color = rgb(0x4a_4d_52);
 const BUTTON_TEXT: Color = rgb(0xe6_e6_e6);
 
