@@ -360,6 +360,10 @@ pub enum Command {
         /// Samples per payload size.
         #[serde(default)]
         tests: Option<u32>,
+        /// Go around network.proxy.url, straight to Cloudflare: the link
+        /// itself rather than the proxy. Nothing without a proxy.
+        #[serde(default)]
+        direct: bool,
     },
     /// One round trip and nothing else, for `tessaro-ctl device ping`. Public, like
     /// `id`: it says no more than that the agent is answering.
@@ -496,6 +500,12 @@ pub enum Command {
         #[serde(default)]
         local: Option<String>,
     },
+    /// The proxy: network.proxy.url masked, the bypass list and the local
+    /// proxy's unit. Read-only.
+    ProxyStatus,
+    /// Cloudflare's trace fetched through the proxy: the address the
+    /// internet sees through it, or why it could not be reached.
+    ProxyTest,
 }
 
 /// The image `update-begin` describes. Its fields sit in the command itself
@@ -1061,6 +1071,32 @@ pub struct Net {
     /// Cloudflare's trace; `None` until it has. Defaulted for older devices.
     #[serde(default)]
     pub public_ip: Option<String>,
+    /// network.proxy.url with its password masked; `None` without a proxy.
+    /// Defaulted for older devices.
+    #[serde(default)]
+    pub proxy: Option<String>,
+}
+
+/// What `network proxy show` reports.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProxyStatus {
+    /// network.proxy.url with its password masked; `None` without a proxy.
+    pub url: Option<String>,
+    /// network.proxy.bypass, besides loopback.
+    pub bypass: Vec<String>,
+    /// Where the device's local proxy listens, `127.0.0.1:3128`.
+    pub listen: String,
+    /// Its unit's state: `active`, `inactive`, `failed`, ...
+    pub unit: String,
+}
+
+/// What `network proxy test` got through the proxy.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProxyTested {
+    /// The address the internet sees through the proxy.
+    pub ip: Option<String>,
+    /// Why it could not be reached, when it could not.
+    pub error: Option<String>,
 }
 
 /// One partition of the disk the device runs from. Sizes and offsets in
@@ -1826,7 +1862,8 @@ mod tests {
             request.command,
             Command::Speedtest {
                 max_size: None,
-                tests: None
+                tests: None,
+                direct: false
             }
         );
     }

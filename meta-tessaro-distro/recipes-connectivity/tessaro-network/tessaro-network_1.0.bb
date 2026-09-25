@@ -11,6 +11,7 @@ inherit systemd
 SRC_URI = " \
     file://10-tessaro.conf \
     file://tessaro-network-state.service \
+    file://tessaro-proxy.service \
 "
 
 S = "${WORKDIR}"
@@ -27,9 +28,12 @@ do_install() {
 
     install -Dm0644 ${WORKDIR}/tessaro-network-state.service \
         ${D}${systemd_system_unitdir}/tessaro-network-state.service
+
+    install -Dm0644 ${WORKDIR}/tessaro-proxy.service \
+        ${D}${systemd_system_unitdir}/tessaro-proxy.service
 }
 
-SYSTEMD_SERVICE:${PN} = "tessaro-network-state.service"
+SYSTEMD_SERVICE:${PN} = "tessaro-network-state.service tessaro-proxy.service"
 SYSTEMD_AUTO_ENABLE:${PN} = "enable"
 
 # Nothing under ${nonarch_libdir} is in the default FILES:${PN}; the unit itself
@@ -58,6 +62,15 @@ RDEPENDS:${PN} = " \
 RDEPENDS:${PN} += " \
     dnsmasq \
     nftables \
+"
+
+# network.proxy.url goes through a local tinyproxy, run by tessaro-proxy.service
+# from a config the agent renders into /run. tinyproxy's own unit and its
+# /etc/tinyproxy.conf stay unused: SYSTEMD_AUTO_ENABLE:pn-tinyproxy in
+# tessaro.conf keeps that unit disabled. meta-networking builds it with
+# --enable-upstream, which is what carries the upstream proxy.
+RDEPENDS:${PN} += " \
+    tinyproxy \
 "
 
 # NetworkManager's masquerade table (table ip nm-shared-<iface>) needs the NAT

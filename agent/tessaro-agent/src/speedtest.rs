@@ -58,6 +58,9 @@ const MAX_TESTS: u32 = 100;
 pub struct Plan {
     sizes: Vec<u64>,
     tests: u32,
+    /// The device's local proxy, when the test goes through it; `None` goes
+    /// straight out, and never through an `HTTP_PROXY` in the environment.
+    pub proxy: Option<std::net::SocketAddr>,
 }
 
 impl Plan {
@@ -79,6 +82,7 @@ impl Plan {
                 .filter(|size| *size <= max_size)
                 .collect(),
             tests,
+            proxy: None,
         })
     }
 }
@@ -94,11 +98,23 @@ pub fn start(plan: Plan, lock: OwnedMutexGuard<()>, log: Arc<Log>) -> mpsc::Rece
 /// Everything on the blocking thread. Returns early once `send` says
 /// nobody is listening: whoever asked has gone.
 fn run(plan: &Plan, send: &dyn Fn(Step) -> bool, log: &Log) {
-    let client = match reqwest::blocking::Client::builder()
+    // Plain HTTP to the local proxy, which does the upstream's scheme and
+    // credentials; so no reqwest socks feature, whatever network.proxy.url
+    // speaks.
+    let builder = reqwest::blocking::Client::builder()
         .timeout(REQUEST)
-        .user_agent(USER_AGENT)
-        .build()
-    {
+        .user_agent(USER_AGENT);
+    let builder = match plan.proxy {
+        Some(proxy) => match reqwest::Proxy::all(format!("http://{proxy}")) {
+            Ok(proxy) => builder.proxy(proxy),
+            Err(err) => {
+                send(Err(format!("speed test: the proxy: {err}")));
+                return;
+            }
+        },
+        None => builder.no_proxy(),
+    };
+    let client = match builder.build() {
         Ok(client) => client,
         Err(err) => {
             send(Err(format!("speed test: {err}")));

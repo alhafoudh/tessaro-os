@@ -47,6 +47,7 @@ trait Manager {
     fn get_unit(&self, name: &str) -> zbus::Result<OwnedObjectPath>;
     fn restart_unit(&self, name: &str, mode: &str) -> zbus::Result<OwnedObjectPath>;
     fn try_restart_unit(&self, name: &str, mode: &str) -> zbus::Result<OwnedObjectPath>;
+    fn stop_unit(&self, name: &str, mode: &str) -> zbus::Result<OwnedObjectPath>;
     fn reboot(&self) -> zbus::Result<()>;
 }
 
@@ -315,6 +316,20 @@ impl Bus {
             .await,
         )
         .map_err(|err| Error::Systemd(format!("TryRestartUnit({unit}) failed: {err}")))?;
+        Ok(())
+    }
+
+    pub async fn stop(&self, unit: &str) -> Result<()> {
+        let manager = self.manager().await?;
+        flatten(
+            crate::deadline::within(
+                "StopUnit",
+                METHOD_TIMEOUT,
+                manager.stop_unit(unit, "replace"),
+            )
+            .await,
+        )
+        .map_err(|err| Error::Systemd(format!("StopUnit({unit}) failed: {err}")))?;
         Ok(())
     }
 

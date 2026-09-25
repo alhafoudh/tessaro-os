@@ -24,9 +24,10 @@ use protocol::files::{self as store, FileEntry, FileKind, FilesListing};
 use protocol::keys;
 use protocol::{
     size_label, Applied, AudioDevice, AudioStatus, AudioTested, Command, Connector, Done,
-    HotspotCredentials, Net, NetChange, NetProfile, NetProfileDetail, Password, PingEvent, Secret,
-    SpeedtestEvent, SshKeyInfo, SshKeyRevoked, Storage, StorageGrowEvent, TimeStatus, TokenCreated,
-    TokenInfo, UpdatePhase, UpdateStatus, Verify, WifiNetwork, WifiSecurity, WifiStatus,
+    HotspotCredentials, Net, NetChange, NetProfile, NetProfileDetail, Password, PingEvent,
+    ProxyTested, Secret, SpeedtestEvent, SshKeyInfo, SshKeyRevoked, Storage, StorageGrowEvent,
+    TimeStatus, TokenCreated, TokenInfo, UpdatePhase, UpdateStatus, Verify, WifiNetwork,
+    WifiSecurity, WifiStatus,
 };
 use serde_json::Value;
 use tessaro_client::clock;
@@ -118,6 +119,7 @@ enum Action {
     FactoryReset,
     NetPing,
     Speedtest,
+    Proxy,
     WifiJoin,
     Hotspot,
     Grow,
@@ -162,6 +164,9 @@ pub enum Msg {
     NetLast,
     NetPing,
     Speedtest,
+    Proxy,
+    ProxyOff,
+    ProxyTest,
     ProfileDetail,
     // wifi
     WifiScan,
@@ -581,6 +586,22 @@ impl Device {
                 let title = format!("Profile {}", detail.profile.name);
                 self.show_text(title, profile_text(&detail));
             }
+            "proxy.test" => {
+                let tested: ProxyTested = parse(value)?;
+                match (tested.ip, tested.error) {
+                    (Some(ip), _) => self.log(
+                        Tone::Ok,
+                        format!("through the proxy the internet sees {ip}"),
+                    ),
+                    (None, error) => self.log(
+                        Tone::Bad,
+                        format!(
+                            "the proxy did not get through: {}",
+                            error.unwrap_or_else(|| "no answer".to_string())
+                        ),
+                    ),
+                }
+            }
             "net.last" => {
                 let last: Option<NetChange> = parse(value)?;
                 let body = match last {
@@ -895,8 +916,41 @@ impl Device {
                         "Largest transfer",
                         "25m",
                         &["100k", "1m", "10m", "25m", "100m"],
-                    )),
+                    ))
+                    .field(Field::check("Bypass the proxy", false)),
             ),
+            Msg::Proxy => {
+                // The URL without its password, which goes in its own
+                // field: typed there it needs no percent-encoding.
+                let current = |key| {
+                    self.setting(key)
+                        .and_then(|setting| setting.value.clone())
+                        .unwrap_or_default()
+                };
+                let url = match keys::parse_proxy(&current(keys::PROXY_URL)) {
+                    Ok(mut proxy) => {
+                        proxy.password = None;
+                        proxy.to_string()
+                    }
+                    Err(_) => String::new(),
+                };
+                self.form(
+                    Form::new("Proxy", "Use it", Action::Proxy)
+                        .intro("Everything the device fetches from the internet goes through it: the browser, the reachability probe, the public address and the speed test. http://host:port or socks5://host:port. The browser restarts when the proxy is switched on.")
+                        .field(Field::text("URL", url, "http://10.0.0.5:3128"))
+                        .field(Field::text("User", "", "only if the proxy wants a login"))
+                        .field(Field::secret("Password"))
+                        .field(Field::text("Bypass", current(keys::PROXY_BYPASS), ".corp.test, 10.0.0.0/8")),
+                );
+            }
+            Msg::ProxyOff => {
+                self.set(&[(keys::PROXY_URL, "")]);
+                self.call("net", Command::Net);
+            }
+            Msg::ProxyTest => {
+                self.log(Tone::Info, "testing the proxy ...");
+                self.call_long("proxy.test", Command::ProxyTest);
+            }
             Msg::ProfileDetail => {
                 if let Some(profile) = self.selected("profiles").cloned() {
                     self.call("net.profile", Command::NetShow { profile });
@@ -1493,8 +1547,32 @@ impl Device {
                 let command = Command::Speedtest {
                     max_size: Some(size),
                     tests: None,
+                    direct: form.checked("Bypass the proxy"),
                 };
                 self.start_job("net", "speed test", jobs::Kind::Stream(command));
+            }
+            Action::Proxy => {
+                let url = form.value("URL").trim();
+                if url.is_empty() {
+                    return Err("a URL, please; Proxy off stops using one".to_string());
+                }
+                let mut proxy = keys::parse_proxy(url)?;
+                let user = form.value("User").trim();
+                if !user.is_empty() {
+                    proxy.user = Some(user.to_string());
+                }
+                let password = form.value("Password");
+                if !password.is_empty() {
+                    if proxy.user.is_none() {
+                        return Err("a password needs a user".to_string());
+                    }
+                    proxy.password = Some(password.to_string());
+                }
+                // Encoded back into the URL, then checked as the device will.
+                let url = super::check(keys::PROXY_URL, &proxy.to_string())?;
+                let bypass = super::check(keys::PROXY_BYPASS, form.value("Bypass").trim())?;
+                self.set(&[(keys::PROXY_URL, &url), (keys::PROXY_BYPASS, &bypass)]);
+                self.call("net", Command::Net);
             }
             Action::WifiJoin => {
                 let ssid = form.value("SSID").trim().to_string();
@@ -2075,6 +2153,11 @@ impl Device {
     }
 
     fn network_view(&self) -> Element<'_, Message> {
+        let proxy_on = self
+            .pages
+            .net
+            .as_ref()
+            .is_some_and(|net| net.proxy.is_some());
         let mut facts = Vec::new();
         let mut interfaces = Vec::new();
         if let Some(net) = &self.pages.net {
@@ -2083,6 +2166,10 @@ impl Device {
             facts.push(("Gateway", net.gateway.clone().unwrap_or_default()));
             facts.push(("DNS", net.dns.join(", ")));
             facts.push(("Public IP", net.public_ip.clone().unwrap_or_default()));
+            facts.push((
+                "Proxy",
+                net.proxy.clone().unwrap_or_else(|| "none".to_string()),
+            ));
             interfaces = net
                 .interfaces
                 .iter()
@@ -2182,6 +2269,19 @@ impl Device {
                 action("Last change", self.when(Msg::NetLast)),
                 action("Ping ...", self.when(Msg::NetPing)),
                 action("Speed test ...", self.when(Msg::Speedtest)),
+                action("Proxy ...", self.when(Msg::Proxy)),
+                action(
+                    "Proxy off",
+                    proxy_on
+                        .then_some(())
+                        .and_then(|()| self.when(Msg::ProxyOff)),
+                ),
+                action(
+                    "Test proxy",
+                    proxy_on
+                        .then_some(())
+                        .and_then(|()| self.when(Msg::ProxyTest)),
+                ),
             ],
             vec![action(
                 "Profile details",

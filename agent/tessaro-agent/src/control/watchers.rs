@@ -67,7 +67,7 @@ impl Control {
         let control = Arc::clone(self);
         let mut shutdown = self.shutdown.clone();
         tokio::spawn(async move {
-            let http = crate::net::public_ip_client();
+            let http = crate::net::public_ip_client(control.proxy);
             // When the next request is due; `None` asks at once.
             let mut due: Option<Instant> = None;
             loop {
@@ -131,7 +131,7 @@ impl Control {
     pub(super) async fn refresh_public_ip_now(&self) {
         // naked: public_ip's every phase is under its own within()
         let _ = self
-            .refresh_public_ip(&crate::net::public_ip_client())
+            .refresh_public_ip(&crate::net::public_ip_client(self.proxy))
             .await;
     }
 
@@ -722,6 +722,7 @@ mod tests {
             dns: vec![],
             interfaces,
             public_ip: None,
+            proxy: None,
         }
     }
 

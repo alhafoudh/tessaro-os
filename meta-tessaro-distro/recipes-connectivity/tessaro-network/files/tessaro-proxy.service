@@ -1,0 +1,26 @@
+[Unit]
+Description=Local forwarding proxy to network.proxy.url
+Documentation=https://tinyproxy.github.io/
+
+# Chromium, the agent's probe and public address lookup, and the speed test
+# all talk plain HTTP to this one proxy on loopback; it carries the upstream
+# network.proxy.url names - http or socks5, with its credentials, which
+# Chromium's own proxy settings cannot take. The agent renders its config
+# into /run from the settings (render.rs), at boot in tessaro-config.service
+# and again on every change, when it restarts or stops this unit. Without a
+# proxy there is no config, and the unit does not start. See
+# docs/networking.md, "Proxy".
+ConditionPathExists=/run/tessaro-proxy/tinyproxy.conf
+After=tessaro-config.service network.target
+Before=tessaro-kiosk.service tessaro-agent.service
+
+[Service]
+# -d: in the foreground, logging to stdout, which is the journal. The config
+# is root's (0600, it holds the credentials); tinyproxy reads it, then drops
+# to the User it names.
+ExecStart=/usr/bin/tinyproxy -d -c /run/tessaro-proxy/tinyproxy.conf
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

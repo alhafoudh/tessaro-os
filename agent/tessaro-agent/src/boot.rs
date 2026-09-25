@@ -374,6 +374,7 @@ mod tests {
                 ("KIOSK_AUTHORIZED_KEYS", at("root/.ssh/authorized_keys")),
                 ("KIOSK_LEGACY_OVERRIDE", at("etc/default-tessaro-kiosk")),
                 ("KIOSK_CMDLINE", at("cmdline")),
+                ("KIOSK_PROXY_CONFIG", at("tinyproxy.conf")),
                 ("KIOSK_URL", "http://127.0.0.1/".to_string()),
             ]
             .into_iter()

@@ -240,6 +240,7 @@ fn device(
 async fn start_control(
     device: Device,
     kiosk_url: &str,
+    proxy: Option<std::net::SocketAddr>,
     session: cdp::session::SessionHandle,
     bridge: control::BridgeSetup,
     log: &Arc<Log>,
@@ -257,6 +258,7 @@ async fn start_control(
         device.identity,
         stop.subscribe(),
         kiosk_url.to_string(),
+        proxy,
     );
 
     if let Err(err) = server::spawn_unix(
@@ -346,7 +348,8 @@ async fn run(
             config.probe_timeout,
             PROBE_BODY,
             heartbeat.clone(),
-        ),
+        )
+        .with_proxy(config.proxy),
         config.probe_connect_timeout,
         config.probe_timeout,
     );
@@ -387,6 +390,7 @@ async fn run(
     start_control(
         device,
         &config.kiosk_url,
+        config.proxy,
         control_session,
         bridge,
         &log,
