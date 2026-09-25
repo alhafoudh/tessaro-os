@@ -63,8 +63,20 @@ tessaro_update_enabled() {
 		/dev/*) TESSARO_UPDATE_ROOT=$bootparam_root ;;
 		*) return 1 ;;
 	esac
+	# A USB or SD boot disk can show up after /init has started, and udev's
+	# settle in 01-udev does not wait for it. Wait for root the way
+	# 90-rootfs does (rootdelay, roottimeout, same defaults), or a pending
+	# update is skipped without a word and the old system boots.
+	tries=0
+	delay=${bootparam_rootdelay:-1}
+	timeout=${bootparam_roottimeout:-5}
+	while [ ! -b "$(readlink -f "$TESSARO_UPDATE_ROOT")" ]; do
+		[ $((tries * delay)) -gt "$timeout" ] && return 1
+		sleep "$delay"
+		udevadm settle
+		tries=$((tries + 1))
+	done
 	TESSARO_UPDATE_ROOT=$(readlink -f "$TESSARO_UPDATE_ROOT")
-	[ -b "$TESSARO_UPDATE_ROOT" ] || return 1
 
 	disk=$(readlink -f "/sys/class/block/${TESSARO_UPDATE_ROOT##*/}/..")
 	disk=${disk##*/}
