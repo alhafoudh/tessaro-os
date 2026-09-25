@@ -62,6 +62,39 @@ module AgentE2E
       expect(guest.kiosk_pid).to eq(browser), "the browser was restarted"
     end
 
+    # A zoom is a smaller viewport in CSS pixels drawn at a larger scale, so
+    # the page's innerWidth is what moves, as with Ctrl+/- in Chrome.
+    it "zoom: browser zoom shrinks the page's viewport without restarting the browser; 100 puts it back",
+       :reconfigure do
+      width = -> { quietly { cdp.command("Runtime.evaluate", expression: "window.innerWidth", returnByValue: true) }
+                     .dig("result", "value").to_i }
+      base = width.call
+      browser = guest.kiosk_pid
+
+      out = guest.run("tessaro-ctl browser zoom 150")
+      expect(out).to include("restarting tessaro-agent.service")
+      journal.wait_for(/^page zoom 150% \(viewport /, timeout: 30)
+      want = (base / 1.5).round
+      step "wait up to 10s for innerWidth #{want}"
+      deadline = Time.now + 10
+      seen = width.call
+      until seen == want || Time.now > deadline
+        sleep 1
+        seen = width.call
+      end
+      expect(seen).to eq(want)
+
+      guest.run("tessaro-ctl browser zoom 100")
+      step "wait up to 30s for innerWidth #{base} again"
+      deadline = Time.now + 30
+      until seen == base || Time.now > deadline
+        sleep 1
+        seen = width.call
+      end
+      expect(seen).to eq(base)
+      expect(guest.kiosk_pid).to eq(browser), "the browser was restarted"
+    end
+
     # The probe URL points at something that does not answer, so the case
     # also proves maintenance mode probes the maintenance page, not
     # browser.probe_url: otherwise the offline page would replace the
@@ -105,6 +138,20 @@ module AgentE2E
         ! test -e "$TESSARO_CONFIG_DIR/nodes.json"
         grep -q '^root::' /etc/shadow
       SH
+
+      # ssh connect sends no key and pins nothing; the command it builds
+      # logs in by the empty password the way this harness does every step.
+      out = guest.run(<<~SH)
+        set -e
+        export TESSARO_CONFIG_DIR=/tmp/e2e-unclaimed
+        tessaro-ctl -n 127.0.0.1 --json ssh connect --print 2>/dev/null
+        ! test -e "$TESSARO_CONFIG_DIR/known_hosts"
+        ! test -s /root/.ssh/authorized_keys
+      SH
+      connect = JSON.parse(out)
+      expect(connect["access"]).to be_nil, "an unclaimed device was sent a key"
+      expect(connect["command"]).to include("StrictHostKeyChecking=no", "UserKnownHostsFile=/dev/null")
+      expect(connect["command"].grep(/HostKeyAlias/)).to be_empty
     end
 
     # Claimed, the root password is not empty any more, and this suite logs

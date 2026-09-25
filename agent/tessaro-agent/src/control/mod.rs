@@ -989,6 +989,7 @@ mod tests {
                 ping: Duration::from_secs(10),
                 reconnect_max: Duration::from_secs(10),
                 device_access: false,
+                zoom: 100,
             },
             Arc::clone(&log),
             shutdown.clone(),

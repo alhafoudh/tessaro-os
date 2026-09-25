@@ -108,6 +108,7 @@ enum Action {
     Navigate,
     Maintenance,
     DebugScreen,
+    Zoom,
     ControlPing,
     FactoryReset,
     NetPing,
@@ -136,6 +137,7 @@ pub enum Msg {
     Navigate,
     Maintenance(bool),
     DebugScreen(bool),
+    Zoom,
     ControlPing,
     FactoryReset,
     // screen
@@ -169,7 +171,9 @@ pub enum Msg {
     // ssh
     KeyRevoke,
     Authorize(bool),
-    Authorized(bool, Result<String, String>),
+    /// Whether to open a terminal; the command, and whether a key was sent
+    /// (not for an unclaimed device).
+    Authorized(bool, Result<(String, bool), String>),
     // files
     FilesUp,
     Upload(bool),
@@ -715,6 +719,14 @@ impl Device {
                 );
             }
             Msg::DebugScreen(false) => self.set(&[(keys::DEBUG_ENABLE, "0")]),
+            Msg::Zoom => {
+                let zoom = self.zoom();
+                self.form(
+                    Form::new("Page zoom", "Zoom", Action::Zoom)
+                        .intro("Percent, 25 to 500 like Chrome's: the page reflows as with Ctrl+/-. 100 is no zoom.")
+                        .field(Field::text("Percent", zoom, "100")),
+                );
+            }
             Msg::ControlPing => self.form(
                 Form::new("Ping the device", "Ping", Action::ControlPing)
                     .intro("Round trips over the control connection, as tessaro-ctl device ping.")
@@ -878,13 +890,21 @@ impl Device {
                     blocking::run(move || {
                         let (mut session, _) = crate::worker::connect(&node)?;
                         let authorized = tessaro_client::ssh::authorize(&mut session, None)?;
-                        Ok(shell_words(&authorized.argv(22, &[])))
+                        let command = shell_words(&authorized.argv(22, &[]));
+                        Ok((command, authorized.access.is_some()))
                     }),
                     move |result| Message::P(Msg::Authorized(terminal, result)),
                 );
             }
-            Msg::Authorized(terminal, Ok(command)) => {
-                self.log(Tone::Ok, format!("key authorized: {command}"));
+            Msg::Authorized(terminal, Ok((command, keyed))) => {
+                if keyed {
+                    self.log(Tone::Ok, format!("key authorized: {command}"));
+                } else {
+                    self.log(
+                        Tone::Warn,
+                        format!("unclaimed, root with an empty password, host key not checked: {command}"),
+                    );
+                }
                 if terminal {
                     if let Err(error) = open_terminal(&command) {
                         self.log(Tone::Bad, error);
@@ -1210,6 +1230,11 @@ impl Device {
                     values.push((keys::DEBUG_TEMPLATE, template));
                 }
                 self.set(&values);
+            }
+            Action::Zoom => {
+                let zoom = form.value("Percent").trim();
+                super::check(keys::ZOOM, zoom)?;
+                self.set(&[(keys::ZOOM, zoom)]);
             }
             Action::ControlPing => {
                 let count = count(form.value("Count"))?;
@@ -1633,6 +1658,7 @@ impl Device {
             facts.push(("Browser answers", yes(status.browser_answering)));
             facts.push(("Maintenance", yes(status.maintenance)));
             facts.push(("Debug screen", yes(status.debug_screen)));
+            facts.push(("Page zoom", format!("{}%", self.zoom())));
             if let Some(data) = &status.data {
                 facts.push((
                     "/data",
@@ -1689,6 +1715,7 @@ impl Device {
                     },
                     self.when(Msg::DebugScreen(!debug)),
                 ),
+                action("Zoom", self.when(Msg::Zoom)),
                 action("Ping", self.when(Msg::ControlPing)),
                 action("Factory reset", self.when(Msg::FactoryReset)),
             ],

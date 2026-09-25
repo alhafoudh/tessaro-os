@@ -93,7 +93,11 @@ Things to know:
   `inherit image` recipe): udev for `/dev/disk/by-*`,
   90-rootfs, finish. finish `switch_root`s to `/sbin/init`, which is still
   the overlayfs-etc preinit. It finds the ESP and `/data` as partitions 1 and
-  3 of root's disk, which every Tessaro wks has. On an ordinary boot the cost
+  3 of root's disk, which every Tessaro wks has. It first waits for root
+  with 90-rootfs's own `rootdelay`/`roottimeout` loop: a USB or SD boot disk
+  can appear after `/init` has started, and without the wait the hook finds
+  no root, skips a pending update without a word and the old system boots.
+  On an ordinary boot the cost
   is a read-only mount of the ESP and of `/data`, and an `ls`.
 * **The `/etc` overlay keeps shadowing the image.** A file edited on the
   device stays edited across updates - an update replaces the lower layer

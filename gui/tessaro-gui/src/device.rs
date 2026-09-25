@@ -612,6 +612,13 @@ impl Device {
             .find(|setting| setting.key == key)
     }
 
+    /// `browser.zoom` as set, else the image's 100.
+    fn zoom(&self) -> String {
+        self.setting(keys::ZOOM)
+            .and_then(|setting| setting.value.clone())
+            .unwrap_or_else(|| "100".to_string())
+    }
+
     /// What the worker said.
     pub fn event(&mut self, event: Event) {
         match event {

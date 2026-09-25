@@ -134,7 +134,8 @@ kiosk origin, Weston restarts - taking the browser and agent with it - for a
   whoever can reach it could claim it and do the same anyway. What makes a
   credential still needs the claim first (`require_claimed` in
   `control/access.rs`): a token, the root password, an ssh key, the hotspot
-  password. Both clients talk to an unclaimed device they have no pin for
+  password; `ssh connect` and the GUI's VNC use the empty root password
+  instead (**SSH keys** in [remote-access.md](remote-access.md)). Both clients talk to an unclaimed device they have no pin for
   without pinning it (`Trust::KnownOnly` in `agent/client/src/connect.rs`),
   with a note saying so; once it is claimed, they refuse it again until
   `access login`.

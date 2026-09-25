@@ -185,6 +185,15 @@ tessaro-ctl browser debug on --template '{device.name}\n\nip     {network.cidr} 
 Neither restarts the browser, and your site's device permissions stay where
 they are.
 
+### Page zoom
+
+```sh
+tessaro-ctl browser zoom 125     # like Ctrl+/- in Chrome, 25 to 500; 100 is no zoom
+```
+
+The page reflows as it would in a desktop Chrome, on top of `screen.scale`,
+and the browser keeps running.
+
 ### Files for offline use
 
 ```
@@ -290,6 +299,7 @@ stopped.
 
 ```sh
 tessaro-ctl ssh connect                     # root shell with your ~/.ssh key, host key pinned
+                                            # (unclaimed: no key, empty password)
 tessaro-ctl ssh connect -- journalctl -fu tessaro-kiosk
 tessaro-ctl access token create phone       # a token for a second client
 tessaro-ctl device factory-reset -y         # settings, owners and files gone
