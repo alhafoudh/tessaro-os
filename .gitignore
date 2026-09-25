@@ -25,9 +25,10 @@
 # The same for gui/, whose tasks build into build/gui-target.
 /gui/target/
 
-# Build output and shared caches
+# Build output and shared caches. No trailing slash on cache: in a worktree
+# it is a symlink to the main checkout's (CLAUDE.md), which `/cache/` misses.
 /build/
-/cache/
+/cache
 
 # kas and bitbake scratch
 /.config.yaml

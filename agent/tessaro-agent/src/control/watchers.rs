@@ -1,14 +1,15 @@
 //! What the control plane keeps true on its own, with nobody asking: the
 //! URL a read-only key moves, the public address, Weston's config against
 //! the screens and keyboards plugged in, the WiFi client's fallback to the
-//! hotspot after boot, and the sound server against the audio.* settings.
+//! hotspot after boot, the sound server against the audio.* settings, and
+//! the clock against the time.* settings.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 use protocol::keys;
-use protocol::{AudioStatus, AudioTested};
+use protocol::{AudioStatus, AudioTested, TimeStatus};
 use tokio::time::Instant;
 
 use super::{After, Control};
@@ -18,6 +19,7 @@ use crate::hotplug;
 use crate::nm::profiles;
 use crate::state;
 use crate::sync::lock;
+use crate::time;
 
 /// Where `audio test --input` leaves its recording in the file store.
 const AUDIO_RECORDING: &str = "audio-recording.wav";
@@ -488,6 +490,62 @@ impl Control {
                 }
             }
         });
+    }
+
+    // --- time --------------------------------------------------------------
+
+    /// Keeps the clock on the time.* settings - see `time.rs`. Applied as
+    /// soon as the agent starts, which is what puts the timesyncd drop-in
+    /// back in `/run` after a boot, then once a minute: that follows a DHCP
+    /// lease that brought other NTP servers, and a timesyncd restarted by
+    /// anyone, which forgets its runtime servers. Applying is idempotent
+    /// and logs real changes only.
+    pub fn watch_time(self: &Arc<Self>) {
+        const EVERY: Duration = Duration::from_secs(60);
+        /// timedated or the bus not answering yet.
+        const RETRY: Duration = Duration::from_secs(10);
+
+        let control = Arc::clone(self);
+        let mut shutdown = self.shutdown.clone();
+        tokio::spawn(async move {
+            let mut reported: Option<String> = None;
+            loop {
+                // naked: apply_time waits only on blocking() and Time, each bounded
+                let outcome = control.apply_time().await;
+                let wait = if outcome.is_ok() { EVERY } else { RETRY };
+                let problem = outcome.err();
+                if problem != reported {
+                    if let Some(err) = &problem {
+                        control.log.info(format!("time: {err}"));
+                    }
+                    reported = problem;
+                }
+                // naked: a timer and the shutdown signal, not the outside world
+                tokio::select! {
+                    _ = tokio::time::sleep(wait) => {}
+                    _ = shutdown.changed() => return,
+                }
+            }
+        });
+    }
+
+    async fn apply_time(&self) -> Result<time::Outcome, String> {
+        let wanted = self.time_wanted().await?;
+        self.time.apply(&self.bus, &wanted).await
+    }
+
+    async fn time_wanted(&self) -> Result<time::Wanted, String> {
+        let state = self.read_state().await?;
+        Ok(self.time_wanted_from(&state.settings))
+    }
+
+    pub(super) fn time_wanted_from(&self, settings: &BTreeMap<String, String>) -> time::Wanted {
+        time::Wanted::from_env(&state::Effective::new(&self.defaults, settings, &self.log))
+    }
+
+    pub(super) async fn time_status(&self) -> Result<TimeStatus, String> {
+        let wanted = self.time_wanted().await?;
+        Ok(self.time.status(&self.bus, &wanted).await)
     }
 
     async fn apply_audio(&self) -> Result<audio::Outcome, String> {

@@ -14,11 +14,11 @@
 //! backslashes and `${...}` meanings of their own.
 //!
 //! A key starts with the `tessaro-ctl` group that acts on the same thing
-//! (`browser.*`, `screen.*`, `network.*`, `device.*`, `access.*`); a key no
+//! (`browser.*`, `screen.*`, `network.*`, `device.*`, `access.*`, `time.*`); a key no
 //! group acts on is named after the component it tunes (`agent.*`). A key
 //! that is renamed goes into `RENAMED`, so devices in the field follow.
 
-use std::net::{Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use serde::{Deserialize, Serialize};
 
@@ -46,6 +46,11 @@ pub enum Consumer {
     /// partition, which it reads only when the board powers on. Nothing
     /// restarts: the change takes effect at the next reboot.
     Firmware,
+    /// The system clock, through systemd-timedated and systemd-timesyncd:
+    /// the agent sets the timezone and the NTP servers on the running
+    /// system. Only systemd-timesyncd restarts, and only when its servers
+    /// change; the browser follows `/etc/localtime` by itself.
+    Time,
 }
 
 /// Hardware a key needs. A key that names one is left out of `config keys`
@@ -105,6 +110,11 @@ pub enum Kind {
     AudioOutput,
     /// Where sound is recorded from: the same, with `AUDIO_INPUTS`.
     AudioInput,
+    /// A tz database name, `Europe/Bratislava` or `UTC`, from `tessaro-ctl
+    /// time zones`. Whether the device has it is the device's check.
+    Timezone,
+    /// Host names or IP addresses, comma separated, or empty.
+    Hosts,
     /// Not a setting: something the device reports - its address, its id.
     /// Listed with `config keys`, readable with `config get`, usable in
     /// browser.url, and refused by `config set`.
@@ -151,6 +161,10 @@ impl Kind {
                 "one of: {}, or an input's name from `tessaro-ctl audio inputs`",
                 AUDIO_INPUTS.join(", ")
             ),
+            Kind::Timezone => {
+                "a timezone, e.g. Europe/Bratislava or UTC, from `tessaro-ctl time zones`".to_string()
+            }
+            Kind::Hosts => "host names or IP addresses, comma separated, or empty".to_string(),
             Kind::ReadOnly => "read-only: reported by the device, cannot be set".to_string(),
         }
     }
@@ -178,6 +192,7 @@ const WESTON: &[Consumer] = &[Consumer::Weston];
 const NETWORK: &[Consumer] = &[Consumer::Network];
 const AUDIO: &[Consumer] = &[Consumer::Audio];
 const FIRMWARE: &[Consumer] = &[Consumer::Firmware];
+const TIME: &[Consumer] = &[Consumer::Time];
 /// The node name: the agent's mDNS name, and the hotspot's SSID.
 const AGENT_AND_NETWORK: &[Consumer] = &[Consumer::Agent, Consumer::Network];
 
@@ -270,6 +285,14 @@ pub static KEYS: &[Key] = &[
         "Where sound is recorded from, for pages that use the microphone: auto (the latest USB or Bluetooth input, else the jack), usb, jack, bluetooth, off (the page records silence), or one input from `tessaro-ctl audio inputs`."),
     key(AUDIO_INPUT_VOLUME, "KIOSK_AUDIO_INPUT_VOLUME", Kind::Int { min: 0, max: 100 }, AUDIO,
         "Input (microphone) level in percent."),
+    // The clock, through timedated and timesyncd. Applied to the running
+    // system at once; see `tessaro-ctl time show`.
+    key(TIMEZONE, "KIOSK_TIMEZONE", Kind::Timezone, TIME,
+        "The device's timezone, e.g. Europe/Bratislava, from `tessaro-ctl time zones`. Pages and the journal show local time in it; the browser follows without a restart. `tessaro-ctl time timezone`."),
+    key(NTP_ENABLE, "KIOSK_NTP", Kind::Flag, TIME,
+        "Keep the clock in sync over NTP. 0 for a network without any time server; then `tessaro-ctl time set` sets the clock by hand. `tessaro-ctl time ntp on|off`."),
+    key(NTP_SERVERS, "KIOSK_NTP_SERVERS", Kind::Hosts, TIME,
+        "NTP servers, comma separated. Empty uses the servers the network's DHCP offers, else the image's fallback servers."),
     key("agent.enable", "KIOSK_AGENT_ENABLE", Kind::Flag, AGENT,
         "Supervise the browser at all; 0 parks the agent."),
     key("agent.debug", "KIOSK_DEBUG", Kind::Flag, AGENT,
@@ -399,6 +422,12 @@ pub const AUDIO_VOLUME: &str = "audio.volume";
 pub const AUDIO_MUTE: &str = "audio.mute";
 pub const AUDIO_INPUT: &str = "audio.input";
 pub const AUDIO_INPUT_VOLUME: &str = "audio.input_volume";
+pub const TIMEZONE: &str = "time.timezone";
+pub const NTP_ENABLE: &str = "time.ntp.enable";
+pub const NTP_SERVERS: &str = "time.ntp.servers";
+
+/// The timezone of a device where time.timezone was never set.
+pub const DEFAULT_TIMEZONE: &str = "UTC";
 
 /// The kinds of output audio.output names instead of one output. Besides
 /// these, `auto` and `off`.
@@ -895,7 +924,70 @@ pub fn validate(key: &Key, value: &str) -> Result<String, String> {
                 ))
             }
         }
+        // Whether the zone exists is the device's check: it knows its tz
+        // database.
+        Kind::Timezone => {
+            if is_timezone(value) {
+                Ok(value.to_string())
+            } else {
+                fail("must be a timezone such as Europe/Bratislava or UTC, from `tessaro-ctl time zones`")
+            }
+        }
+        Kind::Hosts => parse_hosts(value)
+            .map(|hosts| hosts.join(","))
+            .or_else(|why| fail(&why)),
     }
+}
+
+/// A name as the tz database spells them: `UTC`, `Europe/Bratislava`,
+/// `America/Argentina/Buenos_Aires`, `Etc/GMT+2`. Never a path that could
+/// leave `/usr/share/zoneinfo`.
+pub fn is_timezone(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 64
+        && name.split('/').all(|part| {
+            !part.is_empty()
+                && part != "."
+                && part != ".."
+                && part
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '+' | '.'))
+        })
+}
+
+/// Host names and IP addresses, comma or space separated, lower-cased and
+/// without repeats. Empty for none.
+pub fn parse_hosts(value: &str) -> Result<Vec<String>, String> {
+    let mut hosts: Vec<String> = Vec::new();
+    for item in value.split(|ch: char| ch == ',' || ch.is_whitespace()) {
+        if item.is_empty() {
+            continue;
+        }
+        let host = item.to_ascii_lowercase();
+        if host.parse::<IpAddr>().is_err() && !is_hostname(&host) {
+            return Err(format!("{item} is not a host name or an IP address"));
+        }
+        if !hosts.contains(&host) {
+            hosts.push(host);
+        }
+    }
+    Ok(hosts)
+}
+
+/// A DNS name: dot-separated labels of letters, digits and dashes, at most
+/// 253 characters. A trailing dot is not accepted.
+pub fn is_hostname(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 253
+        && name.split('.').all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+                && label
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '-')
+        })
 }
 
 /// A value of audio.output or audio.input that names one device rather than
@@ -1501,6 +1593,54 @@ mod tests {
             AUDIO_INPUT_VOLUME,
         ] {
             assert_eq!(find(name).unwrap().consumers, [Consumer::Audio], "{name}");
+        }
+    }
+
+    #[test]
+    fn timezones_are_tz_names_never_paths() {
+        assert_eq!(
+            check(TIMEZONE, " Europe/Bratislava ").unwrap(),
+            "Europe/Bratislava"
+        );
+        assert_eq!(check(TIMEZONE, "UTC").unwrap(), "UTC");
+        assert_eq!(check(TIMEZONE, "Etc/GMT+2").unwrap(), "Etc/GMT+2");
+        assert_eq!(
+            check(TIMEZONE, "America/Argentina/Buenos_Aires").unwrap(),
+            "America/Argentina/Buenos_Aires"
+        );
+        for bad in [
+            "",
+            "/etc/passwd",
+            "../../etc/passwd",
+            "Europe/../UTC",
+            "Europe//Paris",
+            "Europe/Bra tislava",
+        ] {
+            assert!(check(TIMEZONE, bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn ntp_servers_are_hosts_or_addresses() {
+        assert_eq!(
+            check(
+                NTP_SERVERS,
+                "Time.Example.com, 10.0.0.1 2001:db8::1,10.0.0.1"
+            )
+            .unwrap(),
+            "time.example.com,10.0.0.1,2001:db8::1"
+        );
+        assert_eq!(check(NTP_SERVERS, "").unwrap(), "");
+        for bad in ["-bad.test", "a..b", "ntp_1.test", "host.test."] {
+            assert!(check(NTP_SERVERS, bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn the_time_keys_are_applied_to_the_running_clock() {
+        assert_eq!(check(NTP_ENABLE, "off").unwrap(), "0");
+        for name in [TIMEZONE, NTP_ENABLE, NTP_SERVERS] {
+            assert_eq!(find(name).unwrap().consumers, [Consumer::Time], "{name}");
         }
     }
 

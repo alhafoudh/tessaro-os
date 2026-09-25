@@ -19,6 +19,7 @@ mod prompt;
 mod ssh;
 mod storage;
 mod style;
+mod time;
 mod update;
 
 use std::collections::BTreeMap;
@@ -94,6 +95,8 @@ const HELP_STYLES: Styles = Styles::styled()
         \x20 tessaro-ctl browser zoom 125                   page zoom, like Ctrl+/- in Chrome\n\
         \x20 tessaro-ctl audio show                         where sound plays, how loud, what is plugged in\n\
         \x20 tessaro-ctl audio output hdmi && tessaro-ctl audio volume 60 && tessaro-ctl audio test\n\
+        \x20 tessaro-ctl time show                          timezone, NTP sync, offset and drift\n\
+        \x20 tessaro-ctl time timezone Europe/Bratislava && tessaro-ctl time ntp on --server ntp.corp.test\n\
         \x20 tessaro-ctl config unset browser.url           back to the image default\n\
         \x20 tessaro-ctl device logs -f -u tessaro-agent.service\n\
         \x20 tessaro-ctl update send tessaro-os-qemux86-64.rootfs.wic.bz2   a new image; settings are kept\n\
@@ -166,6 +169,9 @@ enum Cmd {
     /// Sound: which output plays and which input records, volume, a test.
     #[command(subcommand)]
     Audio(audio::AudioCmd),
+    /// The clock: timezone, NTP servers and sync, setting it by hand.
+    #[command(subcommand)]
+    Time(time::TimeCmd),
     /// Put a new image on the device, keeping its settings and claim.
     #[command(subcommand)]
     Update(UpdateCmd),
@@ -696,6 +702,7 @@ fn run(cli: Cli) -> Result<(), String> {
             print(json, &applied, || show_applied(&applied, false))
         }
         Cmd::Audio(command) => audio::run(&mut session, command, json),
+        Cmd::Time(command) => time::run(&mut session, command, json),
         Cmd::Device(DeviceCmd::Restart { what }) => {
             done(&mut session, Command::Restart { what }, json)
         }
@@ -1092,6 +1099,9 @@ fn show_key(key: &KeyInfo) {
             protocol::keys::Consumer::Firmware => {
                 "nothing: the Pi firmware reads it at the next reboot"
             }
+            protocol::keys::Consumer::Time => {
+                "nothing on screen: applied to the clock at once; systemd-timesyncd when its servers change"
+            }
         })
         .collect::<Vec<_>>()
         .join(", ");
@@ -1200,6 +1210,9 @@ fn show_status(status: &Status) {
     if let Some(audio) = &status.audio {
         style::row("audio", &audio::summary(audio));
     }
+    if let Some(summary) = &status.time {
+        style::row("time", &time::summary(summary));
+    }
     if let Some(pending) = &status.pending {
         println!(
             "{} {}={} - {} within {}s or it goes back to {}",
@@ -1237,10 +1250,13 @@ fn show_applied(applied: &Applied, no_apply: bool) {
     if let Some(audio) = &applied.audio {
         audio::show_outcome(audio);
     }
+    if let Some(time) = &applied.time {
+        time::show_outcome(time);
+    }
     if no_apply {
         println!("{}", paint(style::MUTED, "saved; nothing restarted"));
     } else if applied.restarted.is_empty() {
-        if applied.audio.is_none() && !applied.reboot {
+        if applied.audio.is_none() && applied.time.is_none() && !applied.reboot {
             println!("{}", paint(style::MUTED, "nothing to restart"));
         }
     } else {

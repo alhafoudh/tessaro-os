@@ -92,6 +92,20 @@ pub trait Device {
     fn device_type(&self) -> zbus::Result<u32>;
     #[zbus(property)]
     fn active_connection(&self) -> zbus::Result<OwnedObjectPath>;
+    /// `/` while the device has no DHCPv4 lease.
+    #[zbus(property)]
+    fn dhcp4_config(&self) -> zbus::Result<OwnedObjectPath>;
+}
+
+/// A DHCPv4 lease: every option the server sent, by NetworkManager's name
+/// for it (`ntp_servers`, space separated), as strings.
+#[zbus::proxy(
+    interface = "org.freedesktop.NetworkManager.DHCP4Config",
+    default_service = "org.freedesktop.NetworkManager"
+)]
+pub trait Dhcp4Config {
+    #[zbus(property)]
+    fn options(&self) -> zbus::Result<HashMap<String, zbus::zvariant::OwnedValue>>;
 }
 
 #[zbus::proxy(

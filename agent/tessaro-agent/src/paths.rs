@@ -96,6 +96,15 @@ pub struct Paths {
     pub kiosk_unit: String,
     pub weston_unit: String,
     pub agent_unit: String,
+    pub timesyncd_unit: String,
+    /// Whether the agent sets the clock's timezone and NTP servers. Off
+    /// (`KIOSK_MANAGE_CLOCK=0`) on a development host, whose system bus is
+    /// the host's own: the time.* settings are then only reported.
+    pub manage_clock: bool,
+    /// The timesyncd drop-in carrying time.ntp.servers. In `/run`, so it is
+    /// rendered from the settings at every start and never lands on the
+    /// `/etc` overlay.
+    pub timesyncd_dropin: PathBuf,
 }
 
 impl Paths {
@@ -156,6 +165,12 @@ impl Paths {
             kiosk_unit: text("KIOSK_UNIT", "tessaro-kiosk.service"),
             weston_unit: text("KIOSK_WESTON_UNIT", "weston.service"),
             agent_unit: text("KIOSK_AGENT_UNIT", "tessaro-agent.service"),
+            timesyncd_unit: text("KIOSK_TIMESYNCD_UNIT", "systemd-timesyncd.service"),
+            manage_clock: text("KIOSK_MANAGE_CLOCK", "1") != "0",
+            timesyncd_dropin: path(
+                "KIOSK_TIMESYNCD_DROPIN",
+                "/run/systemd/timesyncd.conf.d/50-tessaro.conf",
+            ),
         }
     }
 

@@ -55,6 +55,7 @@ mod storage;
 mod store;
 mod sync;
 mod systemd;
+mod time;
 mod updates;
 mod url;
 mod watchdog;
@@ -299,6 +300,7 @@ async fn start_control(
     control.watch_public_ip();
     control.watch_display();
     control.watch_audio();
+    control.watch_time();
 }
 
 async fn run(

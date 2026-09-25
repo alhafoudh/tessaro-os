@@ -449,6 +449,22 @@ pub enum Command {
         #[serde(default)]
         check: bool,
     },
+    /// The clock as systemd-timedated and systemd-timesyncd report it: the
+    /// timezone, whether it is in sync, and the last NTP exchange. Read-only.
+    TimeStatus,
+    /// Every timezone the device's tz database has, for time.timezone.
+    TimeZones,
+    /// Restart systemd-timesyncd, so it asks its servers again now.
+    TimeSync,
+    /// Set the clock by hand, with time.ntp.enable off: to `usec`
+    /// (microseconds since the epoch, UTC), or to `local`, a
+    /// `YYYY-MM-DD HH:MM[:SS]` read in the device's timezone.
+    TimeSet {
+        #[serde(default)]
+        usec: Option<u64>,
+        #[serde(default)]
+        local: Option<String>,
+    },
 }
 
 /// The image `update-begin` describes. Its fields sit in the command itself
@@ -554,6 +570,179 @@ pub struct Status {
     /// How full `/data` is. Defaulted the same way.
     #[serde(default)]
     pub data: Option<FsUsage>,
+    /// The timezone and whether the clock is in sync. Defaulted the same way.
+    #[serde(default)]
+    pub time: Option<TimeSummary>,
+}
+
+/// The clock in one line, for `device status`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TimeSummary {
+    pub timezone: Option<String>,
+    /// timedated's `NTPSynchronized`: the kernel clock is disciplined.
+    pub synchronized: Option<bool>,
+    /// time.ntp.enable, as systemd reports it.
+    pub ntp: Option<bool>,
+}
+
+/// Everything systemd says about the clock. Every field is what timedated
+/// or timesyncd reported, never measured by the agent; `None` is "not
+/// reported", which a service that is down or has not synced yet does.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TimeStatus {
+    /// Why timedated or timesyncd could not be read, if one of them could not.
+    pub error: Option<String>,
+    /// time.timezone, as set or defaulted.
+    pub setting_timezone: String,
+    /// time.ntp.servers as set: empty uses DHCP's, then the fallback.
+    pub setting_servers: Vec<String>,
+    /// The zone systemd has, `Europe/Bratislava`.
+    pub timezone: Option<String>,
+    /// The system clock, microseconds since the epoch.
+    pub now_usec: Option<u64>,
+    /// The same, as a wall clock in `timezone`: `2026-09-25 14:03:12`.
+    pub local_time: Option<String>,
+    /// `CEST`, and its distance from UTC in seconds east.
+    pub zone_abbreviation: Option<String>,
+    pub utc_offset_seconds: Option<i32>,
+    /// The hardware clock, where there is one; a Raspberry Pi has none.
+    pub rtc_usec: Option<u64>,
+    /// The hardware clock keeps local time instead of UTC.
+    pub local_rtc: Option<bool>,
+    /// An NTP service is installed.
+    pub can_ntp: Option<bool>,
+    /// NTP is switched on (time.ntp.enable).
+    pub ntp: Option<bool>,
+    /// The kernel clock is disciplined by NTP.
+    pub synchronized: Option<bool>,
+    /// systemd-timesyncd's unit state: `active`, `inactive`, ...
+    pub timesyncd: Option<String>,
+    /// The server timesyncd uses now, by name and address.
+    pub server_name: Option<String>,
+    pub server_address: Option<String>,
+    /// How often timesyncd asks, and between what bounds it moves.
+    pub poll_interval_usec: Option<u64>,
+    pub poll_interval_min_usec: Option<u64>,
+    pub poll_interval_max_usec: Option<u64>,
+    /// A server farther than this from a reference clock is not trusted.
+    pub root_distance_max_usec: Option<u64>,
+    /// The kernel's frequency correction - how fast this clock drifts - in
+    /// units of 2^-16 ppm, as adjtimex keeps it. `frequency_ppm` reads it.
+    pub frequency: Option<i64>,
+    /// The last NTP answer, if there was one.
+    pub last: Option<NtpSample>,
+    pub servers: NtpServers,
+}
+
+impl TimeStatus {
+    /// The drift correction in parts per million.
+    pub fn frequency_ppm(&self) -> Option<f64> {
+        self.frequency.map(|raw| raw as f64 / 65536.0)
+    }
+}
+
+/// Where timesyncd's servers come from, in the order it tries them.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NtpServers {
+    /// Set at runtime by the agent: the DHCP servers, while time.ntp.servers
+    /// is empty.
+    pub runtime: Vec<String>,
+    /// time.ntp.servers, from the agent's timesyncd drop-in.
+    pub system: Vec<String>,
+    /// Per-link servers, which only systemd-networkd hands out; empty here.
+    pub link: Vec<String>,
+    /// The image's fallback, used when none of the above has any.
+    pub fallback: Vec<String>,
+    /// What the network's DHCP offered, whether in use or not.
+    pub dhcp: Vec<String>,
+}
+
+/// timesyncd's `NTPMessage`: the last answer from the server, and what
+/// follows from its timestamps.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NtpSample {
+    /// 0 no warning, 1 or 2 a leap second at the end of the day, 3 the
+    /// server is not synchronized.
+    pub leap: u32,
+    pub version: u32,
+    /// The server's distance from a reference clock: 1 is attached to one.
+    pub stratum: u32,
+    /// The server clock's precision, log2 seconds (-20 is about 1 µs).
+    pub precision: i32,
+    pub root_delay_usec: u64,
+    pub root_dispersion_usec: u64,
+    /// The server's reference: a clock name like `GPS` at stratum 1, else
+    /// the address of its own server.
+    pub reference: String,
+    /// How far this clock was from the server's: positive is behind.
+    pub offset_usec: i64,
+    /// The round trip, less the time the server took to answer.
+    pub delay_usec: i64,
+    /// timesyncd's running estimate of how much the offset varies.
+    pub jitter_usec: u64,
+    /// Answers counted since timesyncd started.
+    pub packet_count: u64,
+    /// The last answer was thrown away as an outlier.
+    pub spike: bool,
+    /// When the answer arrived, microseconds since the epoch.
+    pub received_usec: u64,
+}
+
+impl NtpSample {
+    /// The offset and delay of one exchange, from its origin, receive,
+    /// transmit and destination timestamps (microseconds of one clock):
+    /// what `timedatectl timesync-status`
+    /// shows, computed the same way.
+    pub fn offset_and_delay(
+        origin: u64,
+        receive: u64,
+        transmit: u64,
+        destination: u64,
+    ) -> (i64, i64) {
+        let (origin, receive, transmit, destination) = (
+            origin as i128,
+            receive as i128,
+            transmit as i128,
+            destination as i128,
+        );
+        let offset = ((receive - origin) + (transmit - destination)) / 2;
+        let delay = (destination - origin) - (transmit - receive);
+        (offset as i64, delay as i64)
+    }
+}
+
+/// `YYYY-MM-DD HH:MM[:SS]` as fields, for `time set`: year, month, day,
+/// hour, minute, second. A `T` between the date and the time is accepted.
+pub fn parse_local_time(value: &str) -> Result<[i32; 6], String> {
+    let bad = || format!("{value} is not a time; write it as YYYY-MM-DD HH:MM[:SS]");
+    let value = value.trim();
+    let (date, time) = value.split_once([' ', 'T']).ok_or_else(bad)?;
+    let date: Vec<&str> = date.split('-').collect();
+    let time: Vec<&str> = time.trim().split(':').collect();
+    if date.len() != 3 || !(2..=3).contains(&time.len()) {
+        return Err(bad());
+    }
+    let number = |part: &str| part.parse::<i32>().map_err(|_| bad());
+    let fields = [
+        number(date[0])?,
+        number(date[1])?,
+        number(date[2])?,
+        number(time[0])?,
+        number(time[1])?,
+        if time.len() == 3 { number(time[2])? } else { 0 },
+    ];
+    let [year, month, day, hour, minute, second] = fields;
+    let ok = (2000..=2200).contains(&year)
+        && (1..=12).contains(&month)
+        && (1..=31).contains(&day)
+        && (0..=23).contains(&hour)
+        && (0..=59).contains(&minute)
+        && (0..=60).contains(&second);
+    if ok {
+        Ok(fields)
+    } else {
+        Err(bad())
+    }
 }
 
 /// One output or input as PipeWire has it.
@@ -729,6 +918,10 @@ pub struct Applied {
     /// applied (the setting is saved either way).
     #[serde(default)]
     pub audio: Option<String>,
+    /// What the time.* keys did to the clock, in words, when they changed
+    /// (the setting is saved either way). Defaulted for older devices.
+    #[serde(default)]
+    pub time: Option<String>,
     /// A setting the firmware reads at power-on changed on disk, so it takes
     /// effect at the next reboot, which the device leaves to the operator.
     /// Defaulted for older devices.
@@ -1287,6 +1480,97 @@ mod tests {
         let line = to_line(&request);
         assert!(line.ends_with('\n'));
         assert_eq!(from_line::<Request>(&line).unwrap(), request);
+    }
+
+    #[test]
+    fn a_time_set_round_trips_and_older_fields_default() {
+        let request = Request {
+            id: 2,
+            token: None,
+            command: Command::TimeSet {
+                usec: None,
+                local: Some("2026-09-25 14:03".to_string()),
+            },
+        };
+        assert_eq!(from_line::<Request>(&to_line(&request)).unwrap(), request);
+        let bare: Command = serde_json::from_str(r#"{"cmd":"time-set","usec":5}"#).unwrap();
+        assert_eq!(
+            bare,
+            Command::TimeSet {
+                usec: Some(5),
+                local: None
+            }
+        );
+        let status: Command = serde_json::from_str(r#"{"cmd":"time-status"}"#).unwrap();
+        assert_eq!(status, Command::TimeStatus);
+    }
+
+    #[test]
+    fn offset_and_delay_follow_timedatectl() {
+        // Sent at 1000, the server read it at 1600 and answered at 1700,
+        // back at 1300: the server is 500 ahead, 200 of travel.
+        assert_eq!(
+            NtpSample::offset_and_delay(1000, 1600, 1700, 1300),
+            (500, 200)
+        );
+        // A clock ahead of the server gives a negative offset.
+        assert_eq!(
+            NtpSample::offset_and_delay(2000, 1510, 1520, 2030),
+            (-500, 20)
+        );
+    }
+
+    #[test]
+    fn frequency_reads_as_ppm() {
+        let status = TimeStatus {
+            error: None,
+            setting_timezone: "UTC".to_string(),
+            setting_servers: Vec::new(),
+            timezone: None,
+            now_usec: None,
+            local_time: None,
+            zone_abbreviation: None,
+            utc_offset_seconds: None,
+            rtc_usec: None,
+            local_rtc: None,
+            can_ntp: None,
+            ntp: None,
+            synchronized: None,
+            timesyncd: None,
+            server_name: None,
+            server_address: None,
+            poll_interval_usec: None,
+            poll_interval_min_usec: None,
+            poll_interval_max_usec: None,
+            root_distance_max_usec: None,
+            frequency: Some(-65536 * 12 - 32768),
+            last: None,
+            servers: NtpServers::default(),
+        };
+        assert_eq!(status.frequency_ppm(), Some(-12.5));
+    }
+
+    #[test]
+    fn local_times_for_time_set() {
+        assert_eq!(
+            parse_local_time("2026-09-25 14:03").unwrap(),
+            [2026, 9, 25, 14, 3, 0]
+        );
+        assert_eq!(
+            parse_local_time(" 2026-09-25T14:03:09 ").unwrap(),
+            [2026, 9, 25, 14, 3, 9]
+        );
+        for bad in [
+            "",
+            "2026-09-25",
+            "14:03",
+            "2026-13-01 10:00",
+            "2026-09-25 24:00",
+            "1970-01-01 00:00",
+            "2026/09/25 10:00",
+        ] {
+            assert!(parse_local_time(bad).is_err(), "{bad}");
+        }
     }
 
     #[test]

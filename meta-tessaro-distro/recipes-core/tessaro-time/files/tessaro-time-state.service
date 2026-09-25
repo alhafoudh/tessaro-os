@@ -1,0 +1,38 @@
+[Unit]
+Description=Persistent timesyncd clock on /data
+Documentation=man:systemd-timesyncd.service(8)
+
+# systemd-timesyncd saves the time of every sync in
+# /var/lib/systemd/timesync/clock and, at its start, moves a clock that is
+# behind it forward to it. On a board without a hardware clock - every
+# Raspberry Pi - that is the only thing between a boot and 1970 or the build
+# date until the first NTP answer, and a clock that far off fails every TLS
+# handshake. /var/lib is tmpfs here (volatile-binds), so the file would be
+# gone at every boot. This binds it to /data.
+#
+# The same shape as tessaro-network-state.service, for the same reason: a
+# VOLATILE_BINDS entry races var-volatile-lib.service. See the comment there.
+DefaultDependencies=no
+Before=local-fs.target
+After=var-volatile-lib.service
+Requires=var-volatile-lib.service
+# timesyncd is DefaultDependencies=no itself and starts early in
+# sysinit.target, before local-fs.target is anything it waits for: the order
+# has to be stated against it directly.
+Before=systemd-timesyncd.service
+
+RequiresMountsFor=/data
+ConditionPathIsReadWrite=/data
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+
+# A plain bind. timesyncd's StateDirectory= hands the directory to the
+# systemd-timesync user when it starts, bind or not.
+ExecStartPre=/bin/mkdir -p /data/overlay-timesync /var/lib/systemd/timesync
+ExecStart=/bin/mount --bind /data/overlay-timesync /var/lib/systemd/timesync
+ExecStop=/bin/umount /var/lib/systemd/timesync
+
+[Install]
+WantedBy=local-fs.target
