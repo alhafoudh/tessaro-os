@@ -102,7 +102,9 @@ TESSARO_MACHINE=raspberrypi3-64 mise run image:flash   # or: mise run image:flas
 
 `image:pull` rsyncs the machine's `.rootfs.wic.bz2` and `.wic.bmap` from the
 build host and skips what is already up to date; pass a remote path in single
-quotes to pull something else. `image:flash` unmounts the device, writes it
+quotes to pull something else. `mise run image:list` shows every `.wic.bz2`
+on the build host, all machines at once, and marks the one `image:pull`
+fetches by default. `image:flash` unmounts the device, writes it
 with bmaptool (through `/dev/rdiskN` on macOS), syncs and ejects it.
 
 `mise run dev:tunnel` keeps an autossh tunnel to the build host up (needs

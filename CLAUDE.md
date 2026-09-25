@@ -82,6 +82,7 @@ Use the mise tasks rather than calling `kas-container` directly:
 | `mise run image:clean` | Drop build artifacts, keep sstate and downloads |
 | `mise run image:sizes` | Size of every built `.wic`, all machines at once |
 | `mise run image:name` | The file name the next build will give the image, `-dirty` included |
+| `mise run image:list` | Workstation: every `.wic.bz2` on the build host, all machines at once |
 | `mise run image:pull` | Workstation: fetch the image and bmap from the build host |
 | `mise run image:update` | Workstation: pull the image and update a running device over the network (the normal path) |
 | `mise run image:flash` | Workstation, manual: write the pulled image to a card or disk (first install, recovery) |
@@ -110,7 +111,7 @@ that belongs to no artifact. Renaming a task means a `git grep` over the whole
 repo, docs, comments and error messages included.
 
 **Every task acts on one machine**, `$TESSARO_MACHINE`, defaulting to
-`qemux86-64` (`image:sizes` excepted). The `image:build:*` tasks set it;
+`qemux86-64` (`image:sizes` and `image:list` excepted). The `image:build:*` tasks set it;
 anything else takes it from the environment (`TESSARO_MACHINE=raspberrypi3-64
 mise run image:shell`). Valid values are the basenames in `kas/machine/`. Each
 machine gets its own TOPDIR under `build/<machine>/`; `cache/` (`DL_DIR` +

@@ -318,7 +318,7 @@ rev=$(git rev-parse --short=7 HEAD 2>/dev/null) || rev=unknown
 echo "tessaro-os-$TESSARO_MACHINE-$version-$rev.wic.bz2"
 '''
 
-# image:pull, image:flash and image:update run on a workstation, not on the
+# image:list, image:pull, image:flash and image:update run on a workstation, not on the
 # build host: the image is built on a remote x86 machine and pulled here. The
 # normal way onto a device is image:update, which pulls the image and sends it
 # to the running device over the network with tessaro-ctl, keeping its
@@ -327,6 +327,44 @@ echo "tessaro-os-$TESSARO_MACHINE-$version-$rev.wic.bz2"
 # flashed before the update layout (see docs/updates.md).
 # TESSARO_BUILD_HOST, TESSARO_BUILD_HOST_DIR, TESSARO_NODE and
 # TESSARO_FLASH_DEVICE come from mise.local.toml, see README.md.
+
+[tasks."image:list"]
+description = "List the .wic.bz2 images on the build host, across all machines"
+dir = "{{config_root}}"
+run = '''
+set -eu
+: "${TESSARO_BUILD_HOST:?set it in mise.local.toml}"
+: "${TESSARO_BUILD_HOST_DIR:?set it in mise.local.toml}"
+
+# Deliberately not scoped to $TESSARO_MACHINE, like image:sizes. One find on
+# the build host returns the versioned files and the stable .rootfs.wic.bz2
+# symlinks; the file a symlink points at is the one image:pull fetches by
+# default, and gets a "*".
+listing=$(ssh "$TESSARO_BUILD_HOST" "cd '$TESSARO_BUILD_HOST_DIR' && find build -mindepth 6 -maxdepth 6 -path 'build/*/tmp/deploy/images/*/*.wic.bz2' -printf '%y\t%T@\t%s\t%TY-%Tm-%Td %TH:%TM\t%h\t%f\t%l\n'")
+if [ -z "$listing" ]; then
+    echo "no .wic.bz2 images on $TESSARO_BUILD_HOST - run 'mise run image:build' there first" >&2
+    exit 1
+fi
+
+printf '%s\n' "$listing" | sort -t "$(printf '\t')" -k5,5 -k2,2n | awk -F'\t' '
+function human(s,  i, u) {
+    split("B K M G T", u, " ")
+    for (i = 1; s >= 1024 && i < 5; i++) s /= 1024
+    return sprintf("%.1f%s", s, u[i])
+}
+$1 == "l" { pulled[$5 "/" $7] = 1; next }
+$1 == "f" { rows[++n] = $0 }
+END {
+    printf "  %-16s %8s  %-16s  %s\n", "MACHINE", "SIZE", "BUILT", "FILE"
+    for (i = 1; i <= n; i++) {
+        split(rows[i], f, "\t")
+        machine = f[5]; sub(".*/", "", machine)
+        mark = ((f[5] "/" f[6]) in pulled) ? "*" : " "
+        printf "%s %-16s %8s  %-16s  %s\n", mark, machine, human(f[3]), f[4], f[6]
+    }
+}'
+echo "* is what 'mise run image:pull' fetches for that machine"
+'''
 
 [tasks."image:pull"]
 description = "Pull the $TESSARO_MACHINE image and its bmap from the build host into the repo root"
