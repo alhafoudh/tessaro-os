@@ -513,6 +513,17 @@ impl Network {
     /// Whether the managed WiFi client is the connection up on `interface`,
     /// and has finished coming up.
     pub async fn client_up(&self, interface: &str) -> bool {
+        self.profile_up(interface, profiles::WIFI_CLIENT.uuid).await
+    }
+
+    /// Whether the managed hotspot is the connection up on `interface`, and
+    /// has finished coming up.
+    pub async fn hotspot_up(&self, interface: &str) -> bool {
+        self.profile_up(interface, profiles::WIFI_HOTSPOT.uuid)
+            .await
+    }
+
+    async fn profile_up(&self, interface: &str, profile: &str) -> bool {
         let Ok(live) = self.live().await else {
             return false;
         };
@@ -522,7 +533,7 @@ impl Network {
         let Some((active, uuid)) = live.active_on(device.as_str()).await else {
             return false;
         };
-        if uuid != profiles::WIFI_CLIENT.uuid {
+        if uuid != profile {
             return false;
         }
         let Ok(proxy) = live.active(active.as_str()).await else {

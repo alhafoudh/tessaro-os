@@ -299,6 +299,7 @@ async fn start_control(
     control.watch_public_ip();
     control.watch_display();
     control.watch_audio();
+    control.watch_welcome();
 }
 
 async fn run(

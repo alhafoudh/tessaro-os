@@ -394,5 +394,6 @@ impl Control {
         if let Some(mdns) = lock(&self.mdns).as_ref() {
             mdns.set_claimed(claimed, &self.log);
         }
+        self.welcome.notify_one();
     }
 }

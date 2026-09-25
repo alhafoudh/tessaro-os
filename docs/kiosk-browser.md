@@ -230,20 +230,44 @@ CPU.
   accelerated, or says what disabled it; a GPU blocklist entry can be tested
   with `browser.args_extra=--ignore-gpu-blocklist` before changing the image.
 
-## Self-test page
+## The welcome page
 
 **This is what a factory image opens.** `TESSARO_KIOSK_URL` in `tessaro.conf`
-defaults to `http://127.0.0.1/`; a deployment repoints it, at build time or
-with `tessaro-ctl config set browser.url=...`.
+defaults to `http://127.0.0.1/`, which is the welcome page; a deployment
+repoints it, at build time or with `tessaro-ctl config set browser.url=...`.
 
-`meta-tessaro-distro/recipes-browser/tessaro-selftest/` ships one static page at
-`/usr/share/tessaro-selftest/index.html`, with its media beside it. It exercises
+It is `index.html` in `meta-tessaro-distro/recipes-browser/tessaro-selftest/`,
+styled like the maintenance page, and shows what someone standing at a fresh
+device needs to reach it: the node name, its IPv4 addresses, the hotspot's
+SSID while the hotspot is up, whether the device is claimed and, until it is,
+the `tessaro-ctl access claim --node NAME` that claims it.
+
+* **The values come from `/welcome.json`, which the agent keeps current.**
+  `watch_welcome` in `control/watchers.rs` writes
+  `/run/tessaro-kiosk/welcome.json` every 5s, and at once after a claim or an
+  unclaim, only when its content changes. nginx serves that one file of the
+  run directory; the page asks for it every 5s and dims the last values while
+  it gets no answer.
+* **Nothing secret goes in it.** Any page on the loopback can read it, so the
+  hotspot's password stays out. An unclaimed device's hotspot is open anyway;
+  a claimed one's password comes from
+  `tessaro-ctl network wifi hotspot-password`.
+* **Everything is inline**, for the reason the maintenance page's is: this is
+  shown before anyone set the device up, often with no network.
+
+## Self-test page
+
+**It is `http://127.0.0.1/selftest.html`**, beside the welcome page.
+
+`meta-tessaro-distro/recipes-browser/tessaro-selftest/` ships it as a static
+page at `/usr/share/tessaro-selftest/selftest.html`, with its media beside it. It exercises
 rendering, fonts, emoji, every `<input>` type, touch and mouse scrolling plus
 multi-touch, WebSerial and WebHID, audio and video playback, and WebAudio
 synthesis - from local files, with the network down. Passive checks grade
 themselves in a strip at the top; interactive ones stay `pending` until someone
-does something. To get back to it on a deployed device,
-`tessaro-ctl config set browser.url=http://127.0.0.1/`, and `config unset` it afterwards.
+does something. To open it on a device,
+`tessaro-ctl config set browser.url=http://127.0.0.1/selftest.html`, and
+`tessaro-ctl config unset browser.url` afterwards.
 
 * **It is served by nginx because the device grants need a real origin.** A
   `file://` page has a null origin, and `SerialAllowAllPortsForUrls` /
