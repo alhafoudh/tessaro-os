@@ -5,7 +5,7 @@ x86 PC into a screen that boots straight into your site, fullscreen, and keeps
 it there - through crashed tabs, dead networks and power cuts - while you
 manage it from your laptop with one command.
 
-![The self-test page a factory image opens](docs/images/selftest.jpg)
+![The self-test page, at http://127.0.0.1/selftest.html](docs/images/selftest.jpg)
 
 ```sh
 tessaro-ctl -n golden-thistle-5731 config set browser.url=https://menu.example.com/
@@ -70,8 +70,9 @@ bmaptool copy build/raspberrypi3-64/tmp/deploy/images/raspberrypi3-64/tessaro-os
 (From a separate workstation, `mise run image:pull` and `mise run
 image:flash` do the same - see [DEVELOPMENT.md](DEVELOPMENT.md).)
 
-Boot it with a network cable in. It comes up on its self-test page and
-announces itself on the local network. Build the client, find the device and
+Boot it with a network cable in. It comes up on its welcome page, which shows
+its name, its address and the command that claims it, and announces itself on
+the local network. Build the client, find the device and
 claim it:
 
 ```sh
@@ -152,7 +153,7 @@ the URL points.
 ```
 $ tessaro-ctl config keys browser.url
 browser.url
-    The page the kiosk shows (default: the self-test page, http://127.0.0.1/). A new origin also re-grants the device APIs to it.
+    The page the kiosk shows (default: the welcome page, http://127.0.0.1/; the self-test is http://127.0.0.1/selftest.html). A new origin also re-grants the device APIs to it.
     value     http://127.0.0.1/  (default)
     accepts   an http, https, file or data URL; may contain {key} placeholders - any setting's key, e.g. {data.table} or {device.name}
     restarts  the agent (invisible on screen)

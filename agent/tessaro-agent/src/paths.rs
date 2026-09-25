@@ -181,6 +181,12 @@ impl Paths {
         self.run_dir.join("public-ip")
     }
 
+    /// What the welcome page at http://127.0.0.1/ shows, kept current by the
+    /// agent and served by nginx as /welcome.json.
+    pub fn welcome_file(&self) -> PathBuf {
+        self.run_dir.join("welcome.json")
+    }
+
     pub fn tls_dir(&self) -> PathBuf {
         self.state_dir.join("tls")
     }

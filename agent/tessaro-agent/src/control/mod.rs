@@ -179,6 +179,8 @@ pub struct Control {
     storage_grow: Arc<tokio::sync::Mutex<()>>,
     network: Arc<Network>,
     audio: Arc<Audio>,
+    /// Wakes `watch_welcome` early, when the claim changes.
+    welcome: tokio::sync::Notify,
 }
 
 impl Control {
@@ -213,6 +215,7 @@ impl Control {
             mdns: Mutex::new(None),
             writes: tokio::sync::Mutex::new(()),
             probation: Mutex::new(None),
+            welcome: tokio::sync::Notify::new(),
             shutdown,
             speedtest: Arc::new(tokio::sync::Mutex::new(())),
             storage_grow: Arc::new(tokio::sync::Mutex::new(())),

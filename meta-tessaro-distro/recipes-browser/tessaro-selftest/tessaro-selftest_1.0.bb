@@ -1,9 +1,11 @@
-SUMMARY = "Tessaro self-test page: one static page that exercises the kiosk stack"
-DESCRIPTION = "A single self-contained HTML page plus its media, installed at \
-/usr/share/tessaro-selftest. A technician points KIOSK_URL at it to check rendering, \
-fonts, emoji, form inputs, scrolling and multi-touch, WebSerial and WebHID, audio and \
-video playback, and WebAudio synthesis - on one screen, with the network down. \
-Beside it, maintenance.html: the page maintenance mode shows by default."
+SUMMARY = "Tessaro's local pages: the welcome page, the self-test and maintenance"
+DESCRIPTION = "Self-contained HTML pages installed at /usr/share/tessaro-selftest and \
+served on the loopback. index.html is the welcome page a factory image opens: the \
+node name, its addresses and whether it is claimed. selftest.html is the self-test a \
+technician points KIOSK_URL at to check rendering, fonts, emoji, form inputs, scrolling \
+and multi-touch, WebSerial and WebHID, audio and video playback, and WebAudio synthesis \
+- on one screen, with the network down. maintenance.html is the page maintenance mode \
+shows by default."
 LICENSE = "MIT"
 LIC_FILES_CHKSUM = "file://${COMMON_LICENSE_DIR}/MIT;md5=0835ade698e0bcf8506ecda2f7b4f302"
 
@@ -13,6 +15,7 @@ LIC_FILES_CHKSUM = "file://${COMMON_LICENSE_DIR}/MIT;md5=0835ade698e0bcf8506ecda
 # edit to this page. Here a change costs one do_install.
 SRC_URI = " \
     file://index.html \
+    file://selftest.html \
     file://maintenance.html \
     file://10-tessaro-selftest.conf \
     file://media/sample-video-3s-fullhd.mp4 \
@@ -28,7 +31,10 @@ inherit allarch
 S = "${WORKDIR}"
 
 do_install() {
+    # The welcome page at http://127.0.0.1/, what a factory image opens. Its
+    # live values are /welcome.json, which the agent writes and nginx serves.
     install -Dm0644 ${WORKDIR}/index.html ${D}${datadir}/tessaro-selftest/index.html
+    install -m0644 ${WORKDIR}/selftest.html ${D}${datadir}/tessaro-selftest/selftest.html
 
     # Maintenance mode's default page, TESSARO_MAINTENANCE_URL. Here because
     # this directory is already nginx's root on the loopback, so it is
@@ -36,7 +42,7 @@ do_install() {
     install -m0644 ${WORKDIR}/maintenance.html ${D}${datadir}/tessaro-selftest/maintenance.html
 
     # The page refers to these by relative path, so the layout under
-    # ${datadir}/tessaro-selftest has to match what index.html asks for.
+    # ${datadir}/tessaro-selftest has to match what selftest.html asks for.
     install -d ${D}${datadir}/tessaro-selftest/media
     install -m0644 ${WORKDIR}/media/sample-video-3s-fullhd.mp4 \
         ${D}${datadir}/tessaro-selftest/media/

@@ -218,7 +218,7 @@ const fn seconds(
 /// deliberately absent: it is static, an image property, not a setting.
 pub static KEYS: &[Key] = &[
     key(URL, "KIOSK_URL", Kind::Url, AGENT,
-        "The page the kiosk shows (default: the self-test page, http://127.0.0.1/). A new origin also re-grants the device APIs to it."),
+        "The page the kiosk shows (default: the welcome page, http://127.0.0.1/; the self-test is http://127.0.0.1/selftest.html). A new origin also re-grants the device APIs to it."),
     key(PROBE_URL, "KIOSK_PROBE_URL", Kind::OptionalUrl, AGENT,
         "Health endpoint to probe instead of browser.url; empty probes browser.url. Needed for a file: or data: kiosk."),
     key("browser.offline_url", "KIOSK_OFFLINE_URL", Kind::OfflineUrl, AGENT,
