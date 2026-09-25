@@ -81,6 +81,7 @@ Use the mise tasks rather than calling `kas-container` directly:
 | `mise run image:shell` | Interactive kas shell (cwd is the build dir) |
 | `mise run image:clean` | Drop build artifacts, keep sstate and downloads |
 | `mise run image:sizes` | Size of every built `.wic`, all machines at once |
+| `mise run image:name` | The file name the next build will give the image, `-dirty` included |
 | `mise run image:pull` | Workstation: fetch the image and bmap from the build host |
 | `mise run image:update` | Workstation: pull the image and update a running device over the network (the normal path) |
 | `mise run image:flash` | Workstation, manual: write the pulled image to a card or disk (first install, recovery) |

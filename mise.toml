@@ -303,6 +303,21 @@ done
 [ "$found" = 1 ] || echo "no .wic images found - run 'mise run image:build' first" >&2
 '''
 
+[tasks."image:name"]
+description = "Print the file name the next image:build will give the $TESSARO_MACHINE image"
+dir = "{{config_root}}"
+run = '''
+# The same computation as TESSARO_REVISION in tessaro.conf, from the same
+# directory. The build runs git inside kas-container, which has no global git
+# config, so the user's global excludes file is left out here too - a file it
+# hides on the host is untracked there and makes the build -dirty.
+version=$(sed -n 's/^DISTRO_VERSION = "\(.*\)"$/\1/p' meta-tessaro-distro/conf/distro/tessaro.conf)
+cd meta-tessaro-distro
+rev=$(git rev-parse --short=7 HEAD 2>/dev/null) || rev=unknown
+[ -z "$(git -c core.excludesFile=/dev/null status --porcelain 2>/dev/null)" ] || rev=$rev-dirty
+echo "tessaro-os-$TESSARO_MACHINE-$version-$rev.wic.bz2"
+'''
+
 # image:pull, image:flash and image:update run on a workstation, not on the
 # build host: the image is built on a remote x86 machine and pulled here. The
 # normal way onto a device is image:update, which pulls the image and sends it

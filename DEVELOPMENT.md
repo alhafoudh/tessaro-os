@@ -25,6 +25,7 @@ mise run image:build:rpi    # raspberrypi3-64 - Raspberry Pi 3 Model B and B+
 
 TESSARO_MACHINE=raspberrypi3-64 mise run image:shell   # any task, any target
 mise run image:sizes                                   # every built image, side by side
+mise run image:name                                    # what the next build will be called
 mise run image:clean                                   # drop build output, keep the caches
 ```
 
