@@ -41,3 +41,9 @@
 /*.wic.*
 
 /.claude/worktrees
+
+# Per-user editor and Claude Code settings. Ignored here and not only in a
+# global excludes file: the build runs git inside kas-container, which has no
+# global git config, and any untracked file makes the image -dirty.
+/.claude/settings.local.json
+/.idea/
