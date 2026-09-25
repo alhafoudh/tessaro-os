@@ -135,7 +135,7 @@ applies and stays, Default unsets.**
 
 | Page | Covers |
 | --- | --- |
-| Overview | `device status` and `id`, systemd units, `device ping`, `device factory-reset`, `browser navigate`, `browser maintenance`, `browser debug` |
+| Overview | `device status` and `id`, systemd units, `device ping`, `device factory-reset`, `browser navigate`, `browser maintenance`, `browser debug`, `browser zoom` |
 | Screen | `screen modes` with "use this mode", `screen confirm`, `screen screenshot` with a 3s live refresh and Save |
 | Network | `network show` and interfaces, `network last`, `network ping`, `network speedtest`, `network profiles list` and `show` |
 | WiFi | `network wifi status`, `scan`, `join`, `hotspot-password` |

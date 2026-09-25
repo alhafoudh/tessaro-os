@@ -160,6 +160,49 @@ Things to know:
   not add `seccomp` to `DISTRO_FEATURES`: oe-core's default already has it and
   removes it per architecture, which an unconditional append would override.
 
+## Page zoom
+
+**`browser.zoom` (`tessaro-ctl browser zoom PERCENT`) zooms the page the way
+Ctrl+/- does in Chrome, and the agent keeps it applied.** The range is
+Chrome's own, 25 to 500; 100 is no zoom. It is an `AGENT` key: a change
+restarts only the agent, and the browser keeps running.
+
+* **It is a DevTools emulation override:** `Emulation.setDeviceMetricsOverride`
+  with a viewport the zoom's factor smaller in CSS pixels, drawn at a
+  `deviceScaleFactor` that same factor larger, so it still fills the window
+  pixel for pixel (`zoom_override` in `cdp/protocol.rs`). The page reflows,
+  `innerWidth` shrinks or grows, and media queries see the change, as with
+  browser zoom. The scale factor is worked out from the rounded width, so the
+  page ends exactly at the window's edge.
+* **The scale factor alone is not a zoom.** With `width`/`height` 0 the
+  viewport keeps its CSS size and is only drawn at a higher resolution:
+  measured on headless Chromium 151, an 800x600 window stays 800 CSS pixels
+  wide and renders 1200x900 at 150%. `Emulation.setPageScaleFactor` is pinch
+  zoom: the layout stays and the page overflows. `--force-device-scale-factor`
+  has no effect on this stack (see **Display scaling** in
+  [display.md](display.md)).
+* **The window is asked from the page, not worked out:** `Runtime.evaluate`
+  of `devicePixelRatio`, `innerWidth` and `innerHeight` before the override.
+  The ratio is the Weston output scale, so the zoom stacks on `screen.scale`,
+  and the agent does not have to guess which connector the browser is on.
+  The emulated size is fixed, which holds because the window changes size
+  only with a Weston restart, which restarts the browser and so starts a new
+  session. The on-screen keyboard does not resize the surface (see
+  **On-screen keyboard** in [display.md](display.md)).
+* **The override belongs to the DevTools session, so every session applies
+  it again.** Chromium drops it when the client goes away. That is also why
+  the window read at connect time is always the page's own and never a
+  previous zoom. `Driver::prime` in `cdp/session.rs` applies it on every
+  connect, reconnect and browser restart. After a renderer crash,
+  `Inspector.targetReloadedAfterCrash` puts it back. A session that came up
+  on a sad tab never learnt the window, so it asks for it once the tab is
+  back. A page that refuses the override stays at 100% and the session
+  carries on.
+* **While the agent restarts, the page is briefly at 100%.** That happens
+  after any `AGENT` key change and after a watchdog restart; the page then
+  reflows back. A zoom that outlives the agent would need Chromium's profile
+  preferences and a browser restart, which on a public screen is worse.
+
 ## Hardware video decode
 
 **Chromium decodes video on the GPU's decoder where the hardware has one: V4L2

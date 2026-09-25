@@ -108,6 +108,7 @@ enum Action {
     Navigate,
     Maintenance,
     DebugScreen,
+    Zoom,
     ControlPing,
     FactoryReset,
     NetPing,
@@ -136,6 +137,7 @@ pub enum Msg {
     Navigate,
     Maintenance(bool),
     DebugScreen(bool),
+    Zoom,
     ControlPing,
     FactoryReset,
     // screen
@@ -715,6 +717,14 @@ impl Device {
                 );
             }
             Msg::DebugScreen(false) => self.set(&[(keys::DEBUG_ENABLE, "0")]),
+            Msg::Zoom => {
+                let zoom = self.zoom();
+                self.form(
+                    Form::new("Page zoom", "Zoom", Action::Zoom)
+                        .intro("Percent, 25 to 500 like Chrome's: the page reflows as with Ctrl+/-. 100 is no zoom.")
+                        .field(Field::text("Percent", zoom, "100")),
+                );
+            }
             Msg::ControlPing => self.form(
                 Form::new("Ping the device", "Ping", Action::ControlPing)
                     .intro("Round trips over the control connection, as tessaro-ctl device ping.")
@@ -1211,6 +1221,11 @@ impl Device {
                 }
                 self.set(&values);
             }
+            Action::Zoom => {
+                let zoom = form.value("Percent").trim();
+                super::check(keys::ZOOM, zoom)?;
+                self.set(&[(keys::ZOOM, zoom)]);
+            }
             Action::ControlPing => {
                 let count = count(form.value("Count"))?;
                 self.start_job("overview", "ping", jobs::Kind::ControlPing { count });
@@ -1633,6 +1648,7 @@ impl Device {
             facts.push(("Browser answers", yes(status.browser_answering)));
             facts.push(("Maintenance", yes(status.maintenance)));
             facts.push(("Debug screen", yes(status.debug_screen)));
+            facts.push(("Page zoom", format!("{}%", self.zoom())));
             if let Some(data) = &status.data {
                 facts.push((
                     "/data",
@@ -1689,6 +1705,7 @@ impl Device {
                     },
                     self.when(Msg::DebugScreen(!debug)),
                 ),
+                action("Zoom", self.when(Msg::Zoom)),
                 action("Ping", self.when(Msg::ControlPing)),
                 action("Factory reset", self.when(Msg::FactoryReset)),
             ],

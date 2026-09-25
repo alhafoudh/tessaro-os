@@ -344,6 +344,7 @@ async fn run(
             ping: seconds(config.cdp_ping.max(1)),
             reconnect_max: seconds(config.cdp_reconnect_max.max(1)),
             device_access: config.device_access,
+            zoom: config.zoom,
         },
         Arc::clone(&log),
         stop.subscribe(),

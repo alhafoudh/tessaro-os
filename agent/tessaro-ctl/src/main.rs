@@ -91,6 +91,7 @@ const HELP_STYLES: Styles = Styles::styled()
         \x20 tessaro-ctl config set browser.fps_counter=on\n\
         \x20 tessaro-ctl browser maintenance on             show the maintenance page; `off` goes back\n\
         \x20 tessaro-ctl browser debug on                   name and addresses full screen; `off` goes back\n\
+        \x20 tessaro-ctl browser zoom 125                   page zoom, like Ctrl+/- in Chrome\n\
         \x20 tessaro-ctl audio show                         where sound plays, how loud, what is plugged in\n\
         \x20 tessaro-ctl audio output hdmi && tessaro-ctl audio volume 60 && tessaro-ctl audio test\n\
         \x20 tessaro-ctl config unset browser.url           back to the image default\n\
@@ -360,6 +361,15 @@ enum BrowserCmd {
         /// With `on`: set browser.debug.template in the same change.
         #[arg(long)]
         template: Option<String>,
+    },
+    /// Page zoom in percent, 25 to 500 like Chrome's: the page reflows as
+    /// with Ctrl+/-, on top of screen.scale; 100 is no zoom. The same as
+    /// `tessaro-ctl config set browser.zoom=...`.
+    ///
+    ///   tessaro-ctl browser zoom 125
+    Zoom {
+        #[arg(value_parser = clap::value_parser!(u16).range(25..=500))]
+        percent: u16,
     },
 }
 
@@ -677,6 +687,11 @@ fn run(cli: Cli) -> Result<(), String> {
         ),
         Cmd::Browser(BrowserCmd::Navigate { url }) => {
             done(&mut session, Command::Navigate { url }, json)
+        }
+        Cmd::Browser(BrowserCmd::Zoom { percent }) => {
+            let values = BTreeMap::from([(keys::ZOOM.to_string(), percent.to_string())]);
+            let applied = set(&mut session, values)?;
+            print(json, &applied, || show_applied(&applied, false))
         }
         Cmd::Audio(command) => audio::run(&mut session, command, json),
         Cmd::Device(DeviceCmd::Restart { what }) => {
