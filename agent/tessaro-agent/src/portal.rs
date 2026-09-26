@@ -168,7 +168,7 @@ async fn respond(control: &Arc<Control>, request: Request<Incoming>) -> Response
         (Method::GET, "/api/wifi") => {
             let scan = Command::WifiScan {
                 interface: None,
-                rescan: false,
+                rescan: true,
             };
             // naked: Control bounds every call it makes
             answer(control.handle(&caller, scan).await)

@@ -256,6 +256,7 @@ mod tests {
             "src/nm/mod.rs",
             "src/nm/txn.rs",
             "src/nm/nat.rs",
+            "src/nm/sidescan.rs",
             "src/audio.rs",
             "src/proc.rs",
             "src/time.rs",
@@ -300,6 +301,13 @@ mod tests {
             "files.",
             // nm::Live - the same methods called directly.
             "live.",
+            // nm::sidescan - every iw and ip is run_async(), the rest
+            // blocking(); the scan of nm/sidescan.rs checks that, and these
+            // are its own helpers.
+            "sidescan::",
+            "run(IW, ",
+            "run(IP, ",
+            "raise_and_scan(",
             // audio::Audio - every pw-dump, wpctl and pw-play is within(),
             // file work is blocking(); the scan of audio.rs checks that.
             "self.audio.",

@@ -64,6 +64,14 @@ RDEPENDS:${PN} += " \
     nftables \
 "
 
+# A scan while the radio is the hotspot adds a station interface beside it and
+# scans from that with iw (agent/tessaro-agent/src/nm/sidescan.rs), since
+# most drivers refuse to scan from an access point. It raises the interface
+# with ip, which busybox provides.
+RDEPENDS:${PN} += " \
+    iw \
+"
+
 # network.proxy.url goes through a local tinyproxy, run by tessaro-proxy.service
 # from a config the agent renders into /run. tinyproxy's own unit and its
 # /etc/tinyproxy.conf stay unused: SYSTEMD_AUTO_ENABLE:pn-tinyproxy in

@@ -22,6 +22,7 @@ pub mod nat;
 pub mod profiles;
 pub mod proxy;
 pub mod settings;
+pub mod sidescan;
 pub mod txn;
 
 use std::collections::{HashMap, HashSet};
@@ -81,6 +82,11 @@ pub struct Network {
     client: tokio::sync::Mutex<Option<nmrs::NetworkManager>>,
     /// Held by the task running a change, for as long as it runs.
     changing: Arc<tokio::sync::Mutex<()>>,
+    /// Held by a side scan: there is one station interface to scan from.
+    side_scanning: tokio::sync::Mutex<()>,
+    /// What the last side scan of each hotspot interface found, listed for
+    /// as long as that interface is the hotspot.
+    side_found: std::sync::Mutex<HashMap<String, Vec<sidescan::Found>>>,
 }
 
 impl Network {
@@ -91,6 +97,8 @@ impl Network {
             paths,
             client: tokio::sync::Mutex::new(None),
             changing: Arc::new(tokio::sync::Mutex::new(())),
+            side_scanning: tokio::sync::Mutex::new(()),
+            side_found: std::sync::Mutex::new(HashMap::new()),
         })
     }
 
@@ -232,6 +240,7 @@ impl Network {
 
         let devices = devices
             .into_iter()
+            .filter(|device| device.interface != sidescan::INTERFACE)
             .map(|device| {
                 let current = points
                     .iter()
@@ -263,8 +272,12 @@ impl Network {
         }
         let nm = self.client().await?;
         let live = self.live().await?;
+        let hotspots = self.hotspots(interface.as_deref()).await;
         if rescan {
-            live.scan(interface.as_deref()).await?;
+            live.scan(interface.as_deref(), &hotspots).await?;
+            for hotspot in &hotspots {
+                let _ = self.side_scan(hotspot).await;
+            }
         }
         let points = nm_call(
             "listing access points",
@@ -289,8 +302,77 @@ impl Network {
                 active: point.is_active,
             })
             .collect();
+        let side = crate::sync::lock(&self.side_found).clone();
+        for hotspot in &hotspots {
+            for found in side.get(hotspot).into_iter().flatten() {
+                if !seen.insert((found.ssid.clone(), found.bssid.clone())) {
+                    continue;
+                }
+                networks.push(WifiNetwork {
+                    known: !found.ssid.is_empty() && known.contains(&found.ssid),
+                    security: security_of(&found.security),
+                    ssid: found.ssid.clone(),
+                    bssid: found.bssid.clone(),
+                    signal: found.signal,
+                    frequency_mhz: found.frequency_mhz,
+                    interface: hotspot.clone(),
+                    active: false,
+                });
+            }
+        }
         networks.sort_by(|a, b| b.signal.cmp(&a.signal).then_with(|| a.ssid.cmp(&b.ssid)));
         Ok(networks)
+    }
+
+    /// The WiFi interfaces - every one, or `interface` - that are the
+    /// hotspot right now, and so cannot scan themselves (`sidescan.rs`).
+    async fn hotspots(&self, interface: Option<&str>) -> Vec<String> {
+        let paths = self.paths.clone();
+        let wireless = blocking("reading the network", move || {
+            Ok(interfaces(&paths)
+                .into_iter()
+                .filter(|(_, kind)| kind == "wireless")
+                .map(|(name, _)| name)
+                .collect::<Vec<_>>())
+        })
+        .await
+        .unwrap_or_default();
+        let mut hotspots = Vec::new();
+        for name in wireless {
+            if interface.is_some_and(|wanted| wanted != name) {
+                continue;
+            }
+            if sidescan::is_ap(&name).await {
+                hotspots.push(name);
+            }
+        }
+        hotspots
+    }
+
+    /// Scan from beside the hotspot on `hotspot` and keep what it found.
+    async fn side_scan(&self, hotspot: &str) -> Result<(), String> {
+        // naked: in-process; the one holder waits only on sidescan's bounded steps
+        let _scanning = self.side_scanning.lock().await;
+        match sidescan::scan(&self.paths, hotspot).await {
+            Ok(found) => {
+                crate::sync::lock(&self.side_found).insert(hotspot.to_string(), found);
+                Ok(())
+            }
+            Err(err) => {
+                self.log.info(format!("network: {err}"));
+                Err(err)
+            }
+        }
+    }
+
+    /// `ssid` as the last side scan of `hotspot` saw it, strongest first.
+    fn side_network(&self, hotspot: &str, ssid: &str) -> Option<sidescan::Found> {
+        crate::sync::lock(&self.side_found)
+            .get(hotspot)?
+            .iter()
+            .filter(|found| found.ssid == ssid)
+            .max_by_key(|found| found.signal)
+            .cloned()
     }
 
     async fn known_ssids(&self) -> Result<HashSet<String>, String> {
@@ -306,26 +388,42 @@ impl Network {
     }
 
     /// The security of `ssid` as a scan of `interface` sees it, scanning
-    /// again once when it is not in the last results: what `net wifi join`
-    /// stores as `network.wifi.security` when it is not given.
+    /// again once when it is not in the last results - from beside it when
+    /// it is the hotspot: what `net wifi join` stores as
+    /// `network.wifi.security` when it is not given.
     pub async fn security_of_ssid(
         &self,
         interface: &str,
         ssid: &str,
     ) -> Result<WifiSecurity, String> {
-        let mut found = self.find_network(interface, ssid).await?;
-        if found.is_none() {
+        let mut found = self
+            .find_network(interface, ssid)
+            .await?
+            .map(|point| point.security);
+        if found.is_none() && sidescan::is_ap(interface).await {
+            found = self
+                .side_network(interface, ssid)
+                .map(|found| found.security);
+            if found.is_none() {
+                let _ = self.side_scan(interface).await;
+                found = self
+                    .side_network(interface, ssid)
+                    .map(|found| found.security);
+            }
+        } else if found.is_none() {
             let live = self.live().await?;
-            live.scan(Some(interface)).await?;
-            found = self.find_network(interface, ssid).await?;
+            live.scan(Some(interface), &[]).await?;
+            found = self
+                .find_network(interface, ssid)
+                .await?
+                .map(|point| point.security);
         }
-        let point = found.ok_or_else(|| {
+        let features = &found.ok_or_else(|| {
             format!(
                 "{ssid} is not in range of {interface}; for a hidden network pass --hidden \
                  --security psk|sae|open"
             )
         })?;
-        let features = &point.security;
         if features.eap || features.eap_suite_b_192 {
             return Err(format!(
                 "{ssid} is an enterprise (802.1X) network, which is not supported"
@@ -774,8 +872,10 @@ impl Live {
         Some((active, uuid))
     }
 
-    /// Ask every WiFi device, or one, to scan, and wait until it has.
-    async fn scan(&self, interface: Option<&str>) -> Result<(), String> {
+    /// Ask every WiFi device, or one, to scan, and wait until it has. The
+    /// `hotspots` are left out: they cannot scan, and `sidescan.rs` does it
+    /// for them.
+    async fn scan(&self, interface: Option<&str>, hotspots: &[String]) -> Result<(), String> {
         let manager = self.manager().await?;
         let devices = nm_call("Devices", CALL, manager.devices()).await?;
         let mut waiting = Vec::new();
@@ -784,15 +884,14 @@ impl Live {
             if nm_call("a device's type", CALL, device.device_type()).await? != proxy::DEVICE_WIFI {
                 continue;
             }
-            if let Some(wanted) = interface {
-                if nm_call("a device's interface", CALL, device.interface()).await? != wanted {
-                    continue;
-                }
+            let name = nm_call("a device's interface", CALL, device.interface()).await?;
+            if interface.is_some_and(|wanted| wanted != name) || hotspots.contains(&name) {
+                continue;
             }
             let wireless = self.wireless(at.as_str()).await?;
             let before = nm_call("LastScan", CALL, wireless.last_scan()).await?;
-            // Refused when a scan ran a moment ago - or while the device is
-            // the hotspot; what it found last is then what the list shows.
+            // Refused when a scan ran a moment ago; what it found last is
+            // then what the list shows.
             if nm_call("RequestScan", CALL, wireless.request_scan(HashMap::new()))
                 .await
                 .is_ok()

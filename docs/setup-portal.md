@@ -90,7 +90,7 @@ rollback all apply.
 | Route | Command |
 | --- | --- |
 | `GET /api/state` | the welcome page's values, `status`, and `config get` of the keys below |
-| `GET /api/wifi` | `network wifi scan --cached` |
+| `GET /api/wifi` | `network wifi scan` |
 | `GET /api/zones` | the timezone list of `time` |
 | `POST /api/set` | `config set`, of the keys in `KEYS` in `portal.rs` only |
 | `POST /api/wifi/join` | `network wifi join` |
@@ -110,8 +110,11 @@ rollback all apply.
   hotspot down, and the phone with it. If the device cannot reach the new
   network's gateway it rolls back to the hotspot on its own, as for
   `tessaro-ctl network wifi join`. The welcome page shows the result.
-* **The WiFi list is the last one NetworkManager found.** NM refuses to scan
-  while the radio is the hotspot, so the page always offers a typed SSID.
+* **Opening the WiFi section scans, from beside the hotspot.** The page asks
+  once per load, and the scan runs on a station interface next to the
+  hotspot, so the phone stays connected (see **Scanning from the hotspot**
+  in [networking.md](networking.md)). A radio that cannot have that
+  interface lists nothing new, so the page always offers a typed SSID.
 
 ## Online
 

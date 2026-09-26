@@ -225,6 +225,23 @@ renders, `txn.rs` switches) and `ping.rs`.
   10.42.0.1, which is why the address is pinned; every other name resolves
   as before. How that opens the setup portal is in
   [setup-portal.md](setup-portal.md).
+* **Scanning from the hotspot goes through a station interface beside it**
+  (`nm/sidescan.rs`), because an access point cannot scan on most radios:
+  mac80211 refuses it unless the driver sets `NL80211_FEATURE_AP_SCAN`
+  (`ieee80211_scan` in `net/mac80211/cfg.c`), which iwlwifi does not, and
+  wpa_supplicant logs `CTRL-EVENT-SCAN-FAILED ret=-95`. So `network wifi
+  scan` of an interface whose `iw dev` type is `AP` does not ask
+  NetworkManager; it adds `tessaro-scan` on the same phy (a locally
+  administered copy of the hotspot's MAC), scans from it with `iw`, deletes
+  it, and lists what it found beside NetworkManager's own list while that
+  interface stays the hotspot. The hotspot stays up and its clients stay
+  connected. A join's security lookup uses the same results. NetworkManager
+  never manages the interface (`unmanaged-devices` in `10-tessaro.conf`),
+  `net.rs` hides it, so `auto` never picks it, and its name must not start
+  with `wl`, which the `wl*` matches above would catch. A radio whose
+  interface combinations do not allow a station next to an AP (`iw phy
+  <phy> info`) lists nothing new, and the agent's journal says why. `iw` is
+  an `RDEPENDS` of `tessaro-network`.
 * **WiFi joins are Open, WPA2-PSK and WPA3-SAE.** The security comes from a
   scan, or `--hidden --security`; enterprise (802.1X) and WEP are refused.
   Rejoining the same network keeps its saved password if none is given. The
@@ -245,7 +262,9 @@ renders, `txn.rs` switches) and `ping.rs`.
   both.
 * **qemu cannot exercise WiFi** - no emulated wireless NIC - so the e2e checks
   the hotspot's keyfile and NAT table, and joins, scans and the hotspot
-  itself are tested on the Pi by hand.
+  itself are tested on real hardware by hand: the Pi (brcmfmac) and an x86
+  box with an Intel card (iwlwifi), whose drivers differ in what an access
+  point may do.
 
 ## Speed test
 

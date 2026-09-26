@@ -106,6 +106,8 @@ pub fn snapshot(paths: &Paths) -> Net {
             names.push(name.clone());
         }
     }
+    // Up for a few seconds while a hotspot scans: never the WiFi device.
+    names.retain(|name| name != crate::nm::sidescan::INTERFACE);
     names.sort();
 
     let interfaces = names
