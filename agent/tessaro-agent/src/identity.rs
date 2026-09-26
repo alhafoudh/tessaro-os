@@ -30,7 +30,7 @@ use openssl::nid::Nid;
 use openssl::pkey::PKey;
 use openssl::sha::sha256;
 use openssl::sign::Signer;
-use openssl::x509::{X509Builder, X509NameBuilder, X509};
+use openssl::x509::{X509Builder, X509NameBuilder, X509Ref, X509};
 
 use protocol::hex;
 
@@ -160,7 +160,9 @@ pub fn tls(dir: &Path) -> io::Result<(Tls, bool)> {
     ))
 }
 
-fn fingerprint(cert: &X509) -> io::Result<String> {
+/// SHA-256 of the certificate's DER, lower-case hex: the device's own, and
+/// each extra CA's (`certs.rs`).
+pub(crate) fn fingerprint(cert: &X509Ref) -> io::Result<String> {
     let der = cert.to_der().map_err(io::Error::other)?;
     Ok(hex(&sha256(&der)))
 }

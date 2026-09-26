@@ -23,11 +23,11 @@ use iced::{Element, Length, Task};
 use protocol::files::{self as store, FileEntry, FileKind, FilesListing};
 use protocol::keys;
 use protocol::{
-    size_label, Applied, AudioDevice, AudioStatus, AudioTested, Claimed, Command, Connector, Done,
-    HotspotCredentials, Net, NetChange, NetProfile, NetProfileDetail, Password, PingEvent,
-    ProxyTested, Secret, SpeedtestEvent, SshKeyInfo, SshKeyRevoked, Storage, StorageGrowEvent,
-    TimeStatus, TokenCreated, TokenInfo, UpdatePhase, UpdateStatus, Verify, WifiNetwork,
-    WifiSecurity, WifiStatus,
+    size_label, Applied, AudioDevice, AudioStatus, AudioTested, CertInfo, CertsAdded, Claimed,
+    Command, Connector, Done, HotspotCredentials, Net, NetChange, NetProfile, NetProfileDetail,
+    Password, PingEvent, ProxyTested, Secret, SpeedtestEvent, SshKeyInfo, SshKeyRevoked, Storage,
+    StorageGrowEvent, TimeStatus, TokenCreated, TokenInfo, UpdatePhase, UpdateStatus, Verify,
+    WifiNetwork, WifiSecurity, WifiStatus,
 };
 use serde_json::Value;
 use tessaro_client::clock;
@@ -45,6 +45,8 @@ use crate::{blocking, jobs, theme};
 pub struct State {
     net: Option<Net>,
     profiles: Vec<NetProfile>,
+    /// The extra certificate authorities the device trusts.
+    certs: Vec<CertInfo>,
     wifi: Option<WifiStatus>,
     networks: Vec<WifiNetwork>,
     storage: Option<Storage>,
@@ -120,6 +122,7 @@ enum Action {
     NetPing,
     Speedtest,
     Proxy,
+    CertRevoke(String),
     WifiJoin,
     Hotspot,
     Grow,
@@ -168,6 +171,9 @@ pub enum Msg {
     ProxyOff,
     ProxyTest,
     ProfileDetail,
+    CertPick,
+    CertPicked(Option<PathBuf>),
+    CertRevoke,
     // wifi
     WifiScan,
     WifiJoin,
@@ -525,6 +531,7 @@ impl Device {
             Page::Network => {
                 self.call("net", Command::Net);
                 self.call("net.profiles", Command::NetProfiles);
+                self.call("net.certs", Command::NetCertList);
             }
             Page::Wifi => {
                 self.call("wifi", Command::Wifi);
@@ -583,6 +590,23 @@ impl Device {
             "modes" => self.pages.modes = parse(value)?,
             "net" => self.pages.net = Some(parse(value)?),
             "net.profiles" => self.pages.profiles = parse(value)?,
+            "net.certs" => self.pages.certs = parse(value)?,
+            "net.cert.add" => {
+                let added: CertsAdded = parse(value)?;
+                for cert in &added.added {
+                    self.log(Tone::Ok, format!("trusted {}", cert.subject));
+                }
+                for cert in &added.present {
+                    self.log(Tone::Info, format!("already trusted: {}", cert.subject));
+                }
+                self.call("net.certs", Command::NetCertList);
+            }
+            "net.cert.revoke" => {
+                let revoked: CertInfo = parse(value)?;
+                self.log(Tone::Ok, format!("revoked {}", revoked.subject));
+                self.pages.selected.remove("certs");
+                self.call("net.certs", Command::NetCertList);
+            }
             "net.profile" => {
                 let detail: NetProfileDetail = parse(value)?;
                 let title = format!("Profile {}", detail.profile.name);
@@ -978,6 +1002,44 @@ impl Device {
             Msg::ProfileDetail => {
                 if let Some(profile) = self.selected("profiles").cloned() {
                     self.call("net.profile", Command::NetShow { profile });
+                }
+            }
+            Msg::CertPick => {
+                return Task::perform(
+                    rfd::AsyncFileDialog::new()
+                        .set_title("Certificate authority to trust")
+                        .add_filter("Certificate", &["pem", "crt", "cer", "der"])
+                        .pick_file(),
+                    |picked| Message::P(Msg::CertPicked(picked.map(|handle| handle.path().to_path_buf()))),
+                );
+            }
+            Msg::CertPicked(Some(file)) => match tessaro_client::certs::read_pem(&file) {
+                Ok(pem) => self.call("net.cert.add", Command::NetCertAdd { pem }),
+                Err(error) => self.log(Tone::Bad, error),
+            },
+            Msg::CertPicked(None) => {}
+            Msg::CertRevoke => {
+                let chosen = self
+                    .selected("certs")
+                    .and_then(|fingerprint| {
+                        self.pages
+                            .certs
+                            .iter()
+                            .find(|cert| &cert.fingerprint == fingerprint)
+                    })
+                    .cloned();
+                if let Some(cert) = chosen {
+                    self.form(
+                        Form::new(
+                            "Revoke certificate authority",
+                            "Revoke",
+                            Action::CertRevoke(cert.fingerprint.clone()),
+                        )
+                        .intro(format!(
+                            "The device stops trusting {}. Sites whose certificates it signed stop loading. The agent restarts; the browser does not.",
+                            cert.subject
+                        )),
+                    );
                 }
             }
             Msg::WifiScan => self.call(
@@ -1672,6 +1734,10 @@ impl Device {
             Action::KeyRevoke(key) => {
                 self.call("ssh.revoke", Command::SshKeyRevoke { key: key.clone() })
             }
+            Action::CertRevoke(cert) => self.call(
+                "net.cert.revoke",
+                Command::NetCertRevoke { cert: cert.clone() },
+            ),
             Action::Mkdir => {
                 let name = form.value("Name").trim();
                 if name.is_empty() {
@@ -2334,6 +2400,41 @@ impl Device {
                 )
             })
             .collect();
+        const CERTS: &[Col] = &[
+            col("Certificate authority", Length::Fixed(260.0)),
+            col("Expires (UTC)", Length::Fixed(110.0)),
+            col("Issued by", Length::Fixed(200.0)),
+            col("Fingerprint", Length::Fill),
+        ];
+        let certs = self
+            .pages
+            .certs
+            .iter()
+            .map(|cert| {
+                let date = tessaro_client::certs::date(cert.not_after);
+                let expires: Element<'_, Message> =
+                    if tessaro_client::certs::expired(cert.not_after) {
+                        cell(format!("{date} expired")).style(text::danger).into()
+                    } else {
+                        cell(date).into()
+                    };
+                (
+                    cert.fingerprint.clone(),
+                    vec![
+                        cell(cert.subject.clone()).into(),
+                        expires,
+                        cell(if cert.self_signed {
+                            "itself".to_string()
+                        } else {
+                            cert.issuer.clone()
+                        })
+                        .style(theme::muted)
+                        .into(),
+                        cell(cert.fingerprint.clone()).style(theme::muted).into(),
+                    ],
+                )
+            })
+            .collect();
         self.page(
             "net",
             vec![
@@ -2353,12 +2454,20 @@ impl Device {
                         .then_some(())
                         .and_then(|()| self.when(Msg::ProxyTest)),
                 ),
+                action("Trust a CA ...", self.when(Msg::CertPick)),
             ],
-            vec![action(
-                "Profile details",
-                self.selected("profiles")
-                    .and_then(|_| self.when(Msg::ProfileDetail)),
-            )],
+            vec![
+                action(
+                    "Profile details",
+                    self.selected("profiles")
+                        .and_then(|_| self.when(Msg::ProfileDetail)),
+                ),
+                action(
+                    "Revoke CA",
+                    self.selected("certs")
+                        .and_then(|_| self.when(Msg::CertRevoke)),
+                ),
+            ],
             vec![
                 self.facts("netfacts", facts),
                 self.table(
@@ -2368,6 +2477,7 @@ impl Device {
                     Length::Fixed(TABLE_HEIGHT),
                 ),
                 self.table("profiles", PROFILES, profiles, Length::Fill),
+                self.table("certs", CERTS, certs, Length::Fixed(TABLE_HEIGHT)),
             ],
         )
     }

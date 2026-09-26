@@ -23,6 +23,7 @@ mod audio;
 mod auth;
 mod boot;
 mod cdp;
+mod certs;
 mod config;
 mod control;
 mod deadline;
@@ -130,6 +131,7 @@ fn main() -> ExitCode {
 
     let config = Config::load(&effective);
     let log = Arc::new(Log::new(config.debug));
+    trust_extra_cas(&paths, &log);
     let device = device(paths, defaults, &effective, &log);
 
     if config.kiosk_url.is_empty() {
@@ -155,6 +157,33 @@ fn main() -> ExitCode {
 
     runtime.block_on(run(config, log, device, settings.settings));
     ExitCode::SUCCESS
+}
+
+/// Hand the extra certificate authorities to every HTTP client this process
+/// makes. Read once: `tessaro-ctl network certs` restarts the agent.
+fn trust_extra_cas(paths: &paths::Paths, log: &Log) {
+    let certs = match certs::load(&paths.ca_certs_dir()) {
+        Ok(certs) => certs,
+        Err(err) => {
+            log.info(format!(
+                "{}: {err}; trusting only the image's certificate authorities",
+                paths.ca_certs_dir().display()
+            ));
+            return;
+        }
+    };
+    let roots: Vec<native_tls::Certificate> = certs
+        .iter()
+        .filter_map(|cert| cert.to_der().ok())
+        .filter_map(|der| native_tls::Certificate::from_der(&der).ok())
+        .collect();
+    if !roots.is_empty() {
+        log.info(format!(
+            "extra certificate authorities trusted: {}",
+            roots.len()
+        ));
+    }
+    http::trust(roots);
 }
 
 fn device(

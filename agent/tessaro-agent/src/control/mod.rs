@@ -25,6 +25,7 @@
 
 mod access;
 mod bridge;
+mod certs;
 mod network;
 mod page;
 mod screen;
@@ -530,6 +531,9 @@ impl Control {
                 .into(),
             Command::ProxyStatus => self.proxy_status().await.into(),
             Command::ProxyTest => Reply::ok(self.proxy_test().await),
+            Command::NetCertAdd { pem } => self.cert_add(caller, pem).await,
+            Command::NetCertList => self.cert_list().await.into(),
+            Command::NetCertRevoke { cert } => self.cert_revoke(caller, cert).await,
         }
     }
 
@@ -1463,6 +1467,73 @@ mod tests {
             id: claimed.token_id,
             peer: peer(),
         }
+    }
+
+    #[tokio::test]
+    async fn a_ca_is_trusted_listed_kept_by_unclaim_and_reset_away() {
+        let fx = fixture();
+        let holder = claimed(&fx).await;
+        let (ca, _) = crate::certs::tests::ca("Corp Root", 30);
+        let pem = String::from_utf8(ca.to_pem().unwrap()).unwrap();
+        let policy = || fs::read_to_string(&fx.paths.policy).unwrap();
+
+        let reply = fx
+            .control
+            .handle(&holder, Command::NetCertAdd { pem: pem.clone() })
+            .await;
+        // The agent's own client picks the roots up when it starts again.
+        assert_eq!(
+            reply.after,
+            Some(After::Restart(fx.paths.agent_unit.clone()))
+        );
+        let added: protocol::CertsAdded = serde_json::from_value(reply.result.unwrap()).unwrap();
+        assert_eq!(added.added.len(), 1);
+        assert!(policy().contains("\"CACertificates\""));
+
+        // The same again changes nothing, and restarts nothing.
+        let reply = fx
+            .control
+            .handle(&holder, Command::NetCertAdd { pem: pem.clone() })
+            .await;
+        assert_eq!(reply.after, None);
+
+        let listed: Vec<protocol::CertInfo> = ok(&fx.control, &holder, Command::NetCertList).await;
+        assert_eq!(listed, added.added);
+
+        let _: Done = ok(&fx.control, &holder, Command::Unclaim).await;
+        let listed: Vec<protocol::CertInfo> =
+            ok(&fx.control, &Caller::Local, Command::NetCertList).await;
+        assert_eq!(listed.len(), 1, "an unclaim keeps the configuration");
+
+        let revoked: protocol::CertInfo = ok(
+            &fx.control,
+            &Caller::Local,
+            Command::NetCertRevoke {
+                cert: listed[0].fingerprint[..8].to_string(),
+            },
+        )
+        .await;
+        assert_eq!(revoked, listed[0]);
+        assert!(!policy().contains("\"CACertificates\""));
+        let missing = err(
+            &fx.control,
+            &Caller::Local,
+            Command::NetCertRevoke {
+                cert: revoked.fingerprint.clone(),
+            },
+        )
+        .await;
+        assert!(missing.contains("no certificate matches"), "{missing}");
+
+        let _: protocol::CertsAdded =
+            ok(&fx.control, &Caller::Local, Command::NetCertAdd { pem }).await;
+        let reply = fx
+            .control
+            .handle(&Caller::Local, Command::FactoryReset)
+            .await;
+        assert!(reply.result.is_ok(), "{:?}", reply.result);
+        assert!(!fx.paths.ca_certs_dir().exists());
+        assert!(!policy().contains("\"CACertificates\""));
     }
 
     #[tokio::test]

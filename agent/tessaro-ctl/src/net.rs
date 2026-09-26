@@ -12,18 +12,19 @@
 //! answer never arrives; `network last` asks what happened.
 //!
 //! `network proxy set|off` are a plain `config set` of network.proxy.*:
-//! not a network change, so nothing is verified or rolled back.
+//! not a network change, so nothing is verified or rolled back. Neither is
+//! `network certs`, which is no setting at all.
 
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
-use anstream::{eprintln, println};
+use anstream::{eprintln, print, println};
 use clap::{Args, Subcommand, ValueEnum};
 use protocol::{
-    keys, speedtest_size_label, Applied, ChangeOutcome, Command, Direction, Done,
-    HotspotCredentials, Net, NetAddress, NetChange, NetInterface, NetProfile, NetProfileDetail,
-    PingEvent, ProxyStatus, ProxyTested, Secret, SpeedtestEvent, Verify, WifiNetwork, WifiSecurity,
-    WifiStatus,
+    keys, speedtest_size_label, Applied, CertInfo, CertsAdded, ChangeOutcome, Command, Direction,
+    Done, HotspotCredentials, Net, NetAddress, NetChange, NetInterface, NetProfile,
+    NetProfileDetail, PingEvent, ProxyStatus, ProxyTested, Secret, SpeedtestEvent, Verify,
+    WifiNetwork, WifiSecurity, WifiStatus,
 };
 use serde_json::json;
 
@@ -74,6 +75,10 @@ pub enum NetworkCmd {
     /// reachability probe, the public address and the speed test.
     #[command(subcommand)]
     Proxy(ProxyCmd),
+    /// Extra certificate authorities the device trusts, on top of the
+    /// image's: for an intranet site or a proxy that inspects TLS.
+    #[command(subcommand)]
+    Certs(CertsCmd),
     /// Measure the device's internet connection against speed.cloudflare.com:
     /// latency, then download and upload at growing payload sizes.
     ///
@@ -124,6 +129,21 @@ pub enum ProxyCmd {
     /// Fetch Cloudflare's trace through the proxy, from the device: the
     /// address the internet sees it at, or why the proxy did not get there.
     Test,
+}
+
+#[derive(Subcommand)]
+pub enum CertsCmd {
+    /// The extra certificate authorities: fingerprint, subject, expiry.
+    List,
+    /// Trust the certificates in FILE, PEM or DER, one or a chain. The
+    /// browser takes them without a restart; the agent restarts to take
+    /// them for its reachability probe. Never send a private key.
+    ///
+    ///   tessaro-ctl network certs add corp-root-ca.pem
+    Add { file: std::path::PathBuf },
+    /// Stop trusting one: its SHA-256 fingerprint, a unique prefix of it,
+    /// or its exact subject.
+    Revoke { cert: String },
 }
 
 #[derive(Subcommand)]
@@ -331,6 +351,30 @@ fn speedtest_line(step: &SpeedtestEvent) -> String {
     }
 }
 
+/// One certificate authority on a line: fingerprint, subject, expiry, and
+/// who issued it when that is not itself.
+fn show_cert(cert: &CertInfo) {
+    let date = tessaro_client::certs::date(cert.not_after);
+    let until = if tessaro_client::certs::expired(cert.not_after) {
+        paint(style::BAD, format!("expired {date}"))
+    } else {
+        paint(style::LABEL, format!("until {date}"))
+    };
+    let issuer = if cert.self_signed {
+        String::new()
+    } else {
+        format!(
+            " {}",
+            paint(style::MUTED, format!("issued by {}", cert.issuer))
+        )
+    };
+    println!(
+        "{}  {}  {until}{issuer}",
+        paint(style::MUTED, &cert.fingerprint),
+        paint(style::HEADING, &cert.subject)
+    );
+}
+
 fn show_proxy(status: &ProxyStatus) {
     let row = style::row;
     match &status.url {
@@ -534,6 +578,41 @@ pub fn run(session: &mut Session, command: NetworkCmd, json: bool) -> Result<(),
                     paint(style::BAD, "the proxy did not get through:"),
                     error.as_deref().unwrap_or("no answer")
                 ),
+            })
+        }
+        NetworkCmd::Certs(CertsCmd::List) => {
+            let certs: Vec<CertInfo> = session.call(Command::NetCertList)?;
+            print(json, &certs, || {
+                if certs.is_empty() {
+                    println!(
+                        "{}",
+                        paint(style::MUTED, "no extra certificate authorities")
+                    );
+                }
+                for cert in &certs {
+                    show_cert(cert);
+                }
+            })
+        }
+        NetworkCmd::Certs(CertsCmd::Add { file }) => {
+            let pem = tessaro_client::certs::read_pem(&file)?;
+            let added: CertsAdded = session.call(Command::NetCertAdd { pem })?;
+            print(json, &added, || {
+                for cert in &added.added {
+                    print!("{} ", paint(style::OK, "trusted"));
+                    show_cert(cert);
+                }
+                for cert in &added.present {
+                    print!("{} ", paint(style::MUTED, "already trusted"));
+                    show_cert(cert);
+                }
+            })
+        }
+        NetworkCmd::Certs(CertsCmd::Revoke { cert }) => {
+            let revoked: CertInfo = session.call(Command::NetCertRevoke { cert })?;
+            print(json, &revoked, || {
+                print!("{} ", paint(style::OK, "revoked"));
+                show_cert(&revoked);
             })
         }
         NetworkCmd::Profiles(ProfilesCmd::List) => {

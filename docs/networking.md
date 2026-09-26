@@ -253,7 +253,8 @@ on purpose: its only client is a closed binary.
 
 * **It is the `cfspeedtest` crate, and that is the one place reqwest and
   rustls are allowed.** cfspeedtest is blocking reqwest on rustls/ring with
-  webpki-roots - a large dependency tree and a root store compiled in, so this test (only this test) ignores the device's `/etc/ssl/certs`.
+  webpki-roots - a large dependency tree and a root store compiled in, so this test (only this test) ignores the device's `/etc/ssl/certs`
+  and the extra certificate authorities (see **Certificates**).
   Everything else stays on hyper + native-tls, as the TLS bullet in
   [kiosk-browser.md](kiosk-browser.md) says.
   Fenced into `agent/tessaro-agent/src/speedtest.rs`; do not reach for
@@ -341,3 +342,39 @@ restarts `tessaro-proxy.service`, or stops it when the URL is emptied.
   "disable"`): it would read `/etc/tinyproxy.conf`, on the `/etc` overlay.
   `tessaro-proxy.service` has `ConditionPathExists=` on the rendered config,
   so without a proxy nothing runs.
+
+## Certificates
+
+**Extra certificate authorities are trusted by the browser and the agent,
+on top of the image's `ca-certificates` bundle, never in place of it**: for
+an intranet site on an internal CA, or a proxy that inspects TLS.
+`tessaro-ctl network certs add FILE | list | revoke CERT`, and the Network
+page of `tessaro-gui`. The store is `/data/tessaro/ca-certs`, one
+`<sha256>.pem` per certificate (`agent/tessaro-agent/src/certs.rs`); they
+are not a setting, since PEM text is exactly what `config set` refuses.
+
+* **Chromium gets them as the `CACertificates` policy**, base64 DER, in the
+  rendered `10-tessaro.json` (`render::policy`). The policy is
+  `dynamic_refresh` (`CACertificates.yaml` in Chromium's policy templates,
+  supported since 132), so an add or a revoke changes what the browser
+  trusts without restarting it. A page that already failed is not
+  reloaded; the next navigation or probe recovery loads it.
+* **The agent's openssl client adds them as roots once per process**
+  (`http::trust`, from `main.rs` before the runtime starts), which covers
+  the reachability probe, the public address and `network proxy test`.
+  An add or a revoke restarts the agent (`After::Restart`) once the answer
+  is out; an add that only repeats known certificates restarts nothing.
+* **`/etc/ssl/certs` is never touched.** `update-ca-certificates` would copy
+  the whole bundle up into the `/etc` overlay, where it would shadow the
+  image's forever, and an image update's new roots would never arrive.
+  `/usr/local/share/ca-certificates` is on the read-only root anyway.
+* **Nothing else on the device sees them**: curl, NetworkManager's
+  connectivity check, and the speed test, whose rustls root store is
+  compiled in (see **Speed test**).
+* **What is accepted**: PEM or DER (the client wraps DER into PEM), one
+  certificate or a chain, each stored separately, at most 32 and 64 KiB of
+  text per add. A file holding a private key is refused by the client and
+  again by the device. A self-signed server certificate works as well as a
+  root: Chromium and openssl both treat what is added as a trust anchor.
+* **They are configuration, not credentials**: an unclaim keeps them, a
+  factory reset (either path) removes the store.

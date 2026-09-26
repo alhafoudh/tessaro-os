@@ -115,6 +115,7 @@ const HELP_STYLES: Styles = Styles::styled()
         \x20 tessaro-ctl -n brave-otter-3fa2 ssh connect -- journalctl -fu tessaro-agent\n\
         \x20 tessaro-ctl ssh keys list                      keys that can log in as root\n\
         \x20 tessaro-ctl ssh keys revoke user@laptop        by comment or fingerprint\n\
+        \x20 tessaro-ctl network certs add corp-root-ca.pem trust an intranet or TLS-inspecting CA\n\
         \x20 source <(tessaro-ctl completion bash)          tab completion; also zsh, powershell\n\n\
         ENVIRONMENT:\n\
         \x20 TESSARO_NODE        default for --node\n\

@@ -102,7 +102,9 @@ Things to know:
   a path compiled into the binary (`components/policy/core/common/policy_paths.cc`).
   The loader accepts `//` comments and trailing commas, so the file documents
   itself. A syntax error drops the **whole file** with one `SYSLOG(WARNING)`,
-  so confirm on `chrome://policy` after editing.
+  so confirm on `chrome://policy` after editing. The agent renders it
+  (`render.rs`), and `CACertificates` in it is `tessaro-ctl network certs`
+  (see **Certificates** in [networking.md](networking.md)).
 * **`/data/kiosk` is root owned and only `/data/kiosk/chromium` is `weston`.**
   Both come from tmpfiles `d` lines, which re-apply owner and mode every boot.
   `/data/kiosk/offline.html` is a page the agent puts on screen, so a
@@ -146,7 +148,9 @@ Things to know:
   dependency tree would redo the redirect walk and origin parsing the agent
   already has. `native_tls` uses openssl's default verify paths - the image's
   `/etc/ssl/certs` from `ca-certificates` - so there is no compiled-in root
-  store. The silent failure left is an https URL that never takes the TLS path
+  store. The extra certificate authorities are added to those roots, never
+  written into `/etc/ssl` (see **Certificates** in
+  [networking.md](networking.md)). The silent failure left is an https URL that never takes the TLS path
   and fails like a dead site; `agent/tessaro-agent/src/http.rs` tests for it,
   and `readelf -d` on the built binaries should show `libssl.so.3`. Not
   rustls: it freezes the roots at build time, and `ring`/`aws-lc-rs` want a C

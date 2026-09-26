@@ -355,6 +355,14 @@ impl Control {
             self.log
                 .info(format!("factory reset: the file store: {err}"));
         }
+        let dir = self.paths.ca_certs_dir();
+        if let Err(err) = blocking("removing the certificates", move || {
+            crate::certs::clear(&dir).map_err(|err| format!("{}: {err}", dir.display()))
+        })
+        .await
+        {
+            return Reply::err(err);
+        }
 
         if let Err(err) = self.render(&BTreeMap::new()).await {
             return Reply::err(format!("reset, but rendering failed: {err}"));
@@ -364,7 +372,8 @@ impl Control {
         self.refresh_network().await;
 
         self.log.info(format!(
-            "factory reset by {}: settings, tokens, ssh keys, passwords, the network and stored files cleared",
+            "factory reset by {}: settings, tokens, ssh keys, passwords, the network, \
+             certificate authorities and stored files cleared",
             caller.describe()
         ));
         // Weston takes the browser and the agent with it (PartOf=), so every

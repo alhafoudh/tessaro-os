@@ -38,7 +38,7 @@ same change as the behaviour it describes.
 | [docs/audio.md](docs/audio.md) | PipeWire units, how `audio.*` is applied, `auto` |
 | [docs/time.md](docs/time.md) | timedated and timesyncd, how `time.*` is applied, DHCP's NTP servers, the persistent clock, where `time show`'s numbers come from |
 | [docs/files.md](docs/files.md) | the `/data/files` store served at `/files/` |
-| [docs/networking.md](docs/networking.md) | NetworkManager, the managed profiles and their transactions, hotspot, ping, speed test, the proxy (local tinyproxy, what goes through it) |
+| [docs/networking.md](docs/networking.md) | NetworkManager, the managed profiles and their transactions, hotspot, ping, speed test, the proxy (local tinyproxy, what goes through it), extra certificate authorities |
 | [docs/updates.md](docs/updates.md) | in-place updates, `--repartition`, growing `/data` |
 | [docs/e2e.md](docs/e2e.md) | the qemu RSpec suite: running it, lanes, ports, harness quirks |
 | [docs/gui.md](docs/gui.md) | `tessaro-gui`: inner windows, keyboard, the node list, device pages per command group, workers and jobs, the VNC viewer |
@@ -242,8 +242,10 @@ recipe.
   comment, on its own line above the statement. Blocking work goes on
   `spawn_blocking`. `tessaro-ctl` is a plain blocking client on purpose.
 * **TLS is openssl via native-tls on hyper**, using the device's
-  `/etc/ssl/certs`. reqwest and rustls are allowed only inside
-  `speedtest.rs`, for cfspeedtest.
+  `/etc/ssl/certs` plus the extra CAs of `network certs` (`http::trust`).
+  Never run `update-ca-certificates` or write `/etc/ssl`: the overlay would
+  shadow the image's bundle forever. reqwest and rustls are allowed only
+  inside `speedtest.rs`, for cfspeedtest.
 * **Do not "fix" the quiet CDP failures before the browser first answers**
   (`seen_alive` in `agent.rs`). Every boot has them.
 * **Settings go through the registry** (`agent/protocol/src/keys.rs`) and are
@@ -290,7 +292,8 @@ same thing. Keep to these rules when adding a command or a setting:
   * `ssh`: shell access by key. `connect` and `keys list|revoke`.
   * `config`: the settings registry. `keys`, `get`, `set`, `unset`.
   * `network`: the device's network link. Addresses, interfaces, profiles,
-    WiFi, the proxy, `ping` from the device, speed test.
+    WiFi, the proxy, extra certificate authorities, `ping` from the device,
+    speed test.
   * `storage`: the disk the device runs from. Partitions, free space,
     growing `/data`.
   * `screen`: the physical display. Screenshot, modes, confirming a mode,

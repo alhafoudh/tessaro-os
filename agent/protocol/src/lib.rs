@@ -506,6 +506,18 @@ pub enum Command {
     /// Cloudflare's trace fetched through the proxy: the address the
     /// internet sees through it, or why it could not be reached.
     ProxyTest,
+    /// Trust the certificate authorities in `pem`, one or more PEM
+    /// certificates, in Chromium and the agent's own TLS client.
+    NetCertAdd {
+        pem: String,
+    },
+    /// The extra certificate authorities the device trusts.
+    NetCertList,
+    /// Stop trusting one of them: its SHA-256 fingerprint, a unique prefix
+    /// of it, or its exact subject.
+    NetCertRevoke {
+        cert: String,
+    },
 }
 
 /// The image `update-begin` describes. Its fields sit in the command itself
@@ -1378,6 +1390,32 @@ pub struct SshKeyRevoked {
     pub fingerprint: Option<String>,
 }
 
+/// The most PEM text one `net-cert-add` may carry: a chain of a few
+/// certificates, with room to spare.
+pub const CERT_PEM_MAX: usize = 64 * 1024;
+
+/// One extra certificate authority the device trusts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CertInfo {
+    /// SHA-256 of the DER, lower-case hex.
+    pub fingerprint: String,
+    /// `CN=Corp Root CA, O=Corp`.
+    pub subject: String,
+    pub issuer: String,
+    /// When it expires, seconds since the epoch, UTC.
+    pub not_after: i64,
+    /// Signed by its own key: a root rather than an intermediate.
+    pub self_signed: bool,
+}
+
+/// What `net-cert-add` did with each certificate it was sent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CertsAdded {
+    pub added: Vec<CertInfo>,
+    /// Already trusted; nothing changed for these.
+    pub present: Vec<CertInfo>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Screenshot {
     pub format: String,
@@ -1738,6 +1776,8 @@ mod tests {
         assert!(!Command::SshAuthorize { key: "x".into() }.is_public());
         assert!(!Command::SshKeyList.is_public());
         assert!(!Command::NetProfiles.is_public());
+        assert!(!Command::NetCertAdd { pem: "x".into() }.is_public());
+        assert!(!Command::NetCertList.is_public());
         assert!(!Command::FilesList {
             path: "".into(),
             recursive: false
@@ -1942,6 +1982,20 @@ mod tests {
         )
         .unwrap();
         assert_eq!(old, command);
+    }
+
+    #[test]
+    fn cert_commands_have_their_wire_names() {
+        assert_eq!(
+            to_line(&Command::NetCertRevoke {
+                cert: "ab12".into()
+            }),
+            "{\"cmd\":\"net-cert-revoke\",\"cert\":\"ab12\"}\n"
+        );
+        assert_eq!(
+            from_line::<Command>(r#"{"cmd":"net-cert-add","pem":"x"}"#).unwrap(),
+            Command::NetCertAdd { pem: "x".into() }
+        );
     }
 
     #[test]

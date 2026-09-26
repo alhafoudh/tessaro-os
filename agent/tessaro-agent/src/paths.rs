@@ -237,6 +237,12 @@ impl Paths {
         self.state_dir.join("tls")
     }
 
+    /// The extra certificate authorities the device trusts (`certs.rs`),
+    /// one `<fingerprint>.pem` each.
+    pub fn ca_certs_dir(&self) -> PathBuf {
+        self.state_dir.join("ca-certs")
+    }
+
     pub fn factory_reset_marker(&self) -> PathBuf {
         self.state_dir.join("factory-reset")
     }

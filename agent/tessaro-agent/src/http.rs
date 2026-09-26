@@ -45,10 +45,12 @@
 //! an https URL that never takes the TLS path: a plaintext GET to port 443
 //! fails like a dead site, and the device sits on the offline page forever.
 //! Both have a test. `readelf -d` on the built binary should always show
-//! `libssl.so.3`.
+//! `libssl.so.3`. The extra certificate authorities of `tessaro-ctl network
+//! certs` are added to openssl's roots (`trust`), never in place of them.
 
 use std::io::ErrorKind;
 use std::net::{IpAddr, SocketAddr};
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -115,6 +117,32 @@ pub trait HttpGet {
     async fn get(&self, url: &str) -> Result<HttpResponse, HttpError>;
 }
 
+/// The extra certificate authorities (`certs.rs`), read once before the
+/// runtime starts. A change restarts the agent, so a process never needs to
+/// see another set.
+static ROOTS: OnceLock<Vec<native_tls::Certificate>> = OnceLock::new();
+
+/// Trust `roots` as well, in every client made from now on. Only the first
+/// call counts.
+pub fn trust(roots: Vec<native_tls::Certificate>) {
+    let _ = ROOTS.set(roots);
+}
+
+/// native-tls means openssl here, with openssl's default verify paths: the
+/// device's /etc/ssl/certs from ca-certificates. That is the platform
+/// verifier by construction - there is no compiled-in root store to pick by
+/// mistake. `roots` are added on top, never instead.
+fn connector(roots: &[native_tls::Certificate]) -> Result<tokio_native_tls::TlsConnector, String> {
+    let mut builder = native_tls::TlsConnector::builder();
+    for root in roots {
+        builder.add_root_certificate(root.clone());
+    }
+    builder
+        .build()
+        .map(tokio_native_tls::TlsConnector::from)
+        .map_err(|err| err.to_string())
+}
+
 /// Whatever carries the request: a plain socket or a TLS stream over one.
 trait Io: AsyncRead + AsyncWrite + Unpin + Send {}
 impl<T: AsyncRead + AsyncWrite + Unpin + Send> Io for T {}
@@ -139,14 +167,7 @@ impl HyperHttp {
         max_body: usize,
         heartbeat: Heartbeat,
     ) -> Self {
-        // native-tls means openssl here, with openssl's default verify paths:
-        // the device's /etc/ssl/certs from ca-certificates. That is the
-        // platform verifier by construction - there is no compiled-in root
-        // store to pick by mistake.
-        let tls = native_tls::TlsConnector::new()
-            .map(tokio_native_tls::TlsConnector::from)
-            .map_err(|err| err.to_string());
-
+        let tls = connector(ROOTS.get().map(Vec::as_slice).unwrap_or_default());
         Self {
             connect_timeout: seconds(connect_timeout),
             read_timeout: seconds(read_timeout),
@@ -636,6 +657,86 @@ mod tests {
         let result = client().fetch(&format!("https://127.0.0.1:{port}/")).await;
 
         assert_eq!(result, Err(HttpError::Tls));
+    }
+
+    /// An https server on loopback whose certificate `ca` signed for
+    /// 127.0.0.1, answering every connection with a 204.
+    async fn serve_tls(
+        ca: &openssl::x509::X509,
+        ca_key: &openssl::pkey::PKey<openssl::pkey::Private>,
+    ) -> u16 {
+        use openssl::asn1::{Asn1Integer, Asn1Time};
+        use openssl::bn::BigNum;
+        use openssl::ec::{EcGroup, EcKey};
+        use openssl::hash::MessageDigest;
+        use openssl::nid::Nid;
+        use openssl::pkey::PKey;
+        use openssl::x509::extension::SubjectAlternativeName;
+        use openssl::x509::{X509NameBuilder, X509};
+
+        let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
+        let key = PKey::from_ec_key(EcKey::generate(&group).unwrap()).unwrap();
+        let mut name = X509NameBuilder::new().unwrap();
+        name.append_entry_by_nid(Nid::COMMONNAME, "127.0.0.1")
+            .unwrap();
+        let name = name.build();
+        let mut cert = X509::builder().unwrap();
+        cert.set_version(2).unwrap();
+        cert.set_serial_number(&Asn1Integer::from_bn(&BigNum::from_u32(2).unwrap()).unwrap())
+            .unwrap();
+        cert.set_subject_name(&name).unwrap();
+        cert.set_issuer_name(ca.subject_name()).unwrap();
+        cert.set_pubkey(&key).unwrap();
+        cert.set_not_before(&Asn1Time::days_from_now(0).unwrap())
+            .unwrap();
+        cert.set_not_after(&Asn1Time::days_from_now(1).unwrap())
+            .unwrap();
+        let san = SubjectAlternativeName::new()
+            .ip("127.0.0.1")
+            .build(&cert.x509v3_context(Some(ca), None))
+            .unwrap();
+        cert.append_extension(san).unwrap();
+        cert.sign(ca_key, MessageDigest::sha256()).unwrap();
+        let cert = cert.build();
+
+        let identity = native_tls::Identity::from_pkcs8(
+            &cert.to_pem().unwrap(),
+            &key.private_key_to_pem_pkcs8().unwrap(),
+        )
+        .unwrap();
+        let acceptor =
+            tokio_native_tls::TlsAcceptor::from(native_tls::TlsAcceptor::new(identity).unwrap());
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        tokio::spawn(async move {
+            while let Ok((socket, _)) = listener.accept().await {
+                let Ok(mut tls) = acceptor.accept(socket).await else {
+                    continue;
+                };
+                let mut buffer = [0u8; 1024];
+                let _ = tls.read(&mut buffer).await;
+                let _ = tls
+                    .write_all(b"HTTP/1.1 204 No Content\r\ncontent-length: 0\r\n\r\n")
+                    .await;
+                let _ = tls.shutdown().await;
+            }
+        });
+        port
+    }
+
+    #[tokio::test]
+    async fn an_extra_root_is_trusted_on_top_of_the_system_ones() {
+        let (ca, ca_key) = crate::certs::tests::ca("Corp Root", 1);
+        let port = serve_tls(&ca, &ca_key).await;
+        let url = format!("https://127.0.0.1:{port}/");
+
+        let result = client().fetch(&url).await;
+        assert_eq!(result, Err(HttpError::CertificateVerification));
+
+        let mut trusting = client();
+        trusting.tls =
+            connector(&[native_tls::Certificate::from_der(&ca.to_der().unwrap()).unwrap()]);
+        assert_eq!(trusting.fetch(&url).await.expect("response").status, 204);
     }
 
     #[tokio::test]
