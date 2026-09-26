@@ -216,6 +216,8 @@ pub struct Control {
     portal_seen: Mutex<Option<Instant>>,
     /// Set once, by `start_bridge`.
     bridge: std::sync::OnceLock<Arc<bridge::Bridge>>,
+    /// How busy the CPU was over `watch_cpu`'s last interval, in percent.
+    cpu: Mutex<Option<u8>>,
 }
 
 impl Control {
@@ -262,6 +264,7 @@ impl Control {
             speedtest: Arc::new(tokio::sync::Mutex::new(())),
             storage_grow: Arc::new(tokio::sync::Mutex::new(())),
             bridge: std::sync::OnceLock::new(),
+            cpu: Mutex::new(None),
         })
     }
 
@@ -740,6 +743,15 @@ impl Control {
         })
         .await
         .unwrap_or_default();
+        let paths = self.paths.clone();
+        let (hardware, memory) = blocking("reading the hardware", move || {
+            Ok((
+                Some(crate::hardware::hardware(&paths)),
+                crate::hardware::memory(&paths.meminfo),
+            ))
+        })
+        .await
+        .unwrap_or_default();
         let data = self
             .storage()
             .await
@@ -773,6 +785,9 @@ impl Control {
             devtools,
             audio: Some(audio),
             time,
+            hardware,
+            memory,
+            cpu_percent: *lock(&self.cpu),
         })
     }
 
@@ -1159,6 +1174,11 @@ mod tests {
             ("KIOSK_MANAGE_SCHEDULES", "0".to_string()),
             ("KIOSK_SYSTEMD_UNIT_DIR", at("units")),
             ("KIOSK_SYSTEMD_ANALYZE", at("systemd-analyze")),
+            // A qemu VM's hardware, never this host's.
+            ("KIOSK_DMI", at("dmi")),
+            ("KIOSK_DEVICE_TREE", at("device-tree")),
+            ("KIOSK_CPUINFO", at("cpuinfo")),
+            ("KIOSK_MEMINFO", at("meminfo")),
         ]
         .into_iter()
         .map(|(k, v)| (k.to_string(), v))
@@ -1172,6 +1192,20 @@ mod tests {
         fs::write(connector.join("status"), "connected\n").unwrap();
         fs::write(connector.join("modes"), "1920x1080\n1280x720\n").unwrap();
         fake_analyze(&dir.path().join("systemd-analyze"));
+        let dmi = dir.path().join("dmi");
+        fs::create_dir_all(&dmi).unwrap();
+        fs::write(dmi.join("sys_vendor"), "QEMU\n").unwrap();
+        fs::write(dmi.join("product_name"), "Standard PC (Q35 + ICH9, 2009)\n").unwrap();
+        fs::write(
+            dir.path().join("cpuinfo"),
+            "processor\t: 0\nmodel name\t: QEMU Virtual CPU version 2.5+\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("meminfo"),
+            "MemTotal:        4000000 kB\nMemAvailable:    3000000 kB\n",
+        )
+        .unwrap();
 
         let paths = Paths::load(&env);
         let defaults: HashMap<String, String> = [
@@ -1252,6 +1286,26 @@ mod tests {
             apply: true,
             verify: Default::default(),
         }
+    }
+
+    #[tokio::test]
+    async fn status_says_what_the_hardware_is_and_how_much_ram_is_used() {
+        let fx = fixture();
+        let status: Status = ok(&fx.control, &Caller::Local, Command::Status).await;
+        let hardware = status.hardware.unwrap();
+        assert_eq!(hardware.vendor.as_deref(), Some("QEMU"));
+        assert_eq!(
+            hardware.model.as_deref(),
+            Some("Standard PC (Q35 + ICH9, 2009)")
+        );
+        assert_eq!(
+            hardware.cpu.as_deref(),
+            Some("QEMU Virtual CPU version 2.5+")
+        );
+        assert_eq!(hardware.cores, Some(1));
+        let memory = status.memory.unwrap();
+        assert_eq!(memory.total, 4_000_000 * 1024);
+        assert_eq!(memory.used_percent(), 25);
     }
 
     #[tokio::test]

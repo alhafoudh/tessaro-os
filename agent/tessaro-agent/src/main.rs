@@ -31,6 +31,7 @@ mod debug;
 mod display;
 mod error;
 mod files;
+mod hardware;
 mod hotplug;
 mod http;
 mod identity;
@@ -348,6 +349,7 @@ async fn start_control(
     control.watch_display();
     control.watch_audio();
     control.watch_time();
+    control.watch_cpu();
     control.watch_schedules();
     control.watch_welcome();
     control.watch_screen_power();

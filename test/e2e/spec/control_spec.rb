@@ -35,6 +35,21 @@ module AgentE2E
       expect(guest.run("tessaro-ctl config keys")).not_to include("device.gpu_mem")
     end
 
+    # qemu fills DMI in with its own name, so the VM says it is one. CPU use
+    # needs the agent's second sample, and the lane's setup has just
+    # restarted it: its first navigation can come before that.
+    it "hardware: tessaro-ctl device status names the hardware and how busy its CPU and RAM are" do
+      step "wait up to 10s for tessaro-ctl device status to show cpu use"
+      deadline = Time.now + 10
+      sleep 1 until quietly { guest.run("tessaro-ctl device status 2>/dev/null", allow_failure: true) }
+                    .match?(/^cpu use /) || Time.now > deadline
+      status = guest.run("tessaro-ctl device status")
+      expect(status).to match(/^hardware\s+QEMU /)
+      expect(status).to match(/^cpu\s+\S/)
+      expect(status).to match(/^cpu use\s+\d+%$/)
+      expect(status).to match(/^memory\s+\S+ \S+ free of \S+ \S+ \(\d+% used\)$/)
+    end
+
     # The page's zone is what Chromium reads from /etc/localtime, which
     # timedated relinks: no browser restart, and no TZ anywhere.
     it "time: tessaro-ctl time timezone moves the clock's zone and the page follows without a browser restart",

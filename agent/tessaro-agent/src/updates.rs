@@ -872,17 +872,7 @@ fn check_partitions(
 fn fits_in_ram(meminfo: &Path, size: u64) -> Result<(), String> {
     let text =
         fs::read_to_string(meminfo).map_err(|err| format!("{}: {err}", meminfo.display()))?;
-    let total = text
-        .lines()
-        .find_map(|line| line.strip_prefix("MemTotal:"))
-        .and_then(|rest| {
-            rest.trim()
-                .trim_end_matches("kB")
-                .trim()
-                .parse::<u64>()
-                .ok()
-        })
-        .map(|kib| kib * 1024)
+    let total = crate::hardware::meminfo_bytes(&text, "MemTotal")
         .ok_or_else(|| format!("{} has no MemTotal", meminfo.display()))?;
     let needed = size + flash::RAM_MARGIN + RAM_RESERVED;
     if total < needed {

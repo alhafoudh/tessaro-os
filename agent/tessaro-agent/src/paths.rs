@@ -81,8 +81,16 @@ pub struct Paths {
     pub by_label: PathBuf,
     pub mountinfo: PathBuf,
     pub dev: PathBuf,
-    /// `/proc/meminfo`: whether a disk update's upload fits in RAM.
+    /// `/proc/meminfo`: whether a disk update's upload fits in RAM, and
+    /// `status`'s memory.
     pub meminfo: PathBuf,
+    /// `/sys/class/dmi/id`, `/proc/device-tree` and `/proc/cpuinfo`: what the
+    /// hardware is, for `status` (docs/hardware.md).
+    pub dmi: PathBuf,
+    pub device_tree: PathBuf,
+    pub cpuinfo: PathBuf,
+    /// `/proc/stat`: how busy the CPU is, sampled by `watch_cpu`.
+    pub proc_stat: PathBuf,
     /// The image's os-release, for `status`.
     pub os_release: PathBuf,
     /// Where PipeWire, WirePlumber and the Pulse server put their sockets:
@@ -190,6 +198,10 @@ impl Paths {
             mountinfo: path("KIOSK_MOUNTINFO", "/proc/self/mountinfo"),
             dev: path("KIOSK_DEV", "/dev"),
             meminfo: path("KIOSK_MEMINFO", "/proc/meminfo"),
+            dmi: path("KIOSK_DMI", "/sys/class/dmi/id"),
+            device_tree: path("KIOSK_DEVICE_TREE", "/proc/device-tree"),
+            cpuinfo: path("KIOSK_CPUINFO", "/proc/cpuinfo"),
+            proc_stat: path("KIOSK_PROC_STAT", "/proc/stat"),
             os_release: path("KIOSK_OS_RELEASE", "/usr/lib/os-release"),
             audio_runtime: path("KIOSK_AUDIO_RUNTIME_DIR", "/run/tessaro-audio"),
             asound_cards: path("KIOSK_ASOUND_CARDS", "/proc/asound/cards"),

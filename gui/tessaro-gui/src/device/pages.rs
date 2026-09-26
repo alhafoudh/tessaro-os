@@ -473,6 +473,28 @@ fn calendar_note(check: &CalendarCheck) -> String {
     note
 }
 
+/// Overview's rows for what the device is, the same as `tessaro-ctl device
+/// status` prints; a field the firmware does not say is left out.
+fn hardware_facts(hardware: &protocol::Hardware, facts: &mut Vec<(&'static str, String)>) {
+    if let Some(machine) = hardware.machine() {
+        facts.push(("Hardware", machine));
+    }
+    if let Some(board) = &hardware.board {
+        facts.push(("Board", board.clone()));
+    }
+    if let Some(firmware) = &hardware.firmware {
+        facts.push(("Firmware", firmware.clone()));
+    }
+    let cpu = match hardware.cpu_line() {
+        Some(cpu) => format!("{cpu}, {}", hardware.arch),
+        None => hardware.arch.clone(),
+    };
+    facts.push(("CPU", cpu));
+    if let Some(serial) = &hardware.serial {
+        facts.push(("Serial", serial.clone()));
+    }
+}
+
 /// The page a tag's answer belongs to, for its error line.
 fn page_of(tag: &str) -> &'static str {
     match tag.split('.').next().unwrap_or("") {
@@ -2498,7 +2520,21 @@ impl Device {
         if let Some((status, _)) = &self.status {
             facts.push(("OS", status.os.clone().unwrap_or_default()));
             facts.push(("Image", status.image_version.clone().unwrap_or_default()));
+            if let Some(hardware) = &status.hardware {
+                hardware_facts(hardware, &mut facts);
+            }
             facts.push(("Revision", status.revision.to_string()));
+            if let Some(memory) = &status.memory {
+                facts.push((
+                    "Memory",
+                    format!(
+                        "{} of {} used ({}%)",
+                        size_label(memory.used()),
+                        size_label(memory.total),
+                        memory.used_percent()
+                    ),
+                ));
+            }
             if let Some(time) = &status.time {
                 let sync = match (time.ntp, time.synchronized) {
                     (Some(false), _) => "NTP off",

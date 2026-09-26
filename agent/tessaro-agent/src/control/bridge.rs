@@ -452,21 +452,7 @@ impl Control {
                 }
                 (Ok(Value::Null), None)
             }
-            "device.status" => plain(self.status().await.map(|status| {
-                json!({
-                    "os": status.os,
-                    "imageVersion": status.image_version,
-                    "version": status.node.version,
-                    "machine": status.node.machine,
-                    "kioskUrl": status.kiosk_url,
-                    "currentUrl": status.current_url,
-                    "maintenance": status.maintenance,
-                    "debugScreen": status.debug_screen,
-                    "screenOn": status.screen_on,
-                    "units": status.units,
-                    "data": status.data,
-                })
-            })),
+            "device.status" => plain(self.status().await.map(|status| page_status(&status))),
             "network.status" => {
                 let paths = self.paths.clone();
                 plain(
@@ -773,6 +759,27 @@ fn disrupt(bridge: &Bridge) -> Result<(), Value> {
     Ok(())
 }
 
+/// `tessaro.device.status()`: what `device status` shows, without the
+/// node's name, fingerprint and claim.
+fn page_status(status: &protocol::Status) -> Value {
+    json!({
+        "os": status.os,
+        "imageVersion": status.image_version,
+        "version": status.node.version,
+        "machine": status.node.machine,
+        "kioskUrl": status.kiosk_url,
+        "currentUrl": status.current_url,
+        "maintenance": status.maintenance,
+        "debugScreen": status.debug_screen,
+        "screenOn": status.screen_on,
+        "units": status.units,
+        "data": status.data,
+        "hardware": status.hardware,
+        "memory": status.memory,
+        "cpuPercent": status.cpu_percent,
+    })
+}
+
 fn to_value<T: serde::Serialize>(value: T) -> Result<Value, String> {
     serde_json::to_value(value).map_err(|err| err.to_string())
 }
@@ -813,6 +820,18 @@ fn origin_of(url: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn the_page_gets_the_hardware_but_not_the_node() {
+        let fx = crate::control::fixture();
+        let status = page_status(&fx.control.status().await.unwrap());
+        assert_eq!(status["hardware"]["vendor"], "QEMU");
+        assert_eq!(status["memory"]["total"], 4_000_000u64 * 1024);
+        assert!(status.get("cpuPercent").is_some());
+        for hidden in ["name", "fingerprint", "claimed", "node"] {
+            assert!(status.get(hidden).is_none(), "{hidden} reached the page");
+        }
+    }
 
     fn bridge(mode: BridgeMode) -> Bridge {
         Bridge {

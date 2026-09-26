@@ -1353,6 +1353,34 @@ fn show_node(node: &NodeInfo) {
     style::row("claimed", &style::yes_no(node.claimed));
 }
 
+/// What the device is, one row per thing the firmware says; a field it
+/// does not say is left out.
+fn show_hardware(hardware: &protocol::Hardware) {
+    if let Some(machine) = hardware.machine() {
+        style::row("hardware", &machine);
+    }
+    match (&hardware.board, &hardware.firmware) {
+        (Some(board), Some(firmware)) => style::row(
+            "board",
+            &format!(
+                "{board} {}",
+                paint(style::MUTED, format!("firmware {firmware}"))
+            ),
+        ),
+        (Some(board), None) => style::row("board", board),
+        (None, Some(firmware)) => style::row("firmware", firmware),
+        (None, None) => {}
+    }
+    let arch = paint(style::MUTED, &hardware.arch);
+    match hardware.cpu_line() {
+        Some(cpu) => style::row("cpu", &format!("{cpu} {arch}")),
+        None => style::row("cpu", &arch),
+    }
+    if let Some(serial) = &hardware.serial {
+        style::row("serial", &paint(style::MUTED, serial));
+    }
+}
+
 fn show_status(status: &Status) {
     show_node(&status.node);
     if let Some(os) = &status.os {
@@ -1364,7 +1392,22 @@ fn show_status(status: &Status) {
             None => style::row("os", os),
         }
     }
+    if let Some(hardware) = &status.hardware {
+        show_hardware(hardware);
+    }
     style::row("revision", &status.revision.to_string());
+    if let Some(percent) = status.cpu_percent {
+        style::row(
+            "cpu use",
+            &paint(style::usage_level(percent.into()), format!("{percent}%")),
+        );
+    }
+    if let Some(memory) = &status.memory {
+        style::row(
+            "memory",
+            &storage::free_line(memory.available, memory.total, memory.used_percent()),
+        );
+    }
     if let Some(data) = &status.data {
         style::row("data", &storage::usage_line(data));
     }

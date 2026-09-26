@@ -38,6 +38,7 @@ same change as the behaviour it describes.
 | [docs/audio.md](docs/audio.md) | PipeWire units, how `audio.*` is applied, `auto` |
 | [docs/time.md](docs/time.md) | timedated and timesyncd, how `time.*` is applied, DHCP's NTP servers, the persistent clock, where `time show`'s numbers come from |
 | [docs/scheduler.md](docs/scheduler.md) | schedules: the systemd timer and units each is rendered into, parallel runs, how the last run is recorded, the reconcile, checking `OnCalendar` expressions |
+| [docs/hardware.md](docs/hardware.md) | vendor, model, board, CPU, serial and RAM in `device status`: DMI, the device tree, placeholders, where the serial goes |
 | [docs/files.md](docs/files.md) | the `/data/files` store served at `/files/` |
 | [docs/networking.md](docs/networking.md) | NetworkManager, the managed profiles and their transactions, hotspot, ping, speed test, the proxy (local tinyproxy, what goes through it), extra certificate authorities |
 | [docs/updates.md](docs/updates.md) | in-place updates, `--repartition`, growing `/data` |
@@ -268,6 +269,12 @@ recipe.
   change**: an action on the page of its group (`gui/tessaro-gui/src/device/pages.rs`,
   the table in [docs/gui.md](docs/gui.md)). Logic both need goes into
   `agent/client`, not into either binary.
+* **What a `tessaro-ctl` read returns reaches the page bridge in the same
+  change**, when a bridge call mirrors that read (the call table in
+  [docs/bridge.md](docs/bridge.md), `page_action` in `control/bridge.rs`):
+  a new field on `Status` goes into `device.status()`, and so on. A field
+  or command the page must not have is added to what that doc says is left
+  out on purpose, with the reason, instead.
 
 **Command-line output is colored, and any new CLI must be too.** Print through
 anstream's `println!`/`eprintln!` (imported to shadow the std macros) with the

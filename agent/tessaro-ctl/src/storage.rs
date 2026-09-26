@@ -62,11 +62,15 @@ pub fn run(session: &mut Session, command: StorageCmd, json: bool) -> Result<(),
 
 /// `2.8 GB free of 4.0 GB (27% used)`, the use colored by how full it is.
 pub fn usage_line(fs: &FsUsage) -> String {
-    let percent = fs.used_percent();
+    free_line(fs.available, fs.size, fs.used_percent())
+}
+
+/// The same line for anything with a size and free space: RAM too.
+pub fn free_line(available: u64, size: u64, percent: u64) -> String {
     format!(
         "{} free of {} {}",
-        size_label(fs.available),
-        size_label(fs.size),
+        size_label(available),
+        size_label(size),
         paint(style::usage_level(percent), format!("({percent}% used)"))
     )
 }

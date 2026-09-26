@@ -677,6 +677,17 @@ pub struct Status {
     /// The timezone and whether the clock is in sync. Defaulted the same way.
     #[serde(default)]
     pub time: Option<TimeSummary>,
+    /// Vendor, model, board and CPU. Defaulted the same way.
+    #[serde(default)]
+    pub hardware: Option<Hardware>,
+    /// How much RAM there is and how much is in use. Defaulted the same way.
+    #[serde(default)]
+    pub memory: Option<MemUsage>,
+    /// How busy the CPU was over the agent's last 2s sample, every core
+    /// counted: 100 is all of them. `None` until it has two samples.
+    /// Defaulted the same way.
+    #[serde(default)]
+    pub cpu_percent: Option<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1186,6 +1197,68 @@ impl FsUsage {
             0
         } else {
             (self.used * 100).div_ceil(seen)
+        }
+    }
+}
+
+/// What the hardware says it is, from DMI on x86 or the device tree on the
+/// Pi (docs/hardware.md). `None` is "the firmware does not say".
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Hardware {
+    /// `LENOVO`, `QEMU`, `Raspberry Pi`.
+    pub vendor: Option<String>,
+    /// `ThinkCentre M720q`, `Raspberry Pi 3 Model B Plus Rev 1.3`.
+    pub model: Option<String>,
+    /// The mainboard, or on the Pi the manufacturer that built it.
+    pub board: Option<String>,
+    /// The BIOS version and date. The Pi does not say.
+    pub firmware: Option<String>,
+    pub serial: Option<String>,
+    /// `Intel(R) Core(TM) i5-8500T CPU @ 2.10GHz`, or the Pi's SoC, `BCM2837`.
+    pub cpu: Option<String>,
+    pub cores: Option<u32>,
+    /// `x86_64`, `aarch64`.
+    pub arch: String,
+}
+
+impl Hardware {
+    /// Vendor and model in one line, `LENOVO 10T7002VMC (ThinkCentre M720q)`.
+    pub fn machine(&self) -> Option<String> {
+        let parts: Vec<&str> = [self.vendor.as_deref(), self.model.as_deref()]
+            .into_iter()
+            .flatten()
+            .collect();
+        (!parts.is_empty()).then(|| parts.join(" "))
+    }
+
+    /// The CPU and its cores, `BCM2837, 4 cores`, without the architecture.
+    pub fn cpu_line(&self) -> Option<String> {
+        let cores = self
+            .cores
+            .map(|n| format!("{n} {}", if n == 1 { "core" } else { "cores" }));
+        let parts: Vec<String> = self.cpu.iter().cloned().chain(cores).collect();
+        (!parts.is_empty()).then(|| parts.join(", "))
+    }
+}
+
+/// RAM, in bytes, from `/proc/meminfo`. `available` is `MemAvailable`: what
+/// can be handed out without swapping, page cache included.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemUsage {
+    pub total: u64,
+    pub available: u64,
+}
+
+impl MemUsage {
+    pub fn used(&self) -> u64 {
+        self.total.saturating_sub(self.available)
+    }
+
+    pub fn used_percent(&self) -> u64 {
+        if self.total == 0 {
+            0
+        } else {
+            (self.used() * 100).div_ceil(self.total)
         }
     }
 }

@@ -1613,6 +1613,13 @@ impl Device {
             if status.debug_screen {
                 bar = bar.push(small("debug screen".into()).style(iced::widget::text::warning));
             }
+            if let Some(percent) = status.cpu_percent {
+                bar = bar.push(small(format!("CPU {percent}%")).style(theme::muted));
+            }
+            if let Some(memory) = &status.memory {
+                bar =
+                    bar.push(small(format!("RAM {}%", memory.used_percent())).style(theme::muted));
+            }
             if let Some(data) = &status.data {
                 if let Some(percent) = (data.used * 100).checked_div(data.size) {
                     bar = bar.push(small(format!("/data {percent}% used")).style(theme::muted));

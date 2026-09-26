@@ -2,7 +2,8 @@
 //! URL a read-only key moves, the public address, Weston's config against
 //! the screens and keyboards plugged in, the WiFi client's fallback to the
 //! hotspot after boot, the sound server against the audio.* settings, the
-//! clock against the time.* settings, and the welcome page's `welcome.json`.
+//! clock against the time.* settings, the welcome page's `welcome.json`, and
+//! the CPU use `status` reports.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -15,6 +16,7 @@ use tokio::time::Instant;
 use super::{After, Control};
 use crate::audio;
 use crate::deadline::blocking;
+use crate::hardware;
 use crate::hotplug;
 use crate::nm::profiles;
 use crate::state;
@@ -709,6 +711,43 @@ impl Control {
                     _ = tokio::time::sleep(wait) => {}
                     _ = shutdown.changed() => return,
                 }
+            }
+        });
+    }
+
+    /// Keeps `status`'s CPU use current: `/proc/stat` every 2s, the busy
+    /// share of the ticks since the sample before. A share needs two
+    /// samples, so it is taken here for every caller rather than between one
+    /// client's calls: a lone `device status` gets the last interval too, and
+    /// two clients polling do not shorten each other's. The second sample
+    /// comes after `FIRST`, so a `status` right after the agent restarts -
+    /// which a `config set` often does - already has a share.
+    pub fn watch_cpu(self: &Arc<Self>) {
+        const EVERY: Duration = Duration::from_secs(2);
+        const FIRST: Duration = Duration::from_millis(500);
+
+        let control = Arc::clone(self);
+        let mut shutdown = self.shutdown.clone();
+        tokio::spawn(async move {
+            let mut before = None;
+            let mut wait = FIRST;
+            loop {
+                let stat = control.paths.proc_stat.clone();
+                // naked: a /proc read under blocking()'s within()
+                let now = blocking("reading /proc/stat", move || Ok(hardware::cpu_times(&stat)))
+                    .await
+                    .ok()
+                    .flatten();
+                *lock(&control.cpu) = before
+                    .zip(now)
+                    .and_then(|(before, now)| hardware::cpu_percent(before, now));
+                before = now;
+                // naked: a timer and the shutdown signal, not the outside world
+                tokio::select! {
+                    _ = tokio::time::sleep(wait) => {}
+                    _ = shutdown.changed() => return,
+                }
+                wait = EVERY;
             }
         });
     }

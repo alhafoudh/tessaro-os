@@ -75,7 +75,7 @@ answers everything:
 | Call | Mode | Does what `tessaro-ctl` does with |
 | --- | --- | --- |
 | `log(level, message)` | config | the journal, as `page (level): message`; `debug` only with `agent.debug` |
-| `device.status()` | config | `device status`, without the node's name, fingerprint and claim |
+| `device.status()` | config | `device status`, without the node's name, fingerprint and claim: the hardware and its serial, memory and `cpuPercent` included |
 | `network.status()` | config | `network show`, without the public address |
 | `audio.status()` | config | `audio show` |
 | `network.publicIp()` | actions | `config get network.public_ip`: asked now |
