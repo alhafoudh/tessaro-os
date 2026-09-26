@@ -343,6 +343,7 @@ fn page_of(tag: &str) -> &'static str {
     match tag.split('.').next().unwrap_or("") {
         "net" => "net",
         "wifi" => "wifi",
+        "certs" | "cert" => "certs",
         "storage" => "storage",
         "audio" => "audio",
         "time" => "time",
@@ -531,8 +532,8 @@ impl Device {
             Page::Network => {
                 self.call("net", Command::Net);
                 self.call("net.profiles", Command::NetProfiles);
-                self.call("net.certs", Command::NetCertList);
             }
+            Page::Certs => self.call("certs", Command::NetCertList),
             Page::Wifi => {
                 self.call("wifi", Command::Wifi);
                 self.call(
@@ -590,8 +591,8 @@ impl Device {
             "modes" => self.pages.modes = parse(value)?,
             "net" => self.pages.net = Some(parse(value)?),
             "net.profiles" => self.pages.profiles = parse(value)?,
-            "net.certs" => self.pages.certs = parse(value)?,
-            "net.cert.add" => {
+            "certs" => self.pages.certs = parse(value)?,
+            "cert.add" => {
                 let added: CertsAdded = parse(value)?;
                 for cert in &added.added {
                     self.log(Tone::Ok, format!("trusted {}", cert.subject));
@@ -599,13 +600,13 @@ impl Device {
                 for cert in &added.present {
                     self.log(Tone::Info, format!("already trusted: {}", cert.subject));
                 }
-                self.call("net.certs", Command::NetCertList);
+                self.call("certs", Command::NetCertList);
             }
-            "net.cert.revoke" => {
+            "cert.revoke" => {
                 let revoked: CertInfo = parse(value)?;
                 self.log(Tone::Ok, format!("revoked {}", revoked.subject));
                 self.pages.selected.remove("certs");
-                self.call("net.certs", Command::NetCertList);
+                self.call("certs", Command::NetCertList);
             }
             "net.profile" => {
                 let detail: NetProfileDetail = parse(value)?;
@@ -1014,7 +1015,7 @@ impl Device {
                 );
             }
             Msg::CertPicked(Some(file)) => match tessaro_client::certs::read_pem(&file) {
-                Ok(pem) => self.call("net.cert.add", Command::NetCertAdd { pem }),
+                Ok(pem) => self.call("cert.add", Command::NetCertAdd { pem }),
                 Err(error) => self.log(Tone::Bad, error),
             },
             Msg::CertPicked(None) => {}
@@ -1412,6 +1413,14 @@ impl Device {
                     .map(|profile| profile.name.clone())
                     .collect(),
             ),
+            Page::Certs => (
+                "certs",
+                self.pages
+                    .certs
+                    .iter()
+                    .map(|cert| cert.fingerprint.clone())
+                    .collect(),
+            ),
             Page::Access => (
                 "tokens",
                 self.pages
@@ -1734,10 +1743,9 @@ impl Device {
             Action::KeyRevoke(key) => {
                 self.call("ssh.revoke", Command::SshKeyRevoke { key: key.clone() })
             }
-            Action::CertRevoke(cert) => self.call(
-                "net.cert.revoke",
-                Command::NetCertRevoke { cert: cert.clone() },
-            ),
+            Action::CertRevoke(cert) => {
+                self.call("cert.revoke", Command::NetCertRevoke { cert: cert.clone() })
+            }
             Action::Mkdir => {
                 let name = form.value("Name").trim();
                 if name.is_empty() {
@@ -1881,6 +1889,7 @@ impl Device {
             Page::Browser => self.browser_view(),
             Page::Network => self.network_view(),
             Page::Wifi => self.wifi_view(),
+            Page::Certs => self.certs_view(),
             Page::Storage => self.storage_view(),
             Page::Audio => self.audio_view(),
             Page::Time => self.time_view(),
@@ -2400,6 +2409,45 @@ impl Device {
                 )
             })
             .collect();
+        self.page(
+            "net",
+            vec![
+                action("Last change", self.when(Msg::NetLast)),
+                action("Ping ...", self.when(Msg::NetPing)),
+                action("Speed test ...", self.when(Msg::Speedtest)),
+                action("Proxy ...", self.when(Msg::Proxy)),
+                action(
+                    "Proxy off",
+                    proxy_on
+                        .then_some(())
+                        .and_then(|()| self.when(Msg::ProxyOff)),
+                ),
+                action(
+                    "Test proxy",
+                    proxy_on
+                        .then_some(())
+                        .and_then(|()| self.when(Msg::ProxyTest)),
+                ),
+            ],
+            vec![action(
+                "Profile details",
+                self.selected("profiles")
+                    .and_then(|_| self.when(Msg::ProfileDetail)),
+            )],
+            vec![
+                self.facts("netfacts", facts),
+                self.table(
+                    "interfaces",
+                    INTERFACES,
+                    interfaces,
+                    Length::Fixed(TABLE_HEIGHT),
+                ),
+                self.table("profiles", PROFILES, profiles, Length::Fill),
+            ],
+        )
+    }
+
+    fn certs_view(&self) -> Element<'_, Message> {
         const CERTS: &[Col] = &[
             col("Certificate authority", Length::Fixed(260.0)),
             col("Expires (UTC)", Length::Fixed(110.0)),
@@ -2436,49 +2484,14 @@ impl Device {
             })
             .collect();
         self.page(
-            "net",
-            vec![
-                action("Last change", self.when(Msg::NetLast)),
-                action("Ping ...", self.when(Msg::NetPing)),
-                action("Speed test ...", self.when(Msg::Speedtest)),
-                action("Proxy ...", self.when(Msg::Proxy)),
-                action(
-                    "Proxy off",
-                    proxy_on
-                        .then_some(())
-                        .and_then(|()| self.when(Msg::ProxyOff)),
-                ),
-                action(
-                    "Test proxy",
-                    proxy_on
-                        .then_some(())
-                        .and_then(|()| self.when(Msg::ProxyTest)),
-                ),
-                action("Trust a CA ...", self.when(Msg::CertPick)),
-            ],
-            vec![
-                action(
-                    "Profile details",
-                    self.selected("profiles")
-                        .and_then(|_| self.when(Msg::ProfileDetail)),
-                ),
-                action(
-                    "Revoke CA",
-                    self.selected("certs")
-                        .and_then(|_| self.when(Msg::CertRevoke)),
-                ),
-            ],
-            vec![
-                self.facts("netfacts", facts),
-                self.table(
-                    "interfaces",
-                    INTERFACES,
-                    interfaces,
-                    Length::Fixed(TABLE_HEIGHT),
-                ),
-                self.table("profiles", PROFILES, profiles, Length::Fill),
-                self.table("certs", CERTS, certs, Length::Fixed(TABLE_HEIGHT)),
-            ],
+            "certs",
+            vec![action("Trust a CA ...", self.when(Msg::CertPick))],
+            vec![action(
+                "Revoke CA",
+                self.selected("certs")
+                    .and_then(|_| self.when(Msg::CertRevoke)),
+            )],
+            vec![self.table("certs", CERTS, certs, Length::Fill)],
         )
     }
 
@@ -3142,6 +3155,7 @@ pub(super) fn page_key(page: Page) -> &'static str {
         Page::Browser => "browser",
         Page::Network => "net",
         Page::Wifi => "wifi",
+        Page::Certs => "certs",
         Page::Storage => "storage",
         Page::Audio => "audio",
         Page::Time => "time",

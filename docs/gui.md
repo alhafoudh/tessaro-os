@@ -196,8 +196,9 @@ applies and stays, Default unsets.**
 | Overview | `device status` and `id`, systemd units, `device ping`, `device factory-reset` |
 | Screen | `screen modes` with "use this mode", `screen screenshot` with a 3s live refresh and Save, `screen power`, `screen keyboard` |
 | Browser | what the browser shows, `browser navigate`, `reload`, `clear-cache`, `maintenance`, `debug`, `zoom`, `devtools` (a job holding the tunnel until Cancel), `inject`, `bridge`, `eval` (results in the page's output) |
-| Network | `network show` and interfaces, `network last`, `network ping`, `network speedtest` (with "Bypass the proxy"), `network proxy set`, `off` and `test`, `network profiles list` and `show`, `network certs list`, `add` (a file picker) and `revoke` |
+| Network | `network show` and interfaces, `network last`, `network ping`, `network speedtest` (with "Bypass the proxy"), `network proxy set`, `off` and `test`, `network profiles list` and `show` |
 | WiFi | `network wifi status`, `scan`, `join`, `hotspot-password` |
+| Certificates | `network certs list`, `add` (a file picker) and `revoke` |
 | Storage | `storage show`, partitions and filesystems, `storage grow` (check first) |
 | Audio | `audio show`, outputs and inputs, choosing one, volume, mute, `audio test` for the tone and the recording |
 | Time | `time show` and its servers, `time timezone` (a choice of `time zones`), `time ntp on|off` with servers, `time sync`, `time set` (this computer's clock or a typed time) |

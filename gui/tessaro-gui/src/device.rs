@@ -349,6 +349,7 @@ pub enum Page {
     Browser,
     Network,
     Wifi,
+    Certs,
     Storage,
     Audio,
     Time,
@@ -366,6 +367,7 @@ impl Page {
         (Page::Browser, "Browser"),
         (Page::Network, "Network"),
         (Page::Wifi, "WiFi"),
+        (Page::Certs, "Certificates"),
         (Page::Storage, "Storage"),
         (Page::Audio, "Audio"),
         (Page::Time, "Time"),
@@ -389,7 +391,7 @@ impl Page {
             Page::Audio => ("audio", None),
             Page::Time => ("time", None),
             Page::Access => ("access", None),
-            Page::Ssh | Page::Files | Page::Update | Page::Log => return None,
+            Page::Certs | Page::Ssh | Page::Files | Page::Update | Page::Log => return None,
         };
         Some(Scope {
             prefix: prefix.to_string(),
