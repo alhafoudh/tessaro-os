@@ -616,7 +616,7 @@ set -- autossh -N -M 0 -o "ServerAliveInterval 30" -o "ServerAliveCountMax 3" \
     -L 5901:127.0.0.1:5900 \
     -L "5902:$TESSARO_BUILD_HOST_CONTAINER_IP:5901" \
     -R 7400:$TESSARO_DEVICE_IP:7400 \
-    -R 7401:127.0.0.1:7400 \
+    -L 7401:127.0.0.1:7401 \
     -L 2222:127.0.0.1:2222 \
     -R "5022:$TESSARO_DEVICE_IP:22"
 echo "+ $*"
