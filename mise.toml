@@ -549,14 +549,14 @@ else
     GPU_OPT="nographic"
 fi
 # --network=host, so runqemu's slirp forwards (127.0.0.1:2222 ssh,
-# 127.0.0.1:7400 tessaro-ctl - QB_SLIRP_OPT in kas/machine/qemux86-64.yml)
+# 127.0.0.1:7401 tessaro-ctl - QB_SLIRP_OPT in kas/machine/qemux86-64.yml)
 # are the host's loopback and not the container's.
 kas-container --runtime-args "$KVM_RUNTIME $GPU_RUNTIME --network=host" shell $KAS_CONFIG \
     -c "runqemu $WIC ovmf slirp snapshot $KVM_OPT $GPU_OPT serialstdio"
 '''
 
 [tasks."qemu:vnc"]
-description = "Boot the qemux86-64 image in QEMU with a VNC display on localhost:5900"
+description = "Boot the qemux86-64 image in QEMU with a VNC display on localhost:5901"
 dir = "{{config_root}}"
 depends = ["qemu:unpack"]
 raw = true
@@ -578,7 +578,8 @@ else
 fi
 # See qemu:run for why this is --device plus a 0666 udev rule. QEMU's
 # egl-headless display renders through the host GPU and is documented to be
-# combinable with -vnc, which is what publicvnc adds.
+# combinable with -vnc. Without a GPU, nographic keeps runqemu from looking
+# for a gtk or sdl window; -vnc works next to it all the same.
 if [ -d /dev/dri ]; then
     GPU_RUNTIME="--device /dev/dri"
     GPU_OPT="egl-headless"
@@ -586,12 +587,14 @@ else
     echo "warning: no /dev/dri on the host - the kiosk browser will not" >&2
     echo "         render over VNC. See docs/build.md." >&2
     GPU_RUNTIME=""
-    GPU_OPT=""
+    GPU_OPT="nographic"
 fi
 # --network=host as in qemu:run: the ssh and tessaro-ctl forwards reach the
-# host, and publicvnc's 5900 is the host's port with no -p needed.
+# host, and VNC display 1 is the host's 127.0.0.1:5901 with no -p needed.
+# Not runqemu's publicvnc: that is display 0 on every interface, and
+# something else on the build host already holds 5900.
 kas-container --runtime-args "$KVM_RUNTIME $GPU_RUNTIME --network=host" shell $KAS_CONFIG \
-    -c "runqemu $WIC ovmf slirp snapshot $KVM_OPT $GPU_OPT publicvnc serialstdio"
+    -c "runqemu $WIC ovmf slirp snapshot $KVM_OPT $GPU_OPT serialstdio qemuparams='-vnc 127.0.0.1:1'"
 '''
 
 [tasks."dev:tunnel"]
@@ -606,14 +609,15 @@ set -eu
 
 # localhost:5901 - the build host's loopback VNC (mise run qemu:vnc)
 # localhost:5902 - VNC on 5901 of a docker container on the build host
-# localhost:7400 - the qemu:run/qemu:vnc VM's tessaro-ctl port (QB_SLIRP_OPT)
+# localhost:7401 - the qemu:run/qemu:vnc VM's tessaro-ctl port (QB_SLIRP_OPT)
 # localhost:2222 - the same VM's SSH, for `ssh connect --port 2222`
-# build host's localhost:5022 - SSH on the device on this machine's network
+# build host's localhost:7400 - tessaro-ctl on the device on this machine's network
+# build host's localhost:5022 - SSH on the same device
 # -M 0 leaves dead-link detection to ServerAlive, which drops the connection
 # after 90s of silence so autossh can bring it back.
 set -- autossh -N -M 0 -o "ServerAliveInterval 30" -o "ServerAliveCountMax 3" \
     "$TESSARO_BUILD_HOST" \
-    -L 5901:127.0.0.1:5900 \
+    -L 5901:127.0.0.1:5901 \
     -L "5902:$TESSARO_BUILD_HOST_CONTAINER_IP:5901" \
     -R 7400:$TESSARO_DEVICE_IP:7400 \
     -L 7401:127.0.0.1:7401 \

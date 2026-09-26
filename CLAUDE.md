@@ -91,7 +91,7 @@ Use the mise tasks rather than calling `kas-container` directly:
 | `mise run image:flash` | Workstation, manual: write the pulled image to a card or disk (first install, recovery) |
 | `mise run qemu:unpack` | Decompress the `.wic` for runqemu |
 | `mise run qemu:run` | Boot in QEMU, serial console on the terminal |
-| `mise run qemu:vnc` | Boot in QEMU with VNC on localhost:5900 |
+| `mise run qemu:vnc` | Boot in QEMU with VNC on localhost:5901 |
 | `mise run agent:test` | `cargo test` for the whole agent workspace |
 | `mise run agent:lint` | `cargo fmt --check` plus clippy for the workspace |
 | `mise run agent:integration` | The agent against a real headless Chromium (`agent/compose.yaml`, needs docker compose), control plane in a sandbox |

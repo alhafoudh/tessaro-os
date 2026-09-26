@@ -42,7 +42,7 @@ sees the right environment (`bitbake -e <recipe>`, `bitbake -c devshell
 ## Running in QEMU
 
 ```sh
-mise run qemu:vnc   # boot it, framebuffer on localhost:5900
+mise run qemu:vnc   # boot it, framebuffer on localhost:5901
 mise run qemu:run   # serial console only (Ctrl-a x to exit)
 ```
 
@@ -110,10 +110,11 @@ with bmaptool (through `/dev/rdiskN` on macOS), syncs and ejects it.
 `mise run dev:tunnel` keeps an autossh tunnel to the build host up (needs
 `autossh`): `localhost:5901` is the build host's QEMU VNC from `qemu:vnc`,
 `localhost:5902` is VNC on port 5901 of `$TESSARO_BUILD_HOST_CONTAINER_IP`,
-`localhost:7400` and `localhost:2222` are that VM's tessaro-ctl port and SSH
-(`tessaro-ctl -n 127.0.0.1 device status`,
-`tessaro-ctl -n 127.0.0.1 ssh connect --port 2222`), and on the build host
-`localhost:5022` reaches SSH on `$TESSARO_DEVICE_IP`.
+`localhost:7401` and `localhost:2222` are that VM's tessaro-ctl port and SSH
+(`tessaro-ctl -n 127.0.0.1:7401 device status`,
+`tessaro-ctl -n 127.0.0.1:7401 ssh connect --port 2222`), and on the build
+host `localhost:7400` and `localhost:5022` reach tessaro-ctl and SSH on
+`$TESSARO_DEVICE_IP`.
 
 ## The agent
 
