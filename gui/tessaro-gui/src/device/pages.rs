@@ -17,17 +17,18 @@ use std::path::PathBuf;
 
 use iced::widget::{
     checkbox, column, container, pick_list, progress_bar, row, rule, scrollable, slider, space,
-    text, text_input, Column,
+    text, text_editor, text_input, Column,
 };
 use iced::{Element, Length, Task};
 use protocol::files::{self as store, FileEntry, FileKind, FilesListing};
 use protocol::keys;
 use protocol::{
-    size_label, Applied, AudioDevice, AudioStatus, AudioTested, CertInfo, CertsAdded, Claimed,
-    Command, Connector, Done, HotspotCredentials, Net, NetChange, NetProfile, NetProfileDetail,
-    Password, PingEvent, ProxyTested, Secret, SpeedtestEvent, SshKeyInfo, SshKeyRevoked, Storage,
-    StorageGrowEvent, TimeStatus, TokenCreated, TokenInfo, UpdatePhase, UpdateStatus, Verify,
-    WifiNetwork, WifiSecurity, WifiStatus,
+    size_label, Applied, AudioDevice, AudioStatus, AudioTested, CalendarCheck, CertInfo,
+    CertsAdded, Claimed, Command, Connector, Done, HotspotCredentials, Net, NetChange, NetProfile,
+    NetProfileDetail, OnError, Password, PingEvent, ProxyTested, ScheduleInfo, ScheduleSpec,
+    Secret, SpeedtestEvent, SshKeyInfo, SshKeyRevoked, Storage, StorageGrowEvent, TimeStatus,
+    TokenCreated, TokenInfo, UpdatePhase, UpdateStatus, Verify, WifiNetwork, WifiSecurity,
+    WifiStatus,
 };
 use serde_json::Value;
 use tessaro_client::clock;
@@ -55,6 +56,10 @@ pub struct State {
     volume: Option<u8>,
     input_volume: Option<u8>,
     time: Option<TimeStatus>,
+    schedules: Vec<ScheduleInfo>,
+    /// Counts edits of a schedule form's calendar, so only the check of the
+    /// last one is sent.
+    calendar_edits: u64,
     tokens: Vec<TokenInfo>,
     ssh_keys: Vec<SshKeyInfo>,
     files_dir: String,
@@ -90,6 +95,9 @@ pub struct Form {
     ok: &'static str,
     action: Action,
     error: Option<String>,
+    /// What the device says about the fields so far, under them: a
+    /// schedule's next run times.
+    note: Option<String>,
     /// Destructive: the device's name must be typed first.
     typed: bool,
 }
@@ -98,11 +106,15 @@ struct Field {
     label: &'static str,
     value: String,
     kind: FieldKind,
+    /// A multi-line field's text as the editor holds it; `value` follows it.
+    editor: Option<text_editor::Content>,
 }
 
 #[derive(Clone, Copy)]
 enum FieldKind {
     Text(&'static str),
+    /// One item per line.
+    Multiline(&'static str),
     Secret,
     Check,
     Choice(&'static [&'static str]),
@@ -123,6 +135,9 @@ enum Action {
     Speedtest,
     Proxy,
     CertRevoke(String),
+    /// A new schedule, or a change to the one with this id.
+    ScheduleSave(Option<String>),
+    ScheduleRemove(String),
     WifiJoin,
     Hotspot,
     Grow,
@@ -195,6 +210,15 @@ pub enum Msg {
     Ntp,
     TimeSync,
     SetClock,
+    // schedules
+    ScheduleNew,
+    ScheduleEdit,
+    ScheduleToggle,
+    ScheduleRun,
+    ScheduleLogs,
+    ScheduleRemove,
+    /// The calendar field has not changed for a moment since this edit.
+    ScheduleCheckDue(u64),
     // access
     TokenNew,
     TokenRevoke,
@@ -224,6 +248,7 @@ pub enum Msg {
     CancelJob(u64),
     ClearOutput,
     FormText(usize, String),
+    FormEdit(usize, text_editor::Action),
     FormCheck(usize, bool),
     FormChoice(usize, &'static str),
     FormOk,
@@ -236,6 +261,18 @@ impl Field {
             label,
             value: value.into(),
             kind: FieldKind::Text(placeholder),
+            editor: None,
+        }
+    }
+
+    /// Several lines, each one item.
+    fn multiline(label: &'static str, lines: &[String], placeholder: &'static str) -> Self {
+        let value = lines.join("\n");
+        Self {
+            label,
+            editor: Some(text_editor::Content::with_text(&value)),
+            value,
+            kind: FieldKind::Multiline(placeholder),
         }
     }
 
@@ -244,6 +281,7 @@ impl Field {
             label,
             value: String::new(),
             kind: FieldKind::Secret,
+            editor: None,
         }
     }
 
@@ -252,6 +290,7 @@ impl Field {
             label,
             value: flag(on).to_string(),
             kind: FieldKind::Check,
+            editor: None,
         }
     }
 
@@ -260,6 +299,7 @@ impl Field {
             label,
             value: value.to_string(),
             kind: FieldKind::Choice(choices),
+            editor: None,
         }
     }
 
@@ -285,6 +325,7 @@ impl Form {
             ok,
             action,
             error: None,
+            note: None,
             typed: false,
         }
     }
@@ -320,6 +361,70 @@ impl Form {
             .find(|field| field.label == label)
             .is_some_and(Field::on)
     }
+
+    /// A multi-line field's non-blank lines, trimmed.
+    fn lines(&self, label: &str) -> Vec<String> {
+        self.value(label)
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(str::to_string)
+            .collect()
+    }
+}
+
+const ON_ERROR: &[&str] = OnError::NAMES;
+
+/// The schedule dialog: new, or `existing` to change.
+fn schedule_form(existing: Option<&ScheduleInfo>) -> Form {
+    let spec = existing
+        .map(|info| info.spec.clone())
+        .unwrap_or(ScheduleSpec {
+            name: String::new(),
+            enabled: true,
+            calendar: Vec::new(),
+            lines: Vec::new(),
+            on_error: OnError::Stop,
+            timeout_s: None,
+        });
+    let title = existing.map_or_else(
+        || "New schedule".to_string(),
+        |info| format!("Schedule {}", info.spec.name),
+    );
+    let on_error = ON_ERROR
+        .iter()
+        .find(|name| **name == spec.on_error.name())
+        .copied()
+        .unwrap_or("stop");
+    let timeout = spec
+        .timeout_s
+        .map(tessaro_client::schedule::duration)
+        .unwrap_or_default()
+        .replace(' ', "")
+        .replace("min", "m");
+    Form::new(
+        title,
+        "Save",
+        Action::ScheduleSave(existing.map(|info| info.id.clone())),
+    )
+    .intro(
+        "Each command line runs with /bin/sh -c as root, in order; write tessaro-ctl commands out in full. \
+         Calendar lines are systemd OnCalendar expressions in the device's timezone; any of them fires.",
+    )
+    .field(Field::text("Name", spec.name, "lower-case letters, digits and -"))
+    .field(Field::multiline(
+        "Calendar",
+        &spec.calendar,
+        "one per line: Mon..Fri 07:00, Sat,Sun *:0/15, daily",
+    ))
+    .field(Field::multiline(
+        "Commands",
+        &spec.lines,
+        "one per line: tessaro-ctl screen power off",
+    ))
+    .field(Field::choice("On error", on_error, ON_ERROR))
+    .field(Field::text("Timeout", timeout, "none, or 90s, 10m, 2h"))
+    .field(Field::check("Enabled", spec.enabled))
 }
 
 /// The tz database's names, as the first device asked listed them. Kept
@@ -338,6 +443,23 @@ fn zones(list: Vec<String>) -> &'static [&'static str] {
     })
 }
 
+/// Under a schedule form's calendar: how systemd reads it and when it fires.
+fn calendar_note(check: &CalendarCheck) -> String {
+    let now = tessaro_client::schedule::now();
+    let mut note = format!("Reads as: {}", check.normalized.join("  |  "));
+    if check.next.is_empty() {
+        note.push_str("\nNever fires again.");
+    }
+    for next in &check.next {
+        note.push_str(&format!(
+            "\nFires {} ({})",
+            next.local,
+            tessaro_client::schedule::relative(next.unix, now)
+        ));
+    }
+    note
+}
+
 /// The page a tag's answer belongs to, for its error line.
 fn page_of(tag: &str) -> &'static str {
     match tag.split('.').next().unwrap_or("") {
@@ -347,6 +469,7 @@ fn page_of(tag: &str) -> &'static str {
         "storage" => "storage",
         "audio" => "audio",
         "time" => "time",
+        "schedules" | "schedule" => "schedules",
         "tokens" | "token" | "password" | "claim" | "unclaim" => "access",
         "ssh" => "ssh",
         "files" => "files",
@@ -547,6 +670,7 @@ impl Device {
             Page::Storage => self.call("storage", Command::Storage),
             Page::Audio => self.call("audio", Command::AudioStatus),
             Page::Time => self.call("time", Command::TimeStatus),
+            Page::Schedules => self.call("schedules", Command::ScheduleList),
             Page::Access => self.call("tokens", Command::TokenList),
             Page::Ssh => self.call("ssh.keys", Command::SshKeyList),
             Page::Files => {
@@ -569,6 +693,13 @@ impl Device {
         if let Some(count) = self.pages.in_flight.get_mut(tag) {
             *count = count.saturating_sub(1);
         }
+        let result = match tag {
+            "schedule.save" | "schedule.check" => match self.schedule_form_answer(tag, result) {
+                Some(result) => result,
+                None => return,
+            },
+            _ => result,
+        };
         let value = match result {
             Ok(value) => {
                 self.pages.errors.remove(page_of(tag));
@@ -586,9 +717,65 @@ impl Device {
         }
     }
 
+    /// A schedule form's answers belong in the form while it is open: a
+    /// refused save keeps it open with the device's reason, a check says
+    /// when the calendar fires. What is left for the usual path, if
+    /// anything.
+    fn schedule_form_answer(
+        &mut self,
+        tag: &'static str,
+        result: Result<Value, String>,
+    ) -> Option<Result<Value, String>> {
+        let form = match &mut self.dialog {
+            Some(Dialog::Form(form)) if matches!(form.action, Action::ScheduleSave(_)) => form,
+            // The form is gone: a check means nothing now, a save is logged.
+            _ => return (tag == "schedule.save").then_some(result),
+        };
+        match (tag, result) {
+            ("schedule.check", Ok(value)) => {
+                form.note = Some(match parse::<CalendarCheck>(value) {
+                    Ok(check) => calendar_note(&check),
+                    Err(error) => error,
+                });
+                None
+            }
+            ("schedule.check", Err(error)) => {
+                form.note = Some(error);
+                None
+            }
+            (_, Ok(value)) => {
+                self.dialog = None;
+                Some(Ok(value))
+            }
+            (_, Err(error)) => {
+                form.error = Some(error);
+                None
+            }
+        }
+    }
+
     fn take_answer(&mut self, tag: &'static str, value: Value) -> Result<(), String> {
         match tag {
             "modes" => self.pages.modes = parse(value)?,
+            "schedules" => self.pages.schedules = parse(value)?,
+            "schedule.save" | "schedule.set" => {
+                let info: ScheduleInfo = parse(value)?;
+                let state = if info.spec.enabled { "on" } else { "off" };
+                self.log(
+                    Tone::Ok,
+                    format!("schedule {} saved, {state}", info.spec.name),
+                );
+                self.pages.selected.insert("schedules", info.id);
+                self.call("schedules", Command::ScheduleList);
+            }
+            "schedule.run" | "schedule.remove" => {
+                let done: Done = parse(value)?;
+                self.log(Tone::Ok, done.message);
+                if tag == "schedule.remove" {
+                    self.pages.selected.remove("schedules");
+                }
+                self.call("schedules", Command::ScheduleList);
+            }
             "net" => self.pages.net = Some(parse(value)?),
             "net.profiles" => self.pages.profiles = parse(value)?,
             "certs" => self.pages.certs = parse(value)?,
@@ -1043,6 +1230,56 @@ impl Device {
                     );
                 }
             }
+            Msg::ScheduleNew => self.form(schedule_form(None)),
+            Msg::ScheduleEdit => {
+                if let Some(info) = self.selected_schedule() {
+                    self.form(schedule_form(Some(&info)));
+                    return self.check_calendar_soon();
+                }
+            }
+            Msg::ScheduleToggle => {
+                if let Some(info) = self.selected_schedule() {
+                    self.call(
+                        "schedule.set",
+                        Command::ScheduleSet {
+                            schedule: info.id,
+                            name: None,
+                            calendar: None,
+                            lines: None,
+                            on_error: None,
+                            timeout_s: None,
+                            enabled: Some(!info.spec.enabled),
+                        },
+                    );
+                }
+            }
+            Msg::ScheduleRun => {
+                if let Some(info) = self.selected_schedule() {
+                    self.call("schedule.run", Command::ScheduleRun { schedule: info.id });
+                }
+            }
+            Msg::ScheduleLogs => {
+                if let Some(info) = self.selected_schedule() {
+                    self.journal_of(info.units);
+                }
+            }
+            Msg::ScheduleRemove => {
+                if let Some(info) = self.selected_schedule() {
+                    self.form(
+                        Form::new(
+                            format!("Remove schedule {}", info.spec.name),
+                            "Remove",
+                            Action::ScheduleRemove(info.id),
+                        )
+                        .intro("Its timer stops; runs already going finish."),
+                    );
+                }
+            }
+            Msg::ScheduleCheckDue(edit) => {
+                if edit == self.pages.calendar_edits {
+                    self.check_calendar();
+                }
+            }
             Msg::WifiScan => self.call(
                 "wifi.scan",
                 Command::WifiScan {
@@ -1347,6 +1584,7 @@ impl Device {
                 self.pages.output.remove(page);
             }
             Msg::FormText(at, value) => self.form_field(at, value),
+            Msg::FormEdit(at, action) => return self.form_edit(at, action),
             Msg::FormCheck(at, on) => self.form_field(at, flag(on).to_string()),
             Msg::FormChoice(at, value) => self.form_field(at, value.to_string()),
             Msg::FormOk => {
@@ -1382,6 +1620,7 @@ impl Device {
             "outputs" => self.page_update(Msg::UseAudio(keys::AUDIO_OUTPUT)),
             "inputs" => self.page_update(Msg::UseAudio(keys::AUDIO_INPUT)),
             "modes" => self.page_update(Msg::UseMode),
+            "schedules" => self.page_update(Msg::ScheduleEdit),
             _ => Task::none(),
         }
     }
@@ -1419,6 +1658,14 @@ impl Device {
                     .certs
                     .iter()
                     .map(|cert| cert.fingerprint.clone())
+                    .collect(),
+            ),
+            Page::Schedules => (
+                "schedules",
+                self.pages
+                    .schedules
+                    .iter()
+                    .map(|info| info.id.clone())
                     .collect(),
             ),
             Page::Access => (
@@ -1493,6 +1740,74 @@ impl Device {
             .cloned()
     }
 
+    fn selected_schedule(&self) -> Option<ScheduleInfo> {
+        let id = self.selected("schedules")?;
+        self.pages
+            .schedules
+            .iter()
+            .find(|info| &info.id == id)
+            .cloned()
+    }
+
+    /// An edit in a multi-line field. An edit of a schedule's calendar asks
+    /// the device when it fires, once the typing pauses.
+    fn form_edit(&mut self, at: usize, action: text_editor::Action) -> Task<Message> {
+        let Some(Dialog::Form(form)) = &mut self.dialog else {
+            return Task::none();
+        };
+        let schedule = matches!(form.action, Action::ScheduleSave(_));
+        let Some(field) = form.fields.get_mut(at) else {
+            return Task::none();
+        };
+        let Some(editor) = &mut field.editor else {
+            return Task::none();
+        };
+        let edited = action.is_edit();
+        editor.perform(action);
+        if !edited {
+            return Task::none();
+        }
+        field.value = editor.text();
+        form.error = None;
+        if schedule && field.label == "Calendar" {
+            self.check_calendar_soon()
+        } else {
+            Task::none()
+        }
+    }
+
+    /// A calendar check in a moment, unless the calendar changes again.
+    fn check_calendar_soon(&mut self) -> Task<Message> {
+        const PAUSE: std::time::Duration = std::time::Duration::from_millis(400);
+        self.pages.calendar_edits += 1;
+        let edit = self.pages.calendar_edits;
+        Task::perform(
+            blocking::run(|| {
+                std::thread::sleep(PAUSE);
+                Ok(())
+            }),
+            move |_: Result<(), String>| Message::P(Msg::ScheduleCheckDue(edit)),
+        )
+    }
+
+    fn check_calendar(&mut self) {
+        let Some(Dialog::Form(form)) = &mut self.dialog else {
+            return;
+        };
+        let calendar = form.lines("Calendar");
+        if calendar.is_empty() {
+            form.note = None;
+            return;
+        }
+        self.call(
+            "schedule.check",
+            Command::ScheduleCheck {
+                calendar,
+                count: Some(3),
+            },
+        );
+    }
+
     fn form_field(&mut self, at: usize, value: String) {
         if let Some(Dialog::Form(form)) = &mut self.dialog {
             if let Some(field) = form.fields.get_mut(at) {
@@ -1515,10 +1830,17 @@ impl Device {
         let Some(Dialog::Form(form)) = self.dialog.take() else {
             return;
         };
-        if let Err(error) = self.run_action(&form) {
-            let mut form = form;
-            form.error = Some(error);
-            self.dialog = Some(Dialog::Form(form));
+        match self.run_action(&form) {
+            Err(error) => {
+                let mut form = form;
+                form.error = Some(error);
+                self.dialog = Some(Dialog::Form(form));
+            }
+            // Open until the device takes it: a refusal is shown in it.
+            Ok(()) if matches!(form.action, Action::ScheduleSave(_)) => {
+                self.dialog = Some(Dialog::Form(form));
+            }
+            Ok(()) => {}
         }
     }
 
@@ -1746,6 +2068,46 @@ impl Device {
             Action::CertRevoke(cert) => {
                 self.call("cert.revoke", Command::NetCertRevoke { cert: cert.clone() })
             }
+            Action::ScheduleSave(id) => {
+                let timeout =
+                    tessaro_client::schedule::parse_timeout(match form.value("Timeout").trim() {
+                        "" => "none",
+                        timeout => timeout,
+                    })?;
+                let on_error = form.value("On error").parse::<OnError>()?;
+                let name = form.value("Name").trim().to_string();
+                let calendar = form.lines("Calendar");
+                let lines = form.lines("Commands");
+                let enabled = form.checked("Enabled");
+                let command = match id {
+                    None => Command::ScheduleCreate {
+                        spec: ScheduleSpec {
+                            name,
+                            enabled,
+                            calendar,
+                            lines,
+                            on_error,
+                            timeout_s: (timeout > 0).then_some(timeout),
+                        },
+                    },
+                    Some(id) => Command::ScheduleSet {
+                        schedule: id.clone(),
+                        name: Some(name),
+                        calendar: Some(calendar),
+                        lines: Some(lines),
+                        on_error: Some(on_error),
+                        timeout_s: Some(timeout),
+                        enabled: Some(enabled),
+                    },
+                };
+                self.call("schedule.save", command);
+            }
+            Action::ScheduleRemove(id) => self.call(
+                "schedule.remove",
+                Command::ScheduleRemove {
+                    schedule: id.clone(),
+                },
+            ),
             Action::Mkdir => {
                 let name = form.value("Name").trim();
                 if name.is_empty() {
@@ -1796,6 +2158,10 @@ impl Device {
                             label: field.label,
                             value: field.value.clone(),
                             kind: field.kind,
+                            editor: field
+                                .editor
+                                .as_ref()
+                                .map(|_| text_editor::Content::with_text(&field.value)),
                         })
                         .collect();
                     self.form(again.typed());
@@ -1850,6 +2216,15 @@ impl Device {
                     .on_submit(Message::P(Msg::FormOk))
                     .size(theme::SMALL)
                     .into(),
+                FieldKind::Multiline(placeholder) => match &item.editor {
+                    Some(editor) => text_editor(editor)
+                        .placeholder(placeholder)
+                        .on_action(move |action| Message::P(Msg::FormEdit(at, action)))
+                        .height(Length::Fixed(96.0))
+                        .size(theme::SMALL)
+                        .into(),
+                    None => space().into(),
+                },
                 FieldKind::Secret => text_input("", &item.value)
                     .on_input(move |value| Message::P(Msg::FormText(at, value)))
                     .on_submit(Message::P(Msg::FormOk))
@@ -1870,6 +2245,9 @@ impl Device {
                 .into(),
             };
             body = body.push(field(item.label, input));
+        }
+        if let Some(note) = &form.note {
+            body = body.push(text(note).size(theme::SMALL).style(theme::muted));
         }
         body = body.push(dialog::error(form.error.clone()));
         dialog::frame(
@@ -1893,6 +2271,7 @@ impl Device {
             Page::Storage => self.storage_view(),
             Page::Audio => self.audio_view(),
             Page::Time => self.time_view(),
+            Page::Schedules => self.schedules_view(),
             Page::Access => self.access_view(),
             Page::Ssh => self.ssh_view(),
             Page::Files => self.files_view(),
@@ -2492,6 +2871,84 @@ impl Device {
                     .and_then(|_| self.when(Msg::CertRevoke)),
             )],
             vec![self.table("certs", CERTS, certs, Length::Fill)],
+        )
+    }
+
+    fn schedules_view(&self) -> Element<'_, Message> {
+        const SCHEDULES: &[Col] = &[
+            col("Schedule", Length::Fixed(160.0)),
+            col("State", Length::Fixed(50.0)),
+            col("Calendar", Length::Fixed(200.0)),
+            col("Next run", Length::Fixed(190.0)),
+            col("Last run", Length::Fill),
+        ];
+        let now = tessaro_client::schedule::now();
+        let schedules = self
+            .pages
+            .schedules
+            .iter()
+            .map(|info| {
+                let state: Element<'_, Message> = if info.spec.enabled {
+                    cell("on").into()
+                } else {
+                    cell("off").style(theme::muted).into()
+                };
+                let next = info.next.as_ref().map_or_else(
+                    || "-".to_string(),
+                    |next| {
+                        format!(
+                            "{} ({})",
+                            next.local,
+                            tessaro_client::schedule::relative(next.unix, now)
+                        )
+                    },
+                );
+                let mut last = match &info.last_run {
+                    Some(run) => format!(
+                        "{}, {}",
+                        tessaro_client::schedule::outcome(run),
+                        tessaro_client::schedule::relative(run.finished.unix, now)
+                    ),
+                    None => "never".to_string(),
+                };
+                if info.running > 0 {
+                    last.push_str(&format!(" - {} running", info.running));
+                }
+                let last: Element<'_, Message> = match &info.last_run {
+                    Some(run) if !run.succeeded() => cell(last).style(text::danger).into(),
+                    Some(_) => cell(last).into(),
+                    None => cell(last).style(theme::muted).into(),
+                };
+                (
+                    info.id.clone(),
+                    vec![
+                        cell(info.spec.name.clone()).into(),
+                        state,
+                        cell(info.spec.calendar.join("  |  ")).into(),
+                        cell(next).into(),
+                        last,
+                    ],
+                )
+            })
+            .collect();
+        let chosen = self.selected_schedule();
+        let toggle = if chosen.as_ref().is_some_and(|info| info.spec.enabled) {
+            "Disable"
+        } else {
+            "Enable"
+        };
+        let with_one = |message: Msg| chosen.as_ref().and_then(|_| self.when(message));
+        self.page(
+            "schedules",
+            vec![action("New schedule ...", self.when(Msg::ScheduleNew))],
+            vec![
+                action("Edit ...", with_one(Msg::ScheduleEdit)),
+                action(toggle, with_one(Msg::ScheduleToggle)),
+                action("Run now", with_one(Msg::ScheduleRun)),
+                action("Logs", with_one(Msg::ScheduleLogs)),
+                action("Remove ...", with_one(Msg::ScheduleRemove)),
+            ],
+            vec![self.table("schedules", SCHEDULES, schedules, Length::Fill)],
         )
     }
 
@@ -3159,6 +3616,7 @@ pub(super) fn page_key(page: Page) -> &'static str {
         Page::Storage => "storage",
         Page::Audio => "audio",
         Page::Time => "time",
+        Page::Schedules => "schedules",
         Page::Access => "access",
         Page::Ssh => "ssh",
         Page::Files => "files",

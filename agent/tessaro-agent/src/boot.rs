@@ -12,8 +12,8 @@
 //!    in the journal once (`updates::report`).
 //! 1. **Factory reset**, if `/data/tessaro/factory-reset` exists or the
 //!    kernel command line says `tessaro.factory_reset`: settings, tokens, ssh
-//!    keys, root password, extra certificate authorities and stored files
-//!    cleared - the fresh-install state.
+//!    keys, root password, extra certificate authorities, schedules and
+//!    stored files cleared - the fresh-install state.
 //!    What a reset left of the file store to delete is finished every boot.
 //!    The marker is removed
 //!    afterwards; the command-line flag is meant to be typed at the boot
@@ -207,6 +207,10 @@ fn factory_reset(
     if let Err(err) = crate::certs::clear(&paths.ca_certs_dir()) {
         log.info(format!("factory reset: the certificate authorities: {err}"));
     }
+    let schedules = Store::new(&paths.state_dir, crate::schedules::FILE);
+    if let Err(err) = crate::schedules::clear(&schedules, &paths.schedule_runs_dir()) {
+        log.info(format!("factory reset: the schedules: {err}"));
+    }
     match fs::remove_file(paths.factory_reset_marker()) {
         Ok(()) => {}
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
@@ -214,7 +218,7 @@ fn factory_reset(
     }
     log.info(
         "factory reset: settings, tokens, ssh keys, root and network passwords, \
-         certificate authorities, stored files cleared",
+         certificate authorities, schedules, stored files cleared",
     );
 }
 

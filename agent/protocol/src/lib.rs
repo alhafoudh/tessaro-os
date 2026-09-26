@@ -518,6 +518,45 @@ pub enum Command {
     NetCertRevoke {
         cert: String,
     },
+    /// Every schedule, with when it runs next and how its last run ended.
+    ScheduleList,
+    /// Add a schedule. Its calendar is checked with systemd before
+    /// anything is saved.
+    ScheduleCreate {
+        spec: ScheduleSpec,
+    },
+    /// Change what is given of one schedule, by id or name. A given
+    /// `calendar` or `lines` replaces the whole list.
+    ScheduleSet {
+        schedule: String,
+        #[serde(default)]
+        name: Option<String>,
+        #[serde(default)]
+        calendar: Option<Vec<String>>,
+        #[serde(default)]
+        lines: Option<Vec<String>>,
+        #[serde(default)]
+        on_error: Option<OnError>,
+        /// `Some(0)` removes the timeout.
+        #[serde(default)]
+        timeout_s: Option<u64>,
+        #[serde(default)]
+        enabled: Option<bool>,
+    },
+    ScheduleRemove {
+        schedule: String,
+    },
+    /// Start one run of a schedule now, enabled or not.
+    ScheduleRun {
+        schedule: String,
+    },
+    /// Check `OnCalendar` expressions with systemd, saving nothing: the
+    /// next `count` times they fire, merged, or why one is refused.
+    ScheduleCheck {
+        calendar: Vec<String>,
+        #[serde(default)]
+        count: Option<u32>,
+    },
 }
 
 /// The image `update-begin` describes. Its fields sit in the command itself
@@ -1416,6 +1455,126 @@ pub struct CertsAdded {
     pub present: Vec<CertInfo>,
 }
 
+/// Most `OnCalendar` expressions one schedule may carry.
+pub const SCHEDULE_CALENDAR_MAX: usize = 16;
+/// Most command lines one schedule may carry.
+pub const SCHEDULE_LINES_MAX: usize = 64;
+/// Longest command line or expression, in bytes.
+pub const SCHEDULE_LINE_MAX: usize = 4096;
+/// Most run times `schedule-check` answers with.
+pub const SCHEDULE_CHECK_MAX: u32 = 50;
+
+/// What a run does when one of its lines fails.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum OnError {
+    /// The run ends there, failed.
+    #[default]
+    Stop,
+    /// The next line runs anyway.
+    Continue,
+}
+
+impl OnError {
+    pub const NAMES: &'static [&'static str] = &["stop", "continue"];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            OnError::Stop => "stop",
+            OnError::Continue => "continue",
+        }
+    }
+}
+
+impl std::str::FromStr for OnError {
+    type Err = String;
+    fn from_str(name: &str) -> Result<Self, String> {
+        match name {
+            "stop" => Ok(OnError::Stop),
+            "continue" => Ok(OnError::Continue),
+            _ => Err(format!("{name:?} is not stop or continue")),
+        }
+    }
+}
+
+/// What a schedule is: when it fires and what a run does.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScheduleSpec {
+    /// `[a-z0-9][a-z0-9-]*`, unique on the device.
+    pub name: String,
+    #[serde(default = "yes")]
+    pub enabled: bool,
+    /// systemd `OnCalendar` expressions; the schedule fires when any of
+    /// them does.
+    pub calendar: Vec<String>,
+    /// Shell command lines, each run with `/bin/sh -c` as root, in order.
+    pub lines: Vec<String>,
+    #[serde(default)]
+    pub on_error: OnError,
+    /// The longest a whole run may take before systemd kills it.
+    #[serde(default)]
+    pub timeout_s: Option<u64>,
+}
+
+/// A moment as the device reports it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Moment {
+    /// Seconds since the epoch, UTC.
+    pub unix: i64,
+    /// The device's wall clock: `2026-09-28 07:00:00 CEST`.
+    pub local: String,
+}
+
+/// How a finished run ended.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScheduleRun {
+    pub started: Moment,
+    pub finished: Moment,
+    /// systemd's `$SERVICE_RESULT`: `success`, `exit-code`, `timeout`,
+    /// `signal`...
+    pub result: String,
+    /// systemd's `$EXIT_STATUS` of the last line that ran: an exit code
+    /// or a signal name.
+    pub status: String,
+}
+
+impl ScheduleRun {
+    pub fn succeeded(&self) -> bool {
+        self.result == "success"
+    }
+}
+
+/// One schedule and what systemd reports about it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScheduleInfo {
+    /// Stable across renames; names the schedule's systemd units.
+    pub id: String,
+    #[serde(flatten)]
+    pub spec: ScheduleSpec,
+    /// When the timer fires next; `None` while disabled.
+    #[serde(default)]
+    pub next: Option<Moment>,
+    /// When the timer last fired.
+    #[serde(default)]
+    pub last_trigger: Option<Moment>,
+    #[serde(default)]
+    pub last_run: Option<ScheduleRun>,
+    /// Runs going right now; they may overlap.
+    #[serde(default)]
+    pub running: u32,
+    /// The journal pattern of its runs, for `logs --unit`.
+    pub units: String,
+}
+
+/// What `schedule-check` found.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CalendarCheck {
+    /// Each expression as systemd normalizes it, in the order sent.
+    pub normalized: Vec<String>,
+    /// The next times any of them fires, earliest first.
+    pub next: Vec<Moment>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Screenshot {
     pub format: String,
@@ -1778,6 +1937,11 @@ mod tests {
         assert!(!Command::NetProfiles.is_public());
         assert!(!Command::NetCertAdd { pem: "x".into() }.is_public());
         assert!(!Command::NetCertList.is_public());
+        assert!(!Command::ScheduleList.is_public());
+        assert!(!Command::ScheduleRun {
+            schedule: "x".into()
+        }
+        .is_public());
         assert!(!Command::FilesList {
             path: "".into(),
             recursive: false
@@ -1995,6 +2159,48 @@ mod tests {
         assert_eq!(
             from_line::<Command>(r#"{"cmd":"net-cert-add","pem":"x"}"#).unwrap(),
             Command::NetCertAdd { pem: "x".into() }
+        );
+    }
+
+    #[test]
+    fn schedule_commands_have_their_wire_names() {
+        assert_eq!(
+            to_line(&Command::ScheduleRun {
+                schedule: "night".into()
+            }),
+            "{\"cmd\":\"schedule-run\",\"schedule\":\"night\"}\n"
+        );
+        let created = from_line::<Command>(
+            r#"{"cmd":"schedule-create","spec":{"name":"night","calendar":["22:00"],"lines":["true"]}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            created,
+            Command::ScheduleCreate {
+                spec: ScheduleSpec {
+                    name: "night".into(),
+                    enabled: true,
+                    calendar: vec!["22:00".into()],
+                    lines: vec!["true".into()],
+                    on_error: OnError::Stop,
+                    timeout_s: None,
+                }
+            }
+        );
+        assert_eq!(
+            from_line::<Command>(
+                r#"{"cmd":"schedule-set","schedule":"night","on_error":"continue"}"#
+            )
+            .unwrap(),
+            Command::ScheduleSet {
+                schedule: "night".into(),
+                name: None,
+                calendar: None,
+                lines: None,
+                on_error: Some(OnError::Continue),
+                timeout_s: None,
+                enabled: None,
+            }
         );
     }
 

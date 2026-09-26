@@ -115,6 +115,16 @@ pub struct Paths {
     /// at every boot.
     pub proxy_config: PathBuf,
     pub proxy_unit: String,
+    /// Where the schedules' systemd units are rendered. In `/run`, so they
+    /// are rendered from `schedules.json` at every start and never land on
+    /// the `/etc` overlay.
+    pub systemd_unit_dir: PathBuf,
+    /// Whether the agent starts and stops the schedules' timers. Off
+    /// (`KIOSK_MANAGE_SCHEDULES=0`) on a development host, whose systemd is
+    /// the host's own: the units are then only rendered.
+    pub manage_schedules: bool,
+    /// What checks a schedule's `OnCalendar` expressions.
+    pub systemd_analyze: PathBuf,
     /// Where the local proxy listens: what Chromium's policy, the probe and
     /// the speed test are pointed at.
     pub proxy_listen: SocketAddr,
@@ -195,6 +205,9 @@ impl Paths {
             ),
             proxy_config: path("KIOSK_PROXY_CONFIG", "/run/tessaro-proxy/tinyproxy.conf"),
             proxy_unit: text("KIOSK_PROXY_UNIT", "tessaro-proxy.service"),
+            systemd_unit_dir: path("KIOSK_SYSTEMD_UNIT_DIR", "/run/systemd/system"),
+            manage_schedules: text("KIOSK_MANAGE_SCHEDULES", "1") != "0",
+            systemd_analyze: path("KIOSK_SYSTEMD_ANALYZE", "systemd-analyze"),
             proxy_listen: proxy_listen(env),
         }
     }
@@ -241,6 +254,12 @@ impl Paths {
     /// one `<fingerprint>.pem` each.
     pub fn ca_certs_dir(&self) -> PathBuf {
         self.state_dir.join("ca-certs")
+    }
+
+    /// How each schedule's last run ended, one file per schedule id,
+    /// written by the run unit itself (`schedules.rs`).
+    pub fn schedule_runs_dir(&self) -> PathBuf {
+        self.state_dir.join("schedule-runs")
     }
 
     pub fn factory_reset_marker(&self) -> PathBuf {

@@ -32,6 +32,7 @@ use crate::watchdog::Heartbeat;
 const SERVICE: &str = "org.freedesktop.systemd1";
 const IFACE_UNIT: &str = "org.freedesktop.systemd1.Unit";
 const IFACE_SERVICE: &str = "org.freedesktop.systemd1.Service";
+const IFACE_TIMER: &str = "org.freedesktop.systemd1.Timer";
 
 /// Every call here is to pid 1 over a unix socket and answers in milliseconds
 /// or not at all, so this is not a tuning parameter - past it, the bus is
@@ -48,8 +49,34 @@ trait Manager {
     fn restart_unit(&self, name: &str, mode: &str) -> zbus::Result<OwnedObjectPath>;
     fn try_restart_unit(&self, name: &str, mode: &str) -> zbus::Result<OwnedObjectPath>;
     fn stop_unit(&self, name: &str, mode: &str) -> zbus::Result<OwnedObjectPath>;
+    fn start_unit(&self, name: &str, mode: &str) -> zbus::Result<OwnedObjectPath>;
+    fn reload(&self) -> zbus::Result<()>;
+    fn list_units_by_patterns(
+        &self,
+        states: &[&str],
+        patterns: &[&str],
+    ) -> zbus::Result<Vec<UnitRow>>;
     fn reboot(&self) -> zbus::Result<()>;
 }
+
+/// One row of `ListUnitsByPatterns`: name, description, load state, active
+/// state, sub state, followed unit, object path, job id, job type, job path.
+type UnitRow = (
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    OwnedObjectPath,
+    u32,
+    String,
+    OwnedObjectPath,
+);
+
+/// `Reload` re-reads every unit file before it answers, which takes longer
+/// than a plain method call, on a Pi especially.
+const RELOAD_TIMEOUT: Duration = Duration::from_secs(60);
 
 pub struct Systemd<'a> {
     unit: String,
@@ -333,6 +360,66 @@ impl Bus {
         Ok(())
     }
 
+    pub async fn start(&self, unit: &str) -> Result<()> {
+        let manager = self.manager().await?;
+        flatten(
+            crate::deadline::within(
+                "StartUnit",
+                METHOD_TIMEOUT,
+                manager.start_unit(unit, "replace"),
+            )
+            .await,
+        )
+        .map_err(|err| Error::Systemd(format!("StartUnit({unit}) failed: {err}")))?;
+        Ok(())
+    }
+
+    /// `systemctl daemon-reload`: load the unit files as they are now. On a
+    /// connection of its own, because this connection's `method_timeout` is
+    /// shorter than a reload may take.
+    pub async fn reload(&self) -> Result<()> {
+        if self.connection.is_none() {
+            return Err(Error::Systemd("no system bus".to_string()));
+        }
+        let reload = async {
+            let connection = zbus::connection::Builder::system()?
+                .method_timeout(RELOAD_TIMEOUT)
+                .build()
+                .await?; // naked: bounded by the "Reload" within() below
+            let manager = ManagerProxy::builder(&connection)
+                .cache_properties(CacheProperties::No)
+                .build()
+                .await?; // naked: bounded by the "Reload" within() below
+            manager.reload().await // naked: bounded by the "Reload" within() below
+        };
+        flatten(crate::deadline::within("Reload", RELOAD_TIMEOUT, reload).await)
+            .map_err(|err| Error::Systemd(format!("Reload failed: {err}")))
+    }
+
+    /// The loaded units whose names match any of `patterns` (shell globs),
+    /// as name and active state.
+    pub async fn list_units(&self, patterns: &[&str]) -> Result<Vec<(String, String)>> {
+        let manager = self.manager().await?;
+        let rows = flatten(
+            crate::deadline::within(
+                "ListUnitsByPatterns",
+                METHOD_TIMEOUT,
+                manager.list_units_by_patterns(&[], patterns),
+            )
+            .await,
+        )
+        .map_err(|err| Error::Systemd(format!("ListUnitsByPatterns failed: {err}")))?;
+        Ok(rows.into_iter().map(|row| (row.0, row.3)).collect())
+    }
+
+    /// A `u64` property of a timer unit (`NextElapseUSecRealtime`,
+    /// `LastTriggerUSec`); `None` when the bus cannot say or the timer is
+    /// not loaded.
+    pub async fn timer_usec(&self, unit: &str, property: &str) -> Option<u64> {
+        let value = self.property(unit, IFACE_TIMER, property).await.ok()?;
+        u64::try_from(value).ok()
+    }
+
     /// The system bus connection, for the other services the control plane
     /// talks to (timedated, timesyncd). `None` without a bus.
     pub fn connection(&self) -> Option<&Connection> {
@@ -355,6 +442,11 @@ impl Bus {
     }
 
     async fn fetch_active_state(&self, unit: &str) -> Result<String> {
+        let value = self.property(unit, IFACE_UNIT, "ActiveState").await?;
+        String::try_from(value).map_err(|err| Error::Systemd(err.to_string()))
+    }
+
+    async fn property(&self, unit: &str, iface: &str, property: &str) -> Result<OwnedValue> {
         let connection = self
             .connection
             .as_ref()
@@ -377,20 +469,18 @@ impl Bus {
             flatten(crate::deadline::within("properties proxy", METHOD_TIMEOUT, build).await)
                 .map_err(Error::Systemd)?;
 
-        let interface = InterfaceName::try_from(IFACE_UNIT)
+        let interface = InterfaceName::try_from(iface)
             .map_err(|err| Error::Systemd(format!("bad interface name: {err}")))?;
-        let value = flatten(
+        flatten(
             crate::deadline::within(
                 "Properties.Get",
                 METHOD_TIMEOUT,
-                properties.get(interface, "ActiveState"),
+                properties.get(interface, property),
             )
             .await
             .map(|outcome| outcome.map_err(zbus::Error::from)),
         )
-        .map_err(Error::Systemd)?;
-
-        String::try_from(value).map_err(|err| Error::Systemd(err.to_string()))
+        .map_err(Error::Systemd)
     }
 }
 

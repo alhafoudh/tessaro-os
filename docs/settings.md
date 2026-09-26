@@ -150,9 +150,9 @@ kiosk origin, Weston restarts - taking the browser and agent with it - for a
   Only SHA-256s are stored, compared in constant time. The device is claimed
   exactly when a token exists, so revoking the last one unclaims it.
 * **`access unclaim`** removes every token and ssh key and empties the root password;
-  **`device factory-reset`** also wipes the settings and the extra certificate
-  authorities (see **Certificates** in [networking.md](networking.md)), which
-  an unclaim keeps. After either, the first client
+  **`device factory-reset`** also wipes the settings, the extra certificate
+  authorities (see **Certificates** in [networking.md](networking.md)) and
+  the schedules ([scheduler.md](scheduler.md)), which an unclaim keeps. After either, the first client
   to claim wins again. The TLS key survives both, so pins stay valid.
 * `access password set` (prompted, a `PASSWORD` argument, `--password-stdin`,
   or `--random`) changes the root password on a

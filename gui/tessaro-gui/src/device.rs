@@ -353,6 +353,7 @@ pub enum Page {
     Storage,
     Audio,
     Time,
+    Schedules,
     Access,
     Ssh,
     Files,
@@ -371,6 +372,7 @@ impl Page {
         (Page::Storage, "Storage"),
         (Page::Audio, "Audio"),
         (Page::Time, "Time"),
+        (Page::Schedules, "Schedules"),
         (Page::Access, "Access"),
         (Page::Ssh, "SSH"),
         (Page::Files, "Files"),
@@ -391,7 +393,9 @@ impl Page {
             Page::Audio => ("audio", None),
             Page::Time => ("time", None),
             Page::Access => ("access", None),
-            Page::Certs | Page::Ssh | Page::Files | Page::Update | Page::Log => return None,
+            Page::Certs | Page::Schedules | Page::Ssh | Page::Files | Page::Update | Page::Log => {
+                return None
+            }
         };
         Some(Scope {
             prefix: prefix.to_string(),
@@ -623,6 +627,17 @@ impl Device {
                 }
             }
         }
+    }
+
+    /// The Log page, live, on the units `unit` names (a pattern is fine).
+    fn journal_of(&mut self, unit: String) {
+        self.journal.unit = unit.clone();
+        self.journal.streaming_unit = Some(unit);
+        self.journal.generation += 1;
+        self.journal.entries.clear();
+        self.journal.state = None;
+        self.journal.live = true;
+        self.show(Page::Log);
     }
 
     /// Show `page`: live screenshots run only while theirs is shown.

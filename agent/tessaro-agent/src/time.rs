@@ -744,18 +744,19 @@ extern "C" {
 }
 
 /// A moment as the device's wall clock shows it.
-struct Local {
+pub(crate) struct Local {
     /// `2026-09-25 14:03:12`.
-    text: String,
+    pub(crate) text: String,
     /// `CEST`.
-    abbreviation: String,
+    pub(crate) abbreviation: String,
     /// Seconds east of UTC.
     offset: i32,
 }
 
 /// `usec` in the timezone `/etc/localtime` names now. glibc re-reads that
 /// file on `tzset` when it changed, so a new timezone shows at once.
-fn local_clock(usec: u64) -> Option<Local> {
+/// Reads a file: call it from `blocking`.
+pub(crate) fn local_clock(usec: u64) -> Option<Local> {
     let seconds = libc::time_t::try_from(usec / 1_000_000).ok()?;
     // SAFETY: tzset and localtime_r only read the process environment and
     // /etc/localtime; `tm` is a plain C struct localtime_r fills in, and

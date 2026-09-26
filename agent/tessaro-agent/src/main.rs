@@ -47,6 +47,7 @@ mod power;
 mod probe;
 mod proc;
 mod render;
+mod schedules;
 mod secrets;
 mod server;
 mod shadow;
@@ -334,6 +335,7 @@ async fn start_control(
     control.watch_display();
     control.watch_audio();
     control.watch_time();
+    control.watch_schedules();
     control.watch_welcome();
     control.watch_screen_power();
     // Before the agent's first navigation, so the page it opens already

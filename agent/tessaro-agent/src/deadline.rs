@@ -243,6 +243,8 @@ mod tests {
             "src/control/bridge.rs",
             "src/control/page.rs",
             "src/control/screen.rs",
+            "src/control/schedules.rs",
+            "src/control/certs.rs",
             "src/power.rs",
             "src/server.rs",
             "src/updates.rs",
