@@ -13,9 +13,9 @@ module AgentE2E
   # device would.
   module Update
     def push_image(guest)
-      return if guest.run("test -f /data/e2e.wic.bz2 && echo yes", allow_failure: true).include?("yes")
+      return if guest.run("test -f /data/e2e.wic.zst && echo yes", allow_failure: true).include?("yes")
 
-      %w[.bz2 .bmap].each do |suffix|
+      %w[.zst .bmap].each do |suffix|
         guest.run("cat > /data/e2e.wic#{suffix}", input: File.binread(IMAGE + suffix), timeout: 600)
       end
     end
@@ -25,7 +25,7 @@ module AgentE2E
     # proves nothing; the marker being taken does.
     def send_update(guest, *flags)
       push_image(guest)
-      output = guest.run("tessaro-ctl update send /data/e2e.wic.bz2 --yes #{flags.join(" ")} 2>&1",
+      output = guest.run("tessaro-ctl update send /data/e2e.wic.zst --yes #{flags.join(" ")} 2>&1",
                          allow_failure: true, timeout: 900)
       expect(output).to include("applied at the next boot"), "the update was not committed:\n#{output}"
     end

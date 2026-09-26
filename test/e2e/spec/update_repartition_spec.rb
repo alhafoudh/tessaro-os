@@ -17,7 +17,7 @@ module AgentE2E
       wait_for_reboot(guest)
 
       log = boot_log(guest)
-      expect(log).to include("disk rewritten: e2e.wic.bz2")
+      expect(log).to include("disk rewritten: e2e.wic.zst")
       expect(log).to include("/data re-created")
       after = guest.run("tessaro-ctl --json device id")
       expect(JSON.parse(after)["id"]).not_to eq(JSON.parse(before)["id"]), "the node id survived a rewritten disk"

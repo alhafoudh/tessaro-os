@@ -23,9 +23,14 @@ sha2 = "0.10"
 # The .bmap is XML. A tree parser with no dependencies of its own.
 roxmltree = "0.21"
 
-# .wic.bz2, decompressed on the device. 0.6 defaults to libbz2-rs-sys, a pure
-# Rust port of libbzip2, so there is no C to cross-compile. MultiBzDecoder,
-# because oe-core compresses with pbzip2, which writes one stream per block.
+# .wic.zst, the format the build ships, decompressed on the device. Pure
+# Rust, so there is no C to cross-compile. The default hash feature checks
+# the frame checksum zstd writes.
+ruzstd = "0.9"
+
+# .wic.bz2, what older builds shipped, so they can still be sent. 0.6 defaults
+# to libbz2-rs-sys, a pure Rust port of libbzip2. MultiBzDecoder, because
+# oe-core compresses with pbzip2, which writes one stream per block.
 bzip2 = "0.6"
 
 # statvfs and posix_fadvise, which std does not wrap. Already in the lock.

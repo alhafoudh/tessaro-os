@@ -166,7 +166,7 @@ mod tests {
         Outcome {
             applied: true,
             message: "update applied".to_string(),
-            source: "tessaro.wic.bz2".to_string(),
+            source: "tessaro.wic.zst".to_string(),
             wiped_data: false,
             attempts: 1,
             reported: false,

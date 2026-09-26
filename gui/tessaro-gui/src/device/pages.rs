@@ -1558,7 +1558,7 @@ impl Device {
                 return Task::perform(
                     rfd::AsyncFileDialog::new()
                         .set_title("Image to send")
-                        .add_filter("Tessaro image", &["bz2", "wic"])
+                        .add_filter("Tessaro image", &["zst", "bz2", "wic"])
                         .pick_file(),
                     |picked| Message::P(Msg::UpdatePicked(picked.map(|handle| handle.path().to_path_buf()))),
                 );

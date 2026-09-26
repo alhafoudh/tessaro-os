@@ -159,7 +159,7 @@ pub fn fake_kernel(_boot: &Path, dest: &Path) -> Result<String, String> {
 
 pub fn source() -> Source {
     Source {
-        name: "tessaro.wic.bz2".to_string(),
+        name: "tessaro.wic.zst".to_string(),
         sha256: "0".repeat(64),
     }
 }
@@ -169,8 +169,24 @@ pub fn image(bytes: Vec<u8>) -> Image {
     Image::new(std::io::Cursor::new(bytes)).unwrap()
 }
 
-/// `bytes`, bz2-compressed in two streams, the way pbzip2 writes them.
+/// `bytes`, zstd-compressed in two frames with a skippable frame between
+/// them, which a reader that stops at the first frame end gets wrong.
 pub fn compress(bytes: &[u8]) -> Vec<u8> {
+    use ruzstd::encoding::{compress_to_vec, CompressionLevel};
+    let mut out = Vec::new();
+    for (index, half) in bytes.chunks(bytes.len().div_ceil(2)).enumerate() {
+        if index > 0 {
+            out.extend(0x184D_2A50u32.to_le_bytes());
+            out.extend(3u32.to_le_bytes());
+            out.extend(b"pad");
+        }
+        out.extend(compress_to_vec(half, CompressionLevel::Fastest));
+    }
+    out
+}
+
+/// `bytes`, bz2-compressed in two streams, the way pbzip2 writes them.
+pub fn compress_bz2(bytes: &[u8]) -> Vec<u8> {
     use std::io::Write;
     let mut out = Vec::new();
     for half in bytes.chunks(bytes.len().div_ceil(2)) {

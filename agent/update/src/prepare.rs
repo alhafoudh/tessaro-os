@@ -1,4 +1,4 @@
-//! The dry run: prove an uploaded `.wic.bz2` is what its bmap says, so the
+//! The dry run: prove an uploaded `.wic.zst` is what its bmap says, so the
 //! initramfs can write it without second-guessing.
 //!
 //! One sequential pass over the decompressed image. The bmap's ranges come in
@@ -331,9 +331,23 @@ mod tests {
     }
 
     #[test]
-    fn a_bz2_image_prepares_the_same() {
+    fn a_zst_image_prepares_the_same() {
         let (image, text) = disk();
         let compressed = crate::testing::compress(&image);
+        let dir = tempfile::tempdir().unwrap();
+        let manifest = run(compressed.clone(), &text, Mode::Root, dir.path()).unwrap();
+
+        let plain = tempfile::tempdir().unwrap();
+        let (_, expected) = staged(plain.path());
+        assert_eq!(manifest.target.chunks, expected.target.chunks);
+        // What the initramfs checks is the file as uploaded, compressed.
+        assert_eq!(manifest.upload.sha256, crate::sha256(&compressed));
+    }
+
+    #[test]
+    fn a_bz2_image_prepares_the_same() {
+        let (image, text) = disk();
+        let compressed = crate::testing::compress_bz2(&image);
         let dir = tempfile::tempdir().unwrap();
         let manifest = run(compressed.clone(), &text, Mode::Root, dir.path()).unwrap();
 
@@ -398,9 +412,25 @@ mod tests {
         assert!(err.contains("ends before"), "{err}");
     }
 
-    /// Against a real build: `TESSARO_TEST_WIC=path/to/x.rootfs.wic.bz2
-    /// cargo test -p update -- --ignored real_image`. The bmap is found
-    /// next to it; the kernel is not extracted (that needs a loop mount).
+    #[test]
+    fn a_truncated_zst_image_is_refused() {
+        let (image, text) = disk();
+        let compressed = crate::testing::compress(&image);
+        let dir = tempfile::tempdir().unwrap();
+        let err = run(
+            compressed[..compressed.len() / 4].to_vec(),
+            &text,
+            Mode::Root,
+            dir.path(),
+        )
+        .unwrap_err();
+        assert!(err.contains("ends before"), "{err}");
+    }
+
+    /// Against a real build: `TESSARO_TEST_WIC=path/to/x.rootfs.wic.zst
+    /// cargo test -p update -- --ignored real_image`, or an older `.wic.bz2`.
+    /// The bmap is found next to it; the kernel is not extracted (that needs
+    /// a loop mount).
     #[test]
     #[ignore]
     fn a_real_image_prepares() {

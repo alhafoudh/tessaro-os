@@ -10,6 +10,9 @@ workstation, and test the agent. How each subsystem works is in
   provides `kas-container`, which runs every build in its own container.
 - [mise](https://mise.jdx.dev/): `mise trust && mise install` pins Rust (the
   version Chromium's layers dictate) and installs `bmaptool`.
+- `zstd` on the build host and the workstation: images ship as `.wic.zst`,
+  and `bmaptool` and `qemu:unpack` run it to decompress them. macOS does not
+  have it (`brew install zstd`).
 - KVM on the build host for QEMU at a usable speed, and a GPU with a render
   node at `/dev/dri` for the kiosk to paint under QEMU - see the gotchas in
   [docs/build.md](docs/build.md).
@@ -95,14 +98,14 @@ covers what `--repartition` risks.
 boots, or one on a layout updates cannot handle:
 
 ```sh
-TESSARO_MACHINE=raspberrypi3-64 mise run image:pull    # .wic.bz2 + .wic.bmap into the repo root
+TESSARO_MACHINE=raspberrypi3-64 mise run image:pull    # .wic.zst + .wic.bmap into the repo root
 diskutil list                                          # or lsblk - check the device twice
 TESSARO_MACHINE=raspberrypi3-64 mise run image:flash   # or: mise run image:flash /dev/disk4
 ```
 
-`image:pull` rsyncs the machine's `.rootfs.wic.bz2` and `.wic.bmap` from the
+`image:pull` rsyncs the machine's `.rootfs.wic.zst` and `.wic.bmap` from the
 build host and skips what is already up to date; pass a remote path in single
-quotes to pull something else. `mise run image:list` shows every `.wic.bz2`
+quotes to pull something else. `mise run image:list` shows every `.wic.zst`
 on the build host, all machines at once, and marks the one `image:pull`
 fetches by default. `image:flash` unmounts the device, writes it
 with bmaptool (through `/dev/rdiskN` on macOS), syncs and ejects it.

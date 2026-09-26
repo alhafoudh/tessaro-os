@@ -289,13 +289,13 @@ dir = "{{config_root}}"
 run = '''
 # Deliberately not scoped to $TESSARO_MACHINE: the point is to compare the
 # targets against each other. Symlinks are skipped - the stable
-# "...rootfs.wic.bz2" name points at the versioned file already listed.
+# "...rootfs.wic.zst" name points at the versioned file already listed.
 found=0
 printf '%-16s %10s %10s  %s\n' MACHINE SIZE ON-DISK FILE
 for dir in build/*/tmp/deploy/images/*; do
     [ -d "$dir" ] || continue
     machine=$(basename "$dir")
-    for wic in "$dir"/*.wic "$dir"/*.wic.bz2; do
+    for wic in "$dir"/*.wic "$dir"/*.wic.zst; do
         [ -f "$wic" ] || continue
         [ -L "$wic" ] && continue
         # A .wic is sparse, so the apparent size and the blocks it actually
@@ -321,7 +321,7 @@ version=$(sed -n 's/^DISTRO_VERSION = "\(.*\)"$/\1/p' meta-tessaro-distro/conf/d
 cd meta-tessaro-distro
 rev=$(git rev-parse --short=7 HEAD 2>/dev/null) || rev=unknown
 [ -z "$(git -c core.excludesFile=/dev/null status --porcelain 2>/dev/null)" ] || rev=$rev-dirty
-echo "tessaro-os-$TESSARO_MACHINE-$version-$rev.wic.bz2"
+echo "tessaro-os-$TESSARO_MACHINE-$version-$rev.wic.zst"
 '''
 
 # image:list, image:pull, image:flash and image:update run on a workstation, not on the
@@ -335,7 +335,7 @@ echo "tessaro-os-$TESSARO_MACHINE-$version-$rev.wic.bz2"
 # TESSARO_FLASH_DEVICE come from mise.local.toml, see README.md.
 
 [tasks."image:list"]
-description = "List the .wic.bz2 images on the build host, across all machines"
+description = "List the .wic.zst images on the build host, across all machines"
 dir = "{{config_root}}"
 run = '''
 set -eu
@@ -343,12 +343,12 @@ set -eu
 : "${TESSARO_BUILD_HOST_DIR:?set it in mise.local.toml}"
 
 # Deliberately not scoped to $TESSARO_MACHINE, like image:sizes. One find on
-# the build host returns the versioned files and the stable .rootfs.wic.bz2
+# the build host returns the versioned files and the stable .rootfs.wic.zst
 # symlinks; the file a symlink points at is the one image:pull fetches by
 # default, and gets a "*".
-listing=$(ssh "$TESSARO_BUILD_HOST" "cd '$TESSARO_BUILD_HOST_DIR' && find build -mindepth 6 -maxdepth 6 -path 'build/*/tmp/deploy/images/*/*.wic.bz2' -printf '%y\t%T@\t%s\t%TY-%Tm-%Td %TH:%TM\t%h\t%f\t%l\n'")
+listing=$(ssh "$TESSARO_BUILD_HOST" "cd '$TESSARO_BUILD_HOST_DIR' && find build -mindepth 6 -maxdepth 6 -path 'build/*/tmp/deploy/images/*/*.wic.zst' -printf '%y\t%T@\t%s\t%TY-%Tm-%Td %TH:%TM\t%h\t%f\t%l\n'")
 if [ -z "$listing" ]; then
-    echo "no .wic.bz2 images on $TESSARO_BUILD_HOST - run 'mise run image:build' there first" >&2
+    echo "no .wic.zst images on $TESSARO_BUILD_HOST - run 'mise run image:build' there first" >&2
     exit 1
 fi
 
@@ -411,7 +411,7 @@ if [ -z "$device" ]; then
     device="${TESSARO_FLASH_DEVICE:?pass a device or set it in mise.local.toml}"
 fi
 name=$(basename "$WIC")
-image="$name.bz2"
+image="$name.zst"
 bmap="$name.bmap"
 
 if [ ! -f "$image" ]; then
@@ -480,7 +480,7 @@ if [ -z "$node" ]; then
     node="${TESSARO_NODE:?pass a node or set TESSARO_NODE in mise.local.toml}"
 fi
 name=$(basename "$WIC")
-image="$name.bz2"
+image="$name.zst"
 
 if [ ! -f "$image" ]; then
     echo "missing $image - image:pull found nothing to pull" >&2
@@ -507,8 +507,8 @@ description = "Decompress the built .wic so runqemu can boot it"
 dir = "{{config_root}}"
 run = '''
 cd "$KAS_BUILD_DIR"
-if [ -f "$WIC.bz2" ] && [ ! "$WIC" -nt "$WIC.bz2" ]; then
-    bzip2 -dc "$WIC.bz2" > "$WIC"
+if [ -f "$WIC.zst" ] && [ ! "$WIC" -nt "$WIC.zst" ]; then
+    zstd -dcf "$WIC.zst" > "$WIC"
 fi
 [ -f "$WIC" ] || { echo "$WIC not found - run 'mise run image:build' first" >&2; exit 1; }
 '''

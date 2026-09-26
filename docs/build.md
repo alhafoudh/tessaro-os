@@ -53,7 +53,9 @@ Configuration arrives through chains that each span several files:
 3. **Image.** `moonforge-image-base.bb` in meta-moonforge is just
    `inherit moonforge-image`; `moonforge-image.bbclass` inherits `core-image`
    and sets `read-only-rootfs`, `overlayfs-etc`, `splash`, the `ext4 wic.bz2`
-   fstypes and the `IMAGE_NAME`/`IMAGE_VERSION_SUFFIX` scheme.
+   fstypes and the `IMAGE_NAME`/`IMAGE_VERSION_SUFFIX` scheme. Our bbappend
+   swaps `wic.bz2` for `wic.zst` plus `wic.bmap`, compressed at level 19 on
+   that recipe only (see **Images are zstd** in [updates.md](updates.md)).
 
 **Where product changes go:** system-wide policy in `tessaro.conf`; packages and
 image features in `meta-tessaro-distro/recipes-core/images/moonforge-image-base.bbappend`;
@@ -190,7 +192,7 @@ is how Chromium's `PACKAGECONFIG` and `CHROMIUM_EXTRA_ARGS` are set.
   (`git grep ':moonforge'` over the layers) after a Moonforge bump or when
   enabling a new layer. Fix if needed: `DISTROOVERRIDES =. "moonforge:"` in `tessaro.conf`.
 * **Artifacts are named `tessaro-os-qemux86-64-<version>.*`**, e.g.
-  `tessaro-os-qemux86-64-0.1.0-1a2b3c4.wic.bz2`: the `tessaro-os` prefix
+  `tessaro-os-qemux86-64-0.1.0-1a2b3c4.wic.zst`: the `tessaro-os` prefix
   is `IMAGE_BASENAME` in `moonforge-image-base.bbappend` (it defaults to `${PN}`,
   which would name the product after the upstream recipe), and the version is
   `IMAGE_VERSION` in `tessaro.conf`: `DISTRO_VERSION` (the semver marketing

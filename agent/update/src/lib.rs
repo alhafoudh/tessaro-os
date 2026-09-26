@@ -1,6 +1,6 @@
 //! In-place image updates, without A/B partitions.
 //!
-//! An update is the same `.wic.bz2` and `.wic.bmap` that `mise run
+//! An update is the same `.wic.zst` and `.wic.bmap` that `mise run
 //! image:flash` writes to a whole disk. It is kept on `/data` as it was
 //! uploaded, compressed, and decompressed twice: once by the agent to check
 //! it, once by the initramfs to write it. Either to the root partition

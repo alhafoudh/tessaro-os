@@ -64,7 +64,7 @@ The first build fetches and compiles everything, Chromium included, and takes
 hours; later ones reuse the cache. Write the image to a card or disk:
 
 ```sh
-bmaptool copy build/raspberrypi3-64/tmp/deploy/images/raspberrypi3-64/tessaro-os-raspberrypi3-64.rootfs.wic.bz2 /dev/sdX
+bmaptool copy build/raspberrypi3-64/tmp/deploy/images/raspberrypi3-64/tessaro-os-raspberrypi3-64.rootfs.wic.zst /dev/sdX
 ```
 
 (From a separate workstation, `mise run image:pull` and `mise run
@@ -327,7 +327,7 @@ still going when the next one fires does not hold it up.
 
 ```sh
 mise run image:update golden-thistle-5731                  # build host to device; settings stay
-tessaro-ctl update send tessaro-os-raspberrypi3-64.rootfs.wic.bz2   # the same, by hand
+tessaro-ctl update send tessaro-os-raspberrypi3-64.rootfs.wic.zst   # the same, by hand
 tessaro-ctl update status
 ```
 

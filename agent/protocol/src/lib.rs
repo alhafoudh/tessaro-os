@@ -331,7 +331,7 @@ pub enum Command {
     SshKeyRevoke {
         key: String,
     },
-    /// Start, or resume, uploading an image: the `.wic.bz2` is described
+    /// Start, or resume, uploading an image: the `.wic.zst` is described
     /// here and sent in `UpdateChunk`s. The answer says where to resume.
     UpdateBegin(ImageUpload),
     /// The next piece of the upload, starting at `offset`, base64. At most
@@ -2128,7 +2128,7 @@ mod tests {
     #[test]
     fn update_begin_keeps_its_fields_beside_cmd() {
         let command = Command::UpdateBegin(ImageUpload {
-            name: "a.wic.bz2".into(),
+            name: "a.wic.zst".into(),
             size: 3,
             sha256: "ab".into(),
             bmap: "<bmap/>".into(),
@@ -2137,12 +2137,12 @@ mod tests {
         });
         assert_eq!(
             to_line(&command),
-            "{\"cmd\":\"update-begin\",\"name\":\"a.wic.bz2\",\"size\":3,\"sha256\":\"ab\",\
+            "{\"cmd\":\"update-begin\",\"name\":\"a.wic.zst\",\"size\":3,\"sha256\":\"ab\",\
              \"bmap\":\"<bmap/>\",\"verify\":true,\"repartition\":false}\n"
         );
         // What an older client sends, without the defaulted fields.
         let old: Command = from_line(
-            r#"{"cmd":"update-begin","name":"a.wic.bz2","size":3,"sha256":"ab","bmap":"<bmap/>"}"#,
+            r#"{"cmd":"update-begin","name":"a.wic.zst","size":3,"sha256":"ab","bmap":"<bmap/>"}"#,
         )
         .unwrap();
         assert_eq!(old, command);

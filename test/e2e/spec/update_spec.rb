@@ -10,7 +10,7 @@ module AgentE2E
       send_update(guest)
       wait_for_reboot(guest)
 
-      expect(boot_log(guest)).to include("update applied: e2e.wic.bz2")
+      expect(boot_log(guest)).to include("update applied: e2e.wic.zst")
       expect(guest.run("tessaro-ctl config get data.e2e")).to include("kept"), "a setting did not survive the update"
       expect(guest.run("ls /data/tessaro/update")).not_to include("upload.part"), "the staging was left behind"
     ensure

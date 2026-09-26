@@ -1,8 +1,8 @@
 # Updating a device
 
 **In place, without A/B partitions and without signing, from the same
-`.wic.bz2` and `.wic.bmap` that `image:flash` writes.** `tessaro-ctl --node
-NAME update send IMAGE.wic.bz2` (or `mise run image:update NAME`) and the
+`.wic.zst` and `.wic.bmap` that `image:flash` writes.** `tessaro-ctl --node
+NAME update send IMAGE.wic.zst` (or `mise run image:update NAME`) and the
 device reboots into it; settings, the claim and the browser profile stay.
 `--wipe-data` re-creates `/data` as well, and the device comes back unclaimed
 with a new identity. Only the blocks the bmap lists are written, and only to
@@ -41,9 +41,8 @@ disk** below.
    *before the first write*, then decompresses the upload again, checks each
    chunk against its hash as it writes it, drops the device's page cache and
    reads everything back, then installs the kernel as `<name>.new` and
-   renames it over the old one, and reboots into it. Decompressing is the
-   slow part: seconds on x86, likely a few minutes on the Pi, with the screen
-   showing the console's progress. The logic is
+   renames it over the old one, and reboots into it, with the screen showing
+   the console's progress. The logic is
    `agent/update/src/{image,apply,flash,wipe}.rs`.
 5. **Report**: the boot oneshot puts the result in `journalctl -t
    tessaro-config` once; `tessaro-ctl update status` shows it until the next
@@ -65,6 +64,28 @@ Things to know:
   initramfs proves it is still that file. Without it, a file damaged on
   `/data` between the dry run and the apply would only show up at the chunk it hits, after
   root was half written, and every retry would hit it again.
+* **Images are zstd, because the device decompresses every update twice.**
+  The build ships `.wic.zst` at level 19 (`moonforge-image-base.bbappend`);
+  zstd decompresses an order of magnitude faster than bz2 on the Pi's
+  Cortex-A53 at a smaller size, and the level costs build time, not device
+  time. `image.rs` picks the format by the first bytes, not the name: a zstd
+  frame (every frame in the file, each checked against its checksum), bz2
+  (an older build's `.wic.bz2`, or a recompressed one, below), or a plain
+  `.wic`. The decoders are pure Rust (`ruzstd`, `bzip2`), so nothing in C is
+  cross-compiled for the initramfs.
+* **An agent that only reads bz2 cannot take a `.wic.zst`.** It takes the
+  zstd bytes for a plain image, and the partition table check after the
+  first chunk refuses it before anything is written. Recompress the new
+  image to bz2 and send that once; the bmap describes the decompressed
+  image, so the same `.wic.bmap` goes with it, and the agent it installs
+  reads zstd from then on:
+
+  ```sh
+  zstd -dc tessaro-os-raspberrypi3-64.rootfs.wic.zst | bzip2 > tessaro-os-raspberrypi3-64.rootfs.wic.bz2
+  tessaro-ctl --node NAME update send tessaro-os-raspberrypi3-64.rootfs.wic.bz2
+  ```
+
+  An older `.wic.bz2` does not help: it brings the bz2-only agent back.
 * **Every identifier the rootfs names is pinned in the x86 wks files, and
   that is load-bearing.** wic makes new ones on every build otherwise: the
   PARTUUIDs (`--uuid`) go into grub.cfg's `root=`, and the `/boot` vfat

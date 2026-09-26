@@ -133,10 +133,14 @@ pub fn fetch_file(
     Ok(true)
 }
 
-/// `x.rootfs.wic.bz2` -> `x.rootfs.wic.bmap`, the same rule as `image:flash`.
+/// `x.rootfs.wic.zst` (or an older build's `.wic.bz2`) -> `x.rootfs.wic.bmap`,
+/// the same rule as `image:flash`.
 pub fn bmap_for(image: &Path) -> PathBuf {
     let text = image.to_string_lossy();
-    let base = text.strip_suffix(".bz2").unwrap_or(&text);
+    let base = text
+        .strip_suffix(".zst")
+        .or_else(|| text.strip_suffix(".bz2"))
+        .unwrap_or(&text);
     PathBuf::from(format!("{base}.bmap"))
 }
 
@@ -240,8 +244,12 @@ mod tests {
     #[test]
     fn the_bmap_is_found_next_to_the_image() {
         assert_eq!(
-            bmap_for(Path::new("out/tessaro-os-qemux86-64.rootfs.wic.bz2")),
+            bmap_for(Path::new("out/tessaro-os-qemux86-64.rootfs.wic.zst")),
             PathBuf::from("out/tessaro-os-qemux86-64.rootfs.wic.bmap")
+        );
+        assert_eq!(
+            bmap_for(Path::new("x.rootfs.wic.bz2")),
+            PathBuf::from("x.rootfs.wic.bmap")
         );
         assert_eq!(bmap_for(Path::new("x.wic")), PathBuf::from("x.wic.bmap"));
     }

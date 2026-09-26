@@ -7,7 +7,7 @@
 # It is the only variable involved: IMAGE_NAME (moonforge-image.bbclass) and
 # IMAGE_LINK_NAME (image-artifact-names.bbclass) are both built from it, so the
 # versioned file and the stable symlink move together -
-# tessaro-os-<machine>-<IMAGE_VERSION>.wic.bz2 and tessaro-os-<machine>.rootfs.wic.bz2.
+# tessaro-os-<machine>-<IMAGE_VERSION>.wic.zst and tessaro-os-<machine>.rootfs.wic.zst.
 #
 # Deliberately here and not in tessaro.conf: a bare global would put it in
 # every recipe's datastore. Set on the image recipe it changes nothing outside
@@ -20,13 +20,24 @@
 # a real value (our own, from meta-tessaro-distro/wic/).
 IMAGE_BASENAME = "tessaro-os"
 
-# A block map next to every .wic.bz2, so `mise run image:flash` writes only the
-# blocks in use. moonforge-image.bbclass appends "ext4 wic.bz2" and nothing
-# else; the Pi only ever had a bmap because rpi-base.inc lists wic.bmap in its
-# own ?= default. Appended the same way upstream appends, on the image recipe,
-# so only its do_image_wic re-runs. The duplicate on the Pi is harmless - the
-# Pi already carries wic.bz2 twice for the same reason.
-IMAGE_FSTYPES:append = " wic.bmap"
+# The disk image ships as .wic.zst, with a block map next to it so `mise run
+# image:flash` and an update write only the blocks in use. zstd because the
+# device decompresses an update twice (the dry run, then the initramfs), and
+# zstd does that an order of magnitude faster than bz2 at a smaller size.
+#
+# moonforge-image.bbclass appends "ext4 wic.bz2", and rpi-base.inc's ?=
+# default lists wic.bz2 and wic.bmap; the :remove takes out both bz2 entries,
+# since :remove is applied after every append. Set on the image recipe, the
+# way upstream appends, so only its do_image_wic re-runs. The duplicate
+# wic.bmap on the Pi is harmless.
+IMAGE_FSTYPES:append = " wic.zst wic.bmap"
+IMAGE_FSTYPES:remove = "wic.bz2"
+
+# The size is what goes over the network (base64, see docs/updates.md), and
+# decompression speed barely depends on the level; compression runs on every
+# core (ZSTD_THREADS). Here and not in tessaro.conf, so no other recipe that
+# compresses with zstd changes its hash.
+ZSTD_COMPRESSION_LEVEL = "-19"
 
 # Chromium and the CA store arrive as RDEPENDS of tessaro-kiosk, which owns the
 # units, the runtime configuration, the tessaro-agent binary and the offline

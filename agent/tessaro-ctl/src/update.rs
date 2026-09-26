@@ -1,6 +1,6 @@
 //! `tessaro-ctl update`: put a new image on a device.
 //!
-//! The `.wic.bz2` goes up in `UPDATE_CHUNK` pieces, each acknowledged
+//! The `.wic.zst` goes up in `UPDATE_CHUNK` pieces, each acknowledged
 //! before the next, so a dropped link resumes from the last one the device
 //! has - running the same command again is the resume. The device then
 //! checks it while the kiosk keeps running, and writes it at the next boot,
@@ -33,7 +33,7 @@ const COME_BACK: Duration = Duration::from_secs(20 * 60);
 #[derive(clap::Args)]
 pub struct Send {
     pub image: PathBuf,
-    /// The block map, if it is not IMAGE without .bz2 plus .bmap.
+    /// The block map, if it is not IMAGE without .zst or .bz2 plus .bmap.
     #[arg(long)]
     pub bmap: Option<PathBuf>,
     /// Also re-create /data: every setting, the claim, the browser

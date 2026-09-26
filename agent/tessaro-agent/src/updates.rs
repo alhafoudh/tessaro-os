@@ -1,6 +1,6 @@
 //! Image updates: the half that runs while the kiosk does.
 //!
-//! `update-begin` describes a `.wic.bz2` and its bmap, `update-chunk`s
+//! `update-begin` describes a `.wic.zst` and its bmap, `update-chunk`s
 //! append it to `/data/tessaro/update/upload.part`, and once the last one is
 //! in, a background thread checks the whole file against its SHA-256 and
 //! decompresses it once as a dry run (`update::prepare`). The upload stays
@@ -77,8 +77,9 @@ fn boot_room(probe: &layout::Probe, bmap: &bmap::Bmap) -> u64 {
 const RAM_RESERVED: u64 = 128 << 20;
 
 /// How much must have arrived before the partition table can be read from
-/// the compressed upload. pbzip2 streams are 900 kB each, and the first MiB
-/// of an image is almost all zeros, so this is several times what is needed.
+/// the compressed upload. zstd blocks are at most 128 KiB and pbzip2 streams
+/// 900 kB, and the first MiB of an image is almost all zeros, so this is
+/// several times what is needed.
 const HEAD_CHECK: u64 = 4 << 20;
 
 /// Copies the kernel named `name` out of the staged boot partition image.
@@ -894,7 +895,7 @@ fn check_head(upload: &Path, probe: &layout::Probe, meta: &Upload) -> Result<(),
         match image.read(&mut head[filled..]) {
             Ok(0) => break,
             Ok(read) => filled += read,
-            // A bz2 stream cut off mid-block.
+            // A compressed upload cut off mid-block.
             Err(_) if filled > 0 => break,
             Err(err) => return Err(format!("the upload is not a disk image: {err}")),
         }
