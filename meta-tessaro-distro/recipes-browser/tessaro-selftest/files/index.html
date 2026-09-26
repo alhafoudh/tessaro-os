@@ -7,9 +7,10 @@
   page a device shows before anyone has set it up, often with no network.
 
   The live values - node name, IPv4 addresses, the hotspot's SSID while it is
-  up, whether the device is claimed - come from /welcome.json, which
-  tessaro-agent keeps current in /run/tessaro-kiosk and nginx serves. The page
-  asks for it every 5s; see docs/kiosk-browser.md, "The welcome page".
+  up, whether the device is claimed and online, and the setup QR code while
+  the hotspot is open - come from /welcome.json, which tessaro-agent keeps
+  current in /run/tessaro-kiosk and nginx serves. The page asks for it every
+  5s; see docs/kiosk-browser.md, "The welcome page", and docs/setup-portal.md.
 -->
 <html lang="en">
 <head>
@@ -30,6 +31,7 @@
     --accent-2: #9d8cff;
     --ok: #5fe0a6;
     --warn: #ffc66b;
+    --bad: #ff7a7a;
   }
 
   * { box-sizing: border-box; }
@@ -160,6 +162,45 @@
   .status.claimed   { color: var(--ok); }
   .status.unclaimed { color: var(--warn); }
   .status.unknown   { color: var(--dim); }
+  .status.online    { color: var(--ok); }
+  .status.offline   { color: var(--bad); }
+
+  .panels {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: stretch;
+    justify-content: center;
+    gap: clamp(14px, 3vmin, 40px);
+  }
+
+  /* The setup QR: joins a phone to the open hotspot, whose sign-in sheet then
+     opens the setup portal. White behind the code, so it scans on a dark page. */
+  .setup {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: clamp(8px, 1.6vmin, 18px);
+    padding: clamp(14px, 3vmin, 36px);
+    border: 1px solid var(--line);
+    border-radius: clamp(12px, 2vmin, 22px);
+    background: var(--card);
+  }
+  .setup[hidden] { display: none; }
+  .setup .qr {
+    width: clamp(150px, 30vmin, 360px);
+    aspect-ratio: 1;
+    border-radius: clamp(6px, 1vmin, 12px);
+    overflow: hidden;
+  }
+  .setup .qr svg { display: block; width: 100%; height: 100%; }
+  .setup .title { font-size: clamp(1rem, 3vmin, 2.1rem); }
+  .setup .or {
+    color: var(--dim);
+    font-size: clamp(0.75rem, 1.9vmin, 1.25rem);
+    max-width: clamp(150px, 34vmin, 420px);
+  }
+  .setup .or b { color: var(--fg); font-weight: 600; }
 
   .hint {
     margin: 0;
@@ -204,24 +245,36 @@
   <p class="product" id="product">tessaro-os</p>
   <h1 id="node">Welcome</h1>
 
-  <dl class="card stale" id="card">
-    <dt>IP address</dt>
-    <dd id="addresses">-</dd>
-    <dt class="hotspot" hidden>Hotspot</dt>
-    <dd class="hotspot" id="hotspot" hidden></dd>
-    <dt>Status</dt>
-    <dd><span class="status unknown" id="claim">Starting</span></dd>
-  </dl>
+  <div class="panels">
+    <dl class="card stale" id="card">
+      <dt>IP address</dt>
+      <dd id="addresses">-</dd>
+      <dt class="hotspot" hidden>Hotspot</dt>
+      <dd class="hotspot" id="hotspot" hidden></dd>
+      <dt>Internet</dt>
+      <dd><span class="status unknown" id="online">Checking</span></dd>
+      <dt>Status</dt>
+      <dd><span class="status unknown" id="claim">Starting</span></dd>
+    </dl>
+
+    <div class="setup" id="setup" hidden>
+      <div class="title">Scan to set up</div>
+      <div class="qr" id="qr"></div>
+      <div class="or">or join <b id="setup-ssid"></b> and open <b id="setup-url"></b></div>
+    </div>
+  </div>
 
   <p class="hint" id="hint" hidden>Set it up with <code id="claim-cmd"></code></p>
 </main>
 
 <script>
   // Polls /welcome.json and fills the page. Everything goes in through
-  // textContent, never as markup. When the endpoint does not answer the last
-  // values stay on screen, dimmed.
+  // textContent, never as markup - except the QR code, an SVG the agent draws
+  // from nothing but numbers (qr.rs). When the endpoint does not answer the
+  // last values stay on screen, dimmed.
   (function () {
     var POLL_MS = 5000;
+    var shownQr = null;
 
     function el(id) { return document.getElementById(id); }
 
@@ -259,6 +312,25 @@
       claim.textContent = s.claimed ? "Claimed" : "Not claimed";
       el("claim-cmd").textContent = "tessaro-ctl access claim --node " + (s.node || "NAME");
       el("hint").hidden = !!s.claimed;
+
+      // Whether the agent's last lookup of the public address answered;
+      // null until it has tried.
+      var online = el("online");
+      online.className = "status " + (s.online === true ? "online" : s.online === false ? "offline" : "unknown");
+      online.textContent = s.online === true ? "Online" : s.online === false ? "Offline" : "Checking";
+
+      // Only while the device is unclaimed with its hotspot up, which is when
+      // the hotspot is open and the QR carries no password.
+      var setup = s.setup;
+      el("setup").hidden = !setup;
+      if (setup) {
+        if (setup.qr !== shownQr) {
+          el("qr").innerHTML = setup.qr;
+          shownQr = setup.qr;
+        }
+        el("setup-ssid").textContent = ssid || "";
+        el("setup-url").textContent = setup.url;
+      }
     }
 
     function poll() {

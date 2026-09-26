@@ -480,6 +480,10 @@ impl Control {
             }
             "audio.status" => plain(self.audio_status().await.and_then(to_value)),
             "network.publicIp" => (self.page_public_ip(bridge).await, None),
+            // The same lookup and cache as publicIp, as a plain yes or no: a
+            // device that cannot reach the internet resolves `false`, it does
+            // not reject.
+            "network.online" => (Ok(json!(self.page_public_ip(bridge).await.is_ok())), None),
             "browser.reload" => match disrupt(bridge) {
                 Err(refused) => (Err(refused), None),
                 Ok(()) => plain(self.reload().await.and_then(to_value)),
@@ -718,6 +722,7 @@ impl Control {
                 Ok(json!(ip))
             }
             Err(err) => {
+                self.set_online(false);
                 let paths = self.paths.clone();
                 let last = blocking("reading the public address", move || {
                     Ok(crate::net::cached_public_ip(&paths))
@@ -876,6 +881,10 @@ mod tests {
     fn reads_are_what_config_mode_answers() {
         assert!(READS.contains(&"device.status"));
         assert!(!READS.contains(&"network.publicIp"));
+        assert!(
+            !READS.contains(&"network.online"),
+            "a request, like publicIp"
+        );
         assert!(!READS.contains(&"browser.reload"));
     }
 }

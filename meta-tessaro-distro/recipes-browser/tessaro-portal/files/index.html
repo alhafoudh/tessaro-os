@@ -1,0 +1,551 @@
+<!doctype html>
+<!--
+  Tessaro setup portal. A phone opens it after joining the hotspot from the
+  welcome page's QR code; nginx serves it on the hotspot's subnet only and
+  proxies /api/ to the agent (portal.rs). See docs/setup-portal.md.
+
+  One scrolling page of accordion sections, no windows. The look follows
+  tessaro-gui (gui/tessaro-gui/src/theme.rs): its palette, Manrope, square
+  panels and 2px buttons, a little larger for fingers. Everything is inline,
+  so the page works on a hotspot with no internet behind it.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tessaro setup</title>
+<style>
+  @font-face { font-family: Manrope; font-weight: 400; src: url(/fonts/Manrope-Regular.ttf); }
+  @font-face { font-family: Manrope; font-weight: 700; src: url(/fonts/Manrope-Bold.ttf); }
+
+  :root {
+    --desk: #17181a;
+    --background: #1e1f22;
+    --panel: #26282c;
+    --stripe: #2a2c30;
+    --chrome: #2f3136;
+    --border: #3c3f44;
+    --text: #dcdcdc;
+    --muted: #8a8d93;
+    --primary: #3d7bd9;
+    --primary-hover: #528de6;
+    --primary-pressed: #3267b8;
+    --button: #3a3d42;
+    --button-hover: #46494f;
+    --button-border: #4a4d52;
+    --button-text: #e6e6e6;
+    --success: #4cb862;
+    --warning: #e0a43a;
+    --danger: #e55b4d;
+  }
+
+  * { box-sizing: border-box; }
+  html { background: var(--desk); }
+  body {
+    margin: 0 auto;
+    max-width: 640px;
+    min-height: 100vh;
+    background: var(--background);
+    color: var(--text);
+    font: 15px/1.45 Manrope, system-ui, sans-serif;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  header {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
+    background: var(--chrome);
+    border-bottom: 1px solid var(--border);
+  }
+  header h1 { margin: 0; font-size: 17px; font-weight: 700; }
+  header .node { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 10px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    font-size: 13px;
+    white-space: nowrap;
+  }
+  .pill::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .pill.on::before { background: var(--success); }
+  .pill.off::before { background: var(--danger); }
+
+  main { padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+
+  details {
+    background: var(--panel);
+    border: 1px solid var(--border);
+  }
+  summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 14px;
+    background: var(--chrome);
+    font-weight: 700;
+    cursor: pointer;
+    list-style: none;
+    user-select: none;
+  }
+  summary::-webkit-details-marker { display: none; }
+  summary::after { content: "+"; color: var(--muted); font-weight: 400; font-size: 18px; line-height: 1; }
+  details[open] > summary::after { content: "\2212"; }
+  details[open] > summary { border-bottom: 1px solid var(--border); }
+  summary .hint { color: var(--muted); font-weight: 400; font-size: 13px; margin-left: auto; margin-right: 10px; }
+  .body { padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+
+  table.facts { width: 100%; border-collapse: collapse; font-size: 14px; }
+  table.facts td { padding: 6px 8px; vertical-align: top; }
+  table.facts tr:nth-child(even) td { background: var(--stripe); }
+  table.facts td:first-child { color: var(--muted); width: 38%; }
+
+  label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+  label.check { flex-direction: row; align-items: center; gap: 8px; color: var(--text); font-size: 14px; }
+  input, select {
+    width: 100%;
+    padding: 10px;
+    background: var(--background);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    font: inherit;
+  }
+  input[type=checkbox] { width: 20px; height: 20px; accent-color: var(--primary); }
+  input:focus, select:focus { outline: none; border-color: var(--primary); }
+
+  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .row > * { flex: 1 1 140px; }
+
+  button {
+    padding: 10px 16px;
+    background: var(--button);
+    color: var(--button-text);
+    border: 1px solid var(--button-border);
+    border-radius: 2px;
+    font: inherit;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  button:hover { background: var(--button-hover); }
+  button.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+  button.primary:hover { background: var(--primary-hover); }
+  button.primary:active { background: var(--primary-pressed); }
+  button.active { background: var(--warning); border-color: var(--warning); color: #1e1f22; }
+  button:disabled { opacity: .5; cursor: default; }
+
+  .toggle { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .toggle .what { display: flex; flex-direction: column; }
+  .toggle .what small { color: var(--muted); }
+  .toggle button { min-width: 96px; }
+
+  .note { color: var(--muted); font-size: 13px; margin: 0; }
+  .message { font-size: 14px; margin: 0; min-height: 0; }
+  .message:empty { display: none; }
+  .message.ok { color: var(--success); }
+  .message.warn { color: var(--warning); }
+  .message.bad { color: var(--danger); }
+
+  .networks { border: 1px solid var(--border); max-height: 260px; overflow-y: auto; }
+  .networks button {
+    display: flex;
+    width: 100%;
+    justify-content: space-between;
+    gap: 8px;
+    border: 0;
+    border-radius: 0;
+    background: var(--panel);
+    font-weight: 400;
+    text-align: left;
+  }
+  .networks button:nth-child(even) { background: var(--stripe); }
+  .networks button.selected { background: var(--primary); color: #fff; }
+  .networks .meta { color: var(--muted); font-size: 13px; white-space: nowrap; }
+  .networks button.selected .meta { color: #fff; }
+  .networks .empty { padding: 10px; color: var(--muted); font-size: 14px; }
+
+  .static { display: contents; }
+  .static[hidden] { display: none; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Tessaro</h1>
+  <span class="node" id="node">connecting...</span>
+  <span class="pill" id="online">Internet</span>
+</header>
+
+<main>
+
+  <details open id="closed" hidden>
+    <summary>Setup is closed</summary>
+    <div class="body">
+      <p class="message">This device has been claimed, so the setup portal is closed. Whoever claimed it manages it with tessaro-gui or tessaro-ctl.</p>
+    </div>
+  </details>
+
+  <details open id="status">
+    <summary>Status</summary>
+    <div class="body">
+      <table class="facts">
+        <tr><td>Name</td><td id="f-name">-</td></tr>
+        <tr><td>Addresses</td><td id="f-addresses">-</td></tr>
+        <tr><td>Internet</td><td id="f-online">-</td></tr>
+        <tr><td>Screen shows</td><td id="f-showing">-</td></tr>
+        <tr><td>Browser</td><td id="f-browser">-</td></tr>
+      </table>
+      <div class="toggle">
+        <div class="what"><span>Sign-in sheet</span><small>Opens this page on a phone that joins the hotspot. Saving any change turns it off; the page stays at http://10.42.0.1/ until the device is claimed.</small></div>
+        <button id="captive" data-key="network.wifi.captive">-</button>
+      </div>
+      <div class="toggle">
+        <div class="what"><span>Maintenance</span><small>Shows the maintenance page instead of the kiosk page.</small></div>
+        <button id="maintenance" data-key="browser.maintenance.enable">-</button>
+      </div>
+      <div class="toggle">
+        <div class="what"><span>Debug screen</span><small>Shows the device's details on the screen.</small></div>
+        <button id="debug" data-key="browser.debug.enable">-</button>
+      </div>
+      <p class="message" id="m-status"></p>
+    </div>
+  </details>
+
+  <details id="wifi">
+    <summary>WiFi <span class="hint" id="wifi-hint"></span></summary>
+    <div class="body">
+      <p class="note">While the device runs this hotspot it cannot scan, so the list is the last one it found. A network not in it can be typed in.</p>
+      <div class="networks" id="networks"><div class="empty">Loading...</div></div>
+      <label>Network name (SSID)<input id="w-ssid" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+      <label>Password<input id="w-psk" type="password" autocomplete="off"></label>
+      <div class="row">
+        <label>Security
+          <select id="w-security">
+            <option value="">Find out</option>
+            <option value="psk">WPA2</option>
+            <option value="sae">WPA3</option>
+            <option value="open">Open</option>
+          </select>
+        </label>
+      </div>
+      <label class="check"><input type="checkbox" id="w-hidden"> Hidden network</label>
+      <p class="note">Joining takes this hotspot down, so your phone will lose it. If the device cannot reach the network's gateway it goes back to the hotspot on its own. Watch the device's screen for the result.</p>
+      <button class="primary" id="w-join">Join</button>
+      <p class="message" id="m-wifi"></p>
+    </div>
+  </details>
+
+  <details id="ethernet">
+    <summary>Ethernet</summary>
+    <div class="body">
+      <label>Addressing
+        <select id="e-mode" data-key="network.ethernet.mode">
+          <option value="dhcp">Automatic (DHCP)</option>
+          <option value="static">Static</option>
+        </select>
+      </label>
+      <div class="static" id="e-static">
+        <label>Address with prefix<input id="e-address" data-key="network.ethernet.address" placeholder="192.168.1.50/24" inputmode="decimal" autocomplete="off"></label>
+        <label>Gateway<input id="e-gateway" data-key="network.ethernet.gateway" placeholder="192.168.1.1" inputmode="decimal" autocomplete="off"></label>
+        <label>DNS servers, comma separated<input id="e-dns" data-key="network.ethernet.dns" placeholder="1.1.1.1, 8.8.8.8" autocomplete="off"></label>
+      </div>
+      <p class="note">If the device loses its gateway after the change it puts the old settings back.</p>
+      <button class="primary" id="e-apply">Apply</button>
+      <p class="message" id="m-ethernet"></p>
+    </div>
+  </details>
+
+  <details id="page">
+    <summary>Kiosk page</summary>
+    <div class="body">
+      <label>Address the screen shows<input id="p-url" data-key="browser.url" type="url" placeholder="https://example.com/" autocapitalize="off" spellcheck="false"></label>
+      <button class="primary" id="p-save">Save</button>
+      <p class="message" id="m-page"></p>
+    </div>
+  </details>
+
+  <details id="device">
+    <summary>Device</summary>
+    <div class="body">
+      <label>Name<input id="d-name" data-key="device.name" autocapitalize="off" spellcheck="false"></label>
+      <p class="note">The hotspot is named after the device, so renaming it drops your phone off the hotspot too.</p>
+      <button class="primary" id="d-save-name">Save name</button>
+      <label>Timezone<input id="d-timezone" data-key="time.timezone" list="zones" autocapitalize="off" spellcheck="false" placeholder="Europe/Bratislava"></label>
+      <datalist id="zones"></datalist>
+      <button class="primary" id="d-save-timezone">Save timezone</button>
+      <p class="message" id="m-device"></p>
+    </div>
+  </details>
+
+</main>
+
+<script>
+"use strict";
+
+const $ = (id) => document.getElementById(id);
+let state = null;
+// Inputs the user has typed into keep their text; polling never overwrites it.
+const edited = new Set();
+
+async function api(path, body) {
+  const options = body === undefined
+    ? { cache: "no-store" }
+    : { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) };
+  const response = await fetch("/api/" + path, options);
+  let data = null;
+  try { data = await response.json(); } catch (_) { /* an nginx error page */ }
+  if (!response.ok) {
+    const err = new Error((data && data.error) || ("the device answered " + response.status));
+    err.claimed = !!(data && data.claimed);
+    throw err;
+  }
+  return { status: response.status, data };
+}
+
+// A claimed device closes the portal: only the notice is left.
+function closed(on) {
+  document.querySelectorAll("main > details").forEach((d) => {
+    d.hidden = d.id === "closed" ? !on : on;
+  });
+}
+
+function say(id, text, kind) {
+  const el = $(id);
+  el.textContent = text || "";
+  el.className = "message" + (kind ? " " + kind : "");
+}
+
+// One settings change. A 202 means the device is still applying it.
+async function set(values, messageId, done) {
+  say(messageId, "Saving...", "");
+  try {
+    const { status } = await api("set", { values });
+    if (status === 202) {
+      say(messageId, "The device is still applying it; this page may lose the device for a moment.", "warn");
+    } else {
+      say(messageId, done || "Saved.", "ok");
+    }
+    Object.keys(values).forEach((key) => {
+      document.querySelectorAll('[data-key="' + key + '"]').forEach((el) => edited.delete(el.id));
+    });
+    setTimeout(refresh, 1500);
+  } catch (err) {
+    say(messageId, err.message, "bad");
+  }
+}
+
+function fill(id, value) {
+  const el = $(id);
+  if (!edited.has(id) && document.activeElement !== el) {
+    el.value = value == null ? "" : value;
+  }
+}
+
+function render() {
+  const w = state.welcome;
+  const s = state.settings;
+  $("node").textContent = w.node;
+  $("f-name").textContent = w.node;
+  $("f-addresses").textContent = w.addresses.length
+    ? w.addresses.map((a) => a.address + " (" + a.interface + ")").join(", ")
+    : "none";
+
+  const online = $("online");
+  online.className = "pill" + (w.online === true ? " on" : w.online === false ? " off" : "");
+  online.textContent = w.online === true ? "Online" : w.online === false ? "Offline" : "Checking";
+  $("f-online").textContent = w.online === true ? "Online" : w.online === false ? "Offline" : "Checking...";
+
+  const screen = state.screen;
+  $("f-showing").textContent = screen.debug ? "Debug screen"
+    : screen.maintenance ? "Maintenance page"
+    : (screen.showing || screen.url || "-");
+  $("f-browser").textContent = screen.answering ? "Answering" : "Not answering";
+
+  toggle("captive", s["network.wifi.captive"] === "1");
+  toggle("maintenance", screen.maintenance);
+  toggle("debug", screen.debug);
+
+  $("wifi-hint").textContent = w.hotspot ? "on hotspot " + w.hotspot.ssid : "";
+
+  fill("e-mode", s["network.ethernet.mode"] || "dhcp");
+  fill("e-address", s["network.ethernet.address"]);
+  fill("e-gateway", s["network.ethernet.gateway"]);
+  fill("e-dns", s["network.ethernet.dns"]);
+  showStatic();
+  fill("p-url", s["browser.url"]);
+  fill("d-name", s["device.name"] || w.node);
+  fill("d-timezone", s["time.timezone"]);
+}
+
+function toggle(id, on) {
+  const button = $(id);
+  button.textContent = on ? "Turn off" : "Turn on";
+  button.classList.toggle("active", !!on);
+  button.dataset.on = on ? "1" : "0";
+}
+
+function showStatic() {
+  $("e-static").hidden = $("e-mode").value !== "static";
+}
+
+async function refresh() {
+  try {
+    state = (await api("state")).data;
+    closed(false);
+    render();
+    say("m-status", "", "");
+  } catch (err) {
+    if (err.claimed) {
+      $("node").textContent = "claimed";
+      closed(true);
+      return;
+    }
+    $("node").textContent = "not connected";
+    say("m-status", "Cannot reach the device: " + err.message, "bad");
+  }
+}
+
+// --- the toggles: one tap each ---------------------------------------------
+const TOGGLE_NAMES = { captive: "Sign-in sheet ", maintenance: "Maintenance ", debug: "Debug screen " };
+Object.keys(TOGGLE_NAMES).forEach((id) => {
+  $(id).addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    const turnOn = button.dataset.on !== "1";
+    button.disabled = true;
+    await set({ [button.dataset.key]: turnOn ? "1" : "0" }, "m-status",
+      TOGGLE_NAMES[id] + (turnOn ? "on." : "off."));
+    // Maintenance and the debug screen restart the agent to apply; the
+    // button waits for the next state.
+    setTimeout(() => { button.disabled = false; }, 3000);
+  });
+});
+
+// --- WiFi -------------------------------------------------------------------
+let networksLoaded = false;
+$("wifi").addEventListener("toggle", () => {
+  if ($("wifi").open && !networksLoaded) loadNetworks();
+});
+
+async function loadNetworks() {
+  const list = $("networks");
+  try {
+    const networks = (await api("wifi")).data || [];
+    networksLoaded = true;
+    // Strongest first, one row per name; hidden networks have no name to show.
+    const seen = new Map();
+    networks.filter((n) => n.ssid).forEach((n) => {
+      const had = seen.get(n.ssid);
+      if (!had || had.signal < n.signal) seen.set(n.ssid, n);
+    });
+    const rows = [...seen.values()].sort((a, b) => b.signal - a.signal);
+    list.textContent = "";
+    if (!rows.length) {
+      list.innerHTML = '<div class="empty">No networks found yet. Type the name below.</div>';
+      return;
+    }
+    rows.forEach((n) => {
+      const row = document.createElement("button");
+      row.type = "button";
+      const name = document.createElement("span");
+      name.textContent = n.ssid;
+      const meta = document.createElement("span");
+      meta.className = "meta";
+      meta.textContent = n.signal + "% " + (n.security === "open" ? "open" : n.security.replace("wpa-psk", "WPA2").replace("sae", "WPA3"));
+      row.append(name, meta);
+      row.addEventListener("click", () => {
+        list.querySelectorAll("button").forEach((b) => b.classList.remove("selected"));
+        row.classList.add("selected");
+        $("w-ssid").value = n.ssid;
+        $("w-security").value = "";
+        $("w-psk").focus();
+      });
+      list.append(row);
+    });
+  } catch (err) {
+    list.innerHTML = "";
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.textContent = "Could not list networks: " + err.message;
+    list.append(empty);
+  }
+}
+
+$("w-join").addEventListener("click", async () => {
+  const ssid = $("w-ssid").value.trim();
+  const security = $("w-security").value;
+  const psk = $("w-psk").value;
+  if (!ssid) return say("m-wifi", "Type or pick a network.", "bad");
+  if (security !== "open" && psk && (psk.length < 8 || psk.length > 63)) {
+    return say("m-wifi", "A WiFi password is 8 to 63 characters.", "bad");
+  }
+  const body = { ssid, hidden: $("w-hidden").checked };
+  if (psk) body.psk = psk;
+  if (security) body.security = security;
+  say("m-wifi", "Joining " + ssid + "...", "");
+  try {
+    await api("wifi/join", body);
+    say("m-wifi", "The device is joining " + ssid + ". Your phone will lose this hotspot now; the device's screen shows how it went.", "ok");
+  } catch (err) {
+    say("m-wifi", err.message, "bad");
+  }
+});
+
+// --- Ethernet ---------------------------------------------------------------
+$("e-mode").addEventListener("change", showStatic);
+
+$("e-apply").addEventListener("click", () => {
+  const mode = $("e-mode").value;
+  const values = { "network.ethernet.mode": mode };
+  if (mode === "static") {
+    values["network.ethernet.address"] = $("e-address").value.trim();
+    values["network.ethernet.gateway"] = $("e-gateway").value.trim();
+    values["network.ethernet.dns"] = $("e-dns").value.replace(/\s+/g, "");
+  }
+  set(values, "m-ethernet", "Applied.");
+});
+
+// --- Kiosk page and device --------------------------------------------------
+$("p-save").addEventListener("click", () => {
+  set({ "browser.url": $("p-url").value.trim() }, "m-page", "Saved. The screen switches to it.");
+});
+
+$("d-save-name").addEventListener("click", () => {
+  set({ "device.name": $("d-name").value.trim() }, "m-device", "Name saved.");
+});
+
+$("d-save-timezone").addEventListener("click", () => {
+  set({ "time.timezone": $("d-timezone").value.trim() }, "m-device", "Timezone saved.");
+});
+
+let zonesLoaded = false;
+$("device").addEventListener("toggle", async () => {
+  if (!$("device").open || zonesLoaded) return;
+  try {
+    const zones = (await api("zones")).data || [];
+    const list = $("zones");
+    zones.forEach((zone) => {
+      const option = document.createElement("option");
+      option.value = zone;
+      list.append(option);
+    });
+    zonesLoaded = true;
+  } catch (_) { /* typing a zone still works */ }
+});
+
+document.querySelectorAll("input[data-key], select[data-key]").forEach((el) => {
+  el.addEventListener("input", () => edited.add(el.id));
+});
+
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>

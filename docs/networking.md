@@ -208,7 +208,8 @@ renders, `txn.rs` switches) and `ping.rs`.
   WPA2 with CCMP and `pmf=1` (disabled): the Pi's brcmfmac refuses clients
   with PMF on in AP mode, and its WPA3 AP support is broken.
 * **Hotspot clients get DHCP and DNS from NetworkManager's own dnsmasq**
-  (`ipv4.method=shared`, 10.42.0.x) and, with `network.wifi.nat=1`, NAT through
+  (`ipv4.method=shared`, the device at a pinned `address1=10.42.0.1/24`,
+  `HOTSPOT_ADDRESS` in `profiles.rs`) and, with `network.wifi.nat=1`, NAT through
   NetworkManager's nftables table (`firewall-backend=nftables` in
   `10-tessaro.conf`). `network.wifi.nat=0` is a table of the agent's, `inet
   tessaro-hotspot`, dropping forwarded traffic from the WiFi interface - NM
@@ -218,6 +219,12 @@ renders, `txn.rs` switches) and `ping.rs`.
   which would break every lookup on the device) and never enables its own
   unit (which would hold port 53). The NAT modules are recommended, since
   linux-yocto builds them as modules.
+* **The hotspot's dnsmasq answers the phones' captive portal probes with the
+  device itself.** `tessaro-captive.conf` (tessaro-portal) in
+  `/etc/NetworkManager/dnsmasq-shared.d/` maps only the probe host names to
+  10.42.0.1, which is why the address is pinned; every other name resolves
+  as before. How that opens the setup portal is in
+  [setup-portal.md](setup-portal.md).
 * **WiFi joins are Open, WPA2-PSK and WPA3-SAE.** The security comes from a
   scan, or `--hidden --security`; enterprise (802.1X) and WEP are refused.
   Rejoining the same network keeps its saved password if none is given. The

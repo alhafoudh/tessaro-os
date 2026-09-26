@@ -80,6 +80,7 @@
     Object.assign(api.device, { reboot: () => call("device.reboot") });
     Object.assign(api.network, {
       publicIp: () => call("network.publicIp"),
+      online: () => call("network.online"),
       ping: (host) => call("network.ping", host),
       speedTest: () => call("network.speedTest"),
     });

@@ -59,9 +59,15 @@ impl Control {
     /// rather than emptying it, so one lost request never moves the URL;
     /// `watch_url` notices when it does change. The template is checked every
     /// 15s, so a `set` that starts using the key is answered within that.
+    ///
+    /// The same lookup is the online indicator: while the welcome page is on
+    /// screen, or the setup portal was read in the last 2 minutes, it is asked
+    /// every minute, since that is someone watching the indicator and waiting
+    /// on a cable or a WiFi join. A device showing its real page asks neither.
     pub fn watch_public_ip(self: &Arc<Self>) {
         const TICK: Duration = Duration::from_secs(15);
         const EVERY: Duration = Duration::from_secs(300);
+        const WATCHED: Duration = Duration::from_secs(60);
         const RETRY: Duration = Duration::from_secs(30);
 
         let control = Arc::clone(self);
@@ -72,17 +78,25 @@ impl Control {
             let mut due: Option<Instant> = None;
             loop {
                 // naked: a disk read under blocking()'s within()
-                let wanted = control.url_uses("network.public_ip").await;
+                let watched = control.online_watched().await;
+                // naked: a disk read under blocking()'s within()
+                let wanted = watched || control.url_uses("network.public_ip").await;
                 if !wanted {
                     // Asked afresh the moment the URL uses it again.
                     due = None;
                 } else if due.is_none_or(|at| Instant::now() >= at) {
                     // naked: public_ip's every phase is under its own within()
                     let wait = match control.refresh_public_ip(&http).await {
+                        Ok(()) if watched => WATCHED,
                         Ok(()) => EVERY,
                         Err(()) => RETRY,
                     };
                     due = Some(Instant::now() + wait);
+                } else if let Some(at) = due {
+                    // Someone started watching: a 5-minute wait shrinks to one.
+                    if watched && at > Instant::now() + WATCHED {
+                        due = Some(Instant::now() + WATCHED);
+                    }
                 }
                 // naked: a timer and the shutdown signal, not the outside world
                 tokio::select! {
@@ -107,8 +121,88 @@ impl Control {
                     .contains(&key))
     }
 
+    /// Is anyone looking at the online indicator: the welcome page on screen,
+    /// or the setup portal read within the last 2 minutes?
+    async fn online_watched(&self) -> bool {
+        const PORTAL: Duration = Duration::from_secs(120);
+        if lock(&self.portal_seen).is_some_and(|at| at.elapsed() < PORTAL) {
+            return true;
+        }
+        // naked: a disk read under blocking()'s within()
+        self.welcome_shown().await
+    }
+
+    /// Is the welcome page what the screen shows? It is browser.url's image
+    /// default, so this is browser.url unset or set to it, with neither
+    /// maintenance mode nor the debug screen in front of it.
+    pub(super) async fn welcome_shown(&self) -> bool {
+        let Ok(state) = self.read_state().await else {
+            return false;
+        };
+        if state::debug_screen(&state.settings, &self.defaults) {
+            return false;
+        }
+        let (_, template) = state::shown_template(&state.settings, &self.defaults);
+        is_welcome(&template, &self.paths.selftest_origin)
+    }
+
+    /// The setup portal read the device's state: keep the online check going.
+    pub(crate) fn portal_seen(&self) {
+        *lock(&self.portal_seen) = Some(Instant::now());
+    }
+
+    /// Whether the last lookup answered; `None` before the first one.
+    pub(crate) fn online(&self) -> Option<bool> {
+        *lock(&self.online)
+    }
+
+    /// Something the welcome page or the captive flag show changed: write
+    /// them now rather than at the next tick.
+    pub(crate) fn nudge_welcome(&self) {
+        self.welcome.notify_one();
+    }
+
+    /// Keeps the captive flag nginx looks at: there while the device is
+    /// unclaimed and network.wifi.captive is on, gone otherwise. Written
+    /// with the welcome page, so a claim or a portal change reaches it at
+    /// once. No socket directory, no portal: nothing to write.
+    async fn write_captive_flag(&self) {
+        let Some(flag) = self.paths.captive_flag() else {
+            return;
+        };
+        // naked: a disk read under blocking()'s within()
+        let Ok(state) = self.read_state().await else {
+            return;
+        };
+        let on = !self.claimed()
+            && state::setting(&state.settings, &self.defaults, keys::WIFI_CAPTIVE).as_deref()
+                == Some("1");
+        let written = blocking("writing the captive flag", move || {
+            if !flag.parent().is_some_and(|dir| dir.is_dir()) {
+                return Ok(false);
+            }
+            let was = flag.exists();
+            if on && !was {
+                std::fs::write(&flag, b"").map_err(|err| format!("{}: {err}", flag.display()))?;
+            } else if !on && was {
+                std::fs::remove_file(&flag).map_err(|err| format!("{}: {err}", flag.display()))?;
+            }
+            Ok(on != was)
+        })
+        .await;
+        match written {
+            Ok(true) => self.log.info(if on {
+                "setup portal: a phone joining the hotspot gets the sign-in sheet"
+            } else {
+                "setup portal: no sign-in sheet for phones on the hotspot"
+            }),
+            Ok(false) => {}
+            Err(err) => self.log.info(format!("setup portal: {err}")),
+        }
+    }
+
     /// One lookup, saved on success. A failure is logged at debug and leaves
-    /// the last address in place.
+    /// the last address in place. Either way it is the online state.
     async fn refresh_public_ip(&self, http: &crate::http::HyperHttp) -> Result<(), ()> {
         // naked: public_ip's every phase is under its own within()
         match crate::net::public_ip(http).await {
@@ -120,8 +214,21 @@ impl Control {
             Err(err) => {
                 self.log
                     .debug(format!("public address: {} {err}", crate::net::TRACE_URL));
+                self.set_online(false);
                 Err(())
             }
+        }
+    }
+
+    pub(super) fn set_online(&self, online: bool) {
+        let was = lock(&self.online).replace(online);
+        if was != Some(online) {
+            self.log.info(if online {
+                "online: the public address lookup answers"
+            } else {
+                "offline: the public address lookup does not answer"
+            });
+            self.welcome.notify_one();
         }
     }
 
@@ -135,7 +242,10 @@ impl Control {
             .await;
     }
 
+    /// A lookup answered, from any caller: save the address, and the device
+    /// is online.
     pub(super) async fn store_public_ip(&self, ip: String) {
+        self.set_online(true);
         let paths = self.paths.clone();
         let body = format!("{ip}\n");
         let written = blocking("writing the public address", move || {
@@ -155,10 +265,12 @@ impl Control {
 
     /// Keeps `/run/tessaro-kiosk/welcome.json` on what the welcome page at
     /// http://127.0.0.1/ shows: the node name, its IPv4 addresses, the
-    /// hotspot's SSID while the hotspot is up, and whether the device is
-    /// claimed. Looked at every 5s, and at once after a claim or an unclaim;
-    /// written only when it changes. Nothing secret goes in: nginx serves the
-    /// file to any page on the loopback.
+    /// hotspot's SSID while the hotspot is up, whether the device is
+    /// claimed and online, and the setup QR code while it is unclaimed with
+    /// the hotspot up. Looked at every 5s, and at once after a claim, an
+    /// unclaim or a change of online; written only when it changes. Nothing
+    /// secret goes in: nginx serves the file to any page on the loopback, and
+    /// the QR is only ever shown for the open hotspot.
     pub fn watch_welcome(self: &Arc<Self>) {
         const EVERY: Duration = Duration::from_secs(5);
 
@@ -168,6 +280,8 @@ impl Control {
             loop {
                 // naked: every wait in it is blocking() or Network, each under within()
                 control.write_welcome().await;
+                // naked: disk reads and writes under blocking()'s within()
+                control.write_captive_flag().await;
                 // naked: a timer, the claim nudge and the shutdown signal, not the outside world
                 tokio::select! {
                     _ = tokio::time::sleep(EVERY) => {}
@@ -178,15 +292,13 @@ impl Control {
         });
     }
 
-    async fn write_welcome(&self) {
+    /// What the welcome page shows, which the setup portal shows too.
+    pub(crate) async fn welcome(&self) -> Result<serde_json::Value, String> {
         let paths = self.paths.clone();
-        let Ok(net) = blocking("reading the network", move || {
+        let net = blocking("reading the network", move || {
             Ok(crate::net::snapshot(&paths))
         })
-        .await
-        else {
-            return;
-        };
+        .await?;
         let mut hotspot = None;
         // naked: a disk read under blocking()'s within()
         if let Ok(config) = self.net_config().await {
@@ -195,12 +307,21 @@ impl Control {
                 hotspot = Some(config.wifi.hotspot_ssid);
             }
         }
-        let body = welcome_json(
-            &self.identity.name,
-            &net,
-            hotspot.as_deref(),
-            self.claimed(),
-        );
+        Ok(welcome_value(&Welcome {
+            node: &self.identity.name,
+            net: &net,
+            hotspot: hotspot.as_deref(),
+            claimed: self.claimed(),
+            online: self.online(),
+        }))
+    }
+
+    async fn write_welcome(&self) {
+        // naked: every wait in it is blocking() or Network, each under within()
+        let Ok(value) = self.welcome().await else {
+            return;
+        };
+        let body = format!("{value}\n");
         let paths = self.paths.clone();
         let written = blocking("writing the welcome page's values", move || {
             let file = paths.welcome_file();
@@ -657,11 +778,34 @@ impl Control {
     }
 }
 
+/// Is this browser.url template the welcome page? The page is `index.html`
+/// at the self-test origin, however the URL names it.
+fn is_welcome(template: &str, origin: &str) -> bool {
+    let origin = origin.trim_end_matches('/');
+    template
+        .strip_prefix(origin)
+        .is_some_and(|rest| matches!(rest, "" | "/" | "/index.html"))
+}
+
+/// What goes into `welcome.json`.
+struct Welcome<'a> {
+    node: &'a str,
+    net: &'a protocol::Net,
+    /// The hotspot's SSID, while it is up.
+    hotspot: Option<&'a str>,
+    claimed: bool,
+    online: Option<bool>,
+}
+
 /// The body of `welcome.json`. IPv4 global addresses only, with the
 /// interface each is on: those are what someone reads off the screen to reach
-/// the device. The hotspot is `null` unless it is up.
-fn welcome_json(node: &str, net: &protocol::Net, hotspot: Option<&str>, claimed: bool) -> String {
-    let addresses: Vec<_> = net
+/// the device. The hotspot is `null` unless it is up; `online` is `null`
+/// until the first lookup. `setup` - the QR code that joins a phone to the
+/// hotspot, and the portal's address - is there only while the hotspot is up
+/// and the device is unclaimed, which is when the hotspot is open.
+fn welcome_value(welcome: &Welcome) -> serde_json::Value {
+    let addresses: Vec<_> = welcome
+        .net
         .interfaces
         .iter()
         .filter(|interface| interface.kind != "loopback")
@@ -678,13 +822,26 @@ fn welcome_json(node: &str, net: &protocol::Net, hotspot: Option<&str>, claimed:
                 })
         })
         .collect();
-    let body = serde_json::json!({
-        "node": node,
+    // An SSID too long for a QR code cannot happen (32 bytes at most); if
+    // the encoder refused anyway, the page falls back to the written line.
+    let setup = welcome
+        .hotspot
+        .filter(|_| !welcome.claimed)
+        .and_then(|ssid| crate::qr::svg(&crate::qr::wifi_payload(ssid)).ok())
+        .map(|qr| {
+            serde_json::json!({
+                "qr": qr,
+                "url": format!("http://{}/", profiles::HOTSPOT_ADDRESS),
+            })
+        });
+    serde_json::json!({
+        "node": welcome.node,
         "addresses": addresses,
-        "hotspot": hotspot.map(|ssid| serde_json::json!({ "ssid": ssid })),
-        "claimed": claimed,
-    });
-    format!("{body}\n")
+        "hotspot": welcome.hotspot.map(|ssid| serde_json::json!({ "ssid": ssid })),
+        "claimed": welcome.claimed,
+        "online": welcome.online,
+        "setup": setup,
+    })
 }
 
 #[cfg(test)]
@@ -741,8 +898,7 @@ mod tests {
             ),
             interface("wlan0", "wireless", &[("10.42.0.1", "ipv4", "global")]),
         ]);
-        let body: serde_json::Value =
-            serde_json::from_str(&welcome_json("lobby", &net, None, false)).unwrap();
+        let body = welcome_value(&welcome("lobby", &net, None, false, None));
         assert_eq!(
             body,
             serde_json::json!({
@@ -753,24 +909,75 @@ mod tests {
                 ],
                 "hotspot": null,
                 "claimed": false,
+                "online": null,
+                "setup": null,
             })
         );
     }
 
+    fn welcome<'a>(
+        node: &'a str,
+        net: &'a Net,
+        hotspot: Option<&'a str>,
+        claimed: bool,
+        online: Option<bool>,
+    ) -> Welcome<'a> {
+        Welcome {
+            node,
+            net,
+            hotspot,
+            claimed,
+            online,
+        }
+    }
+
     #[test]
     fn the_welcome_page_names_a_running_hotspot() {
-        let body: serde_json::Value = serde_json::from_str(&welcome_json(
+        let net = net(vec![]);
+        let body = welcome_value(&welcome(
             "lobby",
-            &net(vec![]),
+            &net,
             Some("tessaro-lobby"),
             true,
-        ))
-        .unwrap();
+            Some(true),
+        ));
         assert_eq!(
             body["hotspot"],
             serde_json::json!({ "ssid": "tessaro-lobby" })
         );
         assert_eq!(body["claimed"], true);
+        assert_eq!(body["online"], true);
         assert_eq!(body["addresses"], serde_json::json!([]));
+        assert_eq!(body["setup"], serde_json::Value::Null, "claimed: no QR");
+    }
+
+    #[test]
+    fn the_setup_qr_is_there_only_for_the_open_hotspot() {
+        let net = net(vec![]);
+        let body = welcome_value(&welcome(
+            "lobby",
+            &net,
+            Some("tessaro-lobby"),
+            false,
+            Some(false),
+        ));
+        assert_eq!(body["online"], false);
+        assert_eq!(body["setup"]["url"], "http://10.42.0.1/");
+        let qr = body["setup"]["qr"].as_str().unwrap();
+        assert!(qr.starts_with("<svg "), "{qr}");
+
+        let body = welcome_value(&welcome("lobby", &net, None, false, None));
+        assert_eq!(body["setup"], serde_json::Value::Null, "no hotspot: no QR");
+    }
+
+    #[test]
+    fn the_welcome_page_is_the_self_test_origin_s_index() {
+        let origin = "http://127.0.0.1";
+        assert!(is_welcome("http://127.0.0.1/", origin));
+        assert!(is_welcome("http://127.0.0.1", origin));
+        assert!(is_welcome("http://127.0.0.1/index.html", origin));
+        assert!(!is_welcome("http://127.0.0.1/maintenance.html", origin));
+        assert!(!is_welcome("http://127.0.0.1:8080/", origin));
+        assert!(!is_welcome("https://example.com/", origin));
     }
 }

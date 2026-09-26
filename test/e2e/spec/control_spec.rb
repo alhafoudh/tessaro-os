@@ -3,7 +3,7 @@
 module AgentE2E
   # The control plane: settings, the debug screen, maintenance mode, the
   # claim model, ssh keys, the resolution probation, the file store, eval,
-  # the page bridge and screen power.
+  # the page bridge, screen power and the setup portal.
   RSpec.describe "the control plane" do
     include_context "a booted VM"
 
@@ -188,6 +188,47 @@ module AgentE2E
       guest.run("tessaro-ctl browser maintenance off")
       journal.wait_for(/^navigated to #{Regexp.escape(KIOSK_URL)}$/, timeout: 30)
       expect(guest.kiosk_pid).to eq(browser), "the browser was restarted"
+    end
+
+    # qemu has no WiFi, so there is no hotspot: the hotspot's address goes on
+    # the loopback instead, which puts the guest's own requests on the
+    # portal's subnet and runs them through nginx, the tmpfiles directory and
+    # the agent's socket exactly as a phone's would.
+    it "portal: the setup portal answers on the hotspot's address, sends a phone's probe to it until its " \
+       "first saved change, and refuses what it may not set" do
+      portal = "http://10.42.0.1"
+      probe = "wget -q -O- --header 'Host: captive.apple.com' #{portal}/hotspot-detect.html 2>&1"
+      set = lambda do |json|
+        guest.run("wget -q -O- --header 'Content-Type: application/json' --post-data='#{json}' " \
+                  "#{portal}/api/set 2>&1", allow_failure: true)
+      end
+      guest.run("ip addr add 10.42.0.1/24 dev lo")
+
+      state = guest.run("wget -q -O- #{portal}/api/state")
+      expect(state).to include('"welcome"', '"online"', '"network.wifi.captive":"1"')
+      expect(guest.run(probe)).to include("<title>Tessaro setup</title>")
+
+      set.call('{"values":{"time.timezone":"Europe/Bratislava"}}')
+      journal.wait_for(/^settings revision \d+: .*time\.timezone.* changed by the setup portal \(10\.42\.0\.1\)$/,
+                       timeout: 30)
+      journal.wait_for(/^setup portal: no sign-in sheet for phones on the hotspot$/, timeout: 15)
+      expect(guest.run("tessaro-ctl config get time.timezone")).to include("Europe/Bratislava")
+      expect(guest.run("tessaro-ctl config get network.wifi.captive").strip).to end_with("0")
+      # The real server's answer, or a dropped connection where the VM has
+      # no internet - never the portal.
+      expect(guest.run(probe, allow_failure: true)).not_to include("Tessaro setup")
+
+      set.call('{"values":{"network.wifi.captive":"1"}}')
+      journal.wait_for(/^setup portal: a phone joining the hotspot gets the sign-in sheet$/, timeout: 15)
+      expect(guest.run(probe)).to include("<title>Tessaro setup</title>")
+
+      expect(set.call('{"values":{"access.listen":"0.0.0.0:1"}}')).to include("403")
+
+      # The loopback server is untouched: the kiosk's own page is still there.
+      expect(guest.run("wget -q -O- http://127.0.0.1/welcome.json")).to include('"online"')
+    ensure
+      guest.run("ip addr del 10.42.0.1/24 dev lo; tessaro-ctl config unset time.timezone network.wifi.captive",
+                allow_failure: true)
     end
 
     # A client with no pin and no token, over TLS: everything answers but

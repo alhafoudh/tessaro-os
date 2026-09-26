@@ -99,6 +99,7 @@ SRC_URI += " \
     crate://crates.io/http-body/1.1.0 \
     crate://crates.io/http-body-util/0.1.5 \
     crate://crates.io/httparse/1.10.1 \
+    crate://crates.io/httpdate/1.0.3 \
     crate://crates.io/hybrid-array/0.4.15 \
     crate://crates.io/hyper/1.11.1 \
     crate://crates.io/hyper-rustls/0.27.10 \
@@ -159,6 +160,7 @@ SRC_URI += " \
     crate://crates.io/proc-macro2/1.0.107 \
     crate://crates.io/psl-types/2.0.11 \
     crate://crates.io/publicsuffix/2.3.0 \
+    crate://crates.io/qrcode/0.14.1 \
     crate://crates.io/quinn/0.11.12 \
     crate://crates.io/quinn-proto/0.11.18 \
     crate://crates.io/quinn-udp/0.5.15 \
@@ -383,6 +385,7 @@ SRC_URI[http-1.5.0.sha256sum] = "918d3568bebf352712bc2ef3d46a8bcf1a75b373be6539d
 SRC_URI[http-body-1.1.0.sha256sum] = "ca2a8f2913ee65f60facd6a5905613afaa448497a0230cc41ce022d93290bc2c"
 SRC_URI[http-body-util-0.1.5.sha256sum] = "23169fe34a5fbcdd3f3862e78fb9b6fccd5f02a6dc6f732547005d45631ce71c"
 SRC_URI[httparse-1.10.1.sha256sum] = "6dbf3de79e51f3d586ab4cb9d5c3e2c14aa28ed23d180cf89b4df0454a69cc87"
+SRC_URI[httpdate-1.0.3.sha256sum] = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
 SRC_URI[hybrid-array-0.4.15.sha256sum] = "27f864f10dfb56725ce5ce5472bc52252c8f93a4ab86327122cebf62c5f59a17"
 SRC_URI[hyper-1.11.1.sha256sum] = "27b501faa50e7a26c3d3560ca625132f4078a17771f4810baf70475ae48cbe43"
 SRC_URI[hyper-rustls-0.27.10.sha256sum] = "dfa8e654703247911e29c23fbeaa261834bd9bb74efba2f9acddc37bfb127f53"
@@ -443,6 +446,7 @@ SRC_URI[proc-macro-crate-3.5.0.sha256sum] = "e67ba7e9b2b56446f1d419b1d807906278f
 SRC_URI[proc-macro2-1.0.107.sha256sum] = "985e7ec9bb745e6ce6535b544d84d6cd6f7ad8bd711c398938ae983b91a766d9"
 SRC_URI[psl-types-2.0.11.sha256sum] = "33cb294fe86a74cbcf50d4445b37da762029549ebeea341421c7c70370f86cac"
 SRC_URI[publicsuffix-2.3.0.sha256sum] = "6f42ea446cab60335f76979ec15e12619a2165b5ae2c12166bef27d283a9fadf"
+SRC_URI[qrcode-0.14.1.sha256sum] = "d68782463e408eb1e668cf6152704bd856c78c5b6417adaee3203d8f4c1fc9ec"
 SRC_URI[quinn-0.11.12.sha256sum] = "4051e23e9185c255a7e33ef59cdbca87a22d359052eecd22fc6b901fb37d9d11"
 SRC_URI[quinn-proto-0.11.18.sha256sum] = "a9746dbde176634f4f2f1faf2404e30a31b2bc1e9cafb5329c95d8177a18c9fc"
 SRC_URI[quinn-udp-0.5.15.sha256sum] = "35a133f956daabe89a61a685c2649f13d82d5aa4bd5d12d1277e1072a21c0694"

@@ -1,5 +1,6 @@
-# nginx on Tessaro serves exactly one thing: the local self-test page, on the
-# loopback. These changes are needed to make that true.
+# nginx on Tessaro serves the local pages on the loopback (tessaro-selftest)
+# and the setup portal to the hotspot's subnet (tessaro-portal), and nothing
+# else. These changes are needed to make that true.
 
 # 1. Give nginx a config directory outside /etc.
 #
@@ -22,8 +23,9 @@
 #    It listens on 0.0.0.0:80 and [::]:80 and serves /var/www/localhost/html,
 #    which on a kiosk means an nginx welcome page reachable from the network.
 #    Removing the symlink leaves the site file in sites-available for reference
-#    and leaves our own server block, which binds 127.0.0.1 only, as the one
-#    thing nginx answers.
+#    and leaves our own server blocks as the only things nginx answers: the
+#    loopback one, and the portal's, which refuses every address outside the
+#    hotspot's subnet.
 
 # The upstream do_install has already rewritten the shipped nginx.conf's paths
 # with ${sysconfdir}, so match on that rather than on a literal /etc.

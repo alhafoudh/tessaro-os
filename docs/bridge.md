@@ -79,6 +79,7 @@ answers everything:
 | `network.status()` | config | `network show`, without the public address |
 | `audio.status()` | config | `audio show` |
 | `network.publicIp()` | actions | `config get network.public_ip`: asked now |
+| `network.online()` | actions | the same lookup, resolved as `true` or `false` |
 | `browser.reload()` | actions | `browser reload` |
 | `browser.restart()` | actions | `device restart browser` |
 | `browser.home()` | actions | `browser navigate` to the page the agent drives |
@@ -111,6 +112,11 @@ Nothing under `access`, `ssh`, `update` or `device factory-reset`, and no
   wait for one request. A failure rejects with `lastKnown`, the last address
   found this boot, if any. A success also updates what
   `config get network.public_ip` reports, but not `tessaro.config`.
+* **`network.online()` is `publicIp()` as a yes or no, and never rejects for
+  being offline.** It shares that call's request and cache: an answer from
+  Cloudflare's trace at 1.1.1.1 resolves `true`, anything else `false`. The
+  result also feeds the welcome page's online indicator (see **Online** in
+  [setup-portal.md](setup-portal.md)).
 
 ## Who may call
 

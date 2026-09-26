@@ -390,6 +390,10 @@ pub static KEYS: &[Key] = &[
         "hotspot (tessaro-NAME, for installation and management), client (joins network.wifi.ssid; `tessaro-ctl network wifi join`; falls back to the hotspot when it does not connect after boot, see network.wifi.fallback_after), or off."),
     key("network.wifi.nat", "KIOSK_WIFI_NAT", Kind::Flag, NETWORK,
         "Let hotspot clients reach the internet and the LAN through the device; 0 lets them reach the device only."),
+    // Read by the agent's welcome watcher every few seconds, which keeps the
+    // flag nginx looks at; nothing restarts.
+    key(WIFI_CAPTIVE, "KIOSK_WIFI_CAPTIVE", Kind::Flag, NOBODY,
+        "While the device is unclaimed, a phone joining the hotspot gets its sign-in sheet with the setup portal. The portal turns it off with its first saved change; the portal itself stays at http://10.42.0.1/ until the device is claimed."),
     key("network.wifi.ssid", "KIOSK_WIFI_SSID", Kind::Ssid, NETWORK,
         "The network network.wifi.mode=client joins. Its password is set by `tessaro-ctl network wifi join` and never shown."),
     key("network.wifi.security", "KIOSK_WIFI_SECURITY", Kind::Choice(&["psk", "sae", "open"]), NETWORK,
@@ -460,6 +464,7 @@ pub const ID: &str = "device.id";
 pub const GPU_MEM: &str = "device.gpu_mem";
 pub const PUBLIC_IP: &str = "network.public_ip";
 pub const WIFI_FALLBACK_AFTER: &str = "network.wifi.fallback_after";
+pub const WIFI_CAPTIVE: &str = "network.wifi.captive";
 pub const PROXY_URL: &str = "network.proxy.url";
 pub const PROXY_BYPASS: &str = "network.proxy.bypass";
 pub const AUDIO_OUTPUT: &str = "audio.output";

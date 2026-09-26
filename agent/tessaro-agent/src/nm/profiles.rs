@@ -49,6 +49,11 @@ const PRIORITY: i32 = 100;
 /// What the hotspot's name starts with.
 pub const HOTSPOT_PREFIX: &str = "tessaro-";
 
+/// The device's own address on the hotspot, where the setup portal answers.
+/// `tessaro-captive.conf` (tessaro-network) and `20-tessaro-portal.conf`
+/// (tessaro-selftest) name it too.
+pub const HOTSPOT_ADDRESS: &str = "10.42.0.1";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Profile {
     pub id: &'static str,
@@ -489,7 +494,11 @@ fn hotspot(wifi: &Wifi) -> Keyfile {
     }
     // `shared`: NetworkManager's dnsmasq hands out 10.42.0.x and forwards
     // DNS; the NAT, when network.wifi.nat allows it, is its nftables table.
-    body.push_str("\n[ipv4]\nmethod=shared\n\n[ipv6]\nmethod=disabled\n");
+    // The address is NM's own default, stated so it cannot move: the setup
+    // portal's captive DNS drop-in and its nginx server name it.
+    body.push_str(&format!(
+        "\n[ipv4]\nmethod=shared\naddress1={HOTSPOT_ADDRESS}/24\n\n[ipv6]\nmethod=disabled\n"
+    ));
     Keyfile {
         name: WIFI_HOTSPOT.file_name(),
         body,
@@ -580,7 +589,7 @@ mod tests {
         assert!(hotspot.contains("mode=ap\n"));
         assert!(hotspot.contains("ssid=tessaro-brave-otter-3fa2\n"));
         assert!(!hotspot.contains("[wifi-security]"), "open while unclaimed");
-        assert!(hotspot.contains("method=shared"));
+        assert!(hotspot.contains("[ipv4]\nmethod=shared\naddress1=10.42.0.1/24\n"));
         assert_eq!(config.wifi_profile(), Some(WIFI_HOTSPOT));
         assert_eq!(config.ethernet_profile(), ETHERNET_DHCP);
     }

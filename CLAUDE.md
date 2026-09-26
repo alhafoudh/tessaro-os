@@ -43,6 +43,7 @@ same change as the behaviour it describes.
 | [docs/updates.md](docs/updates.md) | in-place updates, `--repartition`, growing `/data` |
 | [docs/e2e.md](docs/e2e.md) | the qemu RSpec suite: running it, lanes, ports, harness quirks |
 | [docs/gui.md](docs/gui.md) | `tessaro-gui`: inner windows, keyboard, the node list, device pages per command group, workers and jobs, the VNC viewer |
+| [docs/setup-portal.md](docs/setup-portal.md) | the welcome page's QR code, captive portal detection, the portal's nginx server and agent socket, what it may set, the online indicator |
 
 **Writing docs** (in `docs/` and in this file):
 
@@ -210,7 +211,8 @@ Builds are long. Run them in a Herdr pane, not the Bash tool.
   shadows the image's copy forever, so shipped defaults and drop-ins go under
   `/usr/lib` (kiosk env, nginx `conf.d`, NetworkManager `conf.d`). The
   exceptions are paths compiled into a binary: the Chromium policy in
-  `/etc/chromium/policies/managed/`, `nginx.conf`, the base `weston.ini`.
+  `/etc/chromium/policies/managed/`, `nginx.conf`, the base `weston.ini`,
+  NetworkManager's `dnsmasq-shared.d/`.
 * **Chromium flags have one home each.** The wrapper carries only
   `--kiosk --no-first-run --ozone-platform=wayland`; everything else is in
   `tessaro-kiosk.service`. A fixed flag must be counterable from

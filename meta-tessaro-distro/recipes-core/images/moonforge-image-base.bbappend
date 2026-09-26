@@ -91,6 +91,12 @@ CORE_IMAGE_EXTRA_INSTALL += " \
     tessaro-selftest \
 "
 
+# The setup portal a phone opens from the welcome page's QR code, on the
+# hotspot only. See docs/setup-portal.md.
+CORE_IMAGE_EXTRA_INSTALL += " \
+    tessaro-portal \
+"
+
 # Sound: PipeWire, WirePlumber and the Pulse server Chromium plays through,
 # with the units that run them as the weston user. Everything about which
 # output plays and how loud is the audio.* settings, applied by the agent;

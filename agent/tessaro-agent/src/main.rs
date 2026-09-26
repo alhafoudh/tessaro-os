@@ -42,10 +42,12 @@ mod notify;
 mod offline;
 mod paths;
 mod ping;
+mod portal;
 mod ports;
 mod power;
 mod probe;
 mod proc;
+mod qr;
 mod render;
 mod schedules;
 mod secrets;
@@ -301,6 +303,17 @@ async fn start_control(
             "control: cannot listen on {}: {err}",
             socket.display()
         ));
+    }
+
+    // No portal is not an error on a device without nginx's socket
+    // directory; it is said once, in the journal.
+    if let Err(err) = portal::spawn(
+        Arc::clone(&control),
+        device.paths.portal_socket.clone(),
+        Arc::clone(log),
+        stop.subscribe(),
+    ) {
+        log.info(format!("setup portal: not started: {err}"));
     }
 
     let mut port = None;

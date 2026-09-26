@@ -93,6 +93,9 @@ pub enum Caller {
     /// The kiosk page itself, through the page bridge: only the commands
     /// `bridge.rs` maps its calls onto.
     Page,
+    /// The setup portal on the hotspot, through nginx: only the commands
+    /// `portal.rs` allows. `peer` is the phone's address as nginx saw it.
+    Portal { peer: String },
 }
 
 impl Caller {
@@ -102,6 +105,7 @@ impl Caller {
             Caller::Token { id, peer } => format!("{peer} (token {id})"),
             Caller::Anonymous { peer } => peer.to_string(),
             Caller::Page => "the page".to_string(),
+            Caller::Portal { peer } => format!("the setup portal ({peer})"),
         }
     }
 }
@@ -203,6 +207,13 @@ pub struct Control {
     time: Arc<Time>,
     /// Wakes `watch_welcome` early, when the claim changes.
     welcome: tokio::sync::Notify,
+    /// Whether the last public address lookup answered: the device is
+    /// online. `None` until one has been tried. Not the cached address, which
+    /// a failure leaves in place.
+    online: Mutex<Option<bool>>,
+    /// When the setup portal last read the device's state, which keeps the
+    /// online check running while someone is looking at it.
+    portal_seen: Mutex<Option<Instant>>,
     /// Set once, by `start_bridge`.
     bridge: std::sync::OnceLock<Arc<bridge::Bridge>>,
 }
@@ -245,6 +256,8 @@ impl Control {
             writes: tokio::sync::Mutex::new(()),
             probation: Mutex::new(None),
             welcome: tokio::sync::Notify::new(),
+            online: Mutex::new(None),
+            portal_seen: Mutex::new(None),
             shutdown,
             speedtest: Arc::new(tokio::sync::Mutex::new(())),
             storage_grow: Arc::new(tokio::sync::Mutex::new(())),

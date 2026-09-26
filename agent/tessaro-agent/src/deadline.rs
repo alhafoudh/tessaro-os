@@ -247,6 +247,7 @@ mod tests {
             "src/control/certs.rs",
             "src/power.rs",
             "src/server.rs",
+            "src/portal.rs",
             "src/updates.rs",
             "src/files.rs",
             "src/speedtest.rs",

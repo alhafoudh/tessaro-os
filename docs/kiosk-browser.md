@@ -288,19 +288,21 @@ repoints it, at build time or with `tessaro-ctl config set browser.url=...`.
 It is `index.html` in `meta-tessaro-distro/recipes-browser/tessaro-selftest/`,
 styled like the maintenance page, and shows what someone standing at a fresh
 device needs to reach it: the node name, its IPv4 addresses, the hotspot's
-SSID while the hotspot is up, whether the device is claimed and, until it is,
-the `tessaro-ctl access claim --node NAME` that claims it.
+SSID while the hotspot is up, whether the device is online, whether it is
+claimed and, until it is, the `tessaro-ctl access claim --node NAME` that
+claims it, next to a QR code that opens the setup portal on a phone (see
+[setup-portal.md](setup-portal.md)).
 
 * **The values come from `/welcome.json`, which the agent keeps current.**
   `watch_welcome` in `control/watchers.rs` writes
-  `/run/tessaro-kiosk/welcome.json` every 5s, and at once after a claim or an
-  unclaim, only when its content changes. nginx serves that one file of the
-  run directory; the page asks for it every 5s and dims the last values while
-  it gets no answer.
+  `/run/tessaro-kiosk/welcome.json` every 5s, and at once after a claim, an
+  unclaim or a change of online, only when its content changes. nginx serves
+  that one file of the run directory; the page asks for it every 5s and dims
+  the last values while it gets no answer.
 * **Nothing secret goes in it.** Any page on the loopback can read it, so the
-  hotspot's password stays out. An unclaimed device's hotspot is open anyway;
-  a claimed one's password comes from
-  `tessaro-ctl network wifi hotspot-password`.
+  hotspot's password stays out. An unclaimed device's hotspot is open anyway,
+  and the QR code (`setup`) is there only then; a claimed one's password comes
+  from `tessaro-ctl network wifi hotspot-password`.
 * **Everything is inline**, for the reason the maintenance page's is: this is
   shown before anyone set the device up, often with no network.
 
@@ -333,7 +335,8 @@ does something. To open it on a device,
   `recipes-httpd/nginx/nginx_%.bbappend` adds that include to `nginx.conf`
   (whose path is compiled in by `--conf-path`) and deletes the stock
   `default_server` symlink, which would answer on `0.0.0.0:80` with the nginx
-  welcome page. Ours binds `127.0.0.1` only.
+  welcome page. Ours binds `127.0.0.1` only; the setup portal's server is
+  the one other, and answers only the hotspot's subnet.
 * **`tessaro-ctl config set agent.refresh_interval=0` before a manual pass.** The agent
   re-navigates on that timer, 600s by default, and a reload closes any serial
   port the page has open and wipes every form value. Put it back afterwards.
