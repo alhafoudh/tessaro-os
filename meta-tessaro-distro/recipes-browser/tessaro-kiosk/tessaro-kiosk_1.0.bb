@@ -225,6 +225,10 @@ CONFFILES:${PN} += " \
 #
 # sfdisk, partx and resize2fs are what `tessaro-ctl storage grow` runs to give
 # /data the rest of the disk; none of them is in the image otherwise.
+#
+# systemd-analyze checks a schedule's OnCalendar expressions with systemd's
+# own parser before `tessaro-ctl schedule` saves them (docs/scheduler.md);
+# systemd splits it into a package of its own.
 RDEPENDS:${PN} = " \
     chromium-ozone-wayland \
     ca-certificates \
@@ -232,4 +236,5 @@ RDEPENDS:${PN} = " \
     util-linux-sfdisk \
     util-linux-partx \
     e2fsprogs-resize2fs \
+    systemd-analyze \
 "

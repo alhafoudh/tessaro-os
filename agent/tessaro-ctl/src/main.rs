@@ -17,6 +17,7 @@ mod files;
 mod net;
 mod progress;
 mod prompt;
+mod schedule;
 mod ssh;
 mod storage;
 mod style;
@@ -102,6 +103,8 @@ const HELP_STYLES: Styles = Styles::styled()
         \x20 tessaro-ctl audio output hdmi && tessaro-ctl audio volume 60 && tessaro-ctl audio test\n\
         \x20 tessaro-ctl time show                          timezone, NTP sync, offset and drift\n\
         \x20 tessaro-ctl time timezone Europe/Bratislava && tessaro-ctl time ntp on --server ntp.corp.test\n\
+        \x20 tessaro-ctl schedule create night --on '*-*-* 22:00' --run 'tessaro-ctl screen power off'\n\
+        \x20 tessaro-ctl schedule list                      when each runs next, how the last run ended\n\
         \x20 tessaro-ctl config unset browser.url           back to the image default\n\
         \x20 tessaro-ctl device logs -f -u tessaro-agent.service\n\
         \x20 tessaro-ctl update send tessaro-os-qemux86-64.rootfs.wic.bz2   a new image; settings are kept\n\
@@ -180,6 +183,10 @@ enum Cmd {
     /// The clock: timezone, NTP servers and sync, setting it by hand.
     #[command(subcommand)]
     Time(time::TimeCmd),
+    /// Command lines the device runs on calendar times: create, change,
+    /// switch on and off, run now, their output.
+    #[command(subcommand)]
+    Schedule(schedule::ScheduleCmd),
     /// Put a new image on the device, keeping its settings and claim.
     #[command(subcommand)]
     Update(UpdateCmd),
@@ -899,6 +906,7 @@ fn run(cli: Cli) -> Result<(), String> {
         }
         Cmd::Audio(command) => audio::run(&mut session, command, json),
         Cmd::Time(command) => time::run(&mut session, command, json),
+        Cmd::Schedule(command) => schedule::run(&mut session, command, json),
         Cmd::Device(DeviceCmd::Restart { what }) => {
             done(&mut session, Command::Restart { what }, json)
         }

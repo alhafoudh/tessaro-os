@@ -20,14 +20,16 @@
 //! `settings` (changing them, and probation), `access` (the claim, tokens,
 //! passwords, SSH keys), `network` (WiFi and the profiles' inputs),
 //! `watchers` (what is kept true with nobody asking), `page` (the page on
-//! screen: reload, eval, the keyboard), `screen` (its power) and `bridge`
-//! (`window.tessaro` and the injected script).
+//! screen: reload, eval, the keyboard), `screen` (its power), `bridge`
+//! (`window.tessaro` and the injected script) and `schedules` (the
+//! schedules and their systemd units).
 
 mod access;
 mod bridge;
 mod certs;
 mod network;
 mod page;
+mod schedules;
 mod screen;
 mod settings;
 mod watchers;
@@ -168,6 +170,9 @@ pub struct Control {
     auth_store: Store,
     /// The hotspot's and the WiFi client's passwords, never in `state.json`.
     secrets: Store,
+    schedules: Store,
+    /// One reconcile of the schedules' units at a time (`schedules`).
+    reconciling: tokio::sync::Mutex<()>,
     /// What `auth.json` holds, kept in memory so verifying a token is not a
     /// disk read. Only ever replaced after a successful write.
     auth: Mutex<Auth>,
@@ -227,6 +232,8 @@ impl Control {
             state: Store::new(&paths.state_dir, state::FILE),
             auth_store: Store::new(&paths.state_dir, auth::FILE),
             secrets: Store::new(&paths.state_dir, secrets::FILE),
+            schedules: Store::new(&paths.state_dir, crate::schedules::FILE),
+            reconciling: tokio::sync::Mutex::new(()),
             log,
             paths,
             defaults,
@@ -534,6 +541,34 @@ impl Control {
             Command::NetCertAdd { pem } => self.cert_add(caller, pem).await,
             Command::NetCertList => self.cert_list().await.into(),
             Command::NetCertRevoke { cert } => self.cert_revoke(caller, cert).await,
+            Command::ScheduleList => self.schedule_list().await.into(),
+            Command::ScheduleCreate { spec } => self.schedule_create(caller, spec).await.into(),
+            Command::ScheduleSet {
+                schedule,
+                name,
+                calendar,
+                lines,
+                on_error,
+                timeout_s,
+                enabled,
+            } => {
+                let change = schedules::Change {
+                    name,
+                    calendar,
+                    lines,
+                    on_error,
+                    timeout_s,
+                    enabled,
+                };
+                self.schedule_set(caller, schedule, change).await.into()
+            }
+            Command::ScheduleRemove { schedule } => {
+                self.schedule_remove(caller, schedule).await.into()
+            }
+            Command::ScheduleRun { schedule } => self.schedule_run(caller, schedule).await.into(),
+            Command::ScheduleCheck { calendar, count } => {
+                self.schedule_check(calendar, count).await.into()
+            }
         }
     }
 
@@ -998,7 +1033,7 @@ fn journal(
         let valid = !unit.is_empty()
             && unit
                 .chars()
-                .all(|ch| ch.is_ascii_alphanumeric() || "@._:-".contains(ch));
+                .all(|ch| ch.is_ascii_alphanumeric() || "@._:-*".contains(ch));
         if !valid {
             return Err(format!("{unit:?} is not a unit name"));
         }
@@ -1106,6 +1141,11 @@ mod tests {
             ("KIOSK_MANAGE_CLOCK", "0".to_string()),
             ("KIOSK_PROXY_CONFIG", at("tinyproxy.conf")),
             ("KIOSK_TIMESYNCD_DROPIN", at("timesyncd.conf")),
+            // Never this host's systemd: units are only rendered, and the
+            // calendar is checked by a stand-in (`fake_analyze`).
+            ("KIOSK_MANAGE_SCHEDULES", "0".to_string()),
+            ("KIOSK_SYSTEMD_UNIT_DIR", at("units")),
+            ("KIOSK_SYSTEMD_ANALYZE", at("systemd-analyze")),
         ]
         .into_iter()
         .map(|(k, v)| (k.to_string(), v))
@@ -1118,6 +1158,7 @@ mod tests {
         fs::create_dir_all(&connector).unwrap();
         fs::write(connector.join("status"), "connected\n").unwrap();
         fs::write(connector.join("modes"), "1920x1080\n1280x720\n").unwrap();
+        fake_analyze(&dir.path().join("systemd-analyze"));
 
         let paths = Paths::load(&env);
         let defaults: HashMap<String, String> = [
@@ -1467,6 +1508,161 @@ mod tests {
             id: claimed.token_id,
             peer: peer(),
         }
+    }
+
+    /// `systemd-analyze calendar` for the tests: refuses `bad`, and fires
+    /// every expression at the same two UTC times.
+    fn fake_analyze(path: &std::path::Path) {
+        use std::os::unix::fs::PermissionsExt;
+        fs::write(
+            path,
+            "#!/bin/sh\n\
+             for expression; do :; done\n\
+             case \"$expression\" in *bad*)\n\
+               echo \"Failed to parse calendar specification '$expression': Invalid argument\" >&2\n\
+               exit 1;;\n\
+             esac\n\
+             echo \"Normalized form: $expression\"\n\
+             echo \"    Next elapse: Mon 2026-09-28 07:00:00 UTC\"\n\
+             echo \"   Iteration #2: Tue 2026-09-29 07:00:00 UTC\"\n",
+        )
+        .unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_schedule_is_created_rendered_changed_and_removed() {
+        let fx = fixture();
+        let units = || crate::schedules::present(&fx.paths.systemd_unit_dir).unwrap();
+        let spec = protocol::ScheduleSpec {
+            name: "night".into(),
+            enabled: true,
+            calendar: vec!["22:00".into()],
+            lines: vec!["tessaro-ctl screen power off".into()],
+            on_error: protocol::OnError::Stop,
+            timeout_s: None,
+        };
+
+        let created: protocol::ScheduleInfo = ok(
+            &fx.control,
+            &Caller::Local,
+            Command::ScheduleCreate { spec: spec.clone() },
+        )
+        .await;
+        assert_eq!(created.spec, spec);
+        assert_eq!(created.running, 0);
+        assert_eq!(
+            created.units,
+            format!("tessaro-schedule-{}-*@*.service", created.id)
+        );
+        let rendered = units();
+        assert_eq!(rendered.len(), 3, "{rendered:?}");
+        let timer =
+            String::from_utf8(rendered[&format!("tessaro-schedule-{}.timer", created.id)].clone())
+                .unwrap();
+        assert!(timer.contains("OnCalendar=22:00\n"));
+
+        // The same name twice, a bad calendar: refused, nothing saved.
+        let reply = fx
+            .control
+            .handle(
+                &Caller::Local,
+                Command::ScheduleCreate { spec: spec.clone() },
+            )
+            .await;
+        assert!(reply.result.is_err());
+        let mut bad = spec.clone();
+        bad.name = "other".into();
+        bad.calendar = vec!["bad".into()];
+        let reply = fx
+            .control
+            .handle(&Caller::Local, Command::ScheduleCreate { spec: bad })
+            .await;
+        assert!(reply.result.unwrap_err().contains("Failed to parse"));
+
+        let changed: protocol::ScheduleInfo = ok(
+            &fx.control,
+            &Caller::Local,
+            Command::ScheduleSet {
+                schedule: "night".into(),
+                name: None,
+                calendar: None,
+                lines: Some(vec!["true".into(), "false".into()]),
+                on_error: Some(protocol::OnError::Continue),
+                timeout_s: Some(60),
+                enabled: Some(false),
+            },
+        )
+        .await;
+        assert_eq!(changed.id, created.id);
+        assert!(!changed.spec.enabled);
+        assert_eq!(changed.spec.timeout_s, Some(60));
+        // A new run template replaces the old one; nothing runs to keep it.
+        let rendered = units();
+        assert_eq!(rendered.len(), 3, "{rendered:?}");
+        let template = rendered
+            .iter()
+            .find(|(name, _)| name.ends_with("@.service"))
+            .map(|(_, body)| String::from_utf8(body.clone()).unwrap())
+            .unwrap();
+        assert!(template.contains("ExecStart=-/bin/sh -c \"false\"\n"));
+        assert!(template.contains("TimeoutStartSec=60s\n"));
+
+        let listed: Vec<protocol::ScheduleInfo> =
+            ok(&fx.control, &Caller::Local, Command::ScheduleList).await;
+        assert_eq!(listed.len(), 1);
+
+        // How the run unit records a run, read back.
+        fs::create_dir_all(fx.paths.schedule_runs_dir()).unwrap();
+        fs::write(
+            fx.paths.schedule_runs_dir().join(&created.id),
+            "1790409110-42 1790409135 exit-code 1\n",
+        )
+        .unwrap();
+        let listed: Vec<protocol::ScheduleInfo> =
+            ok(&fx.control, &Caller::Local, Command::ScheduleList).await;
+        let run = listed[0].last_run.clone().unwrap();
+        assert_eq!(
+            (run.started.unix, run.finished.unix),
+            (1_790_409_110, 1_790_409_135)
+        );
+        assert!(!run.succeeded());
+
+        let check: protocol::CalendarCheck = ok(
+            &fx.control,
+            &Caller::Local,
+            Command::ScheduleCheck {
+                calendar: vec!["Mon 07:00".into(), "Tue 07:00".into()],
+                count: Some(3),
+            },
+        )
+        .await;
+        assert_eq!(check.normalized, ["Mon 07:00", "Tue 07:00"]);
+        // Both fire at the same two times: merged, not repeated.
+        assert_eq!(check.next.len(), 2);
+
+        // Not managed here: nothing to start.
+        let reply = fx
+            .control
+            .handle(
+                &Caller::Local,
+                Command::ScheduleRun {
+                    schedule: "night".into(),
+                },
+            )
+            .await;
+        assert!(reply.result.unwrap_err().contains("KIOSK_MANAGE_SCHEDULES"));
+
+        let _: Done = ok(
+            &fx.control,
+            &Caller::Local,
+            Command::ScheduleRemove {
+                schedule: created.id.clone(),
+            },
+        )
+        .await;
+        assert!(units().is_empty());
+        assert!(!fx.paths.schedule_runs_dir().join(&created.id).exists());
     }
 
     #[tokio::test]

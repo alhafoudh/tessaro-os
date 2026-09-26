@@ -37,6 +37,7 @@ same change as the behaviour it describes.
 | [docs/remote-access.md](docs/remote-access.md) | VNC mirror and its PAM auth, SSH and `ssh connect` keys |
 | [docs/audio.md](docs/audio.md) | PipeWire units, how `audio.*` is applied, `auto` |
 | [docs/time.md](docs/time.md) | timedated and timesyncd, how `time.*` is applied, DHCP's NTP servers, the persistent clock, where `time show`'s numbers come from |
+| [docs/scheduler.md](docs/scheduler.md) | schedules: the systemd timer and units each is rendered into, parallel runs, how the last run is recorded, the reconcile, checking `OnCalendar` expressions |
 | [docs/files.md](docs/files.md) | the `/data/files` store served at `/files/` |
 | [docs/networking.md](docs/networking.md) | NetworkManager, the managed profiles and their transactions, hotspot, ping, speed test, the proxy (local tinyproxy, what goes through it), extra certificate authorities |
 | [docs/updates.md](docs/updates.md) | in-place updates, `--repartition`, growing `/data` |
@@ -305,12 +306,17 @@ same thing. Keep to these rules when adding a command or a setting:
     mute, a test tone and a recording level.
   * `time`: the clock. Timezone, NTP servers and sync, its status, setting
     it by hand.
+  * `schedule`: command lines the device runs on calendar times. The
+    schedules, switching them on and off, a run now, their output, checking
+    a calendar.
   * `update`: putting an image on the device.
   * `files`: the file store in `/data/files`. Upload, download, sync, list,
     move, rm.
   * `nodes`: this client's own view (discovery, known devices). Needs no device.
 * **Commands are verbs or short nouns**, and the same verb means the same thing
-  in every group: `list`, `create`, `revoke`, `set`, `show`, `status`, `cancel`.
+  in every group: `list`, `create`, `revoke`, `set`, `show`, `status`, `cancel`,
+  `remove` (delete a thing the user made), `enable`/`disable`, `run` (start
+  it now), `check` (validate without saving), `logs`.
 * **A group's bare name does nothing**; it prints its help. Overviews are an
   explicit `show` or `status` (`network show`, `network wifi status`).
 * **Nest a third level only for a collection with its own verbs**

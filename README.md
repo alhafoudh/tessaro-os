@@ -305,6 +305,24 @@ Devices start on UTC and take their NTP servers from the network's DHCP,
 else a public fallback. A network that blocks outside NTP needs its own
 servers named, or TLS fails once the clock drifts.
 
+### Schedules
+
+```sh
+tessaro-ctl schedule create screen-off --on 'Mon..Fri 20:00' --on 'Sat,Sun 23:00' \
+    --run 'tessaro-ctl screen power off'
+tessaro-ctl schedule create weekend --on 'Sat,Sun 08:00' \
+    --run 'tessaro-ctl config set browser.url=https://example.com/weekend'
+tessaro-ctl schedule check 'Mon..Fri 07:00'            # when it fires, before saving anything
+tessaro-ctl schedule list                              # next run, how the last one ended
+tessaro-ctl schedule run screen-off && tessaro-ctl schedule logs screen-off
+```
+
+A schedule is systemd `OnCalendar` expressions (`man systemd.time`) in the
+device's timezone, and shell command lines run as root, in order. A failed
+line stops the run unless `--on-error continue`; `--timeout` bounds a whole
+run. Times missed while the device was off are skipped, and a run that is
+still going when the next one fires does not hold it up.
+
 ### Updating
 
 ```sh

@@ -12,6 +12,7 @@ pub mod clock;
 pub mod connect;
 pub mod journal;
 pub mod nodes;
+pub mod schedule;
 pub mod ssh;
 pub mod transfer;
 pub mod tunnel;

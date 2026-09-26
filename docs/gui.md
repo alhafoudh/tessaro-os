@@ -202,6 +202,7 @@ applies and stays, Default unsets.**
 | Storage | `storage show`, partitions and filesystems, `storage grow` (check first) |
 | Audio | `audio show`, outputs and inputs, choosing one, volume, mute, `audio test` for the tone and the recording |
 | Time | `time show` and its servers, `time timezone` (a choice of `time zones`), `time ntp on|off` with servers, `time sync`, `time set` (this computer's clock or a typed time) |
+| Schedules | `schedule list`, `create` and `set` in one dialog (multi-line calendar and commands, checked with `schedule check` as you type), `enable`/`disable`, `run`, `remove`, `logs` (the Log page, filtered to the schedule's runs) |
 | Access | `access claim` (while unclaimed), `access token create`, `list`, `revoke`, `access password set`, `access unclaim` (while claimed) |
 | SSH | `ssh keys list` and `revoke`, `ssh connect` (authorize the key, open a terminal) |
 | Files | `files list` as a browser, `upload` (files or a folder), `download`, `mkdir`, `move`, `rm` |
@@ -223,6 +224,12 @@ erases `/data` or rewrites the disk - wants the device's name typed first,
 as `tessaro-ctl` does. What the device shows once (a token, a password, the
 hotspot password) comes in a dialog with Copy that closes only through Done.
 After unclaim or a factory reset, the node is forgotten on this machine.
+A multi-line field (a schedule's calendar and commands, one per line) takes
+Enter as a new line, so its form is confirmed with the button. The schedule
+form stays open until the device takes it: a refused save shows the
+device's reason in it, and under the fields it shows how the device's
+systemd reads the calendar and when it fires next, asked again once typing
+pauses.
 
 ## Work on connections of its own
 
