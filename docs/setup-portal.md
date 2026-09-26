@@ -43,7 +43,11 @@ one tap each. The portal never claims the device; claiming stays
   reads (`/etc/NetworkManager/dnsmasq-shared.d/`), resolves the probe host
   names of Apple, Android, Windows, Firefox and Linux NetworkManager to
   10.42.0.1 and nothing else, so with `network.wifi.nat` on the phone still
-  reaches the internet by every other name. The file never changes; the
+  reaches the internet by every other name. Each probe name is also
+  `local=`, so its AAAA query gets no answer instead of Apple's real IPv6
+  address: an iPhone prefers that address, sends it over cellular (the
+  hotspot has no IPv6) and shows the real "Success" page in the sheet. The
+  file never changes; the
   sheet is switched in nginx, so turning it off does not restart the hotspot
   under the phone.
 * **nginx decides per probe, from a flag file.** Every request whose `Host`
