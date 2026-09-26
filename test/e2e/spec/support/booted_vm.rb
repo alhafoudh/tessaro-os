@@ -7,6 +7,7 @@ module AgentE2E
     def step(...) = AgentE2E.step(...)
     def pause(...) = AgentE2E.pause(...)
     def quietly(...) = AgentE2E.quietly(...)
+    def api = Api.new(Ports.api)
 
     # Until SSH answers again, after something that took it away.
     def wait_for_ssh(guest, timeout:, what:)

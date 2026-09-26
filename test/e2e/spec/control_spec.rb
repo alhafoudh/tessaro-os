@@ -206,38 +206,46 @@ module AgentE2E
     end
 
     # qemu has no WiFi, so there is no hotspot: the hotspot's address goes on
-    # the loopback instead, which puts the guest's own requests on the
-    # portal's subnet and runs them through nginx, the tmpfiles directory and
-    # the agent's socket exactly as a phone's would.
-    it "portal: the setup portal answers on the hotspot's address, sends a phone's probe to it until its " \
-       "first saved change, and refuses what it may not set" do
-      portal = "http://10.42.0.1"
-      probe = "wget -q -O- --header 'Host: captive.apple.com' #{portal}/hotspot-detect.html 2>&1"
-      set = lambda do |json|
-        guest.run("wget -q -O- --header 'Content-Type: application/json' --post-data='#{json}' " \
-                  "#{portal}/api/set 2>&1", allow_failure: true)
-      end
+    # the loopback instead, which puts the guest's own probes on the
+    # portal's subnet and runs them through nginx and the captive flag
+    # exactly as a phone's would. The setup page and its API are asked from
+    # the host, over the forward of port 7400, as a phone would over TLS.
+    it "portal: a phone's probe is sent to the setup page on the API's port until the first saved change, " \
+       "and the page and its API answer there" do
+      # busybox wget prints the redirect with -S, and then fails to follow
+      # it to https: what matters is where it points.
+      probe = "wget -S -O /dev/null --header 'Host: captive.apple.com' http://10.42.0.1/hotspot-detect.html 2>&1"
+      setup = %r{Location: https://10\.42\.0\.1:7400/}
       guest.run("ip addr add 10.42.0.1/24 dev lo")
 
-      state = guest.run("wget -q -O- #{portal}/api/state")
-      expect(state).to include('"welcome"', '"online"', '"network.wifi.captive":"1"')
-      expect(guest.run(probe)).to include("<title>Tessaro setup</title>")
+      expect(guest.run(probe, allow_failure: true)).to match(setup)
+      page = api.get("/")
+      expect(page.status).to eq(200)
+      expect(page.body).to include("<title>Tessaro setup</title>")
+      welcome = api.get("/api/v1/device/welcome")
+      expect(welcome.json).to include("online", "node")
+      expect(api.get("/api/v1/config?key=network.wifi.captive").json["settings"].first["value"]).to eq("1")
 
-      set.call('{"values":{"time.timezone":"Europe/Bratislava"}}')
-      journal.wait_for(/^settings revision \d+: .*time\.timezone.* changed by the setup portal \(10\.42\.0\.1\)$/,
-                       timeout: 30)
+      # What the page sends with its first change: the sign-in sheet off.
+      set = api.post("/api/v1/config/set",
+                     { values: { "time.timezone" => "Europe/Bratislava", "network.wifi.captive" => "0" } })
+      expect(set.status).to eq(200), set.body
+      journal.wait_for(/^settings revision \d+: .*time\.timezone.* changed by [\d.]+$/, timeout: 30)
       journal.wait_for(/^setup portal: no sign-in sheet for phones on the hotspot$/, timeout: 15)
       expect(guest.run("tessaro-ctl config get time.timezone")).to include("Europe/Bratislava")
-      expect(guest.run("tessaro-ctl config get network.wifi.captive").strip).to end_with("0")
       # The real server's answer, or a dropped connection where the VM has
-      # no internet - never the portal.
-      expect(guest.run(probe, allow_failure: true)).not_to include("Tessaro setup")
+      # no internet - never the setup page.
+      expect(guest.run(probe, allow_failure: true)).not_to match(setup)
 
-      set.call('{"values":{"network.wifi.captive":"1"}}')
+      expect(api.post("/api/v1/config/set", { values: { "network.wifi.captive" => "1" } }).status).to eq(200)
       journal.wait_for(/^setup portal: a phone joining the hotspot gets the sign-in sheet$/, timeout: 15)
-      expect(guest.run(probe)).to include("<title>Tessaro setup</title>")
+      expect(guest.run(probe, allow_failure: true)).to match(setup)
 
-      expect(set.call('{"values":{"access.listen":"0.0.0.0:1"}}')).to include("403")
+      # The API documents itself on the same port.
+      document = api.get("/api/v1/openapi.json").json
+      expect(document["openapi"]).to start_with("3.1")
+      expect(document["paths"]).to include("/api/v1/config/set")
+      expect(api.get("/api/docs/").body).to include("swagger-ui")
 
       # The loopback server is untouched: the kiosk's own page is still there.
       expect(guest.run("wget -q -O- http://127.0.0.1/welcome.json")).to include('"online"')

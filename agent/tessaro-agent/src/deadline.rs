@@ -246,8 +246,9 @@ mod tests {
             "src/control/schedules.rs",
             "src/control/certs.rs",
             "src/power.rs",
-            "src/server.rs",
-            "src/portal.rs",
+            "src/api/mod.rs",
+            "src/api/jobs.rs",
+            "src/api/statics.rs",
             "src/updates.rs",
             "src/files.rs",
             "src/speedtest.rs",
@@ -275,8 +276,6 @@ mod tests {
             // Control::update_state and update_auth - one blocking() each.
             ".update_state(",
             ".update_auth(",
-            // server::send - write_all and flush under within().
-            "send(",
             // systemd::Bus - every method is within() inside.
             "self.bus.",
             // The in-process write lock. Not the outside world: every holder

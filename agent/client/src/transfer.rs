@@ -9,8 +9,8 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use protocol::files::{FileBegun, FileData, FileEntry};
-use protocol::{Command, Received};
+use protocol::api::{self, OffsetQuery, ReadQuery, UploadBody, UploadQuery};
+use protocol::files::FileEntry;
 use sha2::{Digest, Sha256};
 
 use crate::connect::Session;
@@ -31,7 +31,7 @@ pub fn send_file(
     mtime: i64,
     mut on: impl FnMut(u64),
 ) -> Result<Option<u64>, String> {
-    let begun: FileBegun = session.call(Command::FilesBegin {
+    let begun = session.send::<api::files::Begin>(UploadBody {
         path: path.to_string(),
         size,
         mtime,
@@ -53,13 +53,13 @@ pub fn send_file(
                 local.display()
             )
         })?;
-        let data = data_encoding::BASE64.encode(&buffer[..want]);
-        let received: Received = session
-            .call(Command::FilesChunk {
-                path: path.to_string(),
-                offset,
-                data,
-            })
+        let query = UploadQuery {
+            path: path.to_string(),
+            offset,
+        };
+        let received = session
+            .upload::<api::files::Upload>(query, &buffer[..want])
+            .into_result()
             .map_err(|err| {
                 format!(
                     "{path} stopped at {}: {err}; send it again to resume",
@@ -103,18 +103,22 @@ pub fn fetch_file(
     let mut mtime = entry.mtime;
     let mut size = entry.size;
     while offset < size {
-        let data: FileData = session.call(Command::FilesRead {
+        let query = ReadQuery {
             path: entry.path.clone(),
             offset,
             len: protocol::UPDATE_CHUNK as u64,
-        })?;
-        (size, mtime) = (data.size, data.mtime);
-        if data.data.is_empty() {
+        };
+        let data = session.download::<api::files::Read>(query).into_result()?;
+        let number = |name: &str| {
+            data.header(name)
+                .and_then(|value| value.parse::<i64>().ok())
+                .ok_or_else(|| format!("the device's answer has no {name}"))
+        };
+        (size, mtime) = (number(api::HEADER_SIZE)? as u64, number(api::HEADER_MTIME)?);
+        let bytes = data.body;
+        if bytes.is_empty() {
             break;
         }
-        let bytes = data_encoding::BASE64
-            .decode(data.data.as_bytes())
-            .map_err(|_| "the device sent a chunk that is not base64".to_string())?;
         file.write_all(&bytes).map_err(fail)?;
         offset += bytes.len() as u64;
         on(offset, size);
@@ -182,9 +186,9 @@ pub fn upload_image(
         let want = ((size - offset) as usize).min(buffer.len());
         file.read_exact(&mut buffer[..want])
             .map_err(|err| format!("{}: {err}", path.display()))?;
-        let data = data_encoding::BASE64.encode(&buffer[..want]);
-        let received: Received = session
-            .call(Command::UpdateChunk { offset, data })
+        let received = session
+            .upload::<api::update::Image>(OffsetQuery { offset }, &buffer[..want])
+            .into_result()
             .map_err(|err| {
                 format!(
                     "the upload stopped at {}: {err}; send it again to resume",

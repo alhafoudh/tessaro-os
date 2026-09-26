@@ -32,16 +32,13 @@ use anstream::{eprintln, println};
 use clap::builder::styling::Styles;
 use clap::builder::{PossibleValuesParser, TypedValueParser};
 use clap::{Args, ColorChoice, CommandFactory, Parser, Subcommand, ValueEnum};
+use protocol::api::{self, Empty, Endpoint};
 use protocol::keys;
-use protocol::{
-    Applied, Claimed, Command, Connector, Done, EvalResult, KeyInfo, NodeInfo, Password,
-    RestartTarget, ScreenPower, Screenshot, Settings, Source, SshKeyInfo, SshKeyRevoked, Status,
-    TokenCreated, TokenInfo,
-};
+use protocol::{Applied, Done, EvalResult, KeyInfo, NodeInfo, RestartTarget, Source, Status};
 use serde_json::Value;
 use tessaro_client::nodes::{self, Nodes};
 
-use connect::{Session, Target, Trust};
+use connect::{Answer, Session, Target, Trust};
 use style::{pad, paint};
 
 /// `--help` in the same palette as everything else.
@@ -211,7 +208,7 @@ enum DeviceCmd {
     /// Who the device is: node id, name, TLS fingerprint, claim state.
     Id,
     /// How fast the device answers this client: the TCP connect, the TLS
-    /// handshake, then round trips over the control connection. Needs no
+    /// handshake, then round trips over the API connection. Needs no
     /// token, like `id`.
     Ping {
         #[arg(long, short = 'c', default_value_t = protocol::PING_DEFAULT_COUNT)]
@@ -648,15 +645,15 @@ fn run(cli: Cli) -> Result<(), String> {
 
     match cli.command {
         Cmd::Device(DeviceCmd::Status) => {
-            let status: Status = session.call(Command::Status)?;
+            let status = session.fetch::<api::device::Status>()?;
             print(json, &status, || show_status(&status))
         }
         Cmd::Device(DeviceCmd::Id) => {
-            let node: NodeInfo = session.call(Command::Id)?;
+            let node = session.fetch::<api::device::Id>()?;
             print(json, &node, || show_node(&node))
         }
         Cmd::Config(ConfigCmd::Keys { key }) => {
-            let mut keys: Vec<KeyInfo> = session.call(Command::Keys)?;
+            let mut keys = session.fetch::<api::config::Keys>()?;
             if let Some(wanted) = &key {
                 let template = wanted.starts_with(protocol::keys::DATA_PREFIX);
                 keys.retain(|k| &k.name == wanted || (template && k.name == "data.<name>"));
@@ -684,7 +681,7 @@ fn run(cli: Cli) -> Result<(), String> {
             net::ping(&mut session, json, count, interval)
         }
         Cmd::Screen(ScreenCmd::Modes) => {
-            let connectors: Vec<Connector> = session.call(Command::Modes)?;
+            let connectors = session.fetch::<api::screen::Modes>()?;
             print(json, &connectors, || {
                 if connectors.is_empty() {
                     println!(
@@ -713,7 +710,7 @@ fn run(cli: Cli) -> Result<(), String> {
             })
         }
         Cmd::Config(ConfigCmd::Get { key }) => {
-            let settings: Settings = session.call(Command::Get { key })?;
+            let settings = session.call::<api::config::Get>(api::ConfigQuery { key }, ())?;
             print(json, &settings, || {
                 for setting in &settings.settings {
                     let value = setting.value.as_deref().unwrap_or("");
@@ -743,25 +740,27 @@ fn run(cli: Cli) -> Result<(), String> {
                 values.insert(key.to_string(), value.to_string());
             }
             let network = values.keys().any(|key| net::is_network_key(key));
-            let command = Command::Set {
+            let change = Change::Set(api::SetConfig {
                 values,
                 if_revision: how.if_revision,
                 apply: !how.no_apply,
                 verify: how.verify.verify.clone(),
-            };
-            change(&mut session, json, command, network, &how)
+            });
+            change.send(&mut session, json, network, &how)
         }
         Cmd::Config(ConfigCmd::Unset { keys, how }) => {
             let network = keys.iter().any(|key| net::is_network_key(key));
-            let command = Command::Unset {
+            let change = Change::Unset(api::UnsetConfig {
                 keys,
                 if_revision: how.if_revision,
                 apply: !how.no_apply,
                 verify: how.verify.verify.clone(),
-            };
-            change(&mut session, json, command, network, &how)
+            });
+            change.send(&mut session, json, network, &how)
         }
-        Cmd::Screen(ScreenCmd::Confirm) => done(&mut session, Command::Confirm, json),
+        Cmd::Screen(ScreenCmd::Confirm) => {
+            done::<api::screen::Confirm>(&mut session, Empty {}, (), json)
+        }
         Cmd::Browser(BrowserCmd::Maintenance { state, url }) => toggle(
             &mut session,
             json,
@@ -791,7 +790,7 @@ fn run(cli: Cli) -> Result<(), String> {
             template,
         ),
         Cmd::Browser(BrowserCmd::Navigate { url }) => {
-            done(&mut session, Command::Navigate { url }, json)
+            done::<api::browser::Navigate>(&mut session, Empty {}, api::NavigateBody { url }, json)
         }
         Cmd::Browser(BrowserCmd::Zoom { percent }) => {
             let values = BTreeMap::from([(keys::ZOOM.to_string(), percent.to_string())]);
@@ -799,8 +798,12 @@ fn run(cli: Cli) -> Result<(), String> {
             print(json, &applied, || show_applied(&applied, false))
         }
         Cmd::Browser(BrowserCmd::Devtools(options)) => devtools::run(&mut session, options, json),
-        Cmd::Browser(BrowserCmd::Reload) => done(&mut session, Command::Reload, json),
-        Cmd::Browser(BrowserCmd::ClearCache) => done(&mut session, Command::ClearCache, json),
+        Cmd::Browser(BrowserCmd::Reload) => {
+            done::<api::browser::Reload>(&mut session, Empty {}, (), json)
+        }
+        Cmd::Browser(BrowserCmd::ClearCache) => {
+            done::<api::browser::ClearCache>(&mut session, Empty {}, (), json)
+        }
         Cmd::Browser(BrowserCmd::Inject { state, script }) => {
             let value = match (state, script) {
                 (Toggle::On, Some(script)) => script,
@@ -864,7 +867,7 @@ fn run(cli: Cli) -> Result<(), String> {
                 (Some(code), None) => code.to_string(),
                 (None, None) => unreachable!("clap requires the code or --file"),
             };
-            let result: EvalResult = session.call(Command::Eval {
+            let result = session.send::<api::browser::Eval>(api::EvalBody {
                 code,
                 timeout_ms: Some(timeout * 1000),
                 await_promise: !no_await,
@@ -878,7 +881,10 @@ fn run(cli: Cli) -> Result<(), String> {
         }
         Cmd::Screen(ScreenCmd::Power { state }) => {
             let on = state.map(|state| state == Toggle::On);
-            let power: ScreenPower = session.call(Command::ScreenPower { on })?;
+            let power = match on {
+                Some(on) => session.send::<api::screen::PowerSet>(api::ScreenPowerBody { on })?,
+                None => session.fetch::<api::screen::Power>()?,
+            };
             print(json, &power, || {
                 let (label, note) = match (power.on, on.is_some()) {
                     (true, true) => (paint(style::OK, "screen on"), String::new()),
@@ -899,24 +905,26 @@ fn run(cli: Cli) -> Result<(), String> {
             if selector.is_some() && action == KeyboardAction::Hide {
                 return Err("--selector goes with `tessaro-ctl screen keyboard show`".to_string());
             }
-            let command = Command::Keyboard {
+            let body = api::KeyboardBody {
                 show: action == KeyboardAction::Show,
                 selector,
             };
-            done(&mut session, command, json)
+            done::<api::screen::Keyboard>(&mut session, Empty {}, body, json)
         }
         Cmd::Audio(command) => audio::run(&mut session, command, json),
         Cmd::Time(command) => time::run(&mut session, command, json),
         Cmd::Schedule(command) => schedule::run(&mut session, command, json),
         Cmd::Device(DeviceCmd::Restart { what }) => {
-            done(&mut session, Command::Restart { what }, json)
+            done::<api::device::Restart>(&mut session, Empty {}, api::RestartBody { what }, json)
         }
-        Cmd::Device(DeviceCmd::Reboot) => done(&mut session, Command::Reboot, json),
+        Cmd::Device(DeviceCmd::Reboot) => {
+            done::<api::device::Reboot>(&mut session, Empty {}, (), json)
+        }
         Cmd::Screen(ScreenCmd::Screenshot { output }) => {
-            let shot: Screenshot = session.call(Command::Screenshot)?;
-            let bytes = data_encoding::BASE64
-                .decode(shot.data.as_bytes())
-                .map_err(|err| format!("the image is not base64: {err}"))?;
+            let bytes = session
+                .download::<api::screen::Screenshot>(Empty {})
+                .into_result()?
+                .body;
             let path = output.unwrap_or_else(|| format!("{}.jpg", session.node.name));
             std::fs::write(&path, &bytes).map_err(|err| format!("{path}: {err}"))?;
             println!(
@@ -930,12 +938,15 @@ fn run(cli: Cli) -> Result<(), String> {
             follow,
             unit,
             lines,
-        }) => session.stream(
-            Command::Logs {
-                follow,
+        }) => session.logs(
+            api::LogsQuery {
                 unit,
                 lines: Some(lines),
+                cursor: None,
             },
+            follow,
+            // Following ends with Ctrl-C, which ends the process.
+            &|| false,
             |event| {
                 if json {
                     println!("{event}");
@@ -948,7 +959,7 @@ fn run(cli: Cli) -> Result<(), String> {
             let name = name.unwrap_or_else(tessaro_client::client_name);
             // A token left over from before an unclaim means nothing now.
             session.clear_token();
-            let claimed: Claimed = session.call(Command::Claim { name })?;
+            let claimed = session.send::<api::access::Claim>(api::NameBody { name })?;
             remember(&mut nodes, &session, Some(claimed.token.clone()), local)?;
             if json {
                 return print_json(&claimed);
@@ -983,7 +994,7 @@ fn run(cli: Cli) -> Result<(), String> {
         Cmd::Access(AccessCmd::Login { token, .. }) => {
             session.set_token(token.clone());
             // Prove the token before storing it.
-            let _: Vec<TokenInfo> = session.call(Command::TokenList)?;
+            session.fetch::<api::access::Tokens>()?;
             remember(&mut nodes, &session, Some(token), local)?;
             println!(
                 "{} {} {}",
@@ -996,7 +1007,7 @@ fn run(cli: Cli) -> Result<(), String> {
         Cmd::Nodes(_) | Cmd::Completion { .. } => unreachable!("handled above"),
         Cmd::Access(AccessCmd::Token(command)) => match command {
             TokenCmd::Create { name } => {
-                let created: TokenCreated = session.call(Command::TokenCreate { name })?;
+                let created = session.send::<api::access::TokenCreate>(api::NameBody { name })?;
                 print(json, &created, || {
                     show_once(
                         &format!("token {} - shown this once:", created.id),
@@ -1015,7 +1026,7 @@ fn run(cli: Cli) -> Result<(), String> {
                 })
             }
             TokenCmd::List => {
-                let tokens: Vec<TokenInfo> = session.call(Command::TokenList)?;
+                let tokens = session.fetch::<api::access::Tokens>()?;
                 print(json, &tokens, || {
                     for token in &tokens {
                         println!(
@@ -1028,7 +1039,9 @@ fn run(cli: Cli) -> Result<(), String> {
                     }
                 })
             }
-            TokenCmd::Revoke { id } => done(&mut session, Command::TokenRevoke { id }, json),
+            TokenCmd::Revoke { id } => {
+                done::<api::access::TokenRevoke>(&mut session, api::TokenRef { id }, (), json)
+            }
         },
         Cmd::Access(AccessCmd::Password(command)) => match command {
             PasswordCmd::Set {
@@ -1047,7 +1060,7 @@ fn run(cli: Cli) -> Result<(), String> {
                     protocol::check_password(&password)?;
                     Some(password)
                 };
-                let set: Password = session.call(Command::PasswordSet { password })?;
+                let set = session.send::<api::access::Password>(api::PasswordBody { password })?;
                 print(json, &set, || match &set.password {
                     Some(password) => {
                         show_once("root password - shown this once, store it now:", password)
@@ -1059,7 +1072,7 @@ fn run(cli: Cli) -> Result<(), String> {
         Cmd::Ssh(SshCmd::Connect(options)) => ssh::run(&mut session, options, json),
         Cmd::Ssh(SshCmd::Keys(command)) => match command {
             SshKeysCmd::List => {
-                let keys: Vec<SshKeyInfo> = session.call(Command::SshKeyList)?;
+                let keys = session.fetch::<api::ssh::Keys>()?;
                 print(json, &keys, || {
                     if keys.is_empty() {
                         println!("{}", paint(style::MUTED, "no ssh keys"));
@@ -1079,7 +1092,7 @@ fn run(cli: Cli) -> Result<(), String> {
                 })
             }
             SshKeysCmd::Revoke { key } => {
-                let revoked: SshKeyRevoked = session.call(Command::SshKeyRevoke { key })?;
+                let revoked = session.call::<api::ssh::Revoke>(api::SshKeyQuery { key }, ())?;
                 print(json, &revoked, || match &revoked.fingerprint {
                     Some(fingerprint) => println!(
                         "{} {}",
@@ -1096,7 +1109,7 @@ fn run(cli: Cli) -> Result<(), String> {
                 yes,
                 "remove every token and ssh key and empty the root password",
             )?;
-            done(&mut session, Command::Unclaim, json)?;
+            done::<api::access::Unclaim>(&mut session, Empty {}, (), json)?;
             forget_session(&mut nodes, &session)
         }
         Cmd::Device(DeviceCmd::FactoryReset { yes }) => {
@@ -1105,7 +1118,7 @@ fn run(cli: Cli) -> Result<(), String> {
                 yes,
                 "erase every setting, remove every token and ssh key and empty the root password",
             )?;
-            done(&mut session, Command::FactoryReset, json)?;
+            done::<api::device::FactoryReset>(&mut session, Empty {}, (), json)?;
             forget_session(&mut nodes, &session)
         }
         Cmd::Update(command) => match command {
@@ -1143,26 +1156,41 @@ fn completion(shell: CompletionShell) -> String {
     }
 }
 
-/// `config set` or `config unset`, sent. A change to network keys waits for
-/// the device's own verdict on it; anything else is answered at once.
-fn change(
-    session: &mut Session,
-    json: bool,
-    command: Command,
-    network: bool,
-    how: &ChangeArgs,
-) -> Result<(), String> {
-    if network && !how.no_apply {
-        return net::apply(
-            session,
-            json,
-            "changing the network",
-            &how.verify.verify,
-            command,
-        );
+/// `config set` or `config unset`.
+enum Change {
+    Set(api::SetConfig),
+    Unset(api::UnsetConfig),
+}
+
+impl Change {
+    fn request(self, session: &mut Session) -> Answer<Applied> {
+        match self {
+            Change::Set(body) => session.request::<api::config::Set>(Empty {}, body),
+            Change::Unset(body) => session.request::<api::config::Unset>(Empty {}, body),
+        }
     }
-    let applied: Applied = session.call(command)?;
-    print(json, &applied, || show_applied(&applied, how.no_apply))
+
+    /// Sent. A change to network keys waits for the device's own verdict on
+    /// it; anything else is answered at once.
+    fn send(
+        self,
+        session: &mut Session,
+        json: bool,
+        network: bool,
+        how: &ChangeArgs,
+    ) -> Result<(), String> {
+        if network && !how.no_apply {
+            return net::apply(
+                session,
+                json,
+                "changing the network",
+                &how.verify.verify,
+                |session| self.request(session),
+            );
+        }
+        let applied = self.request(session).into_result()?;
+        print(json, &applied, || show_applied(&applied, how.no_apply))
+    }
 }
 
 /// `KEY=VALUE ...` set and applied, with no revision check: what the
@@ -1171,7 +1199,7 @@ pub(crate) fn set(
     session: &mut Session,
     values: BTreeMap<String, String>,
 ) -> Result<Applied, String> {
-    session.call(Command::Set {
+    session.send::<api::config::Set>(api::SetConfig {
         values,
         if_revision: None,
         apply: true,
@@ -1237,8 +1265,14 @@ fn toggle(
     })
 }
 
-fn done(session: &mut Session, command: Command, json: bool) -> Result<(), String> {
-    let done: Done = session.call(command)?;
+/// An endpoint that answers with a `Done`, its message printed.
+pub(crate) fn done<E: Endpoint<Response = Done>>(
+    session: &mut Session,
+    params: E::Params,
+    body: E::Body,
+    json: bool,
+) -> Result<(), String> {
+    let done = session.call::<E>(params, body)?;
     print(json, &done, || println!("{}", done.message))
 }
 

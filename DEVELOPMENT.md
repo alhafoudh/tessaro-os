@@ -113,11 +113,12 @@ with bmaptool (through `/dev/rdiskN` on macOS), syncs and ejects it.
 `mise run dev:tunnel` keeps an autossh tunnel to the build host up (needs
 `autossh`): `localhost:5901` is the build host's QEMU VNC from `qemu:vnc`,
 `localhost:5902` is VNC on port 5901 of `$TESSARO_BUILD_HOST_CONTAINER_IP`,
-`localhost:7401` and `localhost:2222` are that VM's tessaro-ctl port and SSH
+`localhost:7401` and `localhost:2222` are that VM's API port and SSH
 (`tessaro-ctl -n 127.0.0.1:7401 device status`,
 `tessaro-ctl -n 127.0.0.1:7401 ssh connect --port 2222`), and on the build
-host `localhost:7400` and `localhost:5022` reach tessaro-ctl and SSH on
-`$TESSARO_DEVICE_IP`.
+host `localhost:7400` and `localhost:5022` reach the API and SSH on
+`$TESSARO_DEVICE_IP`. `https://localhost:7401/api/docs/` is the VM's
+Swagger UI ([docs/api.md](docs/api.md)).
 
 ## The agent
 
@@ -200,7 +201,7 @@ is in `build/e2e/`. Lanes, ports and the harness are explained in
 | `kas/common/tessaro.yml` | pins every upstream layer and selects the ones every target shares |
 | `kas/machine/<machine>.yml` | what is board-specific; a new target is one new file here |
 | `meta-tessaro-distro/` | the product layer: distro config, image additions, recipes, wks files |
-| `agent/` | `tessaro-agent`, `tessaro-ctl`, the protocol, the client library and the updater |
+| `agent/` | `tessaro-agent`, `tessaro-ctl`, the API's types, the client library and the updater |
 | `gui/` | `tessaro-gui`, the desktop client (a workspace of its own) |
 | `test/e2e/` | the end-to-end suite |
 | `docs/` | how each subsystem works |

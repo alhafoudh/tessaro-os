@@ -1,11 +1,12 @@
 //! Long work on a device, each on a connection of its own so the window's
-//! worker keeps polling: the streams (`network ping`, the speed test,
-//! growing `/data`), files going up or down, an image update, and the
+//! worker keeps polling: the device's own jobs (`network ping`, the speed
+//! test, growing `/data`), files going up or down, an image update, and the
 //! DevTools tunnel.
 //!
 //! A job is a subscription keyed by its id. Cancelling it drops the
-//! subscription; a watcher thread then shuts the connection down, which
-//! ends whatever call the job was in. The transfers themselves are
+//! subscription. A device job sees that between two polls and cancels it on
+//! the device; for the rest a watcher thread shuts the connection down,
+//! which ends whatever call the job was in. The transfers themselves are
 //! `tessaro_client::transfer`, the same as `tessaro-ctl files` and
 //! `tessaro-ctl update send`.
 
@@ -18,8 +19,12 @@ use std::time::Duration;
 
 use iced::futures::channel::mpsc as ui;
 use iced::Subscription;
-use protocol::files::{self as store, FileEntry, FileKind, FilesListing};
-use protocol::{Command, Done, ImageUpload, UpdateBegun, UpdatePhase, UpdateStatus};
+use protocol::api::{
+    self, CommitBody, Endpoint, FilesQuery, GrowBody, PathBody, PingBody, SpeedtestBody,
+};
+use protocol::files::{self as store, FileEntry, FileKind};
+use protocol::{ImageUpload, JobStarted, UpdatePhase};
+use serde_json::Value;
 use tessaro_client::connect::Session;
 use tessaro_client::nodes::Node;
 use tessaro_client::ssh;
@@ -30,8 +35,8 @@ use crate::worker;
 
 #[derive(Debug, Clone)]
 pub enum Kind {
-    /// A command answered with events.
-    Stream(Command),
+    /// A job the device runs, answered with events.
+    Stream(Stream),
     /// Local files and directories into `into`, a directory of the store.
     Upload { local: Vec<PathBuf>, into: String },
     /// A stored file or directory into the local directory `into`.
@@ -43,6 +48,14 @@ pub enum Kind {
     /// `tessaro-ctl browser devtools`: the device's DevTools port forwarded
     /// to this machine until the job is cancelled.
     DevTools,
+}
+
+/// The device's jobs, each with what starts it.
+#[derive(Debug, Clone)]
+pub enum Stream {
+    Ping(PingBody),
+    Speedtest(SpeedtestBody),
+    Grow(GrowBody),
 }
 
 #[derive(Debug, Clone)]
@@ -118,7 +131,10 @@ impl Report<'_> {
 fn run(spec: &Spec, out: &ui::UnboundedSender<Event>) -> Result<String, String> {
     let (mut session, _) = worker::connect(&spec.node)?;
     let done = Arc::new(AtomicBool::new(false));
-    if let Some(tcp) = session.shutdown_handle() {
+    // A device job stops by itself, and cancels on the device on the way:
+    // shutting its connection down would only lose that cancel.
+    let watched = !matches!(spec.kind, Kind::Stream(_));
+    if let Some(tcp) = session.shutdown_handle().filter(|_| watched) {
         let (out, done) = (out.clone(), done.clone());
         std::thread::spawn(move || {
             while !out.is_closed() && !done.load(Ordering::Relaxed) {
@@ -131,7 +147,13 @@ fn run(spec: &Spec, out: &ui::UnboundedSender<Event>) -> Result<String, String> 
     }
     let report = Report { out };
     let result = match &spec.kind {
-        Kind::Stream(command) => stream(&mut session, command.clone(), out),
+        Kind::Stream(Stream::Ping(body)) => {
+            stream::<api::network::Ping>(&mut session, body.clone(), out)
+        }
+        Kind::Stream(Stream::Speedtest(body)) => {
+            stream::<api::network::Speedtest>(&mut session, body.clone(), out)
+        }
+        Kind::Stream(Stream::Grow(body)) => stream::<api::storage::Grow>(&mut session, *body, out),
         Kind::Upload { local, into } => upload(&mut session, local, into, &report),
         Kind::Download { entry, into } => download(&mut session, entry, into, &report),
         Kind::Update(update) => update_send(&mut session, update, &report),
@@ -145,12 +167,19 @@ fn run(spec: &Spec, out: &ui::UnboundedSender<Event>) -> Result<String, String> 
     result
 }
 
-fn stream(
+/// Every event of the job as it came: the page reads them as the job's
+/// event type.
+fn stream<S>(
     session: &mut Session,
-    command: Command,
+    body: S::Body,
     out: &ui::UnboundedSender<Event>,
-) -> Result<String, String> {
-    session.stream(command, |event| {
+) -> Result<String, String>
+where
+    S: Endpoint<Response = JobStarted>,
+    S::Params: Default,
+{
+    session.job::<S, Value>(body, &|| out.is_closed(), |event| {
+        let event = event.unwrap_or_else(|unknown| unknown);
         let _ = out.unbounded_send(Event::Value(event));
     })?;
     Ok("done".to_string())
@@ -169,7 +198,7 @@ fn upload(
         let target = store::join(into, &name);
         let meta = std::fs::metadata(path).map_err(|err| format!("{}: {err}", path.display()))?;
         if meta.is_dir() {
-            session.call::<Done>(Command::FilesMkdir {
+            session.send::<api::files::Mkdir>(PathBody {
                 path: target.clone(),
             })?;
             let mut children: Vec<PathBuf> = std::fs::read_dir(path)
@@ -226,10 +255,13 @@ fn download(
         return Ok(format!("saved {}", target.display()));
     }
 
-    let listing: FilesListing = session.call(Command::FilesList {
-        path: entry.path.clone(),
-        recursive: true,
-    })?;
+    let listing = session.call::<api::files::List>(
+        FilesQuery {
+            path: entry.path.clone(),
+            recursive: true,
+        },
+        (),
+    )?;
     let base = into.join(&name);
     std::fs::create_dir_all(&base).map_err(|err| format!("{}: {err}", base.display()))?;
     let prefix = format!("{}/", entry.path);
@@ -266,14 +298,14 @@ fn update_send(session: &mut Session, update: &Update, report: &Report) -> Resul
 
     let sha256 = transfer::hash(&update.image, |done| report.progress("hashing", done, size))?;
     report.line(format!("hashed {}", mb(size)));
-    let begun: UpdateBegun = session.call(Command::UpdateBegin(ImageUpload {
+    let begun = session.send::<api::update::Begin>(ImageUpload {
         name: name.clone(),
         size,
         sha256,
         bmap,
         verify: update.verify,
         repartition: update.repartition,
-    }))?;
+    })?;
     if begun.phase == UpdatePhase::Receiving {
         if begun.offset > 0 {
             report.line(format!("resuming at {}", mb(begun.offset)));
@@ -287,7 +319,7 @@ fn update_send(session: &mut Session, update: &Update, report: &Report) -> Resul
     }
 
     loop {
-        let status: UpdateStatus = session.call(Command::UpdateStatus)?;
+        let status = session.fetch::<api::update::Status>()?;
         match status.phase {
             UpdatePhase::Verifying => report.progress("verifying", status.verified, status.size),
             UpdatePhase::Preparing => {
@@ -308,7 +340,7 @@ fn update_send(session: &mut Session, update: &Update, report: &Report) -> Resul
     }
     report.line("prepared");
 
-    let done: Done = session.call(Command::UpdateCommit {
+    let done = session.send::<api::update::Commit>(CommitBody {
         wipe_data: update.wipe_data || update.repartition,
         reboot: update.reboot,
     })?;
@@ -326,7 +358,7 @@ fn control_ping(session: &mut Session, count: u32, report: &Report) -> Result<St
     let mut rtts = Vec::new();
     for seq in 1..=count {
         let started = std::time::Instant::now();
-        match session.call::<Done>(Command::Ping) {
+        match session.fetch::<api::device::Ping>() {
             Ok(_) => {
                 let rtt = started.elapsed().as_secs_f64() * 1e3;
                 rtts.push(rtt);

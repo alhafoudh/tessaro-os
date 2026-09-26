@@ -63,12 +63,14 @@ futures-util = { version = "0.3", default-features = false, features = ["std", "
 # client, not reqwest: probe.rs already walks redirects by hand and url.rs
 # already parses origins, and reqwest would add url + idna + the whole ICU
 # stack (~48 crates) to redo both. hyper-util is only here for TokioIo.
-# `server` is for the setup portal's API (portal.rs), on a unix socket behind
-# nginx; it adds only httpdate.
+# `server` is the device's API (api/), routed by hand on the endpoint types
+# of protocol::api rather than through axum and tower; it adds only httpdate.
 hyper = { version = "1", features = ["client", "http1", "server"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
 bytes = "1"
+# The API's query strings, the same decoder the endpoint types use.
+serde_urlencoded = "0.7"
 
 # TLS: openssl through native-tls, used directly. native_tls::TlsConnector
 # uses openssl's default verify paths, i.e. the device's /etc/ssl/certs from

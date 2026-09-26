@@ -131,7 +131,7 @@ so a change that takes the operator's own connection away - re-addressing the
 link it came in on - is safe by construction. The client explains a lost
 connection and `network last` reads the verdict afterwards. `network profiles
 list|show`, `network wifi status` and `network wifi scan` read; `network ping HOST`
-pings from the device (streamed, like `network speedtest`); `tessaro-ctl device ping`
+pings from the device (a job, like `network speedtest`, see [api.md](api.md)); `tessaro-ctl device ping`
 times the client's own path to the agent - TCP connect, TLS handshake, round
 trips - and, like `device id`, needs no token. The logic is `agent/tessaro-agent/src/nm/` (`profiles.rs`
 renders, `txn.rs` switches) and `ping.rs`.
@@ -269,7 +269,8 @@ renders, `txn.rs` switches) and `ping.rs`.
 ## Speed test
 
 **`tessaro-ctl network speedtest` measures the device's link, not the client's.** The
-agent runs it against speed.cloudflare.com and streams one line per step:
+agent runs it against speed.cloudflare.com as a job, and the client prints
+one line per step:
 where Cloudflare sees the device from (`/cdn-cgi/trace`), latency (25 empty
 requests, less the server's own `Server-Timing`), then download and upload at
 100k, 1m, 10m, 25m, 100m up to `--max-size` (default 25m), `--tests` samples
@@ -286,10 +287,10 @@ on purpose: its only client is a closed binary.
   Fenced into `agent/tessaro-agent/src/speedtest.rs`; do not reach for
   reqwest elsewhere just because it is in the lock.
 * **It runs on one `spawn_blocking` thread**, which sends a step per payload
-  size down a channel that `server.rs` forwards as events. The reqwest client
+  size down a channel that the job keeps (`api/jobs.rs`). The reqwest client
   is built and dropped on that thread - a blocking client dropped on the
   runtime thread panics. Every request has a 30s timeout, the thread stops at
-  the next step once nobody is listening, and the server gives the whole test
+  the next step once the job is cancelled, and the job gives the whole test
   5 minutes, so the agent never waits on Cloudflare and the watchdog never
   notices. A size that took over 5s is the last one tried (cfspeedtest's own
   rule), which keeps a slow link from spending minutes on 25 MB samples.

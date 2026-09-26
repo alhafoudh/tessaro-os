@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use anstream::println;
-use protocol::{Command, Status};
+use protocol::api;
 use serde_json::json;
 use tessaro_client::ssh;
 use tessaro_client::tunnel::{self, Prompts, Tunnel};
@@ -62,7 +62,7 @@ pub fn run(session: &mut Session, options: Options, json: bool) -> Result<(), St
             return Err(why);
         }
         // A missed answer is not news; the next one will do.
-        if let Ok(status) = session.call::<Status>(Command::Status) {
+        if let Ok(status) = session.fetch::<api::device::Status>() {
             let news = match connected {
                 Some(was) => was != status.devtools,
                 None => status.devtools,

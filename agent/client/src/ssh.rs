@@ -18,8 +18,9 @@ use std::fs;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
+use protocol::api::{self, SshKeyBody};
 use protocol::sshkey::PublicKey;
-use protocol::{Command, SshAccess};
+use protocol::SshAccess;
 
 use crate::connect::Session;
 use crate::nodes;
@@ -112,7 +113,7 @@ pub fn authorize(session: &mut Session, key: Option<&Path>) -> Result<Authorized
     let public =
         PublicKey::parse(&line).map_err(|err| format!("{}: {err}", chosen.public.display()))?;
 
-    let access: SshAccess = session.call(Command::SshAuthorize { key: public.line() })?;
+    let access = session.send::<api::ssh::Authorize>(SshKeyBody { key: public.line() })?;
 
     write_known_hosts(&known_hosts, &alias, &access.host_keys)?;
     Ok(Authorized {

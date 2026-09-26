@@ -10,9 +10,9 @@ the root partition, plus the kernel file on the boot partition.
 `--repartition` writes the whole disk instead - see **Rewriting the whole
 disk** below.
 
-1. **Upload.** 4 MiB base64 chunks over the control protocol (`update-begin`,
-   `update-chunk`), each fsynced to `/data/tessaro/update/upload.part` before
-   it is acknowledged. The same command run again resumes from the last byte
+1. **Upload.** 4 MiB raw chunks over the API (`update/begin`, then
+   `PUT update/image`, see [api.md](api.md)), each fsynced to
+   `/data/tessaro/update/upload.part` before it is acknowledged. The same command run again resumes from the last byte
    the device has. The partition table is checked against the device's own
    as soon as the start of the image decompresses, so a wrong image fails in
    seconds, not after the whole upload. That is after the first chunk for

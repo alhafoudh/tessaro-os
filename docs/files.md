@@ -29,9 +29,10 @@ shared so both ends refuse the same paths.
   writes `/data/tessaro/files-store.part`, syncs it and renames it in, under
   the same lock and space reserve as uploads but outside the upload slot. The
   one user is the `audio test --input` recording (see [audio.md](audio.md)).
-* **Downloads are request/response, not a stream**: `files-read` of up to
-  `UPDATE_CHUNK` from an offset, written to a `.part` beside the target and
-  renamed, with the device's mtime.
+* **Downloads are request/response, not a stream**: `GET files/content` of
+  up to `UPDATE_CHUNK` raw bytes from an offset, the whole file's size and
+  mtime in its headers ([api.md](api.md)), written to a `.part` beside the
+  target and renamed, with the device's mtime.
 * **256 MiB of `/data` is always left free** (`RESERVE`): the Chromium
   profile, the settings and an image update's staging live there too.
 * **Nothing follows a symlink**, on either side of nginx: the agent checks

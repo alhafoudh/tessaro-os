@@ -20,15 +20,15 @@ use std::time::{Duration, Instant};
 
 use anstream::{eprintln, print, println};
 use clap::{Args, Subcommand, ValueEnum};
+use protocol::api::{self, Empty};
 use protocol::{
-    keys, speedtest_size_label, Applied, CertInfo, CertsAdded, ChangeOutcome, Command, Direction,
-    Done, HotspotCredentials, Net, NetAddress, NetChange, NetInterface, NetProfile,
-    NetProfileDetail, PingEvent, ProxyStatus, ProxyTested, Secret, SpeedtestEvent, Verify,
-    WifiNetwork, WifiSecurity, WifiStatus,
+    keys, speedtest_size_label, Applied, CertInfo, ChangeOutcome, Direction, Net, NetAddress,
+    NetChange, NetInterface, NetProfile, NetProfileDetail, PingEvent, ProxyStatus, Secret,
+    SpeedtestEvent, Verify, WifiNetwork, WifiSecurity, WifiStatus,
 };
 use serde_json::json;
 
-use crate::connect::{Answer, Session, StreamEvents};
+use crate::connect::{follow_job, Answer, Session};
 use crate::style::{self, pad, paint, yes_no};
 use crate::{print, show_applied, show_once};
 
@@ -246,8 +246,9 @@ fn speedtest(
             )
         );
     }
-    session.stream_events(
-        Command::Speedtest {
+    follow_job::<api::network::Speedtest, _>(
+        session,
+        api::SpeedtestBody {
             max_size: Some(max_size),
             tests: Some(tests),
             direct,
@@ -528,11 +529,11 @@ pub(crate) fn seconds(millis: u64) -> f64 {
 pub fn run(session: &mut Session, command: NetworkCmd, json: bool) -> Result<(), String> {
     match command {
         NetworkCmd::Show => {
-            let net: Net = session.call(Command::Net)?;
+            let net = session.fetch::<api::network::Show>()?;
             print(json, &net, || show_net(&net))
         }
         NetworkCmd::Interfaces => {
-            let net: Net = session.call(Command::Net)?;
+            let net = session.fetch::<api::network::Show>()?;
             print(json, &net.interfaces, || {
                 for (at, interface) in net.interfaces.iter().enumerate() {
                     if at > 0 {
@@ -548,7 +549,7 @@ pub fn run(session: &mut Session, command: NetworkCmd, json: bool) -> Result<(),
             no_proxy,
         } => speedtest(session, json, max_size, tests, no_proxy),
         NetworkCmd::Proxy(ProxyCmd::Show) => {
-            let status: ProxyStatus = session.call(Command::ProxyStatus)?;
+            let status = session.fetch::<api::network::Proxy>()?;
             print(json, &status, || show_proxy(&status))
         }
         NetworkCmd::Proxy(ProxyCmd::Set { url, bypass }) => {
@@ -566,7 +567,7 @@ pub fn run(session: &mut Session, command: NetworkCmd, json: bool) -> Result<(),
             print(json, &applied, || show_applied(&applied, false))
         }
         NetworkCmd::Proxy(ProxyCmd::Test) => {
-            let tested: ProxyTested = session.call(Command::ProxyTest)?;
+            let tested = session.send::<api::network::ProxyTest>(())?;
             print(json, &tested, || match (&tested.ip, &tested.error) {
                 (Some(ip), _) => println!(
                     "{} {}",
@@ -581,7 +582,7 @@ pub fn run(session: &mut Session, command: NetworkCmd, json: bool) -> Result<(),
             })
         }
         NetworkCmd::Certs(CertsCmd::List) => {
-            let certs: Vec<CertInfo> = session.call(Command::NetCertList)?;
+            let certs = session.fetch::<api::network::Certs>()?;
             print(json, &certs, || {
                 if certs.is_empty() {
                     println!(
@@ -596,7 +597,7 @@ pub fn run(session: &mut Session, command: NetworkCmd, json: bool) -> Result<(),
         }
         NetworkCmd::Certs(CertsCmd::Add { file }) => {
             let pem = tessaro_client::certs::read_pem(&file)?;
-            let added: CertsAdded = session.call(Command::NetCertAdd { pem })?;
+            let added = session.send::<api::network::CertAdd>(api::CertBody { pem })?;
             print(json, &added, || {
                 for cert in &added.added {
                     print!("{} ", paint(style::OK, "trusted"));
@@ -609,22 +610,23 @@ pub fn run(session: &mut Session, command: NetworkCmd, json: bool) -> Result<(),
             })
         }
         NetworkCmd::Certs(CertsCmd::Revoke { cert }) => {
-            let revoked: CertInfo = session.call(Command::NetCertRevoke { cert })?;
+            let revoked = session.call::<api::network::CertRevoke>(api::CertQuery { cert }, ())?;
             print(json, &revoked, || {
                 print!("{} ", paint(style::OK, "revoked"));
                 show_cert(&revoked);
             })
         }
         NetworkCmd::Profiles(ProfilesCmd::List) => {
-            let profiles: Vec<NetProfile> = session.call(Command::NetProfiles)?;
+            let profiles = session.fetch::<api::network::Profiles>()?;
             print(json, &profiles, || show_profiles(&profiles))
         }
         NetworkCmd::Profiles(ProfilesCmd::Show { profile }) => {
-            let detail: NetProfileDetail = session.call(Command::NetShow { profile })?;
+            let detail =
+                session.call::<api::network::Profile>(api::ProfileQuery { profile }, ())?;
             print(json, &detail, || show_detail(&detail))
         }
         NetworkCmd::Last => {
-            let last: Option<NetChange> = session.call(Command::NetLast)?;
+            let last = session.fetch::<api::network::Last>()?;
             print(json, &last, || match &last {
                 Some(change) => show_change(change),
                 None => println!("{}", paint(style::MUTED, "no network change yet")),
@@ -644,7 +646,7 @@ pub fn run(session: &mut Session, command: NetworkCmd, json: bool) -> Result<(),
 fn wifi(session: &mut Session, json: bool, what: WifiCmd) -> Result<(), String> {
     match what {
         WifiCmd::Status => {
-            let status: WifiStatus = session.call(Command::Wifi)?;
+            let status = session.fetch::<api::network::Wifi>()?;
             print(json, &status, || show_wifi(&status))
         }
         WifiCmd::Scan { interface, cached } => {
@@ -654,10 +656,11 @@ fn wifi(session: &mut Session, json: bool, what: WifiCmd) -> Result<(), String> 
                     paint(style::MUTED, format!("{}: scanning...", session.node.name))
                 );
             }
-            let networks: Vec<WifiNetwork> = session.call(Command::WifiScan {
+            let query = api::WifiScanQuery {
                 interface,
                 rescan: !cached,
-            })?;
+            };
+            let networks = session.call::<api::network::WifiScan>(query, ())?;
             print(json, &networks, || show_networks(&networks))
         }
         WifiCmd::Join {
@@ -668,22 +671,20 @@ fn wifi(session: &mut Session, json: bool, what: WifiCmd) -> Result<(), String> 
             verify,
         } => {
             let psk = join_password(session, &ssid, security, password_stdin)?;
-            apply(
-                session,
-                json,
-                &format!("joining {ssid}"),
-                &verify.verify,
-                Command::WifiJoin {
-                    ssid,
-                    psk: psk.map(Secret),
-                    security: security.map(WifiSecurity::from),
-                    hidden,
-                    verify: verify.verify.clone(),
-                },
-            )
+            let doing = format!("joining {ssid}");
+            let body = api::WifiJoinBody {
+                ssid,
+                psk: psk.map(Secret),
+                security: security.map(WifiSecurity::from),
+                hidden,
+                verify: verify.verify.clone(),
+            };
+            apply(session, json, &doing, &verify.verify, |session| {
+                session.request::<api::network::WifiJoin>(Empty {}, body)
+            })
         }
         WifiCmd::HotspotPassword => {
-            let hotspot: HotspotCredentials = session.call(Command::HotspotPassword)?;
+            let hotspot = session.send::<api::network::HotspotPassword>(())?;
             print(json, &hotspot, || {
                 show_once(
                     &format!("hotspot {} password - shown this once:", hotspot.ssid),
@@ -706,11 +707,12 @@ fn join_password(
     let seen = match security {
         Some(_) => None,
         None => {
-            let networks: Vec<WifiNetwork> = session
-                .call(Command::WifiScan {
-                    interface: None,
-                    rescan: false,
-                })
+            let query = api::WifiScanQuery {
+                interface: None,
+                rescan: false,
+            };
+            let networks = session
+                .call::<api::network::WifiScan>(query, ())
                 .unwrap_or_default();
             networks.into_iter().find(|network| network.ssid == ssid)
         }
@@ -744,14 +746,14 @@ pub fn is_network_key(key: &str) -> bool {
 }
 
 /// Send one change of network settings - a `config set`, a `config unset`,
-/// a join - and
-/// wait for the device's verdict, or explain why it never came.
+/// a join - with `request`, and wait for the device's verdict, or explain
+/// why it never came.
 pub fn apply(
     session: &mut Session,
     json: bool,
     doing: &str,
     verify: &Verify,
-    command: Command,
+    request: impl FnOnce(&mut Session) -> Answer<Applied>,
 ) -> Result<(), String> {
     if !json {
         eprintln!(
@@ -767,7 +769,7 @@ pub fn apply(
         );
     }
     session.set_read_timeout(Some(CHANGE));
-    let answer = session.request::<Applied>(command);
+    let answer = request(session);
     session.restore_read_timeout();
 
     let applied = match answer {
@@ -816,8 +818,9 @@ fn net_ping(
 ) -> Result<(), String> {
     let millis = |seconds: f64| (seconds * 1000.0).round().max(0.0) as u64;
     let mut failed = false;
-    session.stream_events(
-        Command::NetPing {
+    follow_job::<api::network::Ping, _>(
+        session,
+        api::PingBody {
             host,
             count: Some(count),
             interval_ms: Some(millis(interval)),
@@ -839,7 +842,8 @@ fn net_ping(
 }
 
 /// `tessaro-ctl device ping`: the path this client really uses - the TCP connect,
-/// the TLS handshake with the hello, then round trips on the session.
+/// the TLS handshake with asking the device who it is, then round trips on
+/// the session.
 pub fn ping(session: &mut Session, json: bool, count: u32, interval: f64) -> Result<(), String> {
     if count == 0 {
         return Err("--count must be at least 1".to_string());
@@ -852,7 +856,7 @@ pub fn ping(session: &mut Session, json: bool, count: u32, interval: f64) -> Res
                 "{}",
                 paint(
                     style::MUTED,
-                    format!("{} ({address}): the control connection", session.node.name)
+                    format!("{} ({address}): the API connection", session.node.name)
                 )
             ),
             None => eprintln!(
@@ -873,7 +877,7 @@ pub fn ping(session: &mut Session, json: bool, count: u32, interval: f64) -> Res
                 "{} {} {}",
                 label("tls"),
                 paint(style::HEADING, ms(timing.handshake)),
-                paint(style::MUTED, "(handshake and hello)")
+                paint(style::MUTED, "(handshake and device id)")
             );
         }
     }
@@ -885,7 +889,7 @@ pub fn ping(session: &mut Session, json: bool, count: u32, interval: f64) -> Res
             std::thread::sleep(Duration::from_secs_f64(interval.max(0.05)));
         }
         let started = Instant::now();
-        match session.call::<Done>(Command::Ping) {
+        match session.fetch::<api::device::Ping>() {
             Ok(_) => {
                 let rtt = started.elapsed();
                 rtts.push(rtt);

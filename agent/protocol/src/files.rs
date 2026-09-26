@@ -5,6 +5,7 @@
 //! client's own separator is. The rules are here so the client refuses what
 //! the device would, before anything is sent.
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Longest path, in bytes, the whole of it.
@@ -13,14 +14,14 @@ pub const MAX_PATH: usize = 4096;
 /// Longest single name, in bytes: ext4's own limit.
 pub const MAX_NAME: usize = 255;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum FileKind {
     File,
     Dir,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct FileEntry {
     /// From the root of the store, `/`-separated.
     pub path: String,
@@ -32,21 +33,21 @@ pub struct FileEntry {
     pub mtime: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct FilesListing {
     /// Names sorted; recursively, depth first, a directory before what is
     /// in it. Paths are always from the store's root.
     pub entries: Vec<FileEntry>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct FileBegun {
     /// Bytes the device already has of this file. Send from here.
     pub offset: u64,
     pub size: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct FileData {
     /// Base64, at most `UPDATE_CHUNK` bytes before encoding. Empty at the
     /// end of the file.

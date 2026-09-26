@@ -5,15 +5,17 @@
 //! How a device is found and pinned is in `tessaro_client::connect`.
 
 use anstream::{eprintln, println};
-use protocol::Command;
+use protocol::api::Endpoint;
+use protocol::JobStarted;
 use serde::de::DeserializeOwned;
+use serde_json::Value;
 use tessaro_client::connect::{self as client, PinAsk};
 pub use tessaro_client::connect::{browse, resolve, Answer, Session, Target};
 use tessaro_client::nodes::Nodes;
 
 use crate::style::{self, paint};
 
-/// How this client names itself in the hello.
+/// How this client names itself to the device (its User-Agent).
 const CLIENT: &str = concat!("tessaro-ctl ", env!("CARGO_PKG_VERSION"));
 
 /// What the command wants to happen if the node has no pin yet.
@@ -51,32 +53,28 @@ pub fn open(target: &Target, nodes: &Nodes, trust: Trust) -> Result<Session, Str
     Ok(session)
 }
 
-/// Streams printed the way every stream is.
-pub trait StreamEvents {
-    /// With `--json` each event as the device sent it, otherwise through
-    /// `each` - and an event this client does not know, from a newer
-    /// device, as it came.
-    fn stream_events<E: DeserializeOwned>(
-        &mut self,
-        command: Command,
-        json: bool,
-        each: impl FnMut(E),
-    ) -> Result<(), String>;
-}
-
-impl StreamEvents for Session {
-    fn stream_events<E: DeserializeOwned>(
-        &mut self,
-        command: Command,
-        json: bool,
-        mut each: impl FnMut(E),
-    ) -> Result<(), String> {
-        if json {
-            return self.stream(command, |event| println!("{event}"));
-        }
-        self.stream_typed(command, |event| match event {
-            Ok(step) => each(step),
-            Err(raw) => println!("{raw}"),
-        })
+/// Job `S` started and followed to its end, its steps printed the way every
+/// job's are: with `--json` each step as the device sent it, otherwise
+/// through `each` - and a step this client does not know, from a newer
+/// device, as it came. Only Ctrl-C stops it early, which ends the process.
+pub fn follow_job<S, T>(
+    session: &mut Session,
+    body: S::Body,
+    json: bool,
+    mut each: impl FnMut(T),
+) -> Result<(), String>
+where
+    S: Endpoint<Response = JobStarted>,
+    S::Params: Default,
+    T: DeserializeOwned,
+{
+    if json {
+        return session.job::<S, Value>(body, &|| false, |step| match step {
+            Ok(raw) | Err(raw) => println!("{raw}"),
+        });
     }
+    session.job::<S, T>(body, &|| false, |step| match step {
+        Ok(step) => each(step),
+        Err(raw) => println!("{raw}"),
+    })
 }

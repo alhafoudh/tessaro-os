@@ -9,9 +9,10 @@
 
 use anstream::{eprintln, println};
 use clap::Subcommand;
-use protocol::{size_label, Command, FsUsage, Partition, Storage, StorageGrowEvent};
+use protocol::api::{self, GrowBody};
+use protocol::{size_label, FsUsage, Partition, Storage, StorageGrowEvent};
 
-use crate::connect::{Session, StreamEvents};
+use crate::connect::{follow_job, Session};
 use crate::print;
 use crate::style::{self, pad, paint};
 
@@ -41,17 +42,17 @@ pub enum StorageCmd {
 pub fn run(session: &mut Session, command: StorageCmd, json: bool) -> Result<(), String> {
     match command {
         StorageCmd::Show => {
-            let storage: Storage = session.call(Command::Storage)?;
+            let storage = session.fetch::<api::storage::Show>()?;
             print(json, &storage, || show(&storage))
         }
         StorageCmd::Partitions => {
-            let storage: Storage = session.call(Command::Storage)?;
+            let storage = session.fetch::<api::storage::Show>()?;
             print(json, &storage.partitions, || {
                 show_partitions(&storage.partitions)
             })
         }
         StorageCmd::Usage => {
-            let storage: Storage = session.call(Command::Storage)?;
+            let storage = session.fetch::<api::storage::Show>()?;
             print(json, &storage.filesystems, || {
                 show_usage(&storage.filesystems)
             })
@@ -177,11 +178,15 @@ fn show_usage(filesystems: &[FsUsage]) {
 /// The plan, then - unless `check` - a confirmation and the grow itself.
 fn grow(session: &mut Session, json: bool, check: bool, yes: bool) -> Result<(), String> {
     let mut plan = None;
-    session.stream(Command::StorageGrow { check: true }, |event| {
-        if let Ok(event @ StorageGrowEvent::Plan { .. }) = serde_json::from_value(event) {
-            plan = Some(event);
-        }
-    })?;
+    session.job::<api::storage::Grow, StorageGrowEvent>(
+        GrowBody { check: true },
+        &|| false,
+        |event| {
+            if let Ok(event @ StorageGrowEvent::Plan { .. }) = event {
+                plan = Some(event);
+            }
+        },
+    )?;
     let Some(plan) = plan else {
         return Err("the device sent no plan".to_string());
     };
@@ -216,41 +221,41 @@ fn grow(session: &mut Session, json: bool, check: bool, yes: bool) -> Result<(),
         ),
     )?;
 
-    session
-        .stream_events(
-            Command::StorageGrow { check: false },
-            json,
-            |step: StorageGrowEvent| match step {
-                StorageGrowEvent::Plan { .. } => {}
-                StorageGrowEvent::Step { what, command } => {
-                    println!("{} {}", what, paint(style::MUTED, format!("({command})")));
-                }
-                StorageGrowEvent::Grown {
-                    partition,
-                    filesystem,
-                } => println!(
-                    "{} {}",
-                    paint(
-                        style::OK,
-                        format!("grew /data to {}", size_label(filesystem))
-                    ),
-                    paint(
-                        style::MUTED,
-                        format!("(partition {})", size_label(partition))
-                    )
+    follow_job::<api::storage::Grow, _>(
+        session,
+        GrowBody { check: false },
+        json,
+        |step: StorageGrowEvent| match step {
+            StorageGrowEvent::Plan { .. } => {}
+            StorageGrowEvent::Step { what, command } => {
+                println!("{} {}", what, paint(style::MUTED, format!("({command})")));
+            }
+            StorageGrowEvent::Grown {
+                partition,
+                filesystem,
+            } => println!(
+                "{} {}",
+                paint(
+                    style::OK,
+                    format!("grew /data to {}", size_label(filesystem))
                 ),
-            },
-        )
-        .map_err(|error| {
-            if json {
-                error
-            } else {
-                eprintln!("{}", paint(style::BAD, "the grow stopped"));
-                format!(
+                paint(
+                    style::MUTED,
+                    format!("(partition {})", size_label(partition))
+                )
+            ),
+        },
+    )
+    .map_err(|error| {
+        if json {
+            error
+        } else {
+            eprintln!("{}", paint(style::BAD, "the grow stopped"));
+            format!(
                 "{error}\nrunning `tessaro-ctl storage grow` again picks up where this one stopped"
             )
-            }
-        })
+        }
+    })
 }
 
 fn show_plan(plan: &StorageGrowEvent) {

@@ -1,6 +1,7 @@
 # nginx on Tessaro serves the local pages on the loopback (tessaro-selftest)
-# and the setup portal to the hotspot's subnet (tessaro-portal), and nothing
-# else. These changes are needed to make that true.
+# and answers the phones' captive probes on the hotspot's subnet
+# (tessaro-portal), and nothing else. These changes are needed to make that
+# true.
 
 # 1. Give nginx a config directory outside /etc.
 #

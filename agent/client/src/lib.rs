@@ -1,6 +1,7 @@
-//! The client side of the Tessaro control protocol, for every program that
-//! manages devices: finding them, opening a pinned session, and the
-//! `nodes.json` this machine keeps about them.
+//! The client side of the Tessaro API, for every program that manages
+//! devices: finding them, opening a pinned session that calls the endpoints
+//! of `protocol::api` by type, and the `nodes.json` this machine keeps about
+//! them.
 //!
 //! Nothing in here prints or asks. Where the user has to decide - pinning a
 //! certificate seen for the first time - the caller passes the decision in
@@ -10,6 +11,7 @@
 pub mod certs;
 pub mod clock;
 pub mod connect;
+mod http;
 pub mod journal;
 pub mod nodes;
 pub mod schedule;

@@ -335,7 +335,7 @@ does something. To open it on a device,
   `recipes-httpd/nginx/nginx_%.bbappend` adds that include to `nginx.conf`
   (whose path is compiled in by `--conf-path`) and deletes the stock
   `default_server` symlink, which would answer on `0.0.0.0:80` with the nginx
-  welcome page. Ours binds `127.0.0.1` only; the setup portal's server is
+  welcome page. Ours binds `127.0.0.1` only; the captive portal's server is
   the one other, and answers only the hotspot's subnet.
 * **`tessaro-ctl config set agent.refresh_interval=0` before a manual pass.** The agent
   re-navigates on that timer, 600s by default, and a reload closes any serial

@@ -10,7 +10,8 @@ use std::collections::BTreeMap;
 
 use anstream::println;
 use clap::Subcommand;
-use protocol::{keys, AudioDevice, AudioSide, AudioStatus, AudioTested, Command};
+use protocol::api;
+use protocol::{keys, AudioDevice, AudioSide, AudioStatus};
 
 use crate::connect::Session;
 use crate::style::{self, pad, paint};
@@ -65,17 +66,17 @@ pub enum AudioCmd {
 pub fn run(session: &mut Session, command: AudioCmd, json: bool) -> Result<(), String> {
     match command {
         AudioCmd::Show => {
-            let status: AudioStatus = session.call(Command::AudioStatus)?;
+            let status = session.fetch::<api::audio::Show>()?;
             print(json, &status, || show(&status))
         }
         AudioCmd::Outputs => {
-            let status: AudioStatus = session.call(Command::AudioStatus)?;
+            let status = session.fetch::<api::audio::Show>()?;
             print(json, &status.output.devices, || {
                 list(&status, &status.output, "output")
             })
         }
         AudioCmd::Inputs => {
-            let status: AudioStatus = session.call(Command::AudioStatus)?;
+            let status = session.fetch::<api::audio::Show>()?;
             print(json, &status.input.devices, || {
                 list(&status, &status.input, "input")
             })
@@ -88,7 +89,7 @@ pub fn run(session: &mut Session, command: AudioCmd, json: bool) -> Result<(), S
             set(session, json, keys::AUDIO_INPUT_VOLUME, percent.to_string())
         }
         AudioCmd::Test { input } => {
-            let tested: AudioTested = session.call(Command::AudioTest { input })?;
+            let tested = session.send::<api::audio::Test>(api::AudioTestBody { input })?;
             print(json, &tested, || {
                 println!("{}", paint(style::OK, &tested.message));
                 if let (Some(peak), Some(rms)) = (tested.peak_dbfs, tested.rms_dbfs) {

@@ -108,6 +108,12 @@ CORE_IMAGE_EXTRA_INSTALL += " \
     tessaro-portal \
 "
 
+# Swagger UI for the API, which the agent serves at /api/docs/. See
+# docs/api.md.
+CORE_IMAGE_EXTRA_INSTALL += " \
+    tessaro-api-docs \
+"
+
 # Sound: PipeWire, WirePlumber and the Pulse server Chromium plays through,
 # with the units that run them as the weston user. Everything about which
 # output plays and how loud is the audio.* settings, applied by the agent;

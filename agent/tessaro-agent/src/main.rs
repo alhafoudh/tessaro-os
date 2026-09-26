@@ -5,8 +5,8 @@
 //! arrive as environment variables, parsed by systemd from
 //! `/usr/lib/tessaro-kiosk/tessaro-kiosk.env`; what was set on this device
 //! comes from `/data/tessaro/state.json` on top. Nothing else configures it,
-//! and the only way to change `state.json` is `tessaro-ctl`, over the local
-//! socket or TLS (`control/`, `server.rs`).
+//! and the only way to change `state.json` is the API, over the local socket
+//! or HTTPS (`control/`, `api/`).
 //!
 //! `tessaro-agent boot` is the other mode: the oneshot that renders the
 //! configuration before anything reads it (`boot.rs`).
@@ -19,6 +19,7 @@
 //! a standing test of the no-blocking-calls rule the whole design rests on.
 
 mod agent;
+mod api;
 mod audio;
 mod auth;
 mod boot;
@@ -43,7 +44,6 @@ mod notify;
 mod offline;
 mod paths;
 mod ping;
-mod portal;
 mod ports;
 mod power;
 mod probe;
@@ -52,7 +52,6 @@ mod qr;
 mod render;
 mod schedules;
 mod secrets;
-mod server;
 mod shadow;
 mod speedtest;
 mod ssh;
@@ -294,36 +293,18 @@ async fn start_control(
         proxy,
     );
 
-    if let Err(err) = server::spawn_unix(
-        Arc::clone(&control),
-        socket.clone(),
-        Arc::clone(log),
-        stop.subscribe(),
-    ) {
-        log.info(format!(
-            "control: cannot listen on {}: {err}",
-            socket.display()
-        ));
-    }
-
-    // No portal is not an error on a device without nginx's socket
-    // directory; it is said once, in the journal.
-    if let Err(err) = portal::spawn(
-        Arc::clone(&control),
-        device.paths.portal_socket.clone(),
-        Arc::clone(log),
-        stop.subscribe(),
-    ) {
-        log.info(format!("setup portal: not started: {err}"));
+    let server = api::Server::new(Arc::clone(&control), &device.paths, Arc::clone(log));
+    if let Err(err) = api::spawn_unix(Arc::clone(&server), socket.clone(), stop.subscribe()) {
+        log.info(format!("api: cannot listen on {}: {err}", socket.display()));
     }
 
     let mut port = None;
     if let (Some(addr), Some(tls)) = (device.listen, device.tls.as_ref()) {
-        match server::spawn_tls(Arc::clone(&control), addr, tls, Arc::clone(log), stop.subscribe())
+        match api::spawn_tls(Arc::clone(&server), addr, tls, stop.subscribe())
             .await // naked: binding a socket is a local syscall
         {
             Ok(()) => port = Some(addr.port()),
-            Err(err) => log.info(format!("control: cannot listen on {addr}: {err}")),
+            Err(err) => log.info(format!("api: cannot listen on {addr}: {err}")),
         }
     }
 

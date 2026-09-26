@@ -16,7 +16,8 @@ be in `tessaro-kiosk-crates.inc`. iced would drag its whole dependency tree
 into both. So `gui/` has its own `Cargo.lock` and builds into
 `build/gui-target`, and it reaches the shared code by path:
 
-* `agent/protocol` - the wire types and the settings registry (`keys.rs`),
+* `agent/protocol` - the API's endpoint types ([api.md](api.md)) and the
+  settings registry (`keys.rs`),
   so the GUI validates a value with the same `keys::validate` the agent runs
   at `set`.
 * `agent/client` (`tessaro-client`) - what both clients do the same way:
@@ -150,7 +151,8 @@ the subscription, and with it the thread and the connection.
 * A lost connection is retried with a growing pause. The node is opened by
   name (last address first, then mDNS), held to its pin, and `nodes.json` is
   read again each time, so a device that moved is found and remembered.
-* Pages ask through one generic call, `Request::Call`: any `Command`,
+* Pages ask through one generic call, `Request::Call`: any endpoint, built
+  typed by `worker::call`, `fetch` or `send` and run on the worker's session,
   answered as `Event::Answer` with a tag naming the page that asked.
 
 **The nav has one entry per subject; a page shows its tools, and its
@@ -244,16 +246,18 @@ pauses.
 ## Work on connections of its own
 
 **Long work runs as a job on a second connection, so the worker keeps
-polling** (`jobs.rs`). The jobs are the streams (`network ping`, the speed
-test, `storage grow`), `device ping`, files going up or down, an image
-update, and the DevTools tunnel (localhost:9222, or a free port when 9222 is
-taken here). A job is a subscription keyed by its id: it reports progress, lines
-and a result to its page. Cancel drops it, and a watcher thread shuts its
-socket down, which ends whatever call it was in.
+polling** (`jobs.rs`). The jobs are the device's own jobs (`network ping`,
+the speed test, `storage grow`, polled with `Session::job`), `device ping`,
+files going up or down, an image update, and the DevTools tunnel
+(localhost:9222, or a free port when 9222 is taken here). A job is a
+subscription keyed by its id: it reports progress, lines and a result to its
+page. Cancel drops it: a device job is cancelled on the device at the next
+poll, and for the rest a watcher thread shuts the socket down, which ends
+whatever call it was in.
 
 **The live journal is the same, on its own connection** (`logs.rs`), open
-while the Log page is shown and Live is on. A new unit filter is a new
-stream. The last 5,000 entries are kept, the newest 500 matching the filter
+while the Log page is shown and Live is on, polling the journal's pages
+(`Session::logs`). A new unit filter starts it again. The last 5,000 entries are kept, the newest 500 matching the filter
 are drawn, and Pause freezes the table while entries keep arriving.
 
 The transfers are `tessaro_client::transfer`, the same code as `tessaro-ctl

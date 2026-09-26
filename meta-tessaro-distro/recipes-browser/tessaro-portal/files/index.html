@@ -1,8 +1,8 @@
 <!doctype html>
 <!--
   Tessaro setup portal. A phone opens it after joining the hotspot from the
-  welcome page's QR code; nginx serves it on the hotspot's subnet only and
-  proxies /api/ to the agent (portal.rs). See docs/setup-portal.md.
+  welcome page's QR code; the agent serves it with its API on port 7400, and
+  nginx sends the phone's captive probe there. See docs/setup-portal.md.
 
   One scrolling page of accordion sections, no windows. The look follows
   tessaro-gui (gui/tessaro-gui/src/theme.rs): its palette, Manrope, square
@@ -207,7 +207,7 @@
         <tr><td>Browser</td><td id="f-browser">-</td></tr>
       </table>
       <div class="toggle">
-        <div class="what"><span>Sign-in sheet</span><small>Opens this page on a phone that joins the hotspot. Saving any change turns it off; the page stays at http://10.42.0.1/ until the device is claimed.</small></div>
+        <div class="what"><span>Sign-in sheet</span><small>Opens this page on a phone that joins the hotspot. Saving any change turns it off; the page stays at https://10.42.0.1:7400/ until the device is claimed.</small></div>
         <button id="captive" data-key="network.wifi.captive">-</button>
       </div>
       <div class="toggle">
@@ -298,19 +298,39 @@ let state = null;
 // Inputs the user has typed into keep their text; polling never overwrites it.
 const edited = new Set();
 
+// One request to the device's API (docs/api.md), on this page's own origin.
+// A claimed device answers everything but its identity with 401
+// token-required: this page carries no token, so that is the end of it.
 async function api(path, body) {
   const options = body === undefined
     ? { cache: "no-store" }
     : { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) };
-  const response = await fetch("/api/" + path, options);
-  let data = null;
-  try { data = await response.json(); } catch (_) { /* an nginx error page */ }
-  if (!response.ok) {
-    const err = new Error((data && data.error) || ("the device answered " + response.status));
-    err.claimed = !!(data && data.claimed);
+  let response;
+  try {
+    response = await fetch("/api/v1/" + path, options);
+  } catch (_) {
+    const err = new Error("no answer from the device");
+    err.lost = true;
     throw err;
   }
-  return { status: response.status, data };
+  let data = null;
+  try { data = await response.json(); } catch (_) { /* not JSON */ }
+  if (!response.ok) {
+    const err = new Error((data && data.error) || ("the device answered " + response.status));
+    err.claimed = !!(data && data.code === "token-required");
+    throw err;
+  }
+  return data;
+}
+
+// The first change saved here ends the sign-in sheet: whoever made it found
+// the page, and a phone that joins the hotspot later should not be sent here
+// uninvited. It rides in the same change, so it is saved only if the change
+// is. A change of the flag itself is left as asked.
+let savedOnce = false;
+function withCaptiveOff(values) {
+  if (savedOnce || "network.wifi.captive" in values) return values;
+  return Object.assign({ "network.wifi.captive": "0" }, values);
 }
 
 // A claimed device closes the portal: only the notice is left.
@@ -326,22 +346,24 @@ function say(id, text, kind) {
   el.className = "message" + (kind ? " " + kind : "");
 }
 
-// One settings change. A 202 means the device is still applying it.
+// One settings change. A change that renames the hotspot or restarts the
+// agent can take the answer with it: then the device is still applying it.
 async function set(values, messageId, done) {
   say(messageId, "Saving...", "");
   try {
-    const { status } = await api("set", { values });
-    if (status === 202) {
-      say(messageId, "The device is still applying it; this page may lose the device for a moment.", "warn");
-    } else {
-      say(messageId, done || "Saved.", "ok");
-    }
+    await api("config/set", { values: withCaptiveOff(values) });
+    savedOnce = true;
+    say(messageId, done || "Saved.", "ok");
     Object.keys(values).forEach((key) => {
       document.querySelectorAll('[data-key="' + key + '"]').forEach((el) => edited.delete(el.id));
     });
     setTimeout(refresh, 1500);
   } catch (err) {
-    say(messageId, err.message, "bad");
+    if (err.lost) {
+      say(messageId, "The device is still applying it; this page may lose the device for a moment.", "warn");
+    } else {
+      say(messageId, err.message, "bad");
+    }
   }
 }
 
@@ -399,9 +421,26 @@ function showStatic() {
   $("e-static").hidden = $("e-mode").value !== "static";
 }
 
+// What the page shows, from three reads: the welcome page's values (which
+// keep the device's online check running), its status and its settings.
 async function refresh() {
   try {
-    state = (await api("state")).data;
+    const [welcome, status, config] = await Promise.all([
+      api("device/welcome"), api("device/status"), api("config"),
+    ]);
+    const settings = {};
+    config.settings.forEach((s) => { settings[s.key] = s.value; });
+    state = {
+      welcome,
+      settings,
+      screen: {
+        url: status.kiosk_url,
+        showing: status.current_url,
+        answering: status.browser_answering,
+        maintenance: status.maintenance,
+        debug: status.debug_screen,
+      },
+    };
     closed(false);
     render();
     say("m-status", "", "");
@@ -440,7 +479,9 @@ $("wifi").addEventListener("toggle", () => {
 async function loadNetworks() {
   const list = $("networks");
   try {
-    const networks = (await api("wifi")).data || [];
+    // A fresh scan, from a station interface beside the hotspot, so this
+    // phone stays connected.
+    const networks = (await api("network/wifi/scan")) || [];
     networksLoaded = true;
     // Strongest first, one row per name; hidden networks have no name to show.
     const seen = new Map();
@@ -492,12 +533,15 @@ $("w-join").addEventListener("click", async () => {
   const body = { ssid, hidden: $("w-hidden").checked };
   if (psk) body.psk = psk;
   if (security) body.security = security;
-  say("m-wifi", "Joining " + ssid + "...", "");
+  // The join takes the hotspot down, and with it this phone, so the answer
+  // usually never arrives. The device rolls back to the hotspot on its own
+  // if it cannot reach the network; its screen shows how it went.
+  say("m-wifi", "The device is joining " + ssid + ". Your phone will lose this hotspot now; the device's screen shows how it went.", "ok");
   try {
-    await api("wifi/join", body);
-    say("m-wifi", "The device is joining " + ssid + ". Your phone will lose this hotspot now; the device's screen shows how it went.", "ok");
+    await api("network/wifi/join", body);
+    say("m-wifi", "The device joined " + ssid + ".", "ok");
   } catch (err) {
-    say("m-wifi", err.message, "bad");
+    if (!err.lost) say("m-wifi", err.message, "bad");
   }
 });
 
@@ -532,7 +576,7 @@ let zonesLoaded = false;
 $("device").addEventListener("toggle", async () => {
   if (!$("device").open || zonesLoaded) return;
   try {
-    const zones = (await api("zones")).data || [];
+    const zones = (await api("time/zones")) || [];
     const list = $("zones");
     zones.forEach((zone) => {
       const option = document.createElement("option");

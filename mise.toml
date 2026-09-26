@@ -96,6 +96,8 @@ curl -sf -X PUT "http://127.0.0.1:9222/json/new?about:blank" >/dev/null
 # the host. Drive it from another terminal with
 #   TESSARO_SOCKET=<sandbox>/agent.sock tessaro-ctl device status
 #   tessaro-ctl --node 127.0.0.1:17400 access claim
+# or open the setup page and the API at https://127.0.0.1:17400/. Swagger UI
+# comes from its recipe and is not here.
 sandbox="$(mktemp -d)"
 mkdir -p "$sandbox/etc"
 printf 'root::19000:0:99999:7:::\n' > "$sandbox/etc/shadow"
@@ -121,6 +123,8 @@ KIOSK_MANAGE_SCHEDULES=0 \
 KIOSK_SYSTEMD_UNIT_DIR="$sandbox/units" \
 KIOSK_LEGACY_OVERRIDE=/nonexistent \
 KIOSK_API_LISTEN=127.0.0.1:17400 \
+KIOSK_PORTAL_DIR="$sandbox/portal" \
+KIOSK_PORTAL_ROOT="{{config_root}}/meta-tessaro-distro/recipes-browser/tessaro-portal/files" \
 KIOSK_MDNS=off \
 KIOSK_URL="data:text/html,<h1>integration target</h1>" \
 KIOSK_CDP_URL=http://127.0.0.1:9222 \

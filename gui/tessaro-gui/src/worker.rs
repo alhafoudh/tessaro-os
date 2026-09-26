@@ -16,11 +16,10 @@ use std::time::{Duration, Instant};
 
 use iced::futures::channel::mpsc as ui;
 use iced::Subscription;
+use protocol::api::{self, Empty, Endpoint, NameBody, RestartBody, SetConfig, UnsetConfig};
 use protocol::keys::{self, Consumer};
-use protocol::{
-    Applied, Claimed, Command, Done, KeyInfo, NodeInfo, RestartTarget, Screenshot, Settings,
-    Status, Verify,
-};
+use protocol::{Applied, Done, KeyInfo, NodeInfo, RestartTarget, Settings, Status, Verify};
+use serde_json::Value;
 use tessaro_client::connect::{self, Answer, Session, Target, Trust};
 use tessaro_client::nodes::{Node, Nodes};
 
@@ -36,7 +35,6 @@ const RETRY_MOST: Duration = Duration::from_secs(15);
 /// change, as `tessaro-ctl` waits (`net.rs`).
 const NETWORK_CHANGE: Duration = Duration::from_secs(180);
 
-#[derive(Debug, Clone)]
 pub enum Request {
     /// Fetch the settings again, whatever the revision says.
     Refresh,
@@ -53,11 +51,11 @@ pub enum Request {
     Reboot,
     /// One screenshot now.
     Screenshot,
-    /// Any command, answered as it came (`Event::Answer`) for the page that
+    /// Any endpoint, answered as JSON (`Event::Answer`) for the page that
     /// asked, which `tag` names. `long` waits as for a network change.
     Call {
         tag: &'static str,
-        command: Command,
+        call: Call,
         long: bool,
     },
     /// A screenshot every `LIVE_SHOT` from now on, or no more.
@@ -68,6 +66,47 @@ pub enum Request {
     Claim {
         name: String,
     },
+}
+
+/// One request to an endpoint, ready to run on the worker's session. Typed
+/// where it is built (`call`, `fetch`, `send`); the answer comes back as
+/// JSON, for the page that asked to read as the endpoint's response.
+pub type Call = Box<dyn FnOnce(&mut Session) -> Answer<Value> + Send>;
+
+/// A `Call` of `E` with its query and body.
+pub fn call<E>(params: E::Params, body: E::Body) -> Call
+where
+    E: Endpoint + 'static,
+    E::Params: Send + 'static,
+    E::Body: Send + 'static,
+{
+    Box::new(move |session| match session.request::<E>(params, body) {
+        Answer::Ok(response) => match serde_json::to_value(response) {
+            Ok(value) => Answer::Ok(value),
+            Err(err) => Answer::Refused(err.to_string()),
+        },
+        Answer::Refused(error) => Answer::Refused(error),
+        Answer::Lost(why) => Answer::Lost(why),
+    })
+}
+
+/// A `Call` of `E`, which takes neither a query nor a body.
+pub fn fetch<E>() -> Call
+where
+    E: Endpoint<Body = ()> + 'static,
+    E::Params: Default + Send + 'static,
+{
+    call::<E>(E::Params::default(), ())
+}
+
+/// A `Call` of `E`, which takes only a body.
+pub fn send<E>(body: E::Body) -> Call
+where
+    E: Endpoint + 'static,
+    E::Params: Default + Send + 'static,
+    E::Body: Send + 'static,
+{
+    call::<E>(E::Params::default(), body)
 }
 
 /// How often a live screenshot is taken.
@@ -254,15 +293,15 @@ impl Worker {
         requests: &mpsc::Receiver<Request>,
     ) -> Result<std::convert::Infallible, Stop> {
         self.send(Event::Connected(session.node.clone()))?;
-        let keys: Vec<KeyInfo> = ask(session, Command::Keys)?;
+        let keys: Vec<KeyInfo> = ask(session.fetch::<api::config::Keys>())?;
         self.send(Event::Keys(keys))?;
 
         let mut revision = None;
         let mut next_shot = Instant::now();
         loop {
-            let status: Status = ask(session, Command::Status)?;
+            let status: Status = ask(session.fetch::<api::device::Status>())?;
             if revision != Some(status.revision) {
-                let settings: Settings = ask(session, Command::Get { key: None })?;
+                let settings: Settings = ask(session.fetch::<api::config::Get>())?;
                 revision = Some(settings.revision);
                 self.send(Event::Settings(settings))?;
             }
@@ -297,10 +336,8 @@ impl Worker {
     }
 
     fn screenshot(&self, session: &mut Session) -> Result<(), Stop> {
-        let shot = match session.request::<Screenshot>(Command::Screenshot) {
-            Answer::Ok(shot) => data_encoding::BASE64
-                .decode(shot.data.as_bytes())
-                .map_err(|err| format!("the image is not base64: {err}")),
+        let shot = match session.download::<api::screen::Screenshot>(Empty {}) {
+            Answer::Ok(shot) => Ok(shot.body),
             Answer::Refused(error) => Err(error),
             Answer::Lost(why) => {
                 self.send(Event::Screenshot(Err(format!(
@@ -319,33 +356,39 @@ impl Worker {
                 if_revision,
             } => {
                 let network = values.keys().any(|key| is_network_key(key));
-                let command = Command::Set {
+                let body = SetConfig {
                     values,
                     if_revision: Some(if_revision),
                     apply: true,
                     verify: Verify::default(),
                 };
-                self.apply(session, network, command)
+                self.apply(session, network, |session| {
+                    session.request::<api::config::Set>(Empty {}, body)
+                })
             }
             Request::Unset { keys, if_revision } => {
                 let network = keys.iter().any(|key| is_network_key(key));
-                let command = Command::Unset {
+                let body = UnsetConfig {
                     keys,
                     if_revision: Some(if_revision),
                     apply: true,
                     verify: Verify::default(),
                 };
-                self.apply(session, network, command)
+                self.apply(session, network, |session| {
+                    session.request::<api::config::Unset>(Empty {}, body)
+                })
             }
-            Request::Confirm => self.done(session, Command::Confirm),
-            Request::Restart(what) => self.done(session, Command::Restart { what }),
-            Request::Reboot => self.done(session, Command::Reboot),
+            Request::Confirm => self.done::<api::screen::Confirm>(session, ()),
+            Request::Restart(what) => {
+                self.done::<api::device::Restart>(session, RestartBody { what })
+            }
+            Request::Reboot => self.done::<api::device::Reboot>(session, ()),
             Request::Screenshot => self.screenshot(session),
-            Request::Call { tag, command, long } => {
+            Request::Call { tag, call, long } => {
                 if long {
                     session.set_read_timeout(Some(NETWORK_CHANGE));
                 }
-                let answer = session.request::<serde_json::Value>(command);
+                let answer = call(session);
                 session.restore_read_timeout();
                 match answer {
                     Answer::Ok(value) => self.send(Event::Answer(tag, Ok(value))),
@@ -368,7 +411,7 @@ impl Worker {
     /// already open: the device answers only a claim without a token.
     fn claim(&self, session: &mut Session, name: String) -> Result<(), Stop> {
         session.clear_token();
-        let claimed = match session.request::<Claimed>(Command::Claim { name }) {
+        let claimed = match session.request::<api::access::Claim>(Empty {}, NameBody { name }) {
             Answer::Ok(claimed) => claimed,
             Answer::Refused(error) => return self.send(Event::Answer("claim", Err(error))),
             Answer::Lost(why) => {
@@ -398,11 +441,16 @@ impl Worker {
     /// A set or unset. A network change waits for the device's own verdict,
     /// and may lose the connection it came in on - the device keeps or rolls
     /// back the change by itself.
-    fn apply(&self, session: &mut Session, network: bool, command: Command) -> Result<(), Stop> {
+    fn apply(
+        &self,
+        session: &mut Session,
+        network: bool,
+        request: impl FnOnce(&mut Session) -> Answer<Applied>,
+    ) -> Result<(), Stop> {
         if network {
             session.set_read_timeout(Some(NETWORK_CHANGE));
         }
-        let answer = session.request::<Applied>(command);
+        let answer = request(session);
         session.restore_read_timeout();
         match answer {
             Answer::Ok(applied) => self.send(Event::Applied(Ok(Box::new(applied)))),
@@ -423,8 +471,12 @@ impl Worker {
         }
     }
 
-    fn done(&self, session: &mut Session, command: Command) -> Result<(), Stop> {
-        match session.request::<Done>(command) {
+    fn done<E>(&self, session: &mut Session, body: E::Body) -> Result<(), Stop>
+    where
+        E: Endpoint<Response = Done>,
+        E::Params: Default,
+    {
+        match session.request::<E>(E::Params::default(), body) {
             Answer::Ok(done) => self.send(Event::Done(Ok(done.message))),
             Answer::Refused(error) => self.send(Event::Done(Err(error))),
             Answer::Lost(why) => {
@@ -435,12 +487,9 @@ impl Worker {
     }
 }
 
-/// One command whose refusal is as fatal as a lost connection: the polls.
-fn ask<T: serde::de::DeserializeOwned>(session: &mut Session, command: Command) -> Result<T, Stop> {
-    match session.request(command) {
-        Answer::Ok(value) => Ok(value),
-        Answer::Refused(error) | Answer::Lost(error) => Err(Stop::Lost(error)),
-    }
+/// One request whose refusal is as fatal as a lost connection: the polls.
+fn ask<T>(answer: Result<T, String>) -> Result<T, Stop> {
+    answer.map_err(Stop::Lost)
 }
 
 /// Whether a change to `key` is a network change the device verifies.

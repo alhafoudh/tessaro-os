@@ -27,11 +27,14 @@ pub struct Paths {
     /// The image's copy of the policy, which the rendered one starts from.
     pub policy_base: PathBuf,
     pub socket: PathBuf,
-    /// The setup portal's HTTP socket, which nginx proxies `/api/` to
-    /// (portal.rs). Its directory is made by tmpfiles as root:www 0750, and
-    /// the agent never makes it: that directory is what keeps every other
-    /// user, the browser's included, away from the socket.
-    pub portal_socket: PathBuf,
+    /// Where the captive flag nginx looks at lives. Made by tmpfiles as
+    /// root:www 0750, never by the agent: without it there is no captive
+    /// portal on the hotspot.
+    pub portal_dir: PathBuf,
+    /// The setup page's files, which the API server serves at `/`.
+    pub portal_root: PathBuf,
+    /// Swagger UI's files, served at `/api/docs/`.
+    pub api_docs: PathBuf,
     pub shadow: PathBuf,
     pub machine_id: PathBuf,
     /// The runtime override file this replaced; imported once, then renamed.
@@ -168,7 +171,9 @@ impl Paths {
             ),
             policy_base: path("KIOSK_POLICY_BASE", "/usr/lib/tessaro-kiosk/policy.json"),
             socket: path("KIOSK_SOCKET", protocol::DEFAULT_SOCKET),
-            portal_socket: path("KIOSK_PORTAL_SOCKET", "/run/tessaro-portal/api.sock"),
+            portal_dir: path("KIOSK_PORTAL_DIR", "/run/tessaro-portal"),
+            portal_root: path("KIOSK_PORTAL_ROOT", "/usr/share/tessaro-portal"),
+            api_docs: path("KIOSK_API_DOCS", "/usr/share/tessaro-api/docs"),
             shadow: path("KIOSK_SHADOW", "/etc/shadow"),
             machine_id: path("KIOSK_MACHINE_ID", "/etc/machine-id"),
             legacy_override: path("KIOSK_LEGACY_OVERRIDE", "/etc/default/tessaro-kiosk"),
@@ -253,10 +258,10 @@ impl Paths {
     }
 
     /// Present while a phone on the hotspot should get its sign-in sheet;
-    /// nginx looks for it on every probe (20-tessaro-portal.conf). Beside the
-    /// portal's socket, in the directory nginx's workers can read.
-    pub fn captive_flag(&self) -> Option<PathBuf> {
-        self.portal_socket.parent().map(|dir| dir.join("captive"))
+    /// nginx looks for it on every probe (20-tessaro-portal.conf), in the
+    /// directory nginx's workers can read.
+    pub fn captive_flag(&self) -> PathBuf {
+        self.portal_dir.join("captive")
     }
 
     /// What the welcome page at http://127.0.0.1/ shows, kept current by the

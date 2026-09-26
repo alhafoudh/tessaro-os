@@ -31,7 +31,8 @@ same change as the behaviour it describes.
 | [docs/build.md](docs/build.md) | kas layout and config chains, platform gotchas (wks, fstab, QEMU, GPU, Pi), target status |
 | [docs/kiosk-browser.md](docs/kiosk-browser.md) | Chromium units and flags, CDP supervision, origin enforcement, TLS, remote DevTools, page zoom, self-test page, WebSerial/HID/USB/Bluetooth |
 | [docs/agent.md](docs/agent.md) | deadlines, the pledge-fed watchdog, the CDP session |
-| [docs/settings.md](docs/settings.md) | `state.json`, templates and placeholders, read-only keys, the protocol, the claim model, names, completion, maintenance mode, debug screen |
+| [docs/settings.md](docs/settings.md) | `state.json`, templates and placeholders, read-only keys, the claim model, names, completion, maintenance mode, debug screen |
+| [docs/api.md](docs/api.md) | the HTTP API: endpoint types, the OpenAPI document and Swagger UI, the socket and TLS, pinning and Bearer tokens, errors, jobs and log pages, connections |
 | [docs/display.md](docs/display.md) | Weston scaling and resolution, hotplug, on-screen keyboard, screen power |
 | [docs/bridge.md](docs/bridge.md) | the injected script, `window.tessaro` and its modes, who may call, `browser eval` |
 | [docs/remote-access.md](docs/remote-access.md) | VNC mirror and its PAM auth, SSH and `ssh connect` keys |
@@ -44,7 +45,7 @@ same change as the behaviour it describes.
 | [docs/updates.md](docs/updates.md) | in-place updates, `--repartition`, growing `/data` |
 | [docs/e2e.md](docs/e2e.md) | the qemu RSpec suite: running it, lanes, ports, harness quirks |
 | [docs/gui.md](docs/gui.md) | `tessaro-gui`: inner windows, keyboard, the node list, device pages per command group, workers and jobs, the VNC viewer |
-| [docs/setup-portal.md](docs/setup-portal.md) | the welcome page's QR code, captive portal detection, the portal's nginx server and agent socket, what it may set, the online indicator |
+| [docs/setup-portal.md](docs/setup-portal.md) | the welcome page's QR code, captive portal detection, nginx's redirect to the setup page on the API's port, what the page uses, the online indicator |
 
 **Writing docs** (in `docs/` and in this file):
 
@@ -228,7 +229,8 @@ Builds are long. Run them in a Herdr pane, not the Bash tool.
 ## The agent workspace
 
 `agent/` is a plain Rust workspace built by the `tessaro-kiosk` recipe:
-`protocol/` (wire types and the settings registry, `keys.rs`),
+`protocol/` (the API's endpoint types, `api.rs`, the OpenAPI document and
+the settings registry, `keys.rs`),
 `client/` (discovery, the pinned session, `nodes.json`, SSH key setup and
 the chunked transfers, shared by both clients), `tessaro-agent/` (device side), `tessaro-ctl/` (client), `update/`
 (the staging library and `tessaro-flash`, packaged separately for the
@@ -275,6 +277,13 @@ recipe.
   a new field on `Status` goes into `device.status()`, and so on. A field
   or command the page must not have is added to what that doc says is left
   out on purpose, with the reason, instead.
+* **Everything a client can ask is an endpoint type in
+  `agent/protocol/src/api.rs`**, mapped onto a `Command`; clients call it by
+  type and never build a `Command`. A new or changed endpoint regenerates
+  `agent/protocol/openapi.json` in the same change
+  (`UPDATE_OPENAPI=1 cargo test -p tessaro-agent openapi`). Nothing streams:
+  a long command is a job, polled ([docs/api.md](docs/api.md)). Port 7400
+  serves the API, the setup page and Swagger UI, and nothing else.
 
 **Command-line output is colored, and any new CLI must be too.** Print through
 anstream's `println!`/`eprintln!` (imported to shadow the std macros) with the

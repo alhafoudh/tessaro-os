@@ -1,0 +1,6499 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Tessaro device API",
+    "version": "1.0.0",
+    "description": "The API of one Tessaro device, over HTTPS on port 7400 with the device's own self-signed certificate: pin its SHA-256 fingerprint (`/api/v1/device/id`, the mDNS `fp` record). An unclaimed device answers everything without a token; once claimed, everything but identification and the claim needs `Authorization: Bearer <token>`."
+  },
+  "tags": [
+    {
+      "name": "device"
+    },
+    {
+      "name": "access"
+    },
+    {
+      "name": "ssh"
+    },
+    {
+      "name": "config"
+    },
+    {
+      "name": "screen"
+    },
+    {
+      "name": "browser"
+    },
+    {
+      "name": "network"
+    },
+    {
+      "name": "storage"
+    },
+    {
+      "name": "audio"
+    },
+    {
+      "name": "time"
+    },
+    {
+      "name": "schedules"
+    },
+    {
+      "name": "update"
+    },
+    {
+      "name": "files"
+    },
+    {
+      "name": "jobs"
+    }
+  ],
+  "paths": {
+    "/api/v1/device/id": {
+      "get": {
+        "operationId": "device.Id",
+        "tags": [
+          "device"
+        ],
+        "summary": "The device's identity: node id, name, version, machine and TLS fingerprint, and whether it is claimed.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NodeInfo"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/device/ping": {
+      "get": {
+        "operationId": "device.Ping",
+        "tags": [
+          "device"
+        ],
+        "summary": "One round trip: the agent is answering.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Done"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/device/status": {
+      "get": {
+        "operationId": "device.Status",
+        "tags": [
+          "device"
+        ],
+        "summary": "What the device is doing: the page on screen, units, a change on probation, audio, storage, the clock.",
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Status"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/device/welcome": {
+      "get": {
+        "operationId": "device.Welcome",
+        "tags": [
+          "device"
+        ],
+        "summary": "What the welcome page shows: the setup QR code and address, whether the device is online. Asking keeps the online check running for a while.",
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": true
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/device/logs": {
+      "get": {
+        "operationId": "device.Logs",
+        "tags": [
+          "device"
+        ],
+        "summary": "A page of the journal. Following it is asking again with the page's `cursor`.",
+        "parameters": [
+          {
+            "name": "unit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "description": "Only this unit, or a pattern of them (`tessaro-schedule-*`)."
+          },
+          {
+            "name": "lines",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "minimum": 0
+            },
+            "description": "The last this many entries, 100 by default. Ignored with `cursor`."
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "description": "Only what came after this, from the last page's `cursor`."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LogPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/device/restart": {
+      "post": {
+        "operationId": "device.Restart",
+        "tags": [
+          "device"
+        ],
+        "summary": "Restart the browser, the compositor (and with it the browser and the agent), or the agent.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RestartBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Done"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/device/reboot": {
+      "post": {
+        "operationId": "device.Reboot",
+        "tags": [
+          "device"
+        ],
+        "summary": "Reboot, once the answer is out.",
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Done"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/device/factory-reset": {
+      "post": {
+        "operationId": "device.FactoryReset",
+        "tags": [
+          "device"
+        ],
+        "summary": "Wipe `/data` and start over as a new, unclaimed device.",
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Done"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/access/claim": {
+      "post": {
+        "operationId": "access.Claim",
+        "tags": [
+          "access"
+        ],
+        "summary": "Take an unclaimed device: the first claim wins, and answers with the token, the root password and the hotspot's password, once.",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NameBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Claimed"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/access/unclaim": {
+      "post": {
+        "operationId": "access.Unclaim",
+        "tags": [
+          "access"
+        ],
+        "summary": "Remove every owner: every token, the root password, the SSH keys.",
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Done"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/access/tokens": {
+      "get": {
+        "operationId": "access.Tokens",
+        "tags": [
+          "access"
+        ],
+        "summary": "The tokens, never their values.",
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/TokenInfo"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "access.TokenCreate",
+        "tags": [
+          "access"
+        ],
+        "summary": "Issue another token, answered once.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NameBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenCreated"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/access/tokens/{id}": {
+      "delete": {
+        "operationId": "access.TokenRevoke",
+        "tags": [
+          "access"
+        ],
+        "summary": "Revoke a token by its id.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Done"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/access/password": {
+      "post": {
+        "operationId": "access.Password",
+        "tags": [
+          "access"
+        ],
+        "summary": "Set the root password, or generate one and answer with it.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Password"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/ssh/keys": {
+      "post": {
+        "operationId": "ssh.Authorize",
+        "tags": [
+          "ssh"
+        ],
+        "summary": "Add a public key to root's `authorized_keys`. The answer carries the device's host keys, so the client can check them.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SshKeyBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SshAccess"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "ssh.Keys",
+        "tags": [
+          "ssh"
+        ],
+        "summary": "The authorized keys.",
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SshKeyInfo"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "ssh.Revoke",
+        "tags": [
+          "ssh"
+        ],
+        "summary": "Remove one authorized key.",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Its `SHA256:` fingerprint, a unique prefix of it, or its exact\ncomment."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SshKeyRevoked"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/config/keys": {
+      "get": {
+        "operationId": "config.Keys",
+        "tags": [
+          "config"
+        ],
+        "summary": "Every setting: what it does, what it takes, its default and its value here.",
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/KeyInfo"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/config": {
+      "get": {
+        "operationId": "config.Get",
+        "tags": [
+          "config"
+        ],
+        "summary": "The settings, or one of them, and their revision.",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "description": "One key; all of them without it."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Settings"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/config/set": {
+      "post": {
+        "operationId": "config.Set",
+        "tags": [
+          "config"
+        ],
+        "summary": "Change settings, restarting exactly what reads them.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetConfig"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Applied"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/config/unset": {
+      "post": {
+        "operationId": "config.Unset",
+        "tags": [
+          "config"
+        ],
+        "summary": "Put settings back to the image's defaults.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UnsetConfig"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Applied"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/screen/modes": {
+      "get": {
+        "operationId": "screen.Modes",
+        "tags": [
+          "screen"
+        ],
+        "summary": "The output modes every connected connector advertises.",
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Connector"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/screen/screenshot": {
+      "get": {
+        "operationId": "screen.Screenshot",
+        "tags": [
+          "screen"
+        ],
+        "summary": "What is on screen, as a JPEG.",
+        "responses": {
+          "200": {
+            "description": "The bytes.",
+            "content": {
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/screen/confirm": {
+      "post": {
+        "operationId": "screen.Confirm",
+        "tags": [
+          "screen"
+        ],
+        "summary": "Keep a guarded change (a resolution) that is on probation.",
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Done"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/screen/power": {
+      "get": {
+        "operationId": "screen.Power",
+        "tags": [
+          "screen"
+        ],
+        "summary": "Whether the display is on.",
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScreenPower"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "screen.PowerSet",
+        "tags": [
+          "screen"
+        ],
+        "summary": "Switch the display on or off.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScreenPowerBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScreenPower"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/screen/keyboard": {
+      "post": {
+        "operationId": "screen.Keyboard",
+        "tags": [
+          "screen"
+        ],
+        "summary": "Show or hide the on-screen keyboard.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KeyboardBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Done"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/browser/navigate": {
+      "post": {
+        "operationId": "browser.Navigate",
+        "tags": [
+          "browser"
+        ],
+        "summary": "Show a URL now, until the next restart of the browser.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NavigateBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Done"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/browser/reload": {
+      "post": {
+        "operationId": "browser.Reload",
+        "tags": [
+          "browser"
+        ],
+        "summary": "Reload the page, past the cache.",
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Done"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/browser/clear-cache": {
+      "post": {
+        "operationId": "browser.ClearCache",
+        "tags": [
+          "browser"
+        ],
+        "summary": "Empty the browser's HTTP cache.",
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Done"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/browser/eval": {
+      "post": {
+        "operationId": "browser.Eval",
+        "tags": [
+          "browser"
+        ],
+        "summary": "Run JavaScript in the page on screen.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvalBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalResult"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/network": {
+      "get": {
+        "operationId": "network.Show",
+        "tags": [
+          "network"
+        ],
+        "summary": "Addresses, the default route, DNS and every interface.",
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Net"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/network/profiles": {
+      "get": {
+        "operationId": "network.Profiles",
+        "tags": [
+          "network"
+        ],
+        "summary": "NetworkManager's profiles, managed and hand-made.",
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/NetProfile"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/network/profile": {
+      "get": {
+        "operationId": "network.Profile",
+        "tags": [
+          "network"
+        ],
+        "summary": "One profile's addressing, DNS and WiFi settings, never its secrets.",
+        "parameters": [
+          {
+            "name": "profile",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Its name (`connection.id`) or uuid."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NetProfileDetail"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/network/last": {
+      "get": {
+        "operationId": "network.Last",
+        "tags": [
+          "network"
+        ],
+        "summary": "What the last network change did, for a client whose connection went with it.",
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/NetChange"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/network/wifi": {
+      "get": {
+        "operationId": "network.Wifi",
+        "tags": [
+          "network"
+        ],
+        "summary": "The WiFi radio and what each WiFi device is connected to.",
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WifiStatus"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/network/wifi/scan": {
+      "get": {
+        "operationId": "network.WifiScan",
+        "tags": [
+          "network"
+        ],
+        "summary": "The WiFi networks in range.",
+        "parameters": [
+          {
+            "name": "interface",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "rescan",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": true
+            },
+            "description": "Scan first. Without it, what the device last saw."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/WifiNetwork"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/network/wifi/join": {
+      "post": {
+        "operationId": "network.WifiJoin",
+        "tags": [
+          "network"
+        ],
+        "summary": "Join a WiFi network as a client; the hotspot goes down. Rolled back if the device cannot reach it.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WifiJoinBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Applied"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/network/hotspot/password": {
+      "post": {
+        "operationId": "network.HotspotPassword",
+        "tags": [
+          "network"
+        ],
+        "summary": "A new random hotspot password, answered once. Claimed devices only.",
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HotspotCredentials"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/network/ping": {
+      "post": {
+        "operationId": "network.Ping",
+        "tags": [
+          "network"
+        ],
+        "summary": "Ping a host from the device, as a job of `PingEvent`s.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PingBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobStarted"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/network/speedtest": {
+      "post": {
+        "operationId": "network.Speedtest",
+        "tags": [
+          "network"
+        ],
+        "summary": "Measure the device's internet connection against speed.cloudflare.com, as a job of `SpeedtestEvent`s.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SpeedtestBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobStarted"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/network/proxy": {
+      "get": {
+        "operationId": "network.Proxy",
+        "tags": [
+          "network"
+        ],
+        "summary": "The proxy: its URL masked, the bypass list and the local proxy's unit.",
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProxyStatus"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/network/proxy/test": {
+      "post": {
+        "operationId": "network.ProxyTest",
+        "tags": [
+          "network"
+        ],
+        "summary": "Fetch Cloudflare's trace through the proxy.",
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProxyTested"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/network/certs": {
+      "get": {
+        "operationId": "network.Certs",
+        "tags": [
+          "network"
+        ],
+        "summary": "The extra certificate authorities the device trusts.",
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CertInfo"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "network.CertAdd",
+        "tags": [
+          "network"
+        ],
+        "summary": "Trust more certificate authorities, in Chromium and the agent.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CertBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CertsAdded"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "network.CertRevoke",
+        "tags": [
+          "network"
+        ],
+        "summary": "Stop trusting one of them.",
+        "parameters": [
+          {
+            "name": "cert",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Its SHA-256 fingerprint, a unique prefix of it, or its exact subject."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CertInfo"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/storage": {
+      "get": {
+        "operationId": "storage.Show",
+        "tags": [
+          "storage"
+        ],
+        "summary": "The disk the device runs from, its partitions and how full each filesystem is.",
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Storage"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/storage/grow": {
+      "post": {
+        "operationId": "storage.Grow",
+        "tags": [
+          "storage"
+        ],
+        "summary": "Grow `/data` over the unallocated space, as a job of `StorageGrowEvent`s: the plan, then each step.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GrowBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobStarted"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/audio": {
+      "get": {
+        "operationId": "audio.Show",
+        "tags": [
+          "audio"
+        ],
+        "summary": "Every output and input, and which the audio.* settings put in use.",
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AudioStatus"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/audio/test": {
+      "post": {
+        "operationId": "audio.Test",
+        "tags": [
+          "audio"
+        ],
+        "summary": "A tone on the output in use, or a few seconds recorded from the input and its level.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AudioTestBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AudioTested"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/time": {
+      "get": {
+        "operationId": "time.Show",
+        "tags": [
+          "time"
+        ],
+        "summary": "The clock as systemd reports it: timezone, sync, the last NTP exchange.",
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TimeStatus"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/time/zones": {
+      "get": {
+        "operationId": "time.Zones",
+        "tags": [
+          "time"
+        ],
+        "summary": "Every timezone the device knows.",
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/time/sync": {
+      "post": {
+        "operationId": "time.Sync",
+        "tags": [
+          "time"
+        ],
+        "summary": "Ask the NTP servers again now.",
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Done"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/time/set": {
+      "post": {
+        "operationId": "time.Set",
+        "tags": [
+          "time"
+        ],
+        "summary": "Set the clock by hand, with time.ntp.enable off.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TimeSetBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Done"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/schedules": {
+      "get": {
+        "operationId": "schedules.List",
+        "tags": [
+          "schedules"
+        ],
+        "summary": "Every schedule, when it runs next and how its last run ended.",
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ScheduleInfo"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "schedules.Create",
+        "tags": [
+          "schedules"
+        ],
+        "summary": "Add a schedule; its calendar is checked first.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScheduleSpec"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduleInfo"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/schedules/{schedule}": {
+      "patch": {
+        "operationId": "schedules.Change",
+        "tags": [
+          "schedules"
+        ],
+        "summary": "Change what is given of one schedule.",
+        "parameters": [
+          {
+            "name": "schedule",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Its id or its name."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScheduleChange"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduleInfo"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "schedules.Remove",
+        "tags": [
+          "schedules"
+        ],
+        "summary": "Remove a schedule and its units.",
+        "parameters": [
+          {
+            "name": "schedule",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Its id or its name."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Done"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/schedules/{schedule}/run": {
+      "post": {
+        "operationId": "schedules.Run",
+        "tags": [
+          "schedules"
+        ],
+        "summary": "Start one run now, enabled or not.",
+        "parameters": [
+          {
+            "name": "schedule",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Its id or its name."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Done"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/schedules/check": {
+      "post": {
+        "operationId": "schedules.Check",
+        "tags": [
+          "schedules"
+        ],
+        "summary": "Check `OnCalendar` expressions, saving nothing.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CalendarBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalendarCheck"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/update": {
+      "get": {
+        "operationId": "update.Status",
+        "tags": [
+          "update"
+        ],
+        "summary": "Where an update stands: the upload, its checks, the last one applied.",
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpdateStatus"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/update/begin": {
+      "post": {
+        "operationId": "update.Begin",
+        "tags": [
+          "update"
+        ],
+        "summary": "Start, or resume, uploading an image. The answer says where to resume.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImageUpload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpdateBegun"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/update/image": {
+      "put": {
+        "operationId": "update.Image",
+        "tags": [
+          "update"
+        ],
+        "summary": "The next piece of the image, at most `UPDATE_CHUNK` bytes, as the body.",
+        "parameters": [
+          {
+            "name": "offset",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "description": "Where this piece starts: what the device said it has."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Received"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/update/commit": {
+      "post": {
+        "operationId": "update.Commit",
+        "tags": [
+          "update"
+        ],
+        "summary": "Apply the prepared update at the next boot.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CommitBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Done"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/update/cancel": {
+      "post": {
+        "operationId": "update.Cancel",
+        "tags": [
+          "update"
+        ],
+        "summary": "Drop the upload or the prepared update.",
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Done"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files": {
+      "get": {
+        "operationId": "files.List",
+        "tags": [
+          "files"
+        ],
+        "summary": "What is stored in a path, like `ls`: a directory's entries, or everything under it.",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": ""
+            },
+            "description": "From the store's root; the root itself when empty."
+          },
+          {
+            "name": "recursive",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FilesListing"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/upload": {
+      "post": {
+        "operationId": "files.Begin",
+        "tags": [
+          "files"
+        ],
+        "summary": "Start, or resume, storing one file. The answer says where to resume.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UploadBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileBegun"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "files.Upload",
+        "tags": [
+          "files"
+        ],
+        "summary": "The next piece of the file begun for `path`, at most `UPDATE_CHUNK` bytes, as the body.",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Received"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/content": {
+      "get": {
+        "operationId": "files.Read",
+        "tags": [
+          "files"
+        ],
+        "summary": "Up to `len` bytes of a stored file from `offset`, as the body. The whole file's size and mtime are in the `x-tessaro-size` and `x-tessaro-mtime` headers; an empty body is the end of it.",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0,
+              "default": 0
+            }
+          },
+          {
+            "name": "len",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "description": "At most `UPDATE_CHUNK`."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The bytes.",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/mkdir": {
+      "post": {
+        "operationId": "files.Mkdir",
+        "tags": [
+          "files"
+        ],
+        "summary": "Make a directory, and any missing above it.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PathBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Done"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/move": {
+      "post": {
+        "operationId": "files.Move",
+        "tags": [
+          "files"
+        ],
+        "summary": "Move or rename, like `mv`.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MoveBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Done"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/delete": {
+      "post": {
+        "operationId": "files.Delete",
+        "tags": [
+          "files"
+        ],
+        "summary": "Remove files, or directories with everything in them.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeleteBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Done"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/{job}": {
+      "get": {
+        "operationId": "jobs.Poll",
+        "tags": [
+          "jobs"
+        ],
+        "summary": "What a job did from step `after` on, and whether it has ended. A job is kept for a few minutes after it ends.",
+        "parameters": [
+          {
+            "name": "job",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0,
+              "default": 0
+            },
+            "description": "The first step to answer with: the last page's `next`."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "jobs.Cancel",
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Stop a job.",
+        "parameters": [
+          {
+            "name": "job",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Done"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ApiError": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "code": {
+            "$ref": "#/components/schemas/ErrorCode"
+          }
+        },
+        "required": [
+          "error",
+          "code"
+        ],
+        "description": "Every refusal, whatever the endpoint."
+      },
+      "ErrorCode": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "bad-request",
+            "description": "400: the query or the body is not what the endpoint takes."
+          },
+          {
+            "type": "string",
+            "const": "token-required",
+            "description": "401: the device is claimed and this needs a token."
+          },
+          {
+            "type": "string",
+            "const": "invalid-token",
+            "description": "401: the token is not one of the device's."
+          },
+          {
+            "type": "string",
+            "const": "not-found",
+            "description": "404: no such endpoint, or no such job."
+          },
+          {
+            "type": "string",
+            "const": "too-large",
+            "description": "413: the body is too large."
+          },
+          {
+            "type": "string",
+            "const": "refused",
+            "description": "422: the device refused: `error` says why."
+          },
+          {
+            "type": "string",
+            "const": "rate-limited",
+            "description": "429: too many invalid tokens from this address; wait a minute."
+          },
+          {
+            "type": "string",
+            "const": "internal",
+            "description": "500: the device failed to answer."
+          }
+        ]
+      },
+      "Empty": {
+        "type": "object",
+        "description": "No query parameters."
+      },
+      "NodeInfo": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The app-specific id derived from /etc/machine-id. Never the machine id."
+          },
+          "name": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "machine": {
+            "type": "string"
+          },
+          "fingerprint": {
+            "type": "string",
+            "description": "SHA-256 of the device's TLS certificate, lower-case hex."
+          },
+          "claimed": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "version",
+          "machine",
+          "fingerprint",
+          "claimed"
+        ]
+      },
+      "Done": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "message"
+        ]
+      },
+      "Status": {
+        "type": "object",
+        "properties": {
+          "node": {
+            "$ref": "#/components/schemas/NodeInfo"
+          },
+          "revision": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "kiosk_url": {
+            "type": "string"
+          },
+          "current_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "browser_answering": {
+            "type": "boolean"
+          },
+          "units": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "pending": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Pending"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "os": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`PRETTY_NAME` and `IMAGE_VERSION` from the image's os-release, so an\nupdate can be seen to have landed. Defaulted for older devices.",
+            "default": null
+          },
+          "image_version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "maintenance": {
+            "type": "boolean",
+            "description": "In maintenance mode `kiosk_url` is the maintenance page's. Defaulted,\nso a client still reads an agent that predates it.",
+            "default": false
+          },
+          "debug_screen": {
+            "type": "boolean",
+            "description": "The debug screen is up, whatever `kiosk_url` says. Defaulted the same\nway.",
+            "default": false
+          },
+          "devtools": {
+            "type": "boolean",
+            "description": "A DevTools client other than the agent is connected to the browser,\nso the agent leaves the tab alone (docs/kiosk-browser.md). Defaulted\nthe same way.",
+            "default": false
+          },
+          "audio": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AudioStatus"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Where sound plays and at what volume. `None` from a device that\npredates audio.",
+            "default": null
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FsUsage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How full `/data` is. Defaulted the same way.",
+            "default": null
+          },
+          "screen_on": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether the display is on; `None` when the compositor cannot say.",
+            "default": null
+          },
+          "bridge": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BridgeStatus"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The page bridge: `browser.bridge.mode`, and the injected script with\nits state. Defaulted the same way.",
+            "default": null
+          },
+          "time": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TimeSummary"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The timezone and whether the clock is in sync. Defaulted the same way.",
+            "default": null
+          },
+          "hardware": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Hardware"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Vendor, model, board and CPU. Defaulted the same way.",
+            "default": null
+          },
+          "memory": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MemUsage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How much RAM there is and how much is in use. Defaulted the same way.",
+            "default": null
+          },
+          "cpu_percent": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint8",
+            "minimum": 0,
+            "maximum": 255,
+            "description": "How busy the CPU was over the agent's last 2s sample, every core\ncounted: 100 is all of them. `None` until it has two samples.\nDefaulted the same way.",
+            "default": null
+          }
+        },
+        "required": [
+          "node",
+          "revision",
+          "kiosk_url",
+          "browser_answering",
+          "units"
+        ]
+      },
+      "Pending": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          },
+          "previous": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "seconds_left": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "key",
+          "value",
+          "seconds_left"
+        ]
+      },
+      "AudioStatus": {
+        "type": "object",
+        "properties": {
+          "running": {
+            "type": "boolean",
+            "description": "PipeWire answered. When it did not, `error` says why and the sides\ncarry only the settings."
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "output": {
+            "$ref": "#/components/schemas/AudioSide"
+          },
+          "input": {
+            "$ref": "#/components/schemas/AudioSide"
+          }
+        },
+        "required": [
+          "running",
+          "output",
+          "input"
+        ]
+      },
+      "AudioSide": {
+        "type": "object",
+        "properties": {
+          "setting": {
+            "type": "string",
+            "description": "audio.output or audio.input, as set or defaulted."
+          },
+          "using": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AudioDevice"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The device in use, if any."
+          },
+          "fallback": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why that is not what the setting names: `usb is not connected`."
+          },
+          "volume": {
+            "type": "integer",
+            "format": "uint8",
+            "minimum": 0,
+            "maximum": 255,
+            "description": "audio.volume or audio.input_volume, percent."
+          },
+          "muted": {
+            "type": "boolean",
+            "description": "Muted: audio.mute, or the setting is `off`."
+          },
+          "devices": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AudioDevice"
+            }
+          }
+        },
+        "required": [
+          "setting",
+          "volume",
+          "muted",
+          "devices"
+        ],
+        "description": "The output side or the input side."
+      },
+      "AudioDevice": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "What audio.output or audio.input takes to pick exactly this one."
+          },
+          "description": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`hdmi`, `jack`, `usb`, `bluetooth`, or `other`."
+          },
+          "available": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Something is plugged in, as far as the hardware can tell; `None` when\nit cannot."
+          },
+          "in_use": {
+            "type": "boolean",
+            "description": "The one the settings put in use."
+          },
+          "needs_profile": {
+            "type": "boolean",
+            "description": "Not there until its sound card is switched to another profile, which\nchoosing it does.",
+            "default": false
+          }
+        },
+        "required": [
+          "name",
+          "description",
+          "kind",
+          "in_use"
+        ],
+        "description": "One output or input as PipeWire has it."
+      },
+      "FsUsage": {
+        "type": "object",
+        "properties": {
+          "mountpoint": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "fstype": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "used": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "available": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "mountpoint",
+          "source",
+          "fstype",
+          "size",
+          "used",
+          "available"
+        ],
+        "description": "How full one mounted filesystem is, in bytes. `available` is what a\nprocess that is not root can still write."
+      },
+      "BridgeStatus": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string"
+          },
+          "script": {
+            "type": "string",
+            "description": "`browser.inject.script`, empty for none."
+          },
+          "script_problem": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the script is not in the page, when it is not.",
+            "default": null
+          }
+        },
+        "required": [
+          "mode",
+          "script"
+        ]
+      },
+      "TimeSummary": {
+        "type": "object",
+        "properties": {
+          "timezone": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "synchronized": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "timedated's `NTPSynchronized`: the kernel clock is disciplined."
+          },
+          "ntp": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "time.ntp.enable, as systemd reports it."
+          }
+        },
+        "description": "The clock in one line, for `device status`."
+      },
+      "Hardware": {
+        "type": "object",
+        "properties": {
+          "vendor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`LENOVO`, `QEMU`, `Raspberry Pi`."
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`ThinkCentre M720q`, `Raspberry Pi 3 Model B Plus Rev 1.3`."
+          },
+          "board": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The mainboard, or on the Pi the manufacturer that built it."
+          },
+          "firmware": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The BIOS version and date. The Pi does not say."
+          },
+          "serial": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "cpu": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`Intel(R) Core(TM) i5-8500T CPU @ 2.10GHz`, or the Pi's SoC, `BCM2837`."
+          },
+          "cores": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0
+          },
+          "arch": {
+            "type": "string",
+            "description": "`x86_64`, `aarch64`."
+          }
+        },
+        "required": [
+          "arch"
+        ],
+        "description": "What the hardware says it is, from DMI on x86 or the device tree on the\nPi (docs/hardware.md). `None` is \"the firmware does not say\"."
+      },
+      "MemUsage": {
+        "type": "object",
+        "properties": {
+          "total": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "available": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "total",
+          "available"
+        ],
+        "description": "RAM, in bytes, from `/proc/meminfo`. `available` is `MemAvailable`: what\ncan be handed out without swapping, page cache included."
+      },
+      "LogsQuery": {
+        "type": "object",
+        "properties": {
+          "unit": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Only this unit, or a pattern of them (`tessaro-schedule-*`)."
+          },
+          "lines": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "description": "The last this many entries, 100 by default. Ignored with `cursor`."
+          },
+          "cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Only what came after this, from the last page's `cursor`."
+          }
+        }
+      },
+      "LogPage": {
+        "type": "object",
+        "properties": {
+          "entries": {
+            "type": "array",
+            "items": true,
+            "description": "journalctl's JSON entries, oldest first: `MESSAGE`,\n`SYSLOG_IDENTIFIER`, `PRIORITY`, `__REALTIME_TIMESTAMP` and the rest."
+          },
+          "cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Where the next page starts: send it back as `cursor` to get only\nwhat came after. The one sent when nothing new came, `None` for an\nempty journal."
+          }
+        },
+        "required": [
+          "entries"
+        ],
+        "description": "A page of the journal."
+      },
+      "RestartBody": {
+        "type": "object",
+        "properties": {
+          "what": {
+            "$ref": "#/components/schemas/RestartTarget"
+          }
+        },
+        "required": [
+          "what"
+        ]
+      },
+      "RestartTarget": {
+        "type": "string",
+        "enum": [
+          "browser",
+          "weston",
+          "agent"
+        ],
+        "description": "What `restart` restarts."
+      },
+      "NameBody": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "Claimed": {
+        "type": "object",
+        "properties": {
+          "token_id": {
+            "type": "string"
+          },
+          "token": {
+            "type": "string"
+          },
+          "root_password": {
+            "type": "string"
+          },
+          "hotspot": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HotspotCredentials"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The hotspot's new password, shown once like the root password. `None`\non a device without its WiFi interface, or an older one.",
+            "default": null
+          }
+        },
+        "required": [
+          "token_id",
+          "token",
+          "root_password"
+        ]
+      },
+      "HotspotCredentials": {
+        "type": "object",
+        "properties": {
+          "ssid": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ssid",
+          "password"
+        ]
+      },
+      "TokenInfo": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "issued_by": {
+            "type": "string",
+            "description": "The id of the token that issued it, `claim`, or `local`."
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "issued_by"
+        ]
+      },
+      "TokenCreated": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "token": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "token"
+        ]
+      },
+      "TokenRef": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "PasswordBody": {
+        "type": "object",
+        "properties": {
+          "password": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Generated, and answered once, without it.",
+            "default": null
+          }
+        }
+      },
+      "Password": {
+        "type": "object",
+        "properties": {
+          "password": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The generated password, when the server chose it. Shown once."
+          }
+        }
+      },
+      "SshKeyBody": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "One `.pub` line."
+          }
+        },
+        "required": [
+          "key"
+        ]
+      },
+      "SshAccess": {
+        "type": "object",
+        "properties": {
+          "fingerprint": {
+            "type": "string",
+            "description": "SHA256 fingerprint of the key sent."
+          },
+          "added": {
+            "type": "boolean",
+            "description": "False when the key was already there."
+          },
+          "host_keys": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The device's host keys, as OpenSSH `TYPE BASE64` lines. Empty when\nthe device could not read them; the client then falls back to\nssh's own first-use prompt."
+          }
+        },
+        "required": [
+          "fingerprint",
+          "added",
+          "host_keys"
+        ]
+      },
+      "SshKeyInfo": {
+        "type": "object",
+        "properties": {
+          "fingerprint": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "comment": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "fingerprint",
+          "type",
+          "comment"
+        ]
+      },
+      "SshKeyQuery": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "Its `SHA256:` fingerprint, a unique prefix of it, or its exact\ncomment."
+          }
+        },
+        "required": [
+          "key"
+        ]
+      },
+      "SshKeyRevoked": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "fingerprint": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The removed key's SHA256 fingerprint. `None` from an older device,\nwhich only says it in `message`.",
+            "default": null
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "description": "What `ssh-key-revoke` removed. `message` is what an older client prints."
+      },
+      "KeyInfo": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "env": {
+            "type": "string"
+          },
+          "applies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Consumer"
+            }
+          },
+          "guarded": {
+            "type": "boolean"
+          },
+          "doc": {
+            "type": "string"
+          },
+          "values": {
+            "type": "string",
+            "description": "What a value may be, in words.",
+            "default": ""
+          },
+          "default": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The image's default, if it has one.",
+            "default": null
+          },
+          "value": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What this device has set, if anything.",
+            "default": null
+          }
+        },
+        "required": [
+          "name",
+          "env",
+          "applies",
+          "guarded",
+          "doc"
+        ]
+      },
+      "Consumer": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "agent",
+            "description": "Read by tessaro-agent at start: the agent restarts itself. Invisible\non screen - the browser is left alone."
+          },
+          {
+            "type": "string",
+            "const": "browser",
+            "description": "Read by tessaro-kiosk.service: the browser restarts."
+          },
+          {
+            "type": "string",
+            "const": "weston",
+            "description": "Read by tessaro-weston-config before the compositor starts: Weston\nrestarts, and with it (`PartOf=`) the browser and the agent."
+          },
+          {
+            "type": "string",
+            "const": "network",
+            "description": "The device's own NetworkManager profiles: applied as one network\nchange the device verifies and rolls back by itself, before the\nsetting is saved at all. Nothing restarts."
+          },
+          {
+            "type": "string",
+            "const": "audio",
+            "description": "PipeWire, through WirePlumber: the agent switches the output, the\ninput and their volumes on the running sound server at once. Nothing\nrestarts, and a sound that is playing moves over."
+          },
+          {
+            "type": "string",
+            "const": "firmware",
+            "description": "The Raspberry Pi firmware, through `tessaro.txt` on the boot\npartition, which it reads only when the board powers on. Nothing\nrestarts: the change takes effect at the next reboot."
+          },
+          {
+            "type": "string",
+            "const": "time",
+            "description": "The system clock, through systemd-timedated and systemd-timesyncd:\nthe agent sets the timezone and the NTP servers on the running\nsystem. Only systemd-timesyncd restarts, and only when its servers\nchange; the browser follows `/etc/localtime` by itself."
+          },
+          {
+            "type": "string",
+            "const": "proxy",
+            "description": "The device's local forwarding proxy, `tessaro-proxy.service`: its\nconfig in `/run` is rendered again, and the unit restarts, or stops\nwhen network.proxy.url is empty. The browser restarts only when the\nproxy is switched on or off, which changes its policy."
+          }
+        ],
+        "description": "What has to happen for a changed value to take effect."
+      },
+      "ConfigQuery": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "One key; all of them without it."
+          }
+        }
+      },
+      "Settings": {
+        "type": "object",
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "settings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Setting"
+            }
+          }
+        },
+        "required": [
+          "revision",
+          "settings"
+        ]
+      },
+      "Setting": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "env": {
+            "type": "string"
+          },
+          "value": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "$ref": "#/components/schemas/Source"
+          }
+        },
+        "required": [
+          "key",
+          "env",
+          "source"
+        ]
+      },
+      "Source": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "default",
+            "description": "The image's default, from /usr/lib/tessaro-kiosk/tessaro-kiosk.env."
+          },
+          {
+            "type": "string",
+            "const": "set",
+            "description": "Set on this device."
+          },
+          {
+            "type": "string",
+            "const": "live",
+            "description": "Read-only: reported by the device as it is right now."
+          }
+        ]
+      },
+      "SetConfig": {
+        "type": "object",
+        "properties": {
+          "values": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "if_revision": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Refuse unless the settings are still at this revision.",
+            "default": null
+          },
+          "apply": {
+            "type": "boolean",
+            "description": "Restart what reads the keys. Without it the change waits for the next\nrestart.",
+            "default": true
+          },
+          "verify": {
+            "$ref": "#/components/schemas/Verify",
+            "description": "What the device checks before it keeps a change to network keys.",
+            "default": {
+              "check": "gateway"
+            }
+          }
+        },
+        "required": [
+          "values"
+        ]
+      },
+      "Verify": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "check": {
+                "type": "string",
+                "const": "gateway"
+              }
+            },
+            "required": [
+              "check"
+            ],
+            "description": "The default gateway answers a ping."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "host": {
+                "type": "string"
+              },
+              "check": {
+                "type": "string",
+                "const": "host"
+              }
+            },
+            "required": [
+              "check",
+              "host"
+            ],
+            "description": "This host answers a ping."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "host": {
+                "type": "string"
+              },
+              "port": {
+                "type": "integer",
+                "format": "uint16",
+                "minimum": 0,
+                "maximum": 65535
+              },
+              "check": {
+                "type": "string",
+                "const": "tcp"
+              }
+            },
+            "required": [
+              "check",
+              "host",
+              "port"
+            ],
+            "description": "A TCP connection to this host and port opens."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "check": {
+                "type": "string",
+                "const": "none"
+              }
+            },
+            "required": [
+              "check"
+            ],
+            "description": "Only the route and the activation."
+          }
+        ],
+        "description": "What the device checks, on its own, before it keeps a network change.\nWhatever it is, the change must also leave the device with a default\nroute if it had one, and a connection it activated must come up."
+      },
+      "Applied": {
+        "type": "object",
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "changed": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "restarted": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Units restarted, or to be restarted once this reply is out."
+          },
+          "pending": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Pending"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "network": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NetChange"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What the network change did, when network keys changed: its checks.\nA rolled-back change is an error, not an `Applied`. Defaulted for\nolder devices.",
+            "default": null
+          },
+          "audio": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What the audio.* keys did on the sound server, in words, when they\nchanged: where sound now plays and how loud, or why it could not be\napplied (the setting is saved either way).",
+            "default": null
+          },
+          "time": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What the time.* keys did to the clock, in words, when they changed\n(the setting is saved either way). Defaulted for older devices.",
+            "default": null
+          },
+          "reboot": {
+            "type": "boolean",
+            "description": "A setting the firmware reads at power-on changed on disk, so it takes\neffect at the next reboot, which the device leaves to the operator.\nDefaulted for older devices.",
+            "default": false
+          }
+        },
+        "required": [
+          "revision",
+          "changed",
+          "restarted"
+        ]
+      },
+      "NetChange": {
+        "type": "object",
+        "properties": {
+          "outcome": {
+            "$ref": "#/components/schemas/ChangeOutcome"
+          },
+          "action": {
+            "type": "string",
+            "description": "What was asked: `set`, `up`, `down`, `forget`, `join`, `wifi on` ..."
+          },
+          "profile": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "uuid": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why it was rolled back."
+          },
+          "checks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NetCheck"
+            }
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Anything the operator should know about a kept change."
+          }
+        },
+        "required": [
+          "outcome",
+          "action",
+          "checks"
+        ],
+        "description": "What a network change did. Kept on the device as the last one, so a\nclient whose connection went with the change can still ask."
+      },
+      "ChangeOutcome": {
+        "type": "string",
+        "enum": [
+          "committed",
+          "rolled-back"
+        ]
+      },
+      "NetCheck": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "passed": {
+            "type": "boolean"
+          },
+          "detail": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "passed",
+          "detail"
+        ]
+      },
+      "UnsetConfig": {
+        "type": "object",
+        "properties": {
+          "keys": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "if_revision": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0,
+            "default": null
+          },
+          "apply": {
+            "type": "boolean",
+            "default": true
+          },
+          "verify": {
+            "$ref": "#/components/schemas/Verify",
+            "default": {
+              "check": "gateway"
+            }
+          }
+        },
+        "required": [
+          "keys"
+        ]
+      },
+      "Connector": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "modes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "name",
+          "modes"
+        ]
+      },
+      "Blob": {
+        "type": "string",
+        "format": "binary"
+      },
+      "ScreenPower": {
+        "type": "object",
+        "properties": {
+          "on": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "on"
+        ],
+        "description": "Whether the display is on, as the compositor has it."
+      },
+      "ScreenPowerBody": {
+        "type": "object",
+        "properties": {
+          "on": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "on"
+        ]
+      },
+      "KeyboardBody": {
+        "type": "object",
+        "properties": {
+          "show": {
+            "type": "boolean"
+          },
+          "selector": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The field to focus when showing; the one with the focus without it.",
+            "default": null
+          }
+        },
+        "required": [
+          "show"
+        ]
+      },
+      "NavigateBody": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ]
+      },
+      "EvalBody": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "At most `EVAL_MAX` bytes of JavaScript."
+          },
+          "timeout_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0,
+            "description": "`EVAL_TIMEOUT_MS` by default, `EVAL_TIMEOUT_MAX_MS` at most.",
+            "default": null
+          },
+          "await_promise": {
+            "type": "boolean",
+            "description": "Wait for a returned Promise and answer with what it settles to.",
+            "default": true
+          },
+          "user_gesture": {
+            "type": "boolean",
+            "description": "Run as if the user had just touched the page.",
+            "default": false
+          }
+        },
+        "required": [
+          "code"
+        ]
+      },
+      "EvalResult": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "description": "`None` for `undefined`, and for a value JSON cannot hold (a\nfunction, a DOM node): `description` says what it was.",
+            "default": null
+          },
+          "kind": {
+            "type": "string",
+            "description": "The value's type as JavaScript names it, `undefined` included."
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "exception": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EvalException"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "description": "What `eval` came to: the value, as JSON, or what it threw."
+      },
+      "EvalException": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "line": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "1-based, in the code as sent."
+          },
+          "column": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "text",
+          "line",
+          "column"
+        ]
+      },
+      "Net": {
+        "type": "object",
+        "properties": {
+          "hostname": {
+            "type": "string"
+          },
+          "interface": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The interface with the IPv4 default route."
+          },
+          "gateway": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "dns": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The upstream servers, not systemd-resolved's 127.0.0.53 stub."
+          },
+          "interfaces": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NetInterface"
+            }
+          },
+          "public_ip": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The address the internet sees, as the agent last found it through\nCloudflare's trace; `None` until it has. Defaulted for older devices.",
+            "default": null
+          },
+          "proxy": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "network.proxy.url with its password masked; `None` without a proxy.\nDefaulted for older devices.",
+            "default": null
+          }
+        },
+        "required": [
+          "hostname",
+          "dns",
+          "interfaces"
+        ]
+      },
+      "NetInterface": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`ethernet`, `wireless`, `loopback`, or `virtual` (bridges, tunnels...)."
+          },
+          "mac": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "type": "string",
+            "description": "The kernel's operstate: `up`, `down`, `dormant`, `unknown`, ..."
+          },
+          "carrier": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "A cable or an association, if the driver says."
+          },
+          "mtu": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0
+          },
+          "speed_mbps": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0
+          },
+          "default_route": {
+            "type": "boolean",
+            "description": "Carries the IPv4 default route."
+          },
+          "addresses": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NetAddress"
+            }
+          }
+        },
+        "required": [
+          "name",
+          "kind",
+          "state",
+          "default_route",
+          "addresses"
+        ]
+      },
+      "NetAddress": {
+        "type": "object",
+        "properties": {
+          "address": {
+            "type": "string"
+          },
+          "prefix": {
+            "type": "integer",
+            "format": "uint8",
+            "minimum": 0,
+            "maximum": 255
+          },
+          "family": {
+            "type": "string",
+            "description": "`ipv4` or `ipv6`."
+          },
+          "scope": {
+            "type": "string",
+            "description": "`global`, `link-local` or `loopback`."
+          }
+        },
+        "required": [
+          "address",
+          "prefix",
+          "family",
+          "scope"
+        ]
+      },
+      "NetProfile": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "`connection.id`."
+          },
+          "uuid": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`ethernet`, `wifi`, or NetworkManager's own type name for anything\nelse."
+          },
+          "device": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The device it is active on, or bound to."
+          },
+          "active": {
+            "type": "boolean"
+          },
+          "autoconnect": {
+            "type": "boolean"
+          },
+          "priority": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "saved": {
+            "type": "boolean",
+            "description": "Written to disk. A profile under `/run` counts as unsaved, the\nmanaged ones included."
+          },
+          "managed": {
+            "type": "boolean",
+            "description": "One of the fixed profiles the agent renders from settings on\nevery boot, so unsaved but never lost.",
+            "default": false
+          }
+        },
+        "required": [
+          "name",
+          "uuid",
+          "kind",
+          "active",
+          "autoconnect",
+          "priority",
+          "saved"
+        ],
+        "description": "A NetworkManager profile, as `net profiles` lists it."
+      },
+      "ProfileQuery": {
+        "type": "object",
+        "properties": {
+          "profile": {
+            "type": "string",
+            "description": "Its name (`connection.id`) or uuid."
+          }
+        },
+        "required": [
+          "profile"
+        ]
+      },
+      "NetProfileDetail": {
+        "type": "object",
+        "properties": {
+          "profile": {
+            "$ref": "#/components/schemas/NetProfile"
+          },
+          "ipv4": {
+            "$ref": "#/components/schemas/NetIpSettings"
+          },
+          "ipv6": {
+            "$ref": "#/components/schemas/NetIpSettings"
+          },
+          "wifi": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NetWifiSettings"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "addresses": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NetAddress"
+            },
+            "description": "What its device has right now, from the kernel. Empty when inactive."
+          }
+        },
+        "required": [
+          "profile",
+          "ipv4",
+          "ipv6",
+          "addresses"
+        ]
+      },
+      "NetIpSettings": {
+        "type": "object",
+        "properties": {
+          "method": {
+            "type": "string"
+          },
+          "addresses": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "`ADDRESS/PREFIX`."
+          },
+          "gateway": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "dns": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "ignore_auto_dns": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "method",
+          "addresses",
+          "dns",
+          "ignore_auto_dns"
+        ]
+      },
+      "NetWifiSettings": {
+        "type": "object",
+        "properties": {
+          "ssid": {
+            "type": "string"
+          },
+          "security": {
+            "type": "string",
+            "description": "`open`, `wpa-psk`, `sae`, `wpa-eap`, or NetworkManager's key-mgmt."
+          },
+          "hidden": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ssid",
+          "security",
+          "hidden"
+        ]
+      },
+      "WifiStatus": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "The radio, as software (`net wifi on|off`) left it."
+          },
+          "hardware_enabled": {
+            "type": "boolean",
+            "description": "A hardware kill switch, if the device has one."
+          },
+          "devices": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WifiDeviceInfo"
+            }
+          },
+          "fallback": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The client network the hotspot stands in for, when the client did not\nconnect after boot (`network.wifi.fallback_after`). Until the next boot.",
+            "default": null
+          }
+        },
+        "required": [
+          "enabled",
+          "hardware_enabled",
+          "devices"
+        ]
+      },
+      "WifiDeviceInfo": {
+        "type": "object",
+        "properties": {
+          "interface": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "description": "NetworkManager's device state: `activated`, `disconnected`, ..."
+          },
+          "ssid": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "signal": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint8",
+            "minimum": 0,
+            "maximum": 255,
+            "description": "Percent."
+          },
+          "frequency_mhz": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "interface",
+          "state"
+        ]
+      },
+      "WifiScanQuery": {
+        "type": "object",
+        "properties": {
+          "interface": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "rescan": {
+            "type": "boolean",
+            "description": "Scan first. Without it, what the device last saw.",
+            "default": true
+          }
+        }
+      },
+      "WifiNetwork": {
+        "type": "object",
+        "properties": {
+          "ssid": {
+            "type": "string",
+            "description": "Empty for a hidden network."
+          },
+          "bssid": {
+            "type": "string"
+          },
+          "signal": {
+            "type": "integer",
+            "format": "uint8",
+            "minimum": 0,
+            "maximum": 255,
+            "description": "Percent."
+          },
+          "frequency_mhz": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "security": {
+            "type": "string",
+            "description": "`open`, `wpa-psk`, `sae`, `wpa-eap`, `wep`, or several joined by `/`."
+          },
+          "interface": {
+            "type": "string"
+          },
+          "known": {
+            "type": "boolean",
+            "description": "A saved profile has this SSID."
+          },
+          "active": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ssid",
+          "bssid",
+          "signal",
+          "frequency_mhz",
+          "security",
+          "interface",
+          "known",
+          "active"
+        ]
+      },
+      "WifiJoinBody": {
+        "type": "object",
+        "properties": {
+          "ssid": {
+            "type": "string"
+          },
+          "psk": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Secret"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Without it the stored one: rejoining the same network.",
+            "default": null
+          },
+          "security": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WifiSecurity"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Found by scanning when not given; a hidden network needs it.",
+            "default": null
+          },
+          "hidden": {
+            "type": "boolean",
+            "default": false
+          },
+          "verify": {
+            "$ref": "#/components/schemas/Verify",
+            "default": {
+              "check": "gateway"
+            }
+          }
+        },
+        "required": [
+          "ssid"
+        ]
+      },
+      "Secret": {
+        "type": "string",
+        "description": "A secret on its way to the device: a WiFi password. It serializes as the\nplain string, but prints as `***`, so a `{:?}` of a command - in a log\nline, a panic, a test failure - never shows it."
+      },
+      "WifiSecurity": {
+        "oneOf": [
+          {
+            "type": "string",
+            "enum": [
+              "open"
+            ]
+          },
+          {
+            "type": "string",
+            "const": "psk",
+            "description": "WPA2 personal."
+          },
+          {
+            "type": "string",
+            "const": "sae",
+            "description": "WPA3 personal."
+          }
+        ]
+      },
+      "PingBody": {
+        "type": "object",
+        "properties": {
+          "host": {
+            "type": "string"
+          },
+          "count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "default": null
+          },
+          "interval_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0,
+            "default": null
+          },
+          "timeout_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0,
+            "default": null
+          },
+          "interface": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "host"
+        ]
+      },
+      "JobStarted": {
+        "type": "object",
+        "properties": {
+          "job": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "job"
+        ],
+        "description": "A job the device started: poll it at `/api/v1/jobs/{job}`."
+      },
+      "SpeedtestBody": {
+        "type": "object",
+        "properties": {
+          "max_size": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Largest payload, one of `SPEEDTEST_SIZES`.",
+            "default": null
+          },
+          "tests": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "description": "Samples per payload size.",
+            "default": null
+          },
+          "direct": {
+            "type": "boolean",
+            "description": "Go around network.proxy.url, straight to Cloudflare.",
+            "default": false
+          }
+        }
+      },
+      "ProxyStatus": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "network.proxy.url with its password masked; `None` without a proxy."
+          },
+          "bypass": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "network.proxy.bypass, besides loopback."
+          },
+          "listen": {
+            "type": "string",
+            "description": "Where the device's local proxy listens, `127.0.0.1:3128`."
+          },
+          "unit": {
+            "type": "string",
+            "description": "Its unit's state: `active`, `inactive`, `failed`, ..."
+          }
+        },
+        "required": [
+          "bypass",
+          "listen",
+          "unit"
+        ],
+        "description": "What `network proxy show` reports."
+      },
+      "ProxyTested": {
+        "type": "object",
+        "properties": {
+          "ip": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The address the internet sees through the proxy."
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why it could not be reached, when it could not."
+          }
+        },
+        "description": "What `network proxy test` got through the proxy."
+      },
+      "CertInfo": {
+        "type": "object",
+        "properties": {
+          "fingerprint": {
+            "type": "string",
+            "description": "SHA-256 of the DER, lower-case hex."
+          },
+          "subject": {
+            "type": "string",
+            "description": "`CN=Corp Root CA, O=Corp`."
+          },
+          "issuer": {
+            "type": "string"
+          },
+          "not_after": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When it expires, seconds since the epoch, UTC."
+          },
+          "self_signed": {
+            "type": "boolean",
+            "description": "Signed by its own key: a root rather than an intermediate."
+          }
+        },
+        "required": [
+          "fingerprint",
+          "subject",
+          "issuer",
+          "not_after",
+          "self_signed"
+        ],
+        "description": "One extra certificate authority the device trusts."
+      },
+      "CertBody": {
+        "type": "object",
+        "properties": {
+          "pem": {
+            "type": "string",
+            "description": "One or more PEM certificates."
+          }
+        },
+        "required": [
+          "pem"
+        ]
+      },
+      "CertsAdded": {
+        "type": "object",
+        "properties": {
+          "added": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CertInfo"
+            }
+          },
+          "present": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CertInfo"
+            },
+            "description": "Already trusted; nothing changed for these."
+          }
+        },
+        "required": [
+          "added",
+          "present"
+        ],
+        "description": "What `net-cert-add` did with each certificate it was sent."
+      },
+      "CertQuery": {
+        "type": "object",
+        "properties": {
+          "cert": {
+            "type": "string",
+            "description": "Its SHA-256 fingerprint, a unique prefix of it, or its exact subject."
+          }
+        },
+        "required": [
+          "cert"
+        ]
+      },
+      "Storage": {
+        "type": "object",
+        "properties": {
+          "device": {
+            "type": "string",
+            "description": "The disk holding root, `sda` or `mmcblk0`."
+          },
+          "size": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "table": {
+            "type": "string",
+            "description": "`gpt` or `dos`."
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "unallocated": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Space after the last partition that `storage-grow` would give to\n`/data`; 0 when there is too little to bother (`GROW_MIN`)."
+          },
+          "partitions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Partition"
+            }
+          },
+          "filesystems": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FsUsage"
+            }
+          }
+        },
+        "required": [
+          "device",
+          "size",
+          "table",
+          "unallocated",
+          "partitions",
+          "filesystems"
+        ]
+      },
+      "Partition": {
+        "type": "object",
+        "properties": {
+          "number": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string",
+            "description": "The kernel's name, `sda3` or `mmcblk0p3`."
+          },
+          "start": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "size": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The filesystem label, `data` for /data."
+          },
+          "fstype": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Only for filesystems that are mounted."
+          },
+          "mountpoint": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "number",
+          "name",
+          "start",
+          "size"
+        ],
+        "description": "One partition of the disk the device runs from. Sizes and offsets in\nbytes."
+      },
+      "GrowBody": {
+        "type": "object",
+        "properties": {
+          "check": {
+            "type": "boolean",
+            "description": "Only say what would change.",
+            "default": false
+          }
+        }
+      },
+      "AudioTestBody": {
+        "type": "object",
+        "properties": {
+          "input": {
+            "type": "boolean",
+            "description": "Record from the input instead of playing a tone.",
+            "default": false
+          }
+        }
+      },
+      "AudioTested": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "peak_dbfs": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "The recording's loudest sample and its average, dBFS: 0 is full\nscale, silence is far below -60.",
+            "default": null
+          },
+          "rms_dbfs": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "default": null
+          },
+          "saved": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Where the recording was left in the file store, for `tessaro-ctl\nfiles download` or `http://127.0.0.1/files/`.",
+            "default": null
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "description": "What `audio test` played or heard."
+      },
+      "TimeStatus": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why timedated or timesyncd could not be read, if one of them could not."
+          },
+          "setting_timezone": {
+            "type": "string",
+            "description": "time.timezone, as set or defaulted."
+          },
+          "setting_servers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "time.ntp.servers as set: empty uses DHCP's, then the fallback."
+          },
+          "timezone": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The zone systemd has, `Europe/Bratislava`."
+          },
+          "now_usec": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0,
+            "description": "The system clock, microseconds since the epoch."
+          },
+          "local_time": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The same, as a wall clock in `timezone`: `2026-09-25 14:03:12`."
+          },
+          "zone_abbreviation": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`CEST`, and its distance from UTC in seconds east."
+          },
+          "utc_offset_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "rtc_usec": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0,
+            "description": "The hardware clock, where there is one; a Raspberry Pi has none."
+          },
+          "local_rtc": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "The hardware clock keeps local time instead of UTC."
+          },
+          "can_ntp": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "An NTP service is installed."
+          },
+          "ntp": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "NTP is switched on (time.ntp.enable)."
+          },
+          "synchronized": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "The kernel clock is disciplined by NTP."
+          },
+          "timesyncd": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "systemd-timesyncd's unit state: `active`, `inactive`, ..."
+          },
+          "server_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The server timesyncd uses now, by name and address."
+          },
+          "server_address": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "poll_interval_usec": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0,
+            "description": "How often timesyncd asks, and between what bounds it moves."
+          },
+          "poll_interval_min_usec": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0
+          },
+          "poll_interval_max_usec": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0
+          },
+          "root_distance_max_usec": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0,
+            "description": "A server farther than this from a reference clock is not trusted."
+          },
+          "frequency": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The kernel's frequency correction - how fast this clock drifts - in\nunits of 2^-16 ppm, as adjtimex keeps it. `frequency_ppm` reads it."
+          },
+          "last": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NtpSample"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The last NTP answer, if there was one."
+          },
+          "servers": {
+            "$ref": "#/components/schemas/NtpServers"
+          }
+        },
+        "required": [
+          "setting_timezone",
+          "setting_servers",
+          "servers"
+        ],
+        "description": "Everything systemd says about the clock. Every field is what timedated\nor timesyncd reported, never measured by the agent; `None` is \"not\nreported\", which a service that is down or has not synced yet does."
+      },
+      "NtpSample": {
+        "type": "object",
+        "properties": {
+          "leap": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "0 no warning, 1 or 2 a leap second at the end of the day, 3 the\nserver is not synchronized."
+          },
+          "version": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "stratum": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "The server's distance from a reference clock: 1 is attached to one."
+          },
+          "precision": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The server clock's precision, log2 seconds (-20 is about 1 µs)."
+          },
+          "root_delay_usec": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "root_dispersion_usec": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "reference": {
+            "type": "string",
+            "description": "The server's reference: a clock name like `GPS` at stratum 1, else\nthe address of its own server."
+          },
+          "offset_usec": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How far this clock was from the server's: positive is behind."
+          },
+          "delay_usec": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The round trip, less the time the server took to answer."
+          },
+          "jitter_usec": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "timesyncd's running estimate of how much the offset varies."
+          },
+          "packet_count": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Answers counted since timesyncd started."
+          },
+          "spike": {
+            "type": "boolean",
+            "description": "The last answer was thrown away as an outlier."
+          },
+          "received_usec": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "When the answer arrived, microseconds since the epoch."
+          }
+        },
+        "required": [
+          "leap",
+          "version",
+          "stratum",
+          "precision",
+          "root_delay_usec",
+          "root_dispersion_usec",
+          "reference",
+          "offset_usec",
+          "delay_usec",
+          "jitter_usec",
+          "packet_count",
+          "spike",
+          "received_usec"
+        ],
+        "description": "timesyncd's `NTPMessage`: the last answer from the server, and what\nfollows from its timestamps."
+      },
+      "NtpServers": {
+        "type": "object",
+        "properties": {
+          "runtime": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Set at runtime by the agent: the DHCP servers, while time.ntp.servers\nis empty."
+          },
+          "system": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "time.ntp.servers, from the agent's timesyncd drop-in."
+          },
+          "link": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Per-link servers, which only systemd-networkd hands out; empty here."
+          },
+          "fallback": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The image's fallback, used when none of the above has any."
+          },
+          "dhcp": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What the network's DHCP offered, whether in use or not."
+          }
+        },
+        "required": [
+          "runtime",
+          "system",
+          "link",
+          "fallback",
+          "dhcp"
+        ],
+        "description": "Where timesyncd's servers come from, in the order it tries them."
+      },
+      "TimeSetBody": {
+        "type": "object",
+        "properties": {
+          "usec": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Microseconds since the epoch, UTC.",
+            "default": null
+          },
+          "local": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`YYYY-MM-DD HH:MM[:SS]`, in the device's timezone.",
+            "default": null
+          }
+        }
+      },
+      "ScheduleInfo": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Stable across renames; names the schedule's systemd units."
+          },
+          "name": {
+            "type": "string",
+            "description": "`[a-z0-9][a-z0-9-]*`, unique on the device."
+          },
+          "enabled": {
+            "type": "boolean",
+            "default": true
+          },
+          "calendar": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "systemd `OnCalendar` expressions; the schedule fires when any of\nthem does."
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Shell command lines, each run with `/bin/sh -c` as root, in order."
+          },
+          "on_error": {
+            "$ref": "#/components/schemas/OnError",
+            "default": "stop"
+          },
+          "timeout_s": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0,
+            "description": "The longest a whole run may take before systemd kills it.",
+            "default": null
+          },
+          "next": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Moment"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When the timer fires next; `None` while disabled.",
+            "default": null
+          },
+          "last_trigger": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Moment"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When the timer last fired.",
+            "default": null
+          },
+          "last_run": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ScheduleRun"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "running": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "Runs going right now; they may overlap.",
+            "default": 0
+          },
+          "units": {
+            "type": "string",
+            "description": "The journal pattern of its runs, for `logs --unit`."
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "calendar",
+          "lines",
+          "units"
+        ],
+        "description": "One schedule and what systemd reports about it."
+      },
+      "OnError": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "stop",
+            "description": "The run ends there, failed."
+          },
+          {
+            "type": "string",
+            "const": "continue",
+            "description": "The next line runs anyway."
+          }
+        ],
+        "description": "What a run does when one of its lines fails."
+      },
+      "Moment": {
+        "type": "object",
+        "properties": {
+          "unix": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Seconds since the epoch, UTC."
+          },
+          "local": {
+            "type": "string",
+            "description": "The device's wall clock: `2026-09-28 07:00:00 CEST`."
+          }
+        },
+        "required": [
+          "unix",
+          "local"
+        ],
+        "description": "A moment as the device reports it."
+      },
+      "ScheduleRun": {
+        "type": "object",
+        "properties": {
+          "started": {
+            "$ref": "#/components/schemas/Moment"
+          },
+          "finished": {
+            "$ref": "#/components/schemas/Moment"
+          },
+          "result": {
+            "type": "string",
+            "description": "systemd's `$SERVICE_RESULT`: `success`, `exit-code`, `timeout`,\n`signal`..."
+          },
+          "status": {
+            "type": "string",
+            "description": "systemd's `$EXIT_STATUS` of the last line that ran: an exit code\nor a signal name."
+          }
+        },
+        "required": [
+          "started",
+          "finished",
+          "result",
+          "status"
+        ],
+        "description": "How a finished run ended."
+      },
+      "ScheduleSpec": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "`[a-z0-9][a-z0-9-]*`, unique on the device."
+          },
+          "enabled": {
+            "type": "boolean",
+            "default": true
+          },
+          "calendar": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "systemd `OnCalendar` expressions; the schedule fires when any of\nthem does."
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Shell command lines, each run with `/bin/sh -c` as root, in order."
+          },
+          "on_error": {
+            "$ref": "#/components/schemas/OnError",
+            "default": "stop"
+          },
+          "timeout_s": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0,
+            "description": "The longest a whole run may take before systemd kills it.",
+            "default": null
+          }
+        },
+        "required": [
+          "name",
+          "calendar",
+          "lines"
+        ],
+        "description": "What a schedule is: when it fires and what a run does."
+      },
+      "ScheduleRef": {
+        "type": "object",
+        "properties": {
+          "schedule": {
+            "type": "string",
+            "description": "Its id or its name."
+          }
+        },
+        "required": [
+          "schedule"
+        ]
+      },
+      "ScheduleChange": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "calendar": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "default": null
+          },
+          "lines": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "default": null
+          },
+          "on_error": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OnError"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "timeout_s": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0,
+            "description": "`0` removes the timeout.",
+            "default": null
+          },
+          "enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "default": null
+          }
+        },
+        "description": "What is given replaces what the schedule has; a given `calendar` or\n`lines` replaces the whole list."
+      },
+      "CalendarBody": {
+        "type": "object",
+        "properties": {
+          "calendar": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "description": "How many run times to answer with.",
+            "default": null
+          }
+        },
+        "required": [
+          "calendar"
+        ]
+      },
+      "CalendarCheck": {
+        "type": "object",
+        "properties": {
+          "normalized": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Each expression as systemd normalizes it, in the order sent."
+          },
+          "next": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Moment"
+            },
+            "description": "The next times any of them fires, earliest first."
+          }
+        },
+        "required": [
+          "normalized",
+          "next"
+        ],
+        "description": "What `schedule-check` found."
+      },
+      "UpdateStatus": {
+        "type": "object",
+        "properties": {
+          "phase": {
+            "$ref": "#/components/schemas/UpdatePhase"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The file being uploaded or staged."
+          },
+          "size": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "received": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "verified": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Bytes of the upload checked against its SHA-256, of `size`: the first\nstep of preparing, skipped with `verify: false`. Defaulted for older\ndevices, which do not report it.",
+            "default": 0
+          },
+          "prepared": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Mapped bytes of the image checked, of `to_prepare`."
+          },
+          "to_prepare": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "wipe_data": {
+            "type": "boolean"
+          },
+          "repartition": {
+            "type": "boolean",
+            "description": "The whole disk is rewritten, not the root partition. Defaulted for\nolder devices, which cannot.",
+            "default": false
+          },
+          "last": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UpdateResult"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What the last boot that applied an update did."
+          }
+        },
+        "required": [
+          "phase",
+          "size",
+          "received",
+          "prepared",
+          "to_prepare",
+          "wipe_data"
+        ]
+      },
+      "UpdatePhase": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "idle",
+            "description": "Nothing under way."
+          },
+          {
+            "type": "string",
+            "const": "receiving",
+            "description": "Part of the image has arrived."
+          },
+          {
+            "type": "string",
+            "const": "verifying",
+            "description": "All of it has; the device is checking the whole file against its\nSHA-256 (`verified` of `size`). Skipped with `verify: false`."
+          },
+          {
+            "type": "string",
+            "const": "preparing",
+            "description": "Checked; the device is decompressing it once as a dry run, checking\neach bmap range it will write (`prepared` of `to_prepare`)."
+          },
+          {
+            "type": "string",
+            "const": "ready",
+            "description": "Staged and verified; waiting for `update-commit`."
+          },
+          {
+            "type": "string",
+            "const": "pending",
+            "description": "Committed; applied at the next boot."
+          },
+          {
+            "type": "string",
+            "const": "failed",
+            "description": "Preparing failed; `error` says why. Begin again to retry."
+          }
+        ]
+      },
+      "UpdateResult": {
+        "type": "object",
+        "properties": {
+          "applied": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "wiped_data": {
+            "type": "boolean"
+          },
+          "attempts": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "applied",
+          "message",
+          "source",
+          "wiped_data",
+          "attempts"
+        ]
+      },
+      "ImageUpload": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "sha256": {
+            "type": "string",
+            "description": "SHA-256 of the whole file, lower-case hex."
+          },
+          "bmap": {
+            "type": "string",
+            "description": "The `.wic.bmap`, verbatim."
+          },
+          "verify": {
+            "type": "boolean",
+            "description": "Check the whole upload against `sha256` before preparing it.\nThe bmap's per-range checksums are checked either way.",
+            "default": true
+          },
+          "repartition": {
+            "type": "boolean",
+            "description": "Write the whole disk (partition table, every partition, `/data`)\ninstead of the root partition: for a device on another disk\nlayout. Implies wiping `/data`; a power cut while it writes needs\na physical reflash. An older device ignores it and refuses the\nlayout as before.",
+            "default": false
+          }
+        },
+        "required": [
+          "name",
+          "size",
+          "sha256",
+          "bmap"
+        ],
+        "description": "The image `update-begin` describes. Its fields sit in the command itself\non the wire, next to `cmd`."
+      },
+      "UpdateBegun": {
+        "type": "object",
+        "properties": {
+          "offset": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Bytes the device already has. Send from here."
+          },
+          "phase": {
+            "$ref": "#/components/schemas/UpdatePhase"
+          }
+        },
+        "required": [
+          "offset",
+          "phase"
+        ]
+      },
+      "OffsetQuery": {
+        "type": "object",
+        "properties": {
+          "offset": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Where this piece starts: what the device said it has."
+          }
+        },
+        "required": [
+          "offset"
+        ]
+      },
+      "Received": {
+        "type": "object",
+        "properties": {
+          "received": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "size": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "received",
+          "size"
+        ],
+        "description": "How much of an upload - an image, or one file - the device has, after a\nchunk."
+      },
+      "CommitBody": {
+        "type": "object",
+        "properties": {
+          "wipe_data": {
+            "type": "boolean",
+            "description": "Re-create `/data` too: settings, the claim, the browser profile.",
+            "default": false
+          },
+          "reboot": {
+            "type": "boolean",
+            "default": true
+          }
+        }
+      },
+      "FilesQuery": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "From the store's root; the root itself when empty.",
+            "default": ""
+          },
+          "recursive": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      },
+      "FilesListing": {
+        "type": "object",
+        "properties": {
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FileEntry"
+            },
+            "description": "Names sorted; recursively, depth first, a directory before what is\nin it. Paths are always from the store's root."
+          }
+        },
+        "required": [
+          "entries"
+        ]
+      },
+      "FileEntry": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "From the root of the store, `/`-separated."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/FileKind"
+          },
+          "size": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Bytes; 0 for a directory."
+          },
+          "mtime": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Modification time, whole seconds since the epoch. What `sync`\ncompares, with the size."
+          }
+        },
+        "required": [
+          "path",
+          "kind",
+          "size",
+          "mtime"
+        ]
+      },
+      "FileKind": {
+        "type": "string",
+        "enum": [
+          "file",
+          "dir"
+        ]
+      },
+      "UploadBody": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "mtime": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Seconds since the epoch, stamped on the file once it is complete."
+          }
+        },
+        "required": [
+          "path",
+          "size",
+          "mtime"
+        ]
+      },
+      "FileBegun": {
+        "type": "object",
+        "properties": {
+          "offset": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Bytes the device already has of this file. Send from here."
+          },
+          "size": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "offset",
+          "size"
+        ]
+      },
+      "UploadQuery": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "offset": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "path",
+          "offset"
+        ]
+      },
+      "ReadQuery": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "offset": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "default": 0
+          },
+          "len": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "At most `UPDATE_CHUNK`."
+          }
+        },
+        "required": [
+          "path",
+          "len"
+        ]
+      },
+      "PathBody": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ]
+      },
+      "MoveBody": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ]
+      },
+      "DeleteBody": {
+        "type": "object",
+        "properties": {
+          "paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "recursive": {
+            "type": "boolean",
+            "description": "Directories with everything in them.",
+            "default": false
+          }
+        },
+        "required": [
+          "paths"
+        ]
+      },
+      "JobQuery": {
+        "type": "object",
+        "properties": {
+          "job": {
+            "type": "string"
+          },
+          "after": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "The first step to answer with: the last page's `next`.",
+            "default": 0
+          }
+        },
+        "required": [
+          "job"
+        ]
+      },
+      "JobPage": {
+        "type": "object",
+        "properties": {
+          "events": {
+            "type": "array",
+            "items": true,
+            "description": "Its steps from number `after` on, in order: `PingEvent`s,\n`SpeedtestEvent`s or `StorageGrowEvent`s, by the job."
+          },
+          "next": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "What to send as `after` next."
+          },
+          "done": {
+            "type": "boolean",
+            "description": "It has ended. With `error`, it failed."
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "events",
+          "next",
+          "done"
+        ],
+        "description": "What a job did since `after`."
+      },
+      "JobRef": {
+        "type": "object",
+        "properties": {
+          "job": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "job"
+        ]
+      }
+    },
+    "securitySchemes": {
+      "token": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    }
+  },
+  "security": [
+    {
+      "token": []
+    }
+  ]
+}

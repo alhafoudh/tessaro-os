@@ -12,7 +12,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anstream::println;
 use clap::Subcommand;
-use protocol::{keys, Command, Done, TimeStatus, TimeSummary};
+use protocol::api;
+use protocol::{keys, TimeStatus, TimeSummary};
 use tessaro_client::clock::{drift, leap, offset, offset_between, precision, span, utc_offset};
 
 use crate::connect::Session;
@@ -65,11 +66,11 @@ pub enum TimeCmd {
 pub fn run(session: &mut Session, command: TimeCmd, json: bool) -> Result<(), String> {
     match command {
         TimeCmd::Show => {
-            let status: TimeStatus = session.call(Command::TimeStatus)?;
+            let status = session.fetch::<api::time::Show>()?;
             print(json, &status, || show(&status))
         }
         TimeCmd::Zones { filter } => {
-            let mut zones: Vec<String> = session.call(Command::TimeZones)?;
+            let mut zones = session.fetch::<api::time::Zones>()?;
             if let Some(filter) = filter {
                 let filter = filter.to_ascii_lowercase();
                 zones.retain(|zone| zone.to_ascii_lowercase().contains(&filter));
@@ -100,26 +101,26 @@ pub fn run(session: &mut Session, command: TimeCmd, json: bool) -> Result<(), St
             set(session, json, values)
         }
         TimeCmd::Sync => {
-            let done: Done = session.call(Command::TimeSync)?;
+            let done = session.send::<api::time::Sync>(())?;
             print(json, &done, || {
                 println!("{}", paint(style::OK, &done.message))
             })
         }
         TimeCmd::Set { time } => {
-            let command = match time {
+            let body = match time {
                 Some(local) => {
                     protocol::parse_local_time(&local)?;
-                    Command::TimeSet {
+                    api::TimeSetBody {
                         usec: None,
                         local: Some(local),
                     }
                 }
-                None => Command::TimeSet {
+                None => api::TimeSetBody {
                     usec: Some(now_usec()?),
                     local: None,
                 },
             };
-            let done: Done = session.call(command)?;
+            let done = session.send::<api::time::Set>(body)?;
             print(json, &done, || {
                 println!("{}", paint(style::OK, &done.message))
             })

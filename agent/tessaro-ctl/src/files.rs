@@ -13,8 +13,9 @@ use std::path::{Path, PathBuf};
 
 use anstream::{eprintln, println};
 use clap::Subcommand;
+use protocol::api::{self, DeleteBody, Empty, FilesQuery, MoveBody, PathBody};
 use protocol::files::{self as store, FileEntry, FileKind, FilesListing};
-use protocol::{size_label, Command, Done};
+use protocol::size_label;
 use serde::Serialize;
 use tessaro_client::transfer::{self, date, mtime_of};
 
@@ -100,10 +101,11 @@ pub fn run(session: &mut Session, command: FilesCmd, json: bool) -> Result<(), S
     match command {
         FilesCmd::List { remote, recursive } => {
             let path = store::normalize(remote.as_deref().unwrap_or(""))?;
-            let listing: FilesListing = session.call(Command::FilesList {
+            let query = FilesQuery {
                 path: path.clone(),
                 recursive,
-            })?;
+            };
+            let listing = session.call::<api::files::List>(query, ())?;
             print(json, &listing, || show_listing(&path, &listing))
         }
         FilesCmd::Upload { local, remote } => upload(session, &local, remote.as_deref(), json),
@@ -134,7 +136,7 @@ pub fn run(session: &mut Session, command: FilesCmd, json: bool) -> Result<(), S
                 } else {
                     dest.clone()
                 };
-                let done: Done = session.call(Command::FilesMove { from, to })?;
+                let done = session.send::<api::files::Move>(MoveBody { from, to })?;
                 if !json {
                     println!("{}", done.message);
                 }
@@ -158,8 +160,8 @@ pub fn run(session: &mut Session, command: FilesCmd, json: bool) -> Result<(), S
                 yes,
                 &format!("Remove {} from {}?", paths.join(", "), session.node.name),
             )?;
-            let done: Done = session.call(Command::FilesDelete { paths, recursive })?;
-            print(json, &done, || println!("{}", done.message))
+            let body = DeleteBody { paths, recursive };
+            crate::done::<api::files::Delete>(session, Empty {}, body, json)
         }
     }
 }
@@ -167,10 +169,11 @@ pub fn run(session: &mut Session, command: FilesCmd, json: bool) -> Result<(), S
 /// Whether `path` is a directory in the store: its listing is not the file
 /// itself. A missing path is an error, as it would be for `mv`.
 fn is_dir(session: &mut Session, path: &str) -> Result<bool, String> {
-    let listing: FilesListing = session.call(Command::FilesList {
+    let query = FilesQuery {
         path: path.to_string(),
         recursive: false,
-    })?;
+    };
+    let listing = session.call::<api::files::List>(query, ())?;
     Ok(!(listing.entries.len() == 1
         && listing.entries[0].path == path
         && listing.entries[0].kind == FileKind::File))
@@ -367,16 +370,14 @@ fn sync(
 
     // A directory that is not there yet lists as empty; making it is the
     // first change, and a dry run makes nothing.
-    let tree = Command::FilesList {
+    let tree = FilesQuery {
         path: root.clone(),
         recursive: true,
     };
-    let listed: Result<FilesListing, String> = if dry_run || root.is_empty() {
-        session.call(tree)
+    let listed = if dry_run || root.is_empty() {
+        session.call::<api::files::List>(tree, ())
     } else {
-        session
-            .call::<Done>(Command::FilesMkdir { path: root.clone() })
-            .and_then(|_| session.call(tree))
+        mkdir(session, &root).and_then(|()| session.call::<api::files::List>(tree, ()))
     };
     let theirs = match listed {
         Ok(listing) => relative(&root, listing.entries),
@@ -444,7 +445,7 @@ fn sync(
     for action in actions {
         match action {
             Action::Remove(_) => {
-                session.call::<Done>(Command::FilesDelete {
+                session.send::<api::files::Delete>(DeleteBody {
                     paths: removals.clone(),
                     recursive: true,
                 })?;
@@ -455,7 +456,7 @@ fn sync(
             }
             Action::Mkdir(path) => {
                 let path = store::join(&root, &path);
-                session.call::<Done>(Command::FilesMkdir { path: path.clone() })?;
+                mkdir(session, &path)?;
                 report.made.push(path);
             }
             Action::Send(item) => {
@@ -528,19 +529,28 @@ fn upload(
         eprintln!("{} {line}", paint(style::WARN, "skipped:"));
     }
     if !root.is_empty() {
-        session.call::<Done>(Command::FilesMkdir { path: root.clone() })?;
+        mkdir(session, &root)?;
     }
     for item in &ours {
         let path = store::join(&root, &item.path);
         match item.kind {
             FileKind::Dir => {
-                session.call::<Done>(Command::FilesMkdir { path: path.clone() })?;
+                mkdir(session, &path)?;
                 report.made.push(path);
             }
             FileKind::File => send(session, item, &path, &mut progress, &mut report)?,
         }
     }
     print(json, &report, || report.show("sent"))
+}
+
+/// Make `path` in the store, and any missing directory above it.
+fn mkdir(session: &mut Session, path: &str) -> Result<(), String> {
+    session
+        .send::<api::files::Mkdir>(PathBody {
+            path: path.to_string(),
+        })
+        .map(drop)
 }
 
 /// One file to `path` on the device, from where the device says it has got
@@ -589,10 +599,11 @@ fn download(
     json: bool,
 ) -> Result<(), String> {
     let path = store::normalize(remote)?;
-    let listing: FilesListing = session.call(Command::FilesList {
+    let query = FilesQuery {
         path: path.clone(),
         recursive: true,
-    })?;
+    };
+    let listing = session.call::<api::files::List>(query, ())?;
     let name = path
         .rsplit('/')
         .next()

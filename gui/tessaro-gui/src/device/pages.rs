@@ -20,11 +20,17 @@ use iced::widget::{
     text, text_editor, text_input, Column,
 };
 use iced::{Element, Length, Task};
+use protocol::api::{
+    self, AudioTestBody, CalendarBody, CertBody, CertQuery, DeleteBody, EvalBody, FilesQuery,
+    GrowBody, KeyboardBody, MoveBody, NameBody, NavigateBody, PasswordBody, PathBody, PingBody,
+    ProfileQuery, ScheduleChange, ScheduleRef, ScreenPowerBody, SpeedtestBody, SshKeyQuery,
+    TimeSetBody, TokenRef, WifiJoinBody, WifiScanQuery,
+};
 use protocol::files::{self as store, FileEntry, FileKind, FilesListing};
 use protocol::keys;
 use protocol::{
     size_label, Applied, AudioDevice, AudioStatus, AudioTested, CalendarCheck, CertInfo,
-    CertsAdded, Claimed, Command, Connector, Done, HotspotCredentials, Net, NetChange, NetProfile,
+    CertsAdded, Claimed, Connector, Done, HotspotCredentials, Net, NetChange, NetProfile,
     NetProfileDetail, OnError, Password, PingEvent, ProxyTested, ScheduleInfo, ScheduleSpec,
     Secret, SpeedtestEvent, SshKeyInfo, SshKeyRevoked, Storage, StorageGrowEvent, TimeStatus,
     TokenCreated, TokenInfo, UpdatePhase, UpdateStatus, Verify, WifiNetwork, WifiSecurity,
@@ -38,7 +44,7 @@ use super::{Device, Dialog, Link, Message, Page, Tone};
 use crate::dialog::{self, field};
 use crate::grid::{bold, cell, col, grid, Col};
 use crate::section::{self, action};
-use crate::worker::Request;
+use crate::worker::{call, fetch, send, Call, Request};
 use crate::{blocking, jobs, theme};
 
 /// What the pages keep between answers.
@@ -575,16 +581,16 @@ fn open_terminal(command: &str) -> Result<(), String> {
 const TABLE_HEIGHT: f32 = 170.0;
 
 impl Device {
-    fn call(&mut self, tag: &'static str, command: Command) {
-        self.send_call(tag, command, false);
+    fn call(&mut self, tag: &'static str, call: Call) {
+        self.send_call(tag, call, false);
     }
 
-    fn call_long(&mut self, tag: &'static str, command: Command) {
-        self.send_call(tag, command, true);
+    fn call_long(&mut self, tag: &'static str, call: Call) {
+        self.send_call(tag, call, true);
     }
 
-    fn send_call(&mut self, tag: &'static str, command: Command, long: bool) {
-        if self.request(Request::Call { tag, command, long }) {
+    fn send_call(&mut self, tag: &'static str, call: Call, long: bool) {
+        if self.request(Request::Call { tag, call, long }) {
             *self.pages.in_flight.entry(tag).or_default() += 1;
         }
     }
@@ -686,39 +692,45 @@ impl Device {
             return;
         }
         match page {
-            Page::Screen => self.call("modes", Command::Modes),
+            Page::Screen => self.call("modes", fetch::<api::screen::Modes>()),
             Page::Network => {
-                self.call("net", Command::Net);
-                self.call("net.profiles", Command::NetProfiles);
+                self.call("net", fetch::<api::network::Show>());
+                self.call("net.profiles", fetch::<api::network::Profiles>());
             }
-            Page::Certs => self.call("certs", Command::NetCertList),
+            Page::Certs => self.call("certs", fetch::<api::network::Certs>()),
             Page::Wifi => {
-                self.call("wifi", Command::Wifi);
+                self.call("wifi", fetch::<api::network::Wifi>());
                 self.call(
                     "wifi.scan",
-                    Command::WifiScan {
-                        interface: None,
-                        rescan: false,
-                    },
+                    call::<api::network::WifiScan>(
+                        WifiScanQuery {
+                            interface: None,
+                            rescan: false,
+                        },
+                        (),
+                    ),
                 );
             }
-            Page::Storage => self.call("storage", Command::Storage),
-            Page::Audio => self.call("audio", Command::AudioStatus),
-            Page::Time => self.call("time", Command::TimeStatus),
-            Page::Schedules => self.call("schedules", Command::ScheduleList),
-            Page::Access => self.call("tokens", Command::TokenList),
-            Page::Ssh => self.call("ssh.keys", Command::SshKeyList),
+            Page::Storage => self.call("storage", fetch::<api::storage::Show>()),
+            Page::Audio => self.call("audio", fetch::<api::audio::Show>()),
+            Page::Time => self.call("time", fetch::<api::time::Show>()),
+            Page::Schedules => self.call("schedules", fetch::<api::schedule::List>()),
+            Page::Access => self.call("tokens", fetch::<api::access::Tokens>()),
+            Page::Ssh => self.call("ssh.keys", fetch::<api::ssh::Keys>()),
             Page::Files => {
                 let path = self.pages.files_dir.clone();
                 self.call(
                     "files",
-                    Command::FilesList {
-                        path,
-                        recursive: false,
-                    },
+                    call::<api::files::List>(
+                        FilesQuery {
+                            path,
+                            recursive: false,
+                        },
+                        (),
+                    ),
                 );
             }
-            Page::Update => self.call("update", Command::UpdateStatus),
+            Page::Update => self.call("update", fetch::<api::update::Status>()),
             Page::Overview | Page::Browser | Page::Log => {}
         }
     }
@@ -801,7 +813,7 @@ impl Device {
                     format!("schedule {} saved, {state}", info.spec.name),
                 );
                 self.pages.selected.insert("schedules", info.id);
-                self.call("schedules", Command::ScheduleList);
+                self.call("schedules", fetch::<api::schedule::List>());
             }
             "schedule.run" | "schedule.remove" => {
                 let done: Done = parse(value)?;
@@ -809,7 +821,7 @@ impl Device {
                 if tag == "schedule.remove" {
                     self.pages.selected.remove("schedules");
                 }
-                self.call("schedules", Command::ScheduleList);
+                self.call("schedules", fetch::<api::schedule::List>());
             }
             "net" => self.pages.net = Some(parse(value)?),
             "net.profiles" => self.pages.profiles = parse(value)?,
@@ -822,13 +834,13 @@ impl Device {
                 for cert in &added.present {
                     self.log(Tone::Info, format!("already trusted: {}", cert.subject));
                 }
-                self.call("certs", Command::NetCertList);
+                self.call("certs", fetch::<api::network::Certs>());
             }
             "cert.revoke" => {
                 let revoked: CertInfo = parse(value)?;
                 self.log(Tone::Ok, format!("revoked {}", revoked.subject));
                 self.pages.selected.remove("certs");
-                self.call("certs", Command::NetCertList);
+                self.call("certs", fetch::<api::network::Certs>());
             }
             "net.profile" => {
                 let detail: NetProfileDetail = parse(value)?;
@@ -1111,8 +1123,8 @@ impl Device {
                     self.start_job("browser", "DevTools tunnel", jobs::Kind::DevTools);
                 }
             }
-            Msg::Reload => self.call("browser", Command::Reload),
-            Msg::ClearCache => self.call("browser", Command::ClearCache),
+            Msg::Reload => self.call("browser", send::<api::browser::Reload>(())),
+            Msg::ClearCache => self.call("browser", send::<api::browser::ClearCache>(())),
             Msg::Inject => {
                 let script = self
                     .setting(keys::INJECT_SCRIPT)
@@ -1164,15 +1176,18 @@ impl Device {
                     self.set(&[("screen.resolution", &mode)]);
                 }
             }
-            Msg::ScreenPower(on) => self.call("screen.power", Command::ScreenPower { on: Some(on) }),
+            Msg::ScreenPower(on) => self.call(
+                "screen.power",
+                send::<api::screen::PowerSet>(ScreenPowerBody { on }),
+            ),
             Msg::Keyboard(show) => self.call(
                 "screen.keyboard",
-                Command::Keyboard {
+                send::<api::screen::Keyboard>(KeyboardBody {
                     show,
                     selector: None,
-                },
+                }),
             ),
-            Msg::NetLast => self.call("net.last", Command::NetLast),
+            Msg::NetLast => self.call("net.last", fetch::<api::network::Last>()),
             Msg::NetPing => self.form(
                 Form::new("Ping from the device", "Ping", Action::NetPing)
                     .intro("The device pings a host, as tessaro-ctl network ping.")
@@ -1216,15 +1231,18 @@ impl Device {
             }
             Msg::ProxyOff => {
                 self.set(&[(keys::PROXY_URL, "")]);
-                self.call("net", Command::Net);
+                self.call("net", fetch::<api::network::Show>());
             }
             Msg::ProxyTest => {
                 self.log(Tone::Info, "testing the proxy ...");
-                self.call_long("proxy.test", Command::ProxyTest);
+                self.call_long("proxy.test", send::<api::network::ProxyTest>(()));
             }
             Msg::ProfileDetail => {
                 if let Some(profile) = self.selected("profiles").cloned() {
-                    self.call("net.profile", Command::NetShow { profile });
+                    self.call(
+                        "net.profile",
+                        call::<api::network::Profile>(ProfileQuery { profile }, ()),
+                    );
                 }
             }
             Msg::CertPick => {
@@ -1237,7 +1255,7 @@ impl Device {
                 );
             }
             Msg::CertPicked(Some(file)) => match tessaro_client::certs::read_pem(&file) {
-                Ok(pem) => self.call("cert.add", Command::NetCertAdd { pem }),
+                Ok(pem) => self.call("cert.add", send::<api::network::CertAdd>(CertBody { pem })),
                 Err(error) => self.log(Tone::Bad, error),
             },
             Msg::CertPicked(None) => {}
@@ -1276,21 +1294,22 @@ impl Device {
                 if let Some(info) = self.selected_schedule() {
                     self.call(
                         "schedule.set",
-                        Command::ScheduleSet {
-                            schedule: info.id,
-                            name: None,
-                            calendar: None,
-                            lines: None,
-                            on_error: None,
-                            timeout_s: None,
-                            enabled: Some(!info.spec.enabled),
-                        },
+                        call::<api::schedule::Change>(
+                            ScheduleRef { schedule: info.id },
+                            ScheduleChange {
+                                enabled: Some(!info.spec.enabled),
+                                ..ScheduleChange::default()
+                            },
+                        ),
                     );
                 }
             }
             Msg::ScheduleRun => {
                 if let Some(info) = self.selected_schedule() {
-                    self.call("schedule.run", Command::ScheduleRun { schedule: info.id });
+                    self.call(
+                        "schedule.run",
+                        call::<api::schedule::Run>(ScheduleRef { schedule: info.id }, ()),
+                    );
                 }
             }
             Msg::ScheduleLogs => {
@@ -1317,10 +1336,13 @@ impl Device {
             }
             Msg::WifiScan => self.call(
                 "wifi.scan",
-                Command::WifiScan {
-                    interface: None,
-                    rescan: true,
-                },
+                call::<api::network::WifiScan>(
+                    WifiScanQuery {
+                        interface: None,
+                        rescan: true,
+                    },
+                    (),
+                ),
             ),
             Msg::WifiJoin => {
                 let ssid = self
@@ -1349,7 +1371,7 @@ impl Device {
             Msg::GrowCheck => self.start_job(
                 "storage",
                 "grow check",
-                jobs::Kind::Stream(Command::StorageGrow { check: true }),
+                jobs::Kind::Stream(jobs::Stream::Grow(GrowBody { check: true })),
             ),
             Msg::Grow => self.form(
                 Form::new("Grow /data", "Grow", Action::Grow)
@@ -1360,31 +1382,31 @@ impl Device {
                 let table = if side == keys::AUDIO_OUTPUT { "outputs" } else { "inputs" };
                 if let Some(name) = self.selected(table).cloned() {
                     self.set(&[(side, &name)]);
-                    self.call("audio", Command::AudioStatus);
+                    self.call("audio", fetch::<api::audio::Show>());
                 }
             }
             Msg::Volume(volume) => self.pages.volume = Some(volume),
             Msg::VolumeDone => {
                 if let Some(volume) = self.pages.volume {
                     self.set(&[(keys::AUDIO_VOLUME, &volume.to_string())]);
-                    self.call("audio", Command::AudioStatus);
+                    self.call("audio", fetch::<api::audio::Show>());
                 }
             }
             Msg::InputVolume(volume) => self.pages.input_volume = Some(volume),
             Msg::InputVolumeDone => {
                 if let Some(volume) = self.pages.input_volume {
                     self.set(&[(keys::AUDIO_INPUT_VOLUME, &volume.to_string())]);
-                    self.call("audio", Command::AudioStatus);
+                    self.call("audio", fetch::<api::audio::Show>());
                 }
             }
             Msg::Mute(on) => {
                 self.set(&[(keys::AUDIO_MUTE, flag(on))]);
-                self.call("audio", Command::AudioStatus);
+                self.call("audio", fetch::<api::audio::Show>());
             }
             Msg::InputMute(on) => {
                 let input = if on { "off" } else { "auto" };
                 self.set(&[(keys::AUDIO_INPUT, input)]);
-                self.call("audio", Command::AudioStatus);
+                self.call("audio", fetch::<api::audio::Show>());
             }
             Msg::Test(input) => {
                 self.log(
@@ -1395,11 +1417,14 @@ impl Device {
                         "playing a test tone ..."
                     },
                 );
-                self.call_long("audio.test", Command::AudioTest { input });
+                self.call_long(
+                    "audio.test",
+                    send::<api::audio::Test>(AudioTestBody { input }),
+                );
             }
             Msg::Timezone => match ZONES.get() {
                 Some(zones) => self.timezone_form(zones),
-                None => self.call("time.zones", Command::TimeZones),
+                None => self.call("time.zones", fetch::<api::time::Zones>()),
             },
             Msg::Ntp => {
                 let (on, servers) = self
@@ -1415,7 +1440,7 @@ impl Device {
                         .field(Field::text("Servers", servers, "from DHCP, else the fallback")),
                 );
             }
-            Msg::TimeSync => self.call("time.sync", Command::TimeSync),
+            Msg::TimeSync => self.call("time.sync", send::<api::time::Sync>(())),
             Msg::SetClock => {
                 let now = self
                     .pages
@@ -1836,10 +1861,10 @@ impl Device {
         }
         self.call(
             "schedule.check",
-            Command::ScheduleCheck {
+            send::<api::schedule::Check>(CalendarBody {
                 calendar,
                 count: Some(3),
-            },
+            }),
         );
     }
 
@@ -1896,7 +1921,10 @@ impl Device {
                 if url.is_empty() {
                     return Err("a URL, please".to_string());
                 }
-                self.call("browser", Command::Navigate { url });
+                self.call(
+                    "browser",
+                    send::<api::browser::Navigate>(NavigateBody { url }),
+                );
             }
             Action::Maintenance => {
                 let url = form.value("Page").trim();
@@ -1938,52 +1966,54 @@ impl Device {
                 self.output("browser", format!("> {code}"));
                 self.call(
                     "browser.eval",
-                    Command::Eval {
+                    send::<api::browser::Eval>(EvalBody {
                         code,
                         timeout_ms: None,
                         await_promise: true,
                         user_gesture: false,
-                    },
+                    }),
                 );
             }
             Action::Timezone => {
                 let zone = form.value("Timezone").trim();
                 super::check(keys::TIMEZONE, zone)?;
                 self.set(&[(keys::TIMEZONE, zone)]);
-                self.call("time", Command::TimeStatus);
+                self.call("time", fetch::<api::time::Show>());
             }
             Action::Ntp => {
                 let servers = form.value("Servers").trim();
                 super::check(keys::NTP_SERVERS, servers)?;
                 let on = flag(form.checked("Sync over NTP"));
                 self.set(&[(keys::NTP_ENABLE, on), (keys::NTP_SERVERS, servers)]);
-                self.call("time", Command::TimeStatus);
+                self.call("time", fetch::<api::time::Show>());
             }
             Action::SetClock => {
-                let command = if form.checked("Use this computer's clock") {
+                let body = if form.checked("Use this computer's clock") {
                     let usec = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .map_err(|_| "this computer's clock is before 1970".to_string())?
                         .as_micros() as u64;
-                    Command::TimeSet {
+                    TimeSetBody {
                         usec: Some(usec),
                         local: None,
                     }
                 } else {
                     let local = form.value("Time").trim().to_string();
                     protocol::parse_local_time(&local)?;
-                    Command::TimeSet {
+                    TimeSetBody {
                         usec: None,
                         local: Some(local),
                     }
                 };
-                self.call("time.set", command);
+                self.call("time.set", send::<api::time::Set>(body));
             }
             Action::ControlPing => {
                 let count = count(form.value("Count"))?;
                 self.start_job("overview", "ping", jobs::Kind::ControlPing { count });
             }
-            Action::FactoryReset => self.call_long("factory", Command::FactoryReset),
+            Action::FactoryReset => {
+                self.call_long("factory", send::<api::device::FactoryReset>(()))
+            }
             Action::NetPing => {
                 let host = form.value("Host").trim().to_string();
                 if host.is_empty() {
@@ -1991,14 +2021,18 @@ impl Device {
                 }
                 let interface = Some(form.value("Interface").trim().to_string())
                     .filter(|interface| !interface.is_empty());
-                let command = Command::NetPing {
+                let body = PingBody {
                     host: host.clone(),
                     count: Some(count(form.value("Count"))?),
                     interval_ms: None,
                     timeout_ms: None,
                     interface,
                 };
-                self.start_job("net", format!("ping {host}"), jobs::Kind::Stream(command));
+                self.start_job(
+                    "net",
+                    format!("ping {host}"),
+                    jobs::Kind::Stream(jobs::Stream::Ping(body)),
+                );
             }
             Action::Speedtest => {
                 let size = match form.value("Largest transfer") {
@@ -2008,12 +2042,16 @@ impl Device {
                     "100m" => 100_000_000,
                     _ => 25_000_000,
                 };
-                let command = Command::Speedtest {
+                let body = SpeedtestBody {
                     max_size: Some(size),
                     tests: None,
                     direct: form.checked("Bypass the proxy"),
                 };
-                self.start_job("net", "speed test", jobs::Kind::Stream(command));
+                self.start_job(
+                    "net",
+                    "speed test",
+                    jobs::Kind::Stream(jobs::Stream::Speedtest(body)),
+                );
             }
             Action::Proxy => {
                 let url = form.value("URL").trim();
@@ -2036,7 +2074,7 @@ impl Device {
                 let url = super::check(keys::PROXY_URL, &proxy.to_string())?;
                 let bypass = super::check(keys::PROXY_BYPASS, form.value("Bypass").trim())?;
                 self.set(&[(keys::PROXY_URL, &url), (keys::PROXY_BYPASS, &bypass)]);
-                self.call("net", Command::Net);
+                self.call("net", fetch::<api::network::Show>());
             }
             Action::WifiJoin => {
                 let ssid = form.value("SSID").trim().to_string();
@@ -2048,7 +2086,7 @@ impl Device {
                 if security != WifiSecurity::Open {
                     protocol::keys::check_psk(&password)?;
                 }
-                let command = Command::WifiJoin {
+                let body = WifiJoinBody {
                     ssid: ssid.clone(),
                     psk: (!password.is_empty()).then_some(Secret(password)),
                     security: Some(security),
@@ -2059,24 +2097,28 @@ impl Device {
                     Tone::Info,
                     format!("joining {ssid} - this can take a minute"),
                 );
-                self.call_long("wifi.join", command);
+                self.call_long("wifi.join", send::<api::network::WifiJoin>(body));
             }
-            Action::Hotspot => self.call("wifi.hotspot", Command::HotspotPassword),
+            Action::Hotspot => self.call("wifi.hotspot", send::<api::network::HotspotPassword>(())),
             Action::Grow => self.start_job(
                 "storage",
                 "grow /data",
-                jobs::Kind::Stream(Command::StorageGrow { check: false }),
+                jobs::Kind::Stream(jobs::Stream::Grow(GrowBody { check: false })),
             ),
             Action::TokenCreate => {
                 let name = form.value("Name").trim().to_string();
                 if name.is_empty() {
                     return Err("a name, please".to_string());
                 }
-                self.call("token.new", Command::TokenCreate { name });
+                self.call(
+                    "token.new",
+                    send::<api::access::TokenCreate>(NameBody { name }),
+                );
             }
-            Action::TokenRevoke(id) => {
-                self.call("token.revoke", Command::TokenRevoke { id: id.clone() })
-            }
+            Action::TokenRevoke(id) => self.call(
+                "token.revoke",
+                call::<api::access::TokenRevoke>(TokenRef { id: id.clone() }, ()),
+            ),
             Action::Password => {
                 let password = form.value("Password");
                 let password = if password.is_empty() {
@@ -2085,7 +2127,10 @@ impl Device {
                     protocol::check_password(password)?;
                     Some(password.to_string())
                 };
-                self.call("password", Command::PasswordSet { password });
+                self.call(
+                    "password",
+                    send::<api::access::Password>(PasswordBody { password }),
+                );
             }
             Action::Claim => {
                 let name = match form.value("Claim as").trim() {
@@ -2096,13 +2141,15 @@ impl Device {
                     *self.pages.in_flight.entry("claim").or_default() += 1;
                 }
             }
-            Action::Unclaim => self.call("unclaim", Command::Unclaim),
-            Action::KeyRevoke(key) => {
-                self.call("ssh.revoke", Command::SshKeyRevoke { key: key.clone() })
-            }
-            Action::CertRevoke(cert) => {
-                self.call("cert.revoke", Command::NetCertRevoke { cert: cert.clone() })
-            }
+            Action::Unclaim => self.call("unclaim", send::<api::access::Unclaim>(())),
+            Action::KeyRevoke(key) => self.call(
+                "ssh.revoke",
+                call::<api::ssh::Revoke>(SshKeyQuery { key: key.clone() }, ()),
+            ),
+            Action::CertRevoke(cert) => self.call(
+                "cert.revoke",
+                call::<api::network::CertRevoke>(CertQuery { cert: cert.clone() }, ()),
+            ),
             Action::ScheduleSave(id) => {
                 let timeout =
                     tessaro_client::schedule::parse_timeout(match form.value("Timeout").trim() {
@@ -2114,34 +2161,39 @@ impl Device {
                 let calendar = form.lines("Calendar");
                 let lines = form.lines("Commands");
                 let enabled = form.checked("Enabled");
-                let command = match id {
-                    None => Command::ScheduleCreate {
-                        spec: ScheduleSpec {
-                            name,
-                            enabled,
-                            calendar,
-                            lines,
-                            on_error,
-                            timeout_s: (timeout > 0).then_some(timeout),
+                let save = match id {
+                    None => send::<api::schedule::Create>(ScheduleSpec {
+                        name,
+                        enabled,
+                        calendar,
+                        lines,
+                        on_error,
+                        timeout_s: (timeout > 0).then_some(timeout),
+                    }),
+                    Some(id) => call::<api::schedule::Change>(
+                        ScheduleRef {
+                            schedule: id.clone(),
                         },
-                    },
-                    Some(id) => Command::ScheduleSet {
-                        schedule: id.clone(),
-                        name: Some(name),
-                        calendar: Some(calendar),
-                        lines: Some(lines),
-                        on_error: Some(on_error),
-                        timeout_s: Some(timeout),
-                        enabled: Some(enabled),
-                    },
+                        ScheduleChange {
+                            name: Some(name),
+                            calendar: Some(calendar),
+                            lines: Some(lines),
+                            on_error: Some(on_error),
+                            timeout_s: Some(timeout),
+                            enabled: Some(enabled),
+                        },
+                    ),
                 };
-                self.call("schedule.save", command);
+                self.call("schedule.save", save);
             }
             Action::ScheduleRemove(id) => self.call(
                 "schedule.remove",
-                Command::ScheduleRemove {
-                    schedule: id.clone(),
-                },
+                call::<api::schedule::Remove>(
+                    ScheduleRef {
+                        schedule: id.clone(),
+                    },
+                    (),
+                ),
             ),
             Action::Mkdir => {
                 let name = form.value("Name").trim();
@@ -2149,7 +2201,7 @@ impl Device {
                     return Err("a name, please".to_string());
                 }
                 let path = store::normalize(&store::join(&self.pages.files_dir, name))?;
-                self.call("files.done", Command::FilesMkdir { path });
+                self.call("files.done", send::<api::files::Mkdir>(PathBody { path }));
             }
             Action::Move(from) => {
                 let to = store::normalize(form.value("To").trim())?;
@@ -2158,18 +2210,18 @@ impl Device {
                 }
                 self.call(
                     "files.done",
-                    Command::FilesMove {
+                    send::<api::files::Move>(MoveBody {
                         from: from.clone(),
                         to,
-                    },
+                    }),
                 );
             }
             Action::Delete(paths) => self.call(
                 "files.done",
-                Command::FilesDelete {
+                send::<api::files::Delete>(DeleteBody {
                     paths: paths.clone(),
                     recursive: true,
-                },
+                }),
             ),
             Action::UpdateSend(image) => {
                 let bmap = PathBuf::from(form.value("Block map").trim());
@@ -2229,7 +2281,7 @@ impl Device {
                     );
                 }
             }
-            Action::UpdateCancel => self.call("update.done", Command::UpdateCancel),
+            Action::UpdateCancel => self.call("update.done", send::<api::update::Cancel>(())),
         }
         Ok(())
     }

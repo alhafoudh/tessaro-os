@@ -10,7 +10,7 @@
 //!
 //! Anything that would take this process down with it - restarting the agent
 //! or Weston (the agent is `PartOf=` it), a reboot - is returned as an
-//! `After` and run by the server once the reply is on the wire.
+//! `After` and run by the API server once the reply is on the wire.
 //!
 //! All file I/O is blocking and goes through `blocking()`: `spawn_blocking`
 //! under a deadline, so the one runtime thread never waits on a disk.
@@ -43,8 +43,8 @@ use std::time::Duration;
 
 use protocol::keys::{self, Key};
 use protocol::{
-    Command, Done, KeyInfo, NodeInfo, Pending, RestartTarget, Screenshot, Setting, Settings,
-    Source, Status,
+    Command, Done, KeyInfo, LogPage, NodeInfo, Pending, RestartTarget, Screenshot, Setting,
+    Settings, Source, Status,
 };
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -54,7 +54,7 @@ use tokio::time::Instant;
 use crate::audio::Audio;
 use crate::auth::{self, Auth};
 use crate::cdp::session::SessionHandle;
-use crate::deadline::blocking;
+use crate::deadline::{blocking, within};
 use crate::display;
 use crate::files::Files;
 use crate::log::Log;
@@ -87,15 +87,13 @@ pub enum Caller {
     Local,
     /// TCP, with a valid token.
     Token { id: String, peer: SocketAddr },
-    /// TCP, no valid token: the `Command::is_public` commands, and every
-    /// command while the device is unclaimed.
+    /// TCP, no valid token: the public endpoints (`api::Endpoint::PUBLIC`),
+    /// and every endpoint while the device is unclaimed. The setup page on a
+    /// phone is one of these.
     Anonymous { peer: SocketAddr },
     /// The kiosk page itself, through the page bridge: only the commands
     /// `bridge.rs` maps its calls onto.
     Page,
-    /// The setup portal on the hotspot, through nginx: only the commands
-    /// `portal.rs` allows. `peer` is the phone's address as nginx saw it.
-    Portal { peer: String },
 }
 
 impl Caller {
@@ -103,9 +101,8 @@ impl Caller {
         match self {
             Caller::Local => "the local socket".to_string(),
             Caller::Token { id, peer } => format!("{peer} (token {id})"),
-            Caller::Anonymous { peer } => peer.to_string(),
+            Caller::Anonymous { peer } => peer.ip().to_string(),
             Caller::Page => "the page".to_string(),
-            Caller::Portal { peer } => format!("the setup portal ({peer})"),
         }
     }
 }
@@ -211,8 +208,9 @@ pub struct Control {
     /// online. `None` until one has been tried. Not the cached address, which
     /// a failure leaves in place.
     online: Mutex<Option<bool>>,
-    /// When the setup portal last read the device's state, which keeps the
-    /// online check running while someone is looking at it.
+    /// When a client last asked for the welcome values (the setup page does,
+    /// every few seconds), which keeps the online check running while
+    /// someone is looking at it.
     portal_seen: Mutex<Option<Instant>>,
     /// Set once, by `start_bridge`.
     bridge: std::sync::OnceLock<Arc<bridge::Bridge>>,
@@ -268,18 +266,11 @@ impl Control {
         })
     }
 
-    /// A command answered with events (`Command::is_stream`), validated and
-    /// started; the server sends what it produces.
+    /// A command run in steps (`Command::is_job`), validated and started:
+    /// the API keeps what it produces as a job, the page bridge hands it to
+    /// the page.
     pub fn stream(&self, caller: &Caller, command: Command) -> Result<Stream, String> {
         match command {
-            Command::Logs {
-                follow,
-                unit,
-                lines,
-            } => Ok(Stream::Journal {
-                command: journal(follow, unit.as_deref(), lines)?,
-                follow,
-            }),
             Command::Speedtest {
                 max_size,
                 tests,
@@ -417,9 +408,16 @@ impl Control {
                 apply,
                 verify,
             } => {
+                // The captive flag follows network.wifi.captive at once.
+                let captive = values.contains_key(protocol::keys::WIFI_CAPTIVE);
                 let changes = values.into_iter().map(|(k, v)| (k, Some(v))).collect();
-                self.change(caller, changes, if_revision, apply, verify, None)
-                    .await
+                let reply = self
+                    .change(caller, changes, if_revision, apply, verify, None)
+                    .await;
+                if captive {
+                    self.nudge_welcome();
+                }
+                reply
             }
             Command::Unset {
                 keys,
@@ -455,11 +453,19 @@ impl Control {
                 self.keyboard(show, selector.as_deref()).await.into()
             }
             Command::ScreenPower { on } => self.screen_power(caller, on).await.into(),
-            // `Command::is_stream`: the server starts them through `stream`.
-            Command::Logs { .. }
-            | Command::Speedtest { .. }
-            | Command::NetPing { .. }
-            | Command::StorageGrow { .. } => Reply::err("a stream is not answered with one reply"),
+            Command::Logs {
+                unit,
+                lines,
+                cursor,
+            } => self.logs(unit, lines, cursor).await.into(),
+            Command::Welcome => {
+                self.portal_seen();
+                self.welcome().await.into()
+            }
+            // `Command::is_job`: started through `stream`.
+            Command::Speedtest { .. } | Command::NetPing { .. } | Command::StorageGrow { .. } => {
+                Reply::err("that command runs as a job")
+            }
             // The hotspot's security follows the claim, re-applied once the
             // answer is out: whoever claims through the hotspot gets its new
             // password before the hotspot drops them.
@@ -586,6 +592,22 @@ impl Control {
                 self.schedule_check(calendar, count).await.into()
             }
         }
+    }
+
+    /// A page of the journal: the last `lines` entries, or everything after
+    /// `cursor`.
+    async fn logs(
+        &self,
+        unit: Option<String>,
+        lines: Option<u32>,
+        cursor: Option<String>,
+    ) -> Result<LogPage, String> {
+        let mut command = journal(unit.as_deref(), lines, cursor.as_deref())?;
+        let output = within("journalctl", LOGS, command.output())
+            .await
+            .map_err(|expired| expired.to_string())?
+            .map_err(|err| format!("journalctl: {err}"))?;
+        Ok(log_page(&String::from_utf8_lossy(&output.stdout), cursor))
     }
 
     /// Resume whatever update the staging directory holds.
@@ -1026,15 +1048,9 @@ impl Control {
     }
 }
 
-/// A command that answers with events, started. Each kind of step stream
-/// keeps its own type; the server turns every step into one `event` frame.
+/// A command run in steps, started. Each kind keeps its own step type; the
+/// API turns every step into one event of a job.
 pub enum Stream {
-    /// `journalctl`, with the end of a non-following one bounded by the
-    /// server.
-    Journal {
-        command: tokio::process::Command,
-        follow: bool,
-    },
     Speedtest(tokio::sync::mpsc::Receiver<speedtest::Step>),
     Grow(tokio::sync::mpsc::Receiver<storage::Step>),
     Ping {
@@ -1044,18 +1060,32 @@ pub enum Stream {
     },
 }
 
-/// `journalctl` for the `logs` stream.
+/// The most entries one page of the journal carries. A page after a cursor
+/// that has more is its last `LOG_PAGE` entries.
+const LOG_PAGE: u32 = 10_000;
+/// One `journalctl` for a page.
+const LOGS: Duration = Duration::from_secs(30);
+
+/// `journalctl` for one page of `logs`.
 fn journal(
-    follow: bool,
     unit: Option<&str>,
     lines: Option<u32>,
+    cursor: Option<&str>,
 ) -> Result<tokio::process::Command, String> {
     let mut command = tokio::process::Command::new("journalctl");
-    command
-        .args(["--output=json", "--no-pager", "--quiet"])
-        .arg(format!("--lines={}", lines.unwrap_or(100).min(100_000)));
-    if follow {
-        command.arg("--follow");
+    command.args(["--output=json", "--no-pager", "--quiet"]);
+    match cursor {
+        Some(cursor) => {
+            if cursor.is_empty() || cursor.chars().any(char::is_control) {
+                return Err("that is not a journal cursor".to_string());
+            }
+            command
+                .arg(format!("--after-cursor={cursor}"))
+                .arg(format!("--lines={LOG_PAGE}"));
+        }
+        None => {
+            command.arg(format!("--lines={}", lines.unwrap_or(100).min(LOG_PAGE)));
+        }
     }
     if let Some(unit) = unit {
         let valid = !unit.is_empty()
@@ -1073,6 +1103,24 @@ fn journal(
         .stderr(std::process::Stdio::null())
         .kill_on_drop(true);
     Ok(command)
+}
+
+/// journalctl's output as a page: one entry per line, the last one's
+/// `__CURSOR` where the next page starts, `cursor` when nothing came.
+fn log_page(output: &str, cursor: Option<String>) -> LogPage {
+    let entries: Vec<Value> = output
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).unwrap_or_else(|_| Value::String(line.to_string())))
+        .collect();
+    let last = entries
+        .iter()
+        .rev()
+        .find_map(|entry| entry["__CURSOR"].as_str().map(str::to_string));
+    LogPage {
+        cursor: last.or(cursor),
+        entries,
+    }
 }
 
 /// The refusal of anything but `id` and `claim` on an unclaimed device.
@@ -1132,7 +1180,7 @@ mod tests {
     pub(crate) struct Fixture {
         _dir: tempfile::TempDir,
         pub(crate) control: Arc<Control>,
-        paths: Paths,
+        pub(crate) paths: Paths,
         _stop: watch::Sender<bool>,
     }
 
@@ -1179,6 +1227,8 @@ mod tests {
             ("KIOSK_DEVICE_TREE", at("device-tree")),
             ("KIOSK_CPUINFO", at("cpuinfo")),
             ("KIOSK_MEMINFO", at("meminfo")),
+            // Never made: no captive flag is written.
+            ("KIOSK_PORTAL_DIR", at("portal")),
         ]
         .into_iter()
         .map(|(k, v)| (k.to_string(), v))

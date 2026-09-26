@@ -12,12 +12,13 @@ use std::path::PathBuf;
 use anstream::println;
 use clap::builder::{PossibleValuesParser, TypedValueParser};
 use clap::{Args, Subcommand};
-use protocol::{CalendarCheck, Command, Done, Moment, OnError, ScheduleInfo, ScheduleSpec};
+use protocol::api::{self, CalendarBody, LogsQuery, ScheduleChange, ScheduleRef};
+use protocol::{CalendarCheck, Moment, OnError, ScheduleInfo, ScheduleSpec};
 use tessaro_client::schedule::{duration, now, outcome, parse_timeout, relative};
 
 use crate::connect::Session;
 use crate::style::{self, pad, paint};
-use crate::{journal_line, print, prompt};
+use crate::{done, journal_line, print, prompt};
 
 #[derive(Subcommand)]
 pub enum ScheduleCmd {
@@ -145,7 +146,7 @@ impl Body {
 pub fn run(session: &mut Session, command: ScheduleCmd, json: bool) -> Result<(), String> {
     match command {
         ScheduleCmd::List => {
-            let schedules: Vec<ScheduleInfo> = session.call(Command::ScheduleList)?;
+            let schedules = session.fetch::<api::schedule::List>()?;
             print(json, &schedules, || list(&schedules))
         }
         ScheduleCmd::Show { schedule } => {
@@ -170,7 +171,7 @@ pub fn run(session: &mut Session, command: ScheduleCmd, json: bool) -> Result<()
                 on_error: body.on_error.unwrap_or_default(),
                 timeout_s: body.timeout.filter(|seconds| *seconds > 0),
             };
-            let info: ScheduleInfo = session.call(Command::ScheduleCreate { spec })?;
+            let info = session.send::<api::schedule::Create>(spec)?;
             print(json, &info, || {
                 println!(
                     "{}",
@@ -186,8 +187,7 @@ pub fn run(session: &mut Session, command: ScheduleCmd, json: bool) -> Result<()
         } => {
             let lines = body.lines()?;
             let calendar = (!body.calendar.is_empty()).then_some(body.calendar);
-            let command = Command::ScheduleSet {
-                schedule,
+            let change = ScheduleChange {
                 name,
                 calendar,
                 lines,
@@ -195,21 +195,19 @@ pub fn run(session: &mut Session, command: ScheduleCmd, json: bool) -> Result<()
                 timeout_s: body.timeout,
                 enabled: None,
             };
-            changed(session, command, json)
+            changed(session, schedule, change, json)
         }
-        ScheduleCmd::Enable { schedule } => changed(session, enabled(schedule, true), json),
-        ScheduleCmd::Disable { schedule } => changed(session, enabled(schedule, false), json),
+        ScheduleCmd::Enable { schedule } => changed(session, schedule, enabled(true), json),
+        ScheduleCmd::Disable { schedule } => changed(session, schedule, enabled(false), json),
         ScheduleCmd::Run { schedule } => {
-            let done: Done = session.call(Command::ScheduleRun { schedule })?;
-            print(json, &done, || println!("{}", done.message))
+            done::<api::schedule::Run>(session, ScheduleRef { schedule }, (), json)
         }
         ScheduleCmd::Remove { schedule, yes } => {
             prompt::confirm(yes, &format!("Remove schedule {schedule}?"))?;
-            let done: Done = session.call(Command::ScheduleRemove { schedule })?;
-            print(json, &done, || println!("{}", done.message))
+            done::<api::schedule::Remove>(session, ScheduleRef { schedule }, (), json)
         }
         ScheduleCmd::Check { calendar, count } => {
-            let check: CalendarCheck = session.call(Command::ScheduleCheck {
+            let check = session.send::<api::schedule::Check>(CalendarBody {
                 calendar,
                 count: Some(count),
             })?;
@@ -226,12 +224,15 @@ pub fn run(session: &mut Session, command: ScheduleCmd, json: bool) -> Result<()
             lines,
         } => {
             let info = find(session, &schedule)?;
-            session.stream(
-                Command::Logs {
-                    follow,
+            session.logs(
+                LogsQuery {
                     unit: Some(info.units),
                     lines: Some(lines),
+                    cursor: None,
                 },
+                follow,
+                // Following ends with Ctrl-C, which ends the process.
+                &|| false,
                 |event| {
                     if json {
                         println!("{event}");
@@ -244,21 +245,21 @@ pub fn run(session: &mut Session, command: ScheduleCmd, json: bool) -> Result<()
     }
 }
 
-/// `enable` and `disable` are one `schedule-set` of `enabled`.
-fn enabled(schedule: String, enabled: bool) -> Command {
-    Command::ScheduleSet {
-        schedule,
-        name: None,
-        calendar: None,
-        lines: None,
-        on_error: None,
-        timeout_s: None,
+/// `enable` and `disable` are one change of `enabled`.
+fn enabled(enabled: bool) -> ScheduleChange {
+    ScheduleChange {
         enabled: Some(enabled),
+        ..ScheduleChange::default()
     }
 }
 
-fn changed(session: &mut Session, command: Command, json: bool) -> Result<(), String> {
-    let info: ScheduleInfo = session.call(command)?;
+fn changed(
+    session: &mut Session,
+    schedule: String,
+    change: ScheduleChange,
+    json: bool,
+) -> Result<(), String> {
+    let info = session.call::<api::schedule::Change>(ScheduleRef { schedule }, change)?;
     print(json, &info, || {
         println!(
             "{}",
@@ -270,7 +271,7 @@ fn changed(session: &mut Session, command: Command, json: bool) -> Result<(), St
 
 /// The schedule `query` names, by name or id.
 fn find(session: &mut Session, query: &str) -> Result<ScheduleInfo, String> {
-    let schedules: Vec<ScheduleInfo> = session.call(Command::ScheduleList)?;
+    let schedules = session.fetch::<api::schedule::List>()?;
     schedules
         .into_iter()
         .find(|info| info.id == query || info.spec.name == query)
@@ -280,7 +281,7 @@ fn find(session: &mut Session, query: &str) -> Result<ScheduleInfo, String> {
 /// The next times `info` fires; `None` if the device cannot say.
 fn upcoming(session: &mut Session, info: &ScheduleInfo) -> Option<CalendarCheck> {
     session
-        .call(Command::ScheduleCheck {
+        .send::<api::schedule::Check>(CalendarBody {
             calendar: info.spec.calendar.clone(),
             count: Some(5),
         })

@@ -14,9 +14,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use anstream::println;
-use protocol::{
-    Command, Done, ImageUpload, Status, UpdateBegun, UpdatePhase, UpdateResult, UpdateStatus,
-};
+use protocol::api::{self, CommitBody};
+use protocol::{ImageUpload, Status, UpdatePhase, UpdateResult, UpdateStatus};
 use tessaro_client::nodes::Nodes;
 use tessaro_client::transfer;
 
@@ -142,14 +141,14 @@ pub fn send(
     let mut progress = Progress::new(json);
     let sha256 = hash(&options.image, size, &mut progress)?;
 
-    let begun: UpdateBegun = session.call(Command::UpdateBegin(ImageUpload {
+    let begun = session.send::<api::update::Begin>(ImageUpload {
         name: name.clone(),
         size,
         sha256,
         bmap,
         verify: !options.no_verify,
         repartition: options.repartition,
-    }))?;
+    })?;
     if begun.phase == UpdatePhase::Receiving {
         upload(session, &options.image, size, begun.offset, &mut progress)?;
     } else {
@@ -158,7 +157,7 @@ pub fn send(
 
     prepare(session, &mut progress)?;
     let reboot = !options.no_reboot;
-    let done: Done = session.call(Command::UpdateCommit {
+    let done = session.send::<api::update::Commit>(CommitBody {
         wipe_data: options.wipes_data(),
         reboot,
     })?;
@@ -222,13 +221,12 @@ pub fn send(
 }
 
 pub fn status(session: &mut Session, json: bool) -> Result<(), String> {
-    let status: UpdateStatus = session.call(Command::UpdateStatus)?;
+    let status = session.fetch::<api::update::Status>()?;
     crate::print(json, &status, || show(&status))
 }
 
 pub fn cancel(session: &mut Session, json: bool) -> Result<(), String> {
-    let done: Done = session.call(Command::UpdateCancel)?;
-    crate::print(json, &done, || println!("{}", done.message))
+    crate::done::<api::update::Cancel>(session, api::Empty {}, (), json)
 }
 
 fn show(status: &UpdateStatus) {
@@ -348,7 +346,7 @@ fn prepare(session: &mut Session, progress: &mut Progress) -> Result<(), String>
     // The step being shown, and its rate since it started.
     let mut step: Option<(UpdatePhase, Rate)> = None;
     loop {
-        let status: UpdateStatus = session.call(Command::UpdateStatus)?;
+        let status = session.fetch::<api::update::Status>()?;
         let (label, done, total) = match status.phase {
             UpdatePhase::Verifying => ("verifying", status.verified, status.size),
             UpdatePhase::Preparing => ("preparing", status.prepared, status.to_prepare),
@@ -420,8 +418,8 @@ fn wait_for(
             1,
         );
         if let Ok(mut session) = connect::open(target, nodes, Trust::KnownOnly) {
-            let update: UpdateStatus = session.call(Command::UpdateStatus)?;
-            let status: Status = session.call(Command::Status)?;
+            let update = session.fetch::<api::update::Status>()?;
+            let status = session.fetch::<api::device::Status>()?;
             progress.done(&paint(
                 style::OK,
                 format!("{node} is back after {}", clock(started.elapsed())),

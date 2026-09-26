@@ -20,10 +20,11 @@
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// What has to happen for a changed value to take effect.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum Consumer {
     /// Read by tessaro-agent at start: the agent restarts itself. Invisible
@@ -393,7 +394,7 @@ pub static KEYS: &[Key] = &[
     // Read by the agent's welcome watcher every few seconds, which keeps the
     // flag nginx looks at; nothing restarts.
     key(WIFI_CAPTIVE, "KIOSK_WIFI_CAPTIVE", Kind::Flag, NOBODY,
-        "While the device is unclaimed, a phone joining the hotspot gets its sign-in sheet with the setup portal. The portal turns it off with its first saved change; the portal itself stays at http://10.42.0.1/ until the device is claimed."),
+        "While the device is unclaimed, a phone joining the hotspot gets its sign-in sheet with the setup portal. The portal turns it off with its first saved change; the portal itself stays at https://10.42.0.1:7400/ until the device is claimed."),
     key("network.wifi.ssid", "KIOSK_WIFI_SSID", Kind::Ssid, NETWORK,
         "The network network.wifi.mode=client joins. Its password is set by `tessaro-ctl network wifi join` and never shown."),
     key("network.wifi.security", "KIOSK_WIFI_SECURITY", Kind::Choice(&["psk", "sae", "open"]), NETWORK,

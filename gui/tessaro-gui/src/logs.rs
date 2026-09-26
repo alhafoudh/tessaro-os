@@ -1,20 +1,16 @@
 //! A device's journal, followed live on a connection of its own.
 //!
-//! `logs --follow` never ends, and the device window's worker has to keep
-//! polling beside it, so the Log page opens a second session. The stream
-//! blocks in a read for as long as the journal is quiet; a watcher thread
-//! shuts the socket down once nobody listens (the page or the window
-//! closed), which ends the read and with it the thread.
+//! Following the journal never ends, and the device window's worker has to
+//! keep polling beside it, so the Log page opens a second session. The
+//! follow asks for the next page every second and stops once nobody listens
+//! (the page or the window closed), which ends the thread.
 
 use std::hash::{Hash, Hasher};
-use std::net::Shutdown;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use std::time::Duration;
 
 use iced::futures::channel::mpsc as ui;
 use iced::Subscription;
-use protocol::Command;
+use protocol::api::LogsQuery;
 use tessaro_client::journal::Entry;
 use tessaro_client::nodes::Node;
 
@@ -71,26 +67,15 @@ fn follow(spec: Spec, out: ui::UnboundedSender<Event>) {
         let lost = match worker::connect(&spec.node) {
             Ok((mut session, _)) => {
                 let _ = out.unbounded_send(Event::Connected);
-                let done = Arc::new(AtomicBool::new(false));
-                if let Some(tcp) = session.shutdown_handle() {
-                    let (out, done) = (out.clone(), done.clone());
-                    std::thread::spawn(move || {
-                        while !out.is_closed() && !done.load(Ordering::Relaxed) {
-                            std::thread::sleep(Duration::from_secs(1));
-                        }
-                        let _ = tcp.shutdown(Shutdown::Both);
-                    });
-                }
-                let command = Command::Logs {
-                    follow: true,
+                let query = LogsQuery {
                     unit: spec.unit.clone(),
                     lines: Some(BACKLOG),
+                    cursor: None,
                 };
-                let streamed = session.stream(command, |event| {
+                let followed = session.logs(query, true, &|| out.is_closed(), |event| {
                     let _ = out.unbounded_send(Event::Entry(Box::new(Entry::parse(&event))));
                 });
-                done.store(true, Ordering::Relaxed);
-                match streamed {
+                match followed {
                     Ok(()) => "the log stream ended".to_string(),
                     Err(why) => why,
                 }

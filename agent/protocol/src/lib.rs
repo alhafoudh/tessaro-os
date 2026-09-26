@@ -1,39 +1,24 @@
-//! The Tessaro control protocol.
+//! The Tessaro API: the types on the wire, the endpoints that carry them and
+//! the configuration key registry.
 //!
-//! One command model, every transport an encoding of it (TODO.md item 8).
-//! Today there is one encoding, newline-delimited JSON, over the local unix
-//! socket and over TLS on TCP.
-//!
-//! A conversation is:
-//!
-//! ```text
-//! client: {"protocol":1,"client":"tessaro-ctl 1.0.0"}              Hello
-//! server: {"type":"welcome","protocol":1,"node":{...}}             Frame::Welcome
-//! client: {"id":1,"token":"tsr_...","command":{"cmd":"status"}}   Request
-//! server: {"type":"ok","id":1,"result":{...}}                      Frame::Ok
-//! ```
-//!
-//! Requests on one connection are answered in order. A streaming command
-//! (`logs`, `speedtest`, `net-ping`, `storage-grow`: `Command::is_stream`)
-//! answers with `event` frames and ends with `end`. Each stream's events
-//! are tagged in their own way - `phase` for the speed test and storage,
-//! `event` for ping - and stay so: changing a tag would break every client
-//! that reads it.
-//! `token` is only looked at over TCP; the local socket is root-only and
-//! needs none.
+//! Every client - tessaro-ctl, tessaro-gui, the setup page, anyone's own
+//! program - speaks the HTTP API that `api` defines, over TLS on TCP or
+//! plain over the local unix socket (docs/api.md). `Command` is the agent's
+//! own model of what it can be asked: each endpoint maps its request onto
+//! one, and so does the page bridge. It never crosses the network.
 
+pub mod api;
 pub mod files;
 pub mod keys;
+pub mod openapi;
 pub mod sshkey;
 
 use std::collections::BTreeMap;
 
+use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-
-/// Bumped on any change a client of the previous version would misread.
-pub const PROTOCOL_VERSION: u32 = 1;
 
 pub const DEFAULT_PORT: u16 = 7400;
 pub const DEFAULT_SOCKET: &str = "/run/tessaro-agent.sock";
@@ -45,22 +30,13 @@ pub const SERVICE_TYPE: &str = "_tessaro._tcp.local.";
 /// before it reverts itself.
 pub const CONFIRM_SECONDS: u64 = 60;
 
-/// Longest line either side accepts. A screenshot is the largest thing on
-/// the wire; a 4K JPEG in base64 fits with room to spare.
-pub const MAX_LINE: usize = 32 * 1024 * 1024;
-
-/// Largest piece of an image upload, before base64. Small enough that one
-/// request answers well inside the client's timeout on a slow link, large
-/// enough that the round trips do not dominate on a fast one.
+/// Largest piece of an upload, an image or a file, in one request. Small
+/// enough that one request answers well inside the client's timeout on a
+/// slow link, large enough that the round trips do not dominate on a fast
+/// one.
 pub const UPDATE_CHUNK: usize = 4 * 1024 * 1024;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Hello {
-    pub protocol: u32,
-    pub client: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct NodeInfo {
     /// The app-specific id derived from /etc/machine-id. Never the machine id.
     pub id: String,
@@ -72,16 +48,8 @@ pub struct NodeInfo {
     pub claimed: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Request {
-    pub id: u64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub token: Option<String>,
-    pub command: Command,
-}
-
 /// What `restart` restarts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum RestartTarget {
     Browser,
@@ -114,7 +82,7 @@ fn yes() -> bool {
 /// A secret on its way to the device: a WiFi password. It serializes as the
 /// plain string, but prints as `***`, so a `{:?}` of a command - in a log
 /// line, a panic, a test failure - never shows it.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(transparent)]
 pub struct Secret(pub String);
 
@@ -133,7 +101,7 @@ impl std::fmt::Debug for Secret {
 /// What the device checks, on its own, before it keeps a network change.
 /// Whatever it is, the change must also leave the device with a default
 /// route if it had one, and a connection it activated must come up.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "check", rename_all = "kebab-case")]
 pub enum Verify {
     /// The default gateway answers a ping.
@@ -196,7 +164,7 @@ impl Verify {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum WifiSecurity {
     Open,
@@ -218,7 +186,7 @@ impl std::str::FromStr for WifiSecurity {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "cmd", rename_all = "kebab-case")]
 pub enum Command {
     Status,
@@ -293,14 +261,20 @@ pub enum Command {
         #[serde(default)]
         on: Option<bool>,
     },
+    /// A page of the journal: the last `lines` entries, or with `cursor`
+    /// everything after it. A `LogPage`; following is asking again with its
+    /// cursor.
     Logs {
-        #[serde(default)]
-        follow: bool,
         #[serde(default)]
         unit: Option<String>,
         #[serde(default)]
         lines: Option<u32>,
+        #[serde(default)]
+        cursor: Option<String>,
     },
+    /// What the welcome page shows: the setup QR code and address, whether
+    /// the device is online. Asking keeps the online check running.
+    Welcome,
     /// Take an unclaimed device. TCP only.
     Claim {
         name: String,
@@ -561,7 +535,7 @@ pub enum Command {
 
 /// The image `update-begin` describes. Its fields sit in the command itself
 /// on the wire, next to `cmd`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ImageUpload {
     pub name: String,
     pub size: u64,
@@ -583,36 +557,50 @@ pub struct ImageUpload {
 }
 
 impl Command {
-    /// Allowed over TCP without a token.
-    pub fn is_public(&self) -> bool {
-        matches!(self, Command::Id | Command::Claim { .. } | Command::Ping)
-    }
-
-    /// Answered with `event` frames and an `end`, not one `ok`. The device
-    /// bounds every one of them in time, `logs --follow` aside.
-    pub fn is_stream(&self) -> bool {
+    /// Run as a job (`api::Action::Start`): its steps are kept on the
+    /// device and polled, not answered at once. The device bounds every
+    /// one of them in time.
+    pub fn is_job(&self) -> bool {
         matches!(
             self,
-            Command::Logs { .. }
-                | Command::Speedtest { .. }
-                | Command::NetPing { .. }
-                | Command::StorageGrow { .. }
+            Command::Speedtest { .. } | Command::NetPing { .. } | Command::StorageGrow { .. }
         )
     }
 }
 
-/// Everything the server sends.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "kebab-case")]
-pub enum Frame {
-    Welcome { protocol: u32, node: NodeInfo },
-    Ok { id: u64, result: Value },
-    Error { id: u64, error: String },
-    Event { id: u64, event: Value },
-    End { id: u64 },
+/// A page of the journal.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct LogPage {
+    /// journalctl's JSON entries, oldest first: `MESSAGE`,
+    /// `SYSLOG_IDENTIFIER`, `PRIORITY`, `__REALTIME_TIMESTAMP` and the rest.
+    pub entries: Vec<Value>,
+    /// Where the next page starts: send it back as `cursor` to get only
+    /// what came after. The one sent when nothing new came, `None` for an
+    /// empty journal.
+    pub cursor: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// A job the device started: poll it at `/api/v1/jobs/{job}`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct JobStarted {
+    pub job: String,
+}
+
+/// What a job did since `after`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct JobPage {
+    /// Its steps from number `after` on, in order: `PingEvent`s,
+    /// `SpeedtestEvent`s or `StorageGrowEvent`s, by the job.
+    pub events: Vec<Value>,
+    /// What to send as `after` next.
+    pub next: u64,
+    /// It has ended. With `error`, it failed.
+    pub done: bool,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Pending {
     pub key: String,
     pub value: String,
@@ -632,7 +620,7 @@ pub fn previous_or_default(previous: Option<&str>) -> &str {
     previous.unwrap_or("the default")
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Status {
     pub node: NodeInfo,
     pub revision: u64,
@@ -690,7 +678,7 @@ pub struct Status {
     pub cpu_percent: Option<u8>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct BridgeStatus {
     pub mode: String,
     /// `browser.inject.script`, empty for none.
@@ -701,7 +689,7 @@ pub struct BridgeStatus {
 }
 
 /// The clock in one line, for `device status`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct TimeSummary {
     pub timezone: Option<String>,
     /// timedated's `NTPSynchronized`: the kernel clock is disciplined.
@@ -713,7 +701,7 @@ pub struct TimeSummary {
 /// Everything systemd says about the clock. Every field is what timedated
 /// or timesyncd reported, never measured by the agent; `None` is "not
 /// reported", which a service that is down or has not synced yet does.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct TimeStatus {
     /// Why timedated or timesyncd could not be read, if one of them could not.
     pub error: Option<String>,
@@ -767,7 +755,7 @@ impl TimeStatus {
 }
 
 /// Where timesyncd's servers come from, in the order it tries them.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct NtpServers {
     /// Set at runtime by the agent: the DHCP servers, while time.ntp.servers
     /// is empty.
@@ -784,7 +772,7 @@ pub struct NtpServers {
 
 /// timesyncd's `NTPMessage`: the last answer from the server, and what
 /// follows from its timestamps.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct NtpSample {
     /// 0 no warning, 1 or 2 a leap second at the end of the day, 3 the
     /// server is not synchronized.
@@ -871,7 +859,7 @@ pub fn parse_local_time(value: &str) -> Result<[i32; 6], String> {
 }
 
 /// One output or input as PipeWire has it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct AudioDevice {
     /// What audio.output or audio.input takes to pick exactly this one.
     pub name: String,
@@ -890,7 +878,7 @@ pub struct AudioDevice {
 }
 
 /// The output side or the input side.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct AudioSide {
     /// audio.output or audio.input, as set or defaulted.
     pub setting: String,
@@ -905,7 +893,7 @@ pub struct AudioSide {
     pub devices: Vec<AudioDevice>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct AudioStatus {
     /// PipeWire answered. When it did not, `error` says why and the sides
     /// carry only the settings.
@@ -916,7 +904,7 @@ pub struct AudioStatus {
 }
 
 /// What `audio test` played or heard.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AudioTested {
     pub message: String,
     /// The recording's loudest sample and its average, dBFS: 0 is full
@@ -931,7 +919,7 @@ pub struct AudioTested {
     pub saved: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum UpdatePhase {
     /// Nothing under way.
@@ -952,7 +940,7 @@ pub enum UpdatePhase {
     Failed,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct UpdateBegun {
     /// Bytes the device already has. Send from here.
     pub offset: u64,
@@ -961,13 +949,13 @@ pub struct UpdateBegun {
 
 /// How much of an upload - an image, or one file - the device has, after a
 /// chunk.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Received {
     pub received: u64,
     pub size: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct UpdateStatus {
     pub phase: UpdatePhase,
     /// The file being uploaded or staged.
@@ -992,7 +980,7 @@ pub struct UpdateStatus {
     pub last: Option<UpdateResult>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct UpdateResult {
     pub applied: bool,
     pub message: String,
@@ -1001,7 +989,7 @@ pub struct UpdateResult {
     pub attempts: u32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum Source {
     /// The image's default, from /usr/lib/tessaro-kiosk/tessaro-kiosk.env.
@@ -1012,7 +1000,7 @@ pub enum Source {
     Live,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Setting {
     pub key: String,
     pub env: String,
@@ -1020,13 +1008,13 @@ pub struct Setting {
     pub source: Source,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Settings {
     pub revision: u64,
     pub settings: Vec<Setting>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Applied {
     pub revision: u64,
     pub changed: Vec<String>,
@@ -1054,7 +1042,7 @@ pub struct Applied {
     pub reboot: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct KeyInfo {
     pub name: String,
     pub env: String,
@@ -1087,13 +1075,13 @@ impl From<&keys::Key> for KeyInfo {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Connector {
     pub name: String,
     pub modes: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct NetAddress {
     pub address: String,
     pub prefix: u8,
@@ -1103,7 +1091,7 @@ pub struct NetAddress {
     pub scope: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct NetInterface {
     pub name: String,
     /// `ethernet`, `wireless`, `loopback`, or `virtual` (bridges, tunnels...).
@@ -1120,7 +1108,7 @@ pub struct NetInterface {
     pub addresses: Vec<NetAddress>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Net {
     pub hostname: String,
     /// The interface with the IPv4 default route.
@@ -1140,7 +1128,7 @@ pub struct Net {
 }
 
 /// What `network proxy show` reports.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ProxyStatus {
     /// network.proxy.url with its password masked; `None` without a proxy.
     pub url: Option<String>,
@@ -1153,7 +1141,7 @@ pub struct ProxyStatus {
 }
 
 /// What `network proxy test` got through the proxy.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ProxyTested {
     /// The address the internet sees through the proxy.
     pub ip: Option<String>,
@@ -1163,7 +1151,7 @@ pub struct ProxyTested {
 
 /// One partition of the disk the device runs from. Sizes and offsets in
 /// bytes.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Partition {
     pub number: u32,
     /// The kernel's name, `sda3` or `mmcblk0p3`.
@@ -1179,7 +1167,7 @@ pub struct Partition {
 
 /// How full one mounted filesystem is, in bytes. `available` is what a
 /// process that is not root can still write.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct FsUsage {
     pub mountpoint: String,
     pub source: String,
@@ -1203,7 +1191,7 @@ impl FsUsage {
 
 /// What the hardware says it is, from DMI on x86 or the device tree on the
 /// Pi (docs/hardware.md). `None` is "the firmware does not say".
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Hardware {
     /// `LENOVO`, `QEMU`, `Raspberry Pi`.
     pub vendor: Option<String>,
@@ -1243,7 +1231,7 @@ impl Hardware {
 
 /// RAM, in bytes, from `/proc/meminfo`. `available` is `MemAvailable`: what
 /// can be handed out without swapping, page cache included.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct MemUsage {
     pub total: u64,
     pub available: u64,
@@ -1263,7 +1251,7 @@ impl MemUsage {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Storage {
     /// The disk holding root, `sda` or `mmcblk0`.
     pub device: String,
@@ -1282,7 +1270,7 @@ pub struct Storage {
 pub const GROW_MIN: u64 = 64 << 20;
 
 /// A NetworkManager profile, as `net profiles` lists it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct NetProfile {
     /// `connection.id`.
     pub name: String,
@@ -1304,7 +1292,7 @@ pub struct NetProfile {
     pub managed: bool,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct NetIpSettings {
     pub method: String,
     /// `ADDRESS/PREFIX`.
@@ -1314,7 +1302,7 @@ pub struct NetIpSettings {
     pub ignore_auto_dns: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct NetWifiSettings {
     pub ssid: String,
     /// `open`, `wpa-psk`, `sae`, `wpa-eap`, or NetworkManager's key-mgmt.
@@ -1322,7 +1310,7 @@ pub struct NetWifiSettings {
     pub hidden: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct NetProfileDetail {
     pub profile: NetProfile,
     pub ipv4: NetIpSettings,
@@ -1332,7 +1320,7 @@ pub struct NetProfileDetail {
     pub addresses: Vec<NetAddress>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct WifiDeviceInfo {
     pub interface: String,
     /// NetworkManager's device state: `activated`, `disconnected`, ...
@@ -1343,7 +1331,7 @@ pub struct WifiDeviceInfo {
     pub frequency_mhz: Option<u32>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct WifiStatus {
     /// The radio, as software (`net wifi on|off`) left it.
     pub enabled: bool,
@@ -1356,7 +1344,7 @@ pub struct WifiStatus {
     pub fallback: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct WifiNetwork {
     /// Empty for a hidden network.
     pub ssid: String,
@@ -1372,14 +1360,14 @@ pub struct WifiNetwork {
     pub active: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum ChangeOutcome {
     Committed,
     RolledBack,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct NetCheck {
     pub name: String,
     pub passed: bool,
@@ -1388,7 +1376,7 @@ pub struct NetCheck {
 
 /// What a network change did. Kept on the device as the last one, so a
 /// client whose connection went with the change can still ask.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct NetChange {
     pub outcome: ChangeOutcome,
     /// What was asked: `set`, `up`, `down`, `forget`, `join`, `wifi on` ...
@@ -1403,7 +1391,7 @@ pub struct NetChange {
 }
 
 /// One step of `net-ping`, in the order they arrive.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "event", rename_all = "kebab-case")]
 pub enum PingEvent {
     /// The address the host resolved to.
@@ -1435,7 +1423,7 @@ pub const PING_MIN_INTERVAL_MS: u64 = 200;
 pub const PING_DEFAULT_TIMEOUT_MS: u64 = 2_000;
 pub const PING_MAX_TIMEOUT_MS: u64 = 10_000;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Claimed {
     pub token_id: String,
     pub token: String,
@@ -1446,13 +1434,13 @@ pub struct Claimed {
     pub hotspot: Option<HotspotCredentials>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct HotspotCredentials {
     pub ssid: String,
     pub password: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct TokenInfo {
     pub id: String,
     pub name: String,
@@ -1460,19 +1448,19 @@ pub struct TokenInfo {
     pub issued_by: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct TokenCreated {
     pub id: String,
     pub token: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Password {
     /// The generated password, when the server chose it. Shown once.
     pub password: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SshAccess {
     /// SHA256 fingerprint of the key sent.
     pub fingerprint: String,
@@ -1484,7 +1472,7 @@ pub struct SshAccess {
     pub host_keys: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SshKeyInfo {
     pub fingerprint: String,
     #[serde(rename = "type")]
@@ -1493,7 +1481,7 @@ pub struct SshKeyInfo {
 }
 
 /// What `ssh-key-revoke` removed. `message` is what an older client prints.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SshKeyRevoked {
     pub message: String,
     /// The removed key's SHA256 fingerprint. `None` from an older device,
@@ -1507,7 +1495,7 @@ pub struct SshKeyRevoked {
 pub const CERT_PEM_MAX: usize = 64 * 1024;
 
 /// One extra certificate authority the device trusts.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct CertInfo {
     /// SHA-256 of the DER, lower-case hex.
     pub fingerprint: String,
@@ -1521,7 +1509,7 @@ pub struct CertInfo {
 }
 
 /// What `net-cert-add` did with each certificate it was sent.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct CertsAdded {
     pub added: Vec<CertInfo>,
     /// Already trusted; nothing changed for these.
@@ -1538,7 +1526,7 @@ pub const SCHEDULE_LINE_MAX: usize = 4096;
 pub const SCHEDULE_CHECK_MAX: u32 = 50;
 
 /// What a run does when one of its lines fails.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum OnError {
     /// The run ends there, failed.
@@ -1571,7 +1559,7 @@ impl std::str::FromStr for OnError {
 }
 
 /// What a schedule is: when it fires and what a run does.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ScheduleSpec {
     /// `[a-z0-9][a-z0-9-]*`, unique on the device.
     pub name: String,
@@ -1590,7 +1578,7 @@ pub struct ScheduleSpec {
 }
 
 /// A moment as the device reports it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Moment {
     /// Seconds since the epoch, UTC.
     pub unix: i64,
@@ -1599,7 +1587,7 @@ pub struct Moment {
 }
 
 /// How a finished run ended.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ScheduleRun {
     pub started: Moment,
     pub finished: Moment,
@@ -1618,7 +1606,7 @@ impl ScheduleRun {
 }
 
 /// One schedule and what systemd reports about it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ScheduleInfo {
     /// Stable across renames; names the schedule's systemd units.
     pub id: String,
@@ -1640,7 +1628,7 @@ pub struct ScheduleInfo {
 }
 
 /// What `schedule-check` found.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct CalendarCheck {
     /// Each expression as systemd normalizes it, in the order sent.
     pub normalized: Vec<String>,
@@ -1648,7 +1636,7 @@ pub struct CalendarCheck {
     pub next: Vec<Moment>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Screenshot {
     pub format: String,
     /// Base64, as CDP returns it.
@@ -1688,7 +1676,7 @@ pub fn speedtest_size_label(size: u64) -> String {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum Direction {
     Download,
@@ -1696,7 +1684,7 @@ pub enum Direction {
 }
 
 /// One step of `speedtest`, in the order they arrive.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "phase", rename_all = "kebab-case")]
 pub enum SpeedtestEvent {
     /// Where Cloudflare sees the device from.
@@ -1733,7 +1721,7 @@ pub enum SpeedtestEvent {
 }
 
 /// One step of `storage-grow`, in the order they arrive. Sizes in bytes.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "phase", rename_all = "kebab-case")]
 pub enum StorageGrowEvent {
     /// What would change. Equal sizes mean that part is already done; both
@@ -1759,7 +1747,7 @@ pub const EVAL_TIMEOUT_MS: u64 = 10_000;
 pub const EVAL_TIMEOUT_MAX_MS: u64 = 60_000;
 
 /// What `eval` came to: the value, as JSON, or what it threw.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct EvalResult {
     /// `None` for `undefined`, and for a value JSON cannot hold (a
     /// function, a DOM node): `description` says what it was.
@@ -1773,7 +1761,7 @@ pub struct EvalResult {
     pub exception: Option<EvalException>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct EvalException {
     pub text: String,
     /// 1-based, in the code as sent.
@@ -1782,12 +1770,12 @@ pub struct EvalException {
 }
 
 /// Whether the display is on, as the compositor has it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ScreenPower {
     pub on: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Done {
     pub message: String,
 }
@@ -1798,17 +1786,6 @@ impl Done {
             message: message.into(),
         }
     }
-}
-
-/// One frame, newline terminated.
-pub fn to_line<T: Serialize>(value: &T) -> String {
-    let mut line = serde_json::to_string(value).expect("protocol types always serialize");
-    line.push('\n');
-    line
-}
-
-pub fn from_line<T: DeserializeOwned>(line: &str) -> Result<T, String> {
-    serde_json::from_str(line.trim_end()).map_err(|err| format!("malformed frame: {err}"))
 }
 
 /// Lower-case hex, the way every fingerprint, id and checksum here is
@@ -1857,47 +1834,6 @@ pub fn check_password(password: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_request_round_trips() {
-        let request = Request {
-            id: 7,
-            token: Some("tsr_x".to_string()),
-            command: Command::Set {
-                values: [("browser.url".to_string(), "https://a.test/".to_string())].into(),
-                if_revision: Some(3),
-                apply: false,
-                verify: Verify::None,
-            },
-        };
-
-        let line = to_line(&request);
-        assert!(line.ends_with('\n'));
-        assert_eq!(from_line::<Request>(&line).unwrap(), request);
-    }
-
-    #[test]
-    fn a_time_set_round_trips_and_older_fields_default() {
-        let request = Request {
-            id: 2,
-            token: None,
-            command: Command::TimeSet {
-                usec: None,
-                local: Some("2026-09-25 14:03".to_string()),
-            },
-        };
-        assert_eq!(from_line::<Request>(&to_line(&request)).unwrap(), request);
-        let bare: Command = serde_json::from_str(r#"{"cmd":"time-set","usec":5}"#).unwrap();
-        assert_eq!(
-            bare,
-            Command::TimeSet {
-                usec: Some(5),
-                local: None
-            }
-        );
-        let status: Command = serde_json::from_str(r#"{"cmd":"time-status"}"#).unwrap();
-        assert_eq!(status, Command::TimeStatus);
-    }
 
     #[test]
     fn offset_and_delay_follow_timedatectl() {
@@ -1968,71 +1904,6 @@ mod tests {
     }
 
     #[test]
-    fn the_wire_form_is_readable() {
-        let line = to_line(&Request {
-            id: 1,
-            token: None,
-            command: Command::Restart {
-                what: RestartTarget::Browser,
-            },
-        });
-        assert_eq!(
-            line,
-            "{\"id\":1,\"command\":{\"cmd\":\"restart\",\"what\":\"browser\"}}\n"
-        );
-    }
-
-    #[test]
-    fn set_applies_unless_told_otherwise() {
-        let request: Request =
-            from_line(r#"{"id":1,"command":{"cmd":"set","values":{"a":"b"}}}"#).unwrap();
-        assert!(matches!(request.command, Command::Set { apply: true, .. }));
-    }
-
-    #[test]
-    fn frames_round_trip() {
-        let frame = Frame::Error {
-            id: 2,
-            error: "nope".to_string(),
-        };
-        assert_eq!(from_line::<Frame>(&to_line(&frame)).unwrap(), frame);
-    }
-
-    #[test]
-    fn only_id_claim_and_ping_are_public() {
-        assert!(Command::Id.is_public());
-        assert!(Command::Claim { name: "x".into() }.is_public());
-        assert!(Command::Ping.is_public());
-        assert!(!Command::Status.is_public());
-        assert!(!Command::TokenCreate { name: "x".into() }.is_public());
-        assert!(!Command::SshAuthorize { key: "x".into() }.is_public());
-        assert!(!Command::SshKeyList.is_public());
-        assert!(!Command::NetProfiles.is_public());
-        assert!(!Command::NetCertAdd { pem: "x".into() }.is_public());
-        assert!(!Command::NetCertList.is_public());
-        assert!(!Command::ScheduleList.is_public());
-        assert!(!Command::ScheduleRun {
-            schedule: "x".into()
-        }
-        .is_public());
-        assert!(!Command::FilesList {
-            path: "".into(),
-            recursive: false
-        }
-        .is_public());
-        assert!(!Command::FilesDelete {
-            paths: vec!["a".into()],
-            recursive: true
-        }
-        .is_public());
-        assert!(!Command::WifiScan {
-            interface: None,
-            rescan: true
-        }
-        .is_public());
-    }
-
-    #[test]
     fn a_secret_travels_but_never_prints() {
         let command = Command::WifiJoin {
             ssid: "Office".into(),
@@ -2041,27 +1912,14 @@ mod tests {
             hidden: false,
             verify: Verify::Gateway,
         };
-        assert!(to_line(&command).contains("hunter2hunter2"));
+        assert!(serde_json::to_string(&command)
+            .unwrap()
+            .contains("hunter2hunter2"));
         assert!(!format!("{command:?}").contains("hunter2"));
     }
 
     #[test]
-    fn a_network_change_verifies_the_gateway_unless_told() {
-        let request: Request = from_line(
-            r#"{"id":1,"command":{"cmd":"set","values":{"network.ethernet.mode":"dhcp"}}}"#,
-        )
-        .unwrap();
-        assert!(matches!(
-            request.command,
-            Command::Set {
-                verify: Verify::Gateway,
-                ..
-            }
-        ));
-        // An older device's claim answer has no hotspot.
-        let claimed: Claimed =
-            serde_json::from_str(r#"{"token_id":"a","token":"b","root_password":"c"}"#).unwrap();
-        assert_eq!(claimed.hotspot, None);
+    fn verify_is_tagged_by_check() {
         let tcp = serde_json::to_value(Verify::Tcp {
             host: "a.test".into(),
             port: 443,
@@ -2133,16 +1991,6 @@ mod tests {
             serde_json::from_value::<SpeedtestEvent>(value).unwrap(),
             event
         );
-
-        let request: Request = from_line(r#"{"id":1,"command":{"cmd":"speedtest"}}"#).unwrap();
-        assert_eq!(
-            request.command,
-            Command::Speedtest {
-                max_size: None,
-                tests: None,
-                direct: false
-            }
-        );
     }
 
     #[test]
@@ -2183,107 +2031,16 @@ mod tests {
     }
 
     #[test]
-    fn only_the_four_streams_stream() {
-        let streams = [
-            r#"{"cmd":"logs"}"#,
-            r#"{"cmd":"speedtest"}"#,
-            r#"{"cmd":"net-ping","host":"a.test"}"#,
-            r#"{"cmd":"storage-grow"}"#,
-        ];
-        for line in streams {
-            assert!(from_line::<Command>(line).unwrap().is_stream(), "{line}");
+    fn only_the_stepped_commands_are_jobs() {
+        assert!(Command::Speedtest {
+            max_size: None,
+            tests: None,
+            direct: false
         }
-        assert!(!Command::Status.is_stream());
-        assert!(!Command::Ping.is_stream());
-        assert!(!Command::Storage.is_stream());
-    }
-
-    #[test]
-    fn update_begin_keeps_its_fields_beside_cmd() {
-        let command = Command::UpdateBegin(ImageUpload {
-            name: "a.wic.zst".into(),
-            size: 3,
-            sha256: "ab".into(),
-            bmap: "<bmap/>".into(),
-            verify: true,
-            repartition: false,
-        });
-        assert_eq!(
-            to_line(&command),
-            "{\"cmd\":\"update-begin\",\"name\":\"a.wic.zst\",\"size\":3,\"sha256\":\"ab\",\
-             \"bmap\":\"<bmap/>\",\"verify\":true,\"repartition\":false}\n"
-        );
-        // What an older client sends, without the defaulted fields.
-        let old: Command = from_line(
-            r#"{"cmd":"update-begin","name":"a.wic.zst","size":3,"sha256":"ab","bmap":"<bmap/>"}"#,
-        )
-        .unwrap();
-        assert_eq!(old, command);
-    }
-
-    #[test]
-    fn cert_commands_have_their_wire_names() {
-        assert_eq!(
-            to_line(&Command::NetCertRevoke {
-                cert: "ab12".into()
-            }),
-            "{\"cmd\":\"net-cert-revoke\",\"cert\":\"ab12\"}\n"
-        );
-        assert_eq!(
-            from_line::<Command>(r#"{"cmd":"net-cert-add","pem":"x"}"#).unwrap(),
-            Command::NetCertAdd { pem: "x".into() }
-        );
-    }
-
-    #[test]
-    fn schedule_commands_have_their_wire_names() {
-        assert_eq!(
-            to_line(&Command::ScheduleRun {
-                schedule: "night".into()
-            }),
-            "{\"cmd\":\"schedule-run\",\"schedule\":\"night\"}\n"
-        );
-        let created = from_line::<Command>(
-            r#"{"cmd":"schedule-create","spec":{"name":"night","calendar":["22:00"],"lines":["true"]}}"#,
-        )
-        .unwrap();
-        assert_eq!(
-            created,
-            Command::ScheduleCreate {
-                spec: ScheduleSpec {
-                    name: "night".into(),
-                    enabled: true,
-                    calendar: vec!["22:00".into()],
-                    lines: vec!["true".into()],
-                    on_error: OnError::Stop,
-                    timeout_s: None,
-                }
-            }
-        );
-        assert_eq!(
-            from_line::<Command>(
-                r#"{"cmd":"schedule-set","schedule":"night","on_error":"continue"}"#
-            )
-            .unwrap(),
-            Command::ScheduleSet {
-                schedule: "night".into(),
-                name: None,
-                calendar: None,
-                lines: None,
-                on_error: Some(OnError::Continue),
-                timeout_s: None,
-                enabled: None,
-            }
-        );
-    }
-
-    #[test]
-    fn answers_from_older_devices_still_parse() {
-        let revoked: SshKeyRevoked =
-            serde_json::from_str(r#"{"message":"revoked SHA256:x"}"#).unwrap();
-        assert_eq!(revoked.fingerprint, None);
-        let received: Received = serde_json::from_str(r#"{"received":1,"size":2}"#).unwrap();
-        assert_eq!(received.size, 2);
+        .is_job());
+        assert!(Command::StorageGrow { check: true }.is_job());
+        assert!(!Command::Status.is_job());
+        assert!(!Command::Storage.is_job());
     }
 
     #[test]

@@ -1,9 +1,9 @@
 SUMMARY = "Tessaro's setup portal, for phones on the hotspot"
 DESCRIPTION = "The one-page setup portal a phone opens after scanning the welcome \
 page's QR code: WiFi, Ethernet, the kiosk page, the device name and timezone, and \
-maintenance and the debug screen. nginx serves it on the hotspot's subnet and \
-proxies its API to the agent; a dnsmasq drop-in answers the phones' captive portal \
-probes so the sheet opens by itself. See docs/setup-portal.md."
+maintenance and the debug screen. The agent serves it with its API on port 7400; \
+a dnsmasq drop-in and nginx on port 80 send the phones' captive portal probes \
+there, so the sheet opens by itself. See docs/setup-portal.md."
 LICENSE = "MIT & OFL-1.1"
 LIC_FILES_CHKSUM = " \
     file://${COMMON_LICENSE_DIR}/MIT;md5=0835ade698e0bcf8506ecda2f7b4f302 \
@@ -32,7 +32,8 @@ do_compile[noexec] = "1"
 do_install() {
     install -Dm0644 ${WORKDIR}/index.html ${D}${datadir}/tessaro-portal/index.html
 
-    # Manrope, the font tessaro-gui uses, so the portal looks like it.
+    # Served by the agent (KIOSK_PORTAL_ROOT). Manrope, the font
+    # tessaro-gui uses, so the portal looks like it.
     install -d ${D}${datadir}/tessaro-portal/fonts
     install -m0644 ${WORKDIR}/fonts/Manrope-Regular.ttf ${D}${datadir}/tessaro-portal/fonts/
     install -m0644 ${WORKDIR}/fonts/Manrope-Bold.ttf ${D}${datadir}/tessaro-portal/fonts/
@@ -58,8 +59,9 @@ FILES:${PN} = " \
     ${nonarch_libdir}/tmpfiles.d/tessaro-portal.conf \
 "
 
-# nginx serves the page and owns the www group the socket directory is given
-# to; tessaro-network brings the hotspot's dnsmasq that reads the drop-in.
+# nginx answers the probes and owns the www group the flag's directory is
+# given to; tessaro-network brings the hotspot's dnsmasq that reads the
+# drop-in.
 RDEPENDS:${PN} = " \
     nginx \
     tessaro-network \

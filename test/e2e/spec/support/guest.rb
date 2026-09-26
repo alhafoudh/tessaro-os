@@ -110,7 +110,7 @@ module AgentE2E
       AgentE2E.step("wait up to #{timeout}s for the restarted agent to listen again")
       AgentE2E.quietly do
         deadline = Time.now + timeout
-        until journal_after(cursor).any? { _1.start_with?("control: listening on /run/tessaro-agent.sock") }
+        until journal_after(cursor).any? { _1.start_with?("api: listening on /run/tessaro-agent.sock") }
           raise Failure, "the agent was not listening again within #{timeout}s" if Time.now > deadline
 
           sleep 1

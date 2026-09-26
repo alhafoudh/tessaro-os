@@ -167,11 +167,9 @@ impl Control {
     /// Keeps the captive flag nginx looks at: there while the device is
     /// unclaimed and network.wifi.captive is on, gone otherwise. Written
     /// with the welcome page, so a claim or a portal change reaches it at
-    /// once. No socket directory, no portal: nothing to write.
+    /// once. No portal directory, no captive portal: nothing to write.
     async fn write_captive_flag(&self) {
-        let Some(flag) = self.paths.captive_flag() else {
-            return;
-        };
+        let flag = self.paths.captive_flag();
         // naked: a disk read under blocking()'s within()
         let Ok(state) = self.read_state().await else {
             return;
@@ -870,7 +868,13 @@ fn welcome_value(welcome: &Welcome) -> serde_json::Value {
         .map(|qr| {
             serde_json::json!({
                 "qr": qr,
-                "url": format!("http://{}/", profiles::HOTSPOT_ADDRESS),
+                // The API's port, where the agent serves the setup page;
+                // nginx on port 80 sends a typed http://10.42.0.1/ there too.
+                "url": format!(
+                    "https://{}:{}/",
+                    profiles::HOTSPOT_ADDRESS,
+                    protocol::DEFAULT_PORT
+                ),
             })
         });
     serde_json::json!({
@@ -1001,7 +1005,7 @@ mod tests {
             Some(false),
         ));
         assert_eq!(body["online"], false);
-        assert_eq!(body["setup"]["url"], "http://10.42.0.1/");
+        assert_eq!(body["setup"]["url"], "https://10.42.0.1:7400/");
         let qr = body["setup"]["qr"].as_str().unwrap();
         assert!(qr.starts_with("<svg "), "{qr}");
 

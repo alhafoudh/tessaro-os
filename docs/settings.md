@@ -115,22 +115,15 @@ kiosk origin, Weston restarts - taking the browser and agent with it - for a
   `.migrated`. A `config set` or `config get` of an old name is refused with
   the new one - there are no aliases.
 
-**One protocol over a local socket and TLS** (newline-delimited JSON,
-`agent/protocol/src/lib.rs`):
-
-* **`/run/tessaro-agent.sock`**, mode 0600 root: no auth, no TLS, full power.
-  Not group accessible on purpose - Chromium runs as `weston`, and a
-  compromised browser must not be one `connect()` from the control plane.
-* **TLS on `access.listen`** (default `0.0.0.0:7400`, `off` disables it). The
-  device makes an EC P-256 key and a self-signed certificate in
-  `/data/tessaro/tls/` on first boot, valid from 1970 to 9999 so a wrong clock
-  cannot break it. Clients **pin** its SHA-256 on first use, keyed by node id,
-  and check the pin before any token is sent.
+**Every client goes through the API** - `tessaro-ctl`, `tessaro-gui`, the
+setup page, anyone's own program - over HTTPS on `access.listen` or plain on
+the root-only local socket. How it is built, the certificate and pinning,
+and how a client authenticates are in [api.md](api.md).
 
 **The claim model:**
 
 * A fresh device is **unclaimed**: no tokens, empty root password. Over TCP it
-  answers every command without a token (a stale one is ignored), because
+  answers every endpoint without a token (a stale one is ignored), because
   whoever can reach it could claim it and do the same anyway. What makes a
   credential still needs the claim first (`require_claimed` in
   `control/access.rs`): a token, the root password, an ssh key, the hotspot
@@ -139,6 +132,9 @@ kiosk origin, Weston restarts - taking the browser and agent with it - for a
   without pinning it (`Trust::KnownOnly` in `agent/client/src/connect.rs`),
   with a note saying so; once it is claimed, they refuse it again until
   `access login`.
+* **A claimed device answers only who it is without a token**: `device/id`,
+  `device/ping` and the claim itself, which refuses. Everything else wants
+  `Authorization: Bearer <token>`.
 * **The first `claim` wins.** It gets a token and the root password becomes a
   random 20-character one, which `tessaro-ctl` shows exactly once. Order
   matters for power loss: the password is set first, then the token
