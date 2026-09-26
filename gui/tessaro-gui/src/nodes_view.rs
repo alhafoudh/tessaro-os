@@ -43,7 +43,8 @@ pub struct Row {
     pub claimed: Option<bool>,
     pub pin: Pin,
     pub token: bool,
-    /// Answering on the network right now.
+    /// Announced by mDNS, or answered a peek this session. False only means
+    /// nobody has heard from it, not that it is down.
     pub online: bool,
 }
 
@@ -195,7 +196,8 @@ pub struct NodesView {
     known: Nodes,
     /// Announced on the network, by mDNS name.
     seen: BTreeMap<String, Found>,
-    /// Added by address; kept for the session.
+    /// Answered a peek (added by address, or a login or claim dialog): its
+    /// live address and claimed state, kept for the session.
     added: Vec<Found>,
     selected: Option<String>,
     filter: String,
@@ -365,17 +367,12 @@ impl NodesView {
                 *busy = false;
                 match result {
                     Ok(peek) => {
-                        let found = Found {
-                            name: peek.node.name.clone(),
-                            address: peek.address,
-                            id: Some(peek.node.id.clone()),
-                            fingerprint: Some(peek.fingerprint.clone()),
-                            claimed: Some(peek.node.claimed),
-                        };
-                        self.added.retain(|added| added.id != found.id);
-                        self.added.push(found);
-                        self.selected = Some(peek.node.id);
                         self.dialog = None;
+                        self.answered(&peek);
+                        if let Err(why) = self.keep(&peek) {
+                            self.message = Some(Err(why));
+                        }
+                        self.selected = Some(peek.node.id);
                     }
                     Err(why) => *error = Some(why),
                 }
@@ -389,14 +386,34 @@ impl NodesView {
                 none
             }
             Message::Peeked(result) => {
-                if let Some(Dialog::Access {
-                    peek, error, busy, ..
+                let Some(Dialog::Access {
+                    mode,
+                    peek,
+                    error,
+                    busy,
+                    ..
                 }) = &mut self.dialog
-                {
-                    *busy = false;
-                    match result {
-                        Ok(peeked) => *peek = Some(Box::new(peeked)),
-                        Err(why) => *error = Some(why),
+                else {
+                    return none;
+                };
+                *busy = false;
+                let peeked = match result {
+                    Ok(peeked) => peeked,
+                    Err(why) => {
+                        *error = Some(why);
+                        return none;
+                    }
+                };
+                *peek = Some(Box::new(peeked.clone()));
+                let login = *mode == Mode::Login;
+                self.answered(&peeked);
+                // A known device that turns out unclaimed has nothing to log
+                // in to: open it, as a double click on its row would.
+                if login && !peeked.node.claimed {
+                    let node = self.selected_row().and_then(|row| self.openable(&row));
+                    if node.is_some() {
+                        self.dialog = None;
+                        return (Task::none(), node);
                     }
                 }
                 none
@@ -502,6 +519,48 @@ impl NodesView {
     }
 
     /// Open the login or claim dialog for the selected row, and peek.
+    /// A peek is the device answering: list it at that address with its
+    /// claimed state, as mDNS would, for this session.
+    fn answered(&mut self, peek: &Peek) {
+        let found = Found {
+            name: peek.node.name.clone(),
+            address: peek.address,
+            id: Some(peek.node.id.clone()),
+            fingerprint: Some(peek.fingerprint.clone()),
+            claimed: Some(peek.node.claimed),
+        };
+        self.added.retain(|added| added.id != found.id);
+        self.added.push(found);
+    }
+
+    /// A device added by address goes into nodes.json, claimed or not, so it
+    /// is listed again after a restart even though mDNS cannot see it. A new
+    /// one is pinned to the certificate it just presented, without a token;
+    /// a known one only takes the new address, and one presenting another
+    /// certificate than its pin is left alone for Forget.
+    fn keep(&mut self, peek: &Peek) -> Result<(), String> {
+        self.reload();
+        let address = peek.address.to_string();
+        let node = match self.known.by_id(&peek.node.id) {
+            Some(known) if known.fingerprint != peek.fingerprint || known.address == address => {
+                return Ok(());
+            }
+            Some(known) => Node {
+                address,
+                ..known.clone()
+            },
+            None => Node {
+                id: peek.node.id.clone(),
+                name: peek.node.name.clone(),
+                address,
+                fingerprint: peek.fingerprint.clone(),
+                token: None,
+            },
+        };
+        self.known.put(node);
+        self.known.save()
+    }
+
     fn access(&mut self, mode: Mode) -> (Task<Message>, Option<Node>) {
         let Some(row) = self.selected_row() else {
             return (Task::none(), None);
@@ -596,10 +655,12 @@ impl NodesView {
                     Pin::Mismatch => cell("MISMATCH").style(text::danger).into(),
                 },
                 cell(if row.token { "yes" } else { "-" }).into(),
+                // Not seen is not offline: nothing asks a known device that
+                // mDNS does not announce, as one on another subnet never is.
                 if row.online {
                     cell("online").style(text::success).into()
                 } else {
-                    cell("offline").style(theme::muted).into()
+                    cell("not seen").style(theme::muted).into()
                 },
             ]
         });

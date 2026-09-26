@@ -108,6 +108,8 @@ struct Field {
     kind: FieldKind,
     /// A multi-line field's text as the editor holds it; `value` follows it.
     editor: Option<text_editor::Content>,
+    /// Typed in `Font::MONOSPACE`: code, where the characters matter.
+    mono: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -262,6 +264,7 @@ impl Field {
             value: value.into(),
             kind: FieldKind::Text(placeholder),
             editor: None,
+            mono: false,
         }
     }
 
@@ -273,6 +276,7 @@ impl Field {
             editor: Some(text_editor::Content::with_text(&value)),
             value,
             kind: FieldKind::Multiline(placeholder),
+            mono: false,
         }
     }
 
@@ -282,6 +286,7 @@ impl Field {
             value: String::new(),
             kind: FieldKind::Secret,
             editor: None,
+            mono: false,
         }
     }
 
@@ -291,6 +296,7 @@ impl Field {
             value: flag(on).to_string(),
             kind: FieldKind::Check,
             editor: None,
+            mono: false,
         }
     }
 
@@ -300,7 +306,14 @@ impl Field {
             value: value.to_string(),
             kind: FieldKind::Choice(choices),
             editor: None,
+            mono: false,
         }
+    }
+
+    /// Typed in the monospace font.
+    fn mono(mut self) -> Self {
+        self.mono = true;
+        self
     }
 
     fn on(&self) -> bool {
@@ -416,12 +429,12 @@ fn schedule_form(existing: Option<&ScheduleInfo>) -> Form {
         "Calendar",
         &spec.calendar,
         "one per line: Mon..Fri 07:00, Sat,Sun *:0/15, daily",
-    ))
+    ).mono())
     .field(Field::multiline(
         "Commands",
         &spec.lines,
         "one per line: tessaro-ctl screen power off",
-    ))
+    ).mono())
     .field(Field::choice("On error", on_error, ON_ERROR))
     .field(Field::text("Timeout", timeout, "none, or 90s, 10m, 2h"))
     .field(Field::check("Enabled", spec.enabled))
@@ -2162,6 +2175,7 @@ impl Device {
                                 .editor
                                 .as_ref()
                                 .map(|_| text_editor::Content::with_text(&field.value)),
+                            mono: field.mono,
                         })
                         .collect();
                     self.form(again.typed());
@@ -2210,11 +2224,17 @@ impl Device {
             });
         }
         for (at, item) in form.fields.iter().enumerate() {
+            let font = if item.mono {
+                iced::Font::MONOSPACE
+            } else {
+                theme::FONT
+            };
             let input: Element<'a, Message> = match item.kind {
                 FieldKind::Text(placeholder) => text_input(placeholder, &item.value)
                     .on_input(move |value| Message::P(Msg::FormText(at, value)))
                     .on_submit(Message::P(Msg::FormOk))
                     .size(theme::SMALL)
+                    .font(font)
                     .into(),
                 FieldKind::Multiline(placeholder) => match &item.editor {
                     Some(editor) => text_editor(editor)
@@ -2222,6 +2242,7 @@ impl Device {
                         .on_action(move |action| Message::P(Msg::FormEdit(at, action)))
                         .height(Length::Fixed(96.0))
                         .size(theme::SMALL)
+                        .font(font)
                         .into(),
                     None => space().into(),
                 },
@@ -2889,9 +2910,9 @@ impl Device {
             .iter()
             .map(|info| {
                 let state: Element<'_, Message> = if info.spec.enabled {
-                    cell("on").into()
+                    cell("on").style(text::success).into()
                 } else {
-                    cell("off").style(theme::muted).into()
+                    cell("off").style(text::danger).into()
                 };
                 let next = info.next.as_ref().map_or_else(
                     || "-".to_string(),

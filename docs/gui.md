@@ -104,7 +104,9 @@ keyed by node id** (`nodes_view::merge`).
   (`NodesView::openable`): it answers everything without a token (see **The
   claim model** in [settings.md](settings.md)). A stranger is reached at the
   address it was seen at (`worker::connect`), and only while it stays
-  unclaimed. Actions that make a credential show the device's refusal;
+  unclaimed. Once it answers, the worker writes it to `nodes.json`, pinned
+  to that session's certificate with no token, so it stays in the list and
+  later sessions are held to that pin. Actions that make a credential show the device's refusal;
   SSH and VNC go in by the empty root password instead of a key. Unclaim is
   disabled instead: the device does not refuse it, and the node would be
   forgotten here for nothing. The claim state comes from each status poll.
@@ -113,6 +115,14 @@ Discovery runs for as long as the app does (`discovery.rs`). Rescan starts a
 new browse. A device mDNS cannot see (another subnet, a VM) is added by
 address. Both are actions on the node list's own toolbar, since they act on
 that list; the app header only has the app's name.
+
+**A device added by address is written to `nodes.json` at once, claimed or
+not** (`NodesView::keep`), so it is listed after a restart although mDNS never
+announces it. A new one is pinned to the certificate the add just saw, with no
+token; a known one only takes the new address, and one that presents another
+certificate than its pin is not touched. After a restart its claimed state is
+unknown until it answers, so opening it goes through the login dialog's peek,
+and a device that turns out unclaimed opens straight from there.
 
 **Login and claim peek first, then pin exactly what was shown.** The dialog
 opens a session with `Trust::Peek`, which sends nothing secret, and shows the

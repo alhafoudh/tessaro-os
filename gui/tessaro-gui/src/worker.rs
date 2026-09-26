@@ -101,7 +101,8 @@ pub enum Event {
 /// found elsewhere is remembered there. Also what is worth telling the user.
 ///
 /// A node nobody pinned - an unclaimed device opened from the list - is
-/// reached at the address it was seen at, and only while it stays unclaimed.
+/// reached at the address it was seen at, and only while it stays unclaimed;
+/// once it answers it is written to nodes.json and known from then on.
 pub fn connect(node: &Node) -> Result<(Session, Vec<String>), String> {
     let mut nodes = Nodes::load()?;
     let target = match nodes.by_id(&node.id).cloned() {
@@ -127,7 +128,17 @@ pub fn connect(node: &Node) -> Result<(Session, Vec<String>), String> {
         ));
     }
     let mut notes = session.notes.clone();
-    if let (Some(was), Some((address, _))) = (nodes.refresh(&session)?, &session.remote) {
+    if nodes.by_id(&node.id).is_none() {
+        // An unclaimed device opened from the list: keep it, pinned to the
+        // certificate this session was opened on and without a token, so it
+        // stays in the list and later sessions are held to that pin.
+        nodes.remember(&session, None)?;
+        notes.retain(|note| !note.contains("is unclaimed and not pinned"));
+        notes.push(format!(
+            "{}: remembered on this machine, unclaimed",
+            session.node.name
+        ));
+    } else if let (Some(was), Some((address, _))) = (nodes.refresh(&session)?, &session.remote) {
         notes.push(format!(
             "{}: now at {address}, was {was}",
             session.node.name
