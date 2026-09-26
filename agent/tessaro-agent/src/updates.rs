@@ -76,11 +76,18 @@ fn boot_room(probe: &layout::Probe, bmap: &bmap::Bmap) -> u64 {
 /// MemTotal is what the initramfs will see, less about this.
 const RAM_RESERVED: u64 = 128 << 20;
 
-/// How much must have arrived before the partition table can be read from
-/// the compressed upload. zstd blocks are at most 128 KiB and pbzip2 streams
-/// 900 kB, and the first MiB of an image is almost all zeros, so this is
-/// several times what is needed.
+/// How much must have arrived before the partition table is first looked
+/// for in the compressed upload. Enough for bz2, whose 900 kB streams come out
+/// whole; zstd often needs more, because ruzstd holds back a whole window
+/// (8 MiB at level 19) before it hands out the first byte, and the boot
+/// partition that follows the table barely compresses. So the check is
+/// repeated at every chunk until the table comes out.
 const HEAD_CHECK: u64 = 4 << 20;
+
+/// Past this the head check stops being retried and is skipped: each try
+/// decompresses the upload from its start, and the dry run checks the
+/// partition table anyway, only later.
+const HEAD_CHECK_LIMIT: u64 = 64 << 20;
 
 /// Copies the kernel named `name` out of the staged boot partition image.
 type Extract = fn(&Path, &Path, &str) -> Result<(), String>;
@@ -383,7 +390,11 @@ impl Updates {
             })
             .await?;
             match check {
-                Ok(()) => lock(&self.job).head_checked = true,
+                Ok(true) => lock(&self.job).head_checked = true,
+                Ok(false) if now >= HEAD_CHECK_LIMIT.min(upload.size) => {
+                    lock(&self.job).head_checked = true
+                }
+                Ok(false) => {}
                 Err(err) => {
                     self.fail(&err).await;
                     return Err(err);
@@ -829,7 +840,8 @@ fn scan(dir: &Path) -> Job {
             .unwrap_or(0)
             .min(upload.size);
         job.received = received;
-        job.head_checked = received >= HEAD_CHECK.min(upload.size);
+        // Short of the limit it is simply checked again at the next chunk.
+        job.head_checked = received >= HEAD_CHECK_LIMIT.min(upload.size);
         job.phase = if received == upload.size {
             UpdatePhase::Preparing
         } else {
@@ -886,8 +898,9 @@ fn fits_in_ram(meminfo: &Path, size: u64) -> Result<(), String> {
 }
 
 /// The partition table from the start of a partial upload, against this
-/// disk. An upload too short to decompress that far is not an error yet.
-fn check_head(upload: &Path, probe: &layout::Probe, meta: &Upload) -> Result<(), String> {
+/// disk. An upload too short to decompress that far is not an error yet:
+/// `Ok(false)`, try again with more of it.
+fn check_head(upload: &Path, probe: &layout::Probe, meta: &Upload) -> Result<bool, String> {
     let mut image = Image::open(upload).map_err(|err| format!("reading the upload: {err}"))?;
     let mut head = vec![0u8; 1 << 20];
     let mut filled = 0;
@@ -895,19 +908,21 @@ fn check_head(upload: &Path, probe: &layout::Probe, meta: &Upload) -> Result<(),
         match image.read(&mut head[filled..]) {
             Ok(0) => break,
             Ok(read) => filled += read,
-            // A compressed upload cut off mid-block.
+            // A compressed upload cut off mid-block, or before the decoder
+            // had given out anything.
+            Err(err) if err.kind() == io::ErrorKind::UnexpectedEof => break,
             Err(_) if filled > 0 => break,
             Err(err) => return Err(format!("the upload is not a disk image: {err}")),
         }
     }
     if filled < 64 * 1024 {
-        return Ok(());
+        return Ok(false);
     }
     let partitions = ptable::parse(&head[..filled])?;
     let device = layout::probe(probe)
         .map_err(|err| format!("cannot tell which disk this device booted from: {err}"))?;
     let image_size = bmap::parse(&meta.bmap)?.image_size;
-    check_partitions(&device, &partitions, meta.mode(), image_size)
+    check_partitions(&device, &partitions, meta.mode(), image_size).map(|()| true)
 }
 
 fn check_name(name: &str) -> Result<(), String> {

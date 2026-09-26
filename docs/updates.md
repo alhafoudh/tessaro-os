@@ -14,8 +14,12 @@ disk** below.
    `update-chunk`), each fsynced to `/data/tessaro/update/upload.part` before
    it is acknowledged. The same command run again resumes from the last byte
    the device has. The partition table is checked against the device's own
-   after the first chunk, so a wrong image fails in seconds, not after the
-   whole upload. `update-begin` refuses an upload `/data` has no room for:
+   as soon as the start of the image decompresses, so a wrong image fails in
+   seconds, not after the whole upload. That is after the first chunk for
+   bz2, and a few chunks in for zstd: ruzstd hands out nothing until it has
+   decoded a whole window (8 MiB at level 19), so the check is retried at
+   each chunk until the table comes out, up to 64 MiB (`HEAD_CHECK` and
+   `HEAD_CHECK_LIMIT` in `updates.rs`). `update-begin` refuses an upload `/data` has no room for:
    the upload, 128 MiB for the profile to keep writing, and for a root
    update the boot staging, measured as twice what the bmap maps inside
    the device's boot partition (`boot_room` in `updates.rs`) - a few tens of
