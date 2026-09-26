@@ -469,8 +469,26 @@ struct Vnc {
     open: bool,
     /// A new one reconnects (Reconnect).
     generation: u64,
-    frame: Option<(image::Handle, u32, u32)>,
+    /// The picture shown, with its hold on the GPU texture. A frame is
+    /// swapped in only once it is uploaded: iced uploads a full screen's
+    /// worth off-thread and draws nothing until it is done, so showing a
+    /// handle straight away blanks the panel on every frame.
+    frame: Option<(image::Handle, Option<image::Allocation>)>,
+    /// The newest frame, held while another one uploads.
+    next: Option<image::Handle>,
+    /// The upload under way. A result with any other number is from before
+    /// the panel was closed, and is dropped.
+    uploading: Option<u64>,
+    uploads: u64,
     state: Option<Result<String, String>>,
+}
+
+/// A VNC frame iced has finished uploading, for the window it was meant for.
+#[derive(Debug, Clone)]
+pub struct VncUploaded {
+    upload: u64,
+    image: image::Handle,
+    allocation: Result<image::Allocation, image::Error>,
 }
 
 impl Device {
@@ -516,16 +534,44 @@ impl Device {
     }
 
     /// What the VNC viewer said.
-    pub fn vnc_event(&mut self, event: vnc::Event) {
+    pub fn vnc_event(&mut self, event: vnc::Event) -> Task<VncUploaded> {
         match event {
             vnc::Event::State(state) => self.vnc.state = Some(Ok(state)),
-            vnc::Event::Frame {
-                image,
-                width,
-                height,
-            } => self.vnc.frame = Some((image, width, height)),
+            vnc::Event::Frame(image) if self.vnc.open => {
+                if self.vnc.uploading.is_none() {
+                    return self.vnc_upload(image);
+                }
+                self.vnc.next = Some(image);
+            }
+            vnc::Event::Frame(_) => {}
             vnc::Event::Lost(why) => self.vnc.state = Some(Err(why)),
         }
+        Task::none()
+    }
+
+    /// A frame is uploaded: show it, and start on the newest one waiting.
+    pub fn vnc_uploaded(&mut self, uploaded: VncUploaded) -> Task<VncUploaded> {
+        if self.vnc.uploading != Some(uploaded.upload) {
+            return Task::none();
+        }
+        self.vnc.uploading = None;
+        // Without an allocation the picture may blink, which beats none.
+        self.vnc.frame = Some((uploaded.image, uploaded.allocation.ok()));
+        match self.vnc.next.take() {
+            Some(image) => self.vnc_upload(image),
+            None => Task::none(),
+        }
+    }
+
+    fn vnc_upload(&mut self, image: image::Handle) -> Task<VncUploaded> {
+        self.vnc.uploads += 1;
+        let upload = self.vnc.uploads;
+        self.vnc.uploading = Some(upload);
+        image::allocate(image.clone()).map(move |allocation| VncUploaded {
+            upload,
+            image: image.clone(),
+            allocation,
+        })
     }
 
     fn vnc_view(&self) -> Element<'_, Message> {
@@ -552,7 +598,7 @@ impl Device {
                 .size(theme::SMALL)
                 .style(text::warning)
                 .into(),
-            (Some((frame, _, _)), false) => iced::widget::image(frame.clone())
+            (Some((frame, _)), false) => iced::widget::image(frame.clone())
                 .content_fit(iced::ContentFit::Contain)
                 .width(Length::Fill)
                 .height(Length::Fill)
@@ -976,6 +1022,8 @@ impl Device {
                 self.vnc.open = !self.vnc.open;
                 if !self.vnc.open {
                     self.vnc.frame = None;
+                    self.vnc.next = None;
+                    self.vnc.uploading = None;
                     self.vnc.state = None;
                 }
             }

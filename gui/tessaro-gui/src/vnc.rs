@@ -45,11 +45,7 @@ const RETRY: Duration = Duration::from_secs(3);
 pub enum Event {
     /// What it is doing, for the panel's status line.
     State(String),
-    Frame {
-        image: image::Handle,
-        width: u32,
-        height: u32,
-    },
+    Frame(image::Handle),
     Lost(String),
 }
 
@@ -247,11 +243,11 @@ fn view(tcp: TcpStream, out: &ui::UnboundedSender<Event>) -> Result<(), String> 
         }
 
         if dirty && shown.elapsed() >= FRAME_EVERY {
-            let frame = Event::Frame {
-                image: image::Handle::from_rgba(width as u32, height as u32, rgba(&screen)),
-                width: width as u32,
-                height: height as u32,
-            };
+            let frame = Event::Frame(image::Handle::from_rgba(
+                width as u32,
+                height as u32,
+                rgba(&screen),
+            ));
             if out.unbounded_send(frame).is_err() {
                 return Ok(());
             }

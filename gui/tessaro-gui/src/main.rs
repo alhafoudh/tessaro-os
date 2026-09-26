@@ -161,6 +161,9 @@ enum Message {
     Worker(mdi::Id, worker::Event),
     Journal(mdi::Id, logs::Event),
     Vnc(mdi::Id, vnc::Event),
+    /// A VNC frame on the GPU, ready to show; not `Device`, which would
+    /// raise the window on every frame.
+    VncUploaded(mdi::Id, device::VncUploaded),
     Job(mdi::Id, u64, jobs::Event),
     Desk(mdi::Message),
     Key(Key),
@@ -241,12 +244,18 @@ impl App {
                 }
                 Task::none()
             }
-            Message::Vnc(id, event) => {
-                if let Some(device) = self.devices.get_mut(&id) {
-                    device.vnc_event(event);
-                }
-                Task::none()
-            }
+            Message::Vnc(id, event) => match self.devices.get_mut(&id) {
+                Some(device) => device
+                    .vnc_event(event)
+                    .map(move |uploaded| Message::VncUploaded(id, uploaded)),
+                None => Task::none(),
+            },
+            Message::VncUploaded(id, uploaded) => match self.devices.get_mut(&id) {
+                Some(device) => device
+                    .vnc_uploaded(uploaded)
+                    .map(move |uploaded| Message::VncUploaded(id, uploaded)),
+                None => Task::none(),
+            },
             Message::Job(id, job, event) => {
                 if let Some(device) = self.devices.get_mut(&id) {
                     device.job_event(job, event);

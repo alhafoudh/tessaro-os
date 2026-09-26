@@ -278,6 +278,13 @@ dialogs (`rfd`).
   3.8 client: VeNCrypt X509Plain (or TLSPlain), the image's `tessaro` login,
   then Raw and CopyRect updates into a framebuffer. The picture is handed to
   the UI at most every 150ms.
+* **A frame is shown only once iced has it on the GPU** (`image::allocate`,
+  `vnc_uploaded` in `device.rs`). iced_wgpu uploads an image of 2 MiB or more
+  off-thread and draws nothing for that handle until it is done
+  (`MAX_SYNC_SIZE` in `iced_wgpu/src/image/cache.rs`), and a whole screen is
+  far past that, so putting each new handle in the view straight away blanks
+  the panel on every frame. The shown frame keeps its `Allocation`; while
+  one upload runs, only the newest frame waits.
 * It is view only because remote input never reaches the browser (the second
   seat, in remote-access.md).
 * `screen.vnc=off` shows a note instead of a picture.
