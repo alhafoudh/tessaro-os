@@ -37,6 +37,9 @@ pub const BORDER: Color = rgb(0x3c_3f_44);
 pub const TEXT_COLOR: Color = rgb(0xdc_dc_dc);
 pub const MUTED: Color = rgb(0x8a_8d_93);
 pub const PRIMARY: Color = rgb(0x3d_7b_d9);
+/// The selected table row and section list entry: the primary colour dimmed,
+/// so `MUTED` text stays readable on it, not only white.
+const SELECTION: Color = rgb(0x26_45_70);
 const BUTTON: Color = rgb(0x3a_3d_42);
 /// A hovered button, and the hovered entry of a cell's Copy menu.
 pub const BUTTON_HOVER: Color = rgb(0x46_49_4f);
@@ -187,13 +190,13 @@ pub fn table_header(_: &Theme) -> container::Style {
     filled(CHROME)
 }
 
-/// A table row: the selected one in the primary colour, every other one
+/// A table row: the selected one in a dimmed primary colour, every other one
 /// faintly striped so a wide row is easy to follow.
 pub fn table_row(selected: bool, odd: bool) -> impl Fn(&Theme) -> container::Style {
     move |_| match (selected, odd) {
         (true, _) => container::Style {
             text_color: Some(Color::WHITE),
-            ..filled(PRIMARY)
+            ..filled(SELECTION)
         },
         (false, true) => filled(STRIPE),
         (false, false) => filled(PANEL),
@@ -277,7 +280,7 @@ pub fn frame_title(focused: bool) -> impl Fn(&Theme) -> container::Style {
 pub fn nav(selected: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
     move |_, status| {
         let background = match (selected, status) {
-            (true, _) => PRIMARY,
+            (true, _) => SELECTION,
             (false, button::Status::Hovered) => CHROME,
             (false, _) => Color::TRANSPARENT,
         };
