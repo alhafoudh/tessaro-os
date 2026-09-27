@@ -42,6 +42,9 @@ start.
   sparse copy and leaves the image as built.
 * **Every worker has its own ports**, from `TEST_ENV_NUMBER`
   (`spec/support/ports.rb`); worker 0 has the ports a single VM always had.
+  `E2E_WORKER_OFFSET=1` moves every worker one up, for a host where
+  something else holds worker 0's ports (`dev:tunnel` holds 7400 on the
+  build host).
   The forwards are fixed in the image's qemuboot.conf, so each worker writes
   its own copy, `tessaro-os-qemux86-64.e2e-worker-N.qemuboot.conf`, into the
   deploy directory and passes it to runqemu *after* the `.wic`: runqemu

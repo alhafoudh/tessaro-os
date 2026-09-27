@@ -6,11 +6,13 @@ module AgentE2E
   # not share one. parallel_tests numbers its workers through TEST_ENV_NUMBER
   # ("" for the first, then "2", "3", ...), and worker n gets every port
   # offset by 10n. Worker 0 is the ports a single VM always used, so a plain
-  # `rspec` run behaves like the old one-VM suite.
+  # `rspec` run behaves like the old one-VM suite. E2E_WORKER_OFFSET=N moves
+  # every worker N places up, for a host where something else holds worker
+  # 0's ports (`dev:tunnel` holds 127.0.0.1:7400 on the build host).
   module Ports
     def self.worker
       number = ENV.fetch("TEST_ENV_NUMBER", "")
-      number.empty? ? 0 : number.to_i - 1
+      (number.empty? ? 0 : number.to_i - 1) + ENV.fetch("E2E_WORKER_OFFSET", "0").to_i
     end
 
     # More than one worker. `parallel_rspec -n 1` is not parallel.
