@@ -74,6 +74,14 @@ with the keyboard has the lighter one and a blue border.
   never overwrites the restored one. The check runs on a ticker thread
   that lives only while something is unwritten: iced's pool executor has
   no timer.
+* **On macOS the app header is the app window's title bar** (`main.rs`):
+  the native title is hidden and the title bar transparent over a
+  full-size content view, so only the traffic lights are left, over the
+  header's left end. The header's title starts `TRAFFIC_LIGHTS` points in,
+  divided by the zoom because the zoom scales the header but not the
+  traffic lights. The content view takes the title bar's clicks, so the
+  header drags the window itself (`window::drag`) and maximizes it on a
+  double-click. Other platforms keep their native title bar.
 * **The title-bar icons are drawn, not typed** (`icon.rs`): a `□` from a
   fallback font lands on fractional device pixels at most zooms, so some
   of its edges come out half as thin. The canvas snaps each edge to a whole

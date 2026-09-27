@@ -39,6 +39,10 @@ pub const CLIENT: &str = concat!("tessaro-gui ", env!("CARGO_PKG_VERSION"));
 const WINDOW: Size = Size::new(1400.0, 860.0);
 const DEVICE_SIZE: Size = Size::new(1060.0, 640.0);
 const CONFIG_SIZE: Size = Size::new(760.0, 440.0);
+/// How far the header's title starts from the window's left edge, in the
+/// screen's points: past the macOS traffic lights, which the zoom does not
+/// scale.
+const TRAFFIC_LIGHTS: f32 = if cfg!(target_os = "macos") { 78.0 } else { 0.0 };
 /// The kinds of inner window, each remembering where it was left.
 const DEVICE: mdi::Kind = "device";
 const SETTINGS: mdi::Kind = "settings";
@@ -57,6 +61,14 @@ fn main() -> iced::Result {
             }),
             maximized: prefs.window.is_some_and(|at| at.maximized),
             min_size: Some(Size::new(800.0, 500.0)),
+            // No title bar of its own: the header takes its place, with the
+            // traffic lights over its left end (`TRAFFIC_LIGHTS`).
+            #[cfg(target_os = "macos")]
+            platform_specific: window::settings::PlatformSpecific {
+                title_hidden: true,
+                titlebar_transparent: true,
+                fullsize_content_view: true,
+            },
             ..window::Settings::default()
         })
         .settings(iced::Settings {
@@ -210,6 +222,11 @@ enum Message {
     Settle,
     /// It settled, and the window has said whether it is maximized.
     Placed(Moving, bool),
+    /// The header, which stands in for the title bar, was pressed: move
+    /// the app window with the mouse.
+    DragWindow,
+    /// It was double-clicked: maximize or restore the app window.
+    ToggleMaximize,
 }
 
 impl App {
@@ -355,6 +372,8 @@ impl App {
                 }
                 Task::none()
             }
+            Message::DragWindow => window::oldest().and_then(window::drag),
+            Message::ToggleMaximize => window::oldest().and_then(window::toggle_maximize),
         }
     }
 
@@ -519,9 +538,16 @@ impl App {
         )
         .height(mdi::DESK_TOP)
         .width(Length::Fill)
-        .padding([0, 10])
+        .padding(iced::Padding {
+            left: 10.0 + TRAFFIC_LIGHTS / self.zoom.scale(),
+            right: 10.0,
+            ..iced::Padding::ZERO
+        })
         .align_y(iced::alignment::Vertical::Center)
         .style(theme::app_header);
+        let header = iced::widget::mouse_area(header)
+            .on_press(Message::DragWindow)
+            .on_double_click(Message::ToggleMaximize);
 
         let empty = || mdi::Window {
             title: String::new(),
