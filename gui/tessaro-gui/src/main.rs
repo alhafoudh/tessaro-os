@@ -22,10 +22,12 @@ mod vnc;
 mod worker;
 
 use std::collections::BTreeMap;
+use std::time::{Duration, Instant};
 
+use iced::futures::channel::mpsc;
 use iced::keyboard::{self, key};
 use iced::widget::{container, row, space, text};
-use iced::{event, mouse, window, Element, Length, Size, Subscription, Task};
+use iced::{event, mouse, window, Element, Length, Point, Size, Subscription, Task};
 
 use device::Device;
 use nodes_view::NodesView;
@@ -37,19 +39,36 @@ pub const CLIENT: &str = concat!("tessaro-gui ", env!("CARGO_PKG_VERSION"));
 const WINDOW: Size = Size::new(1400.0, 860.0);
 const DEVICE_SIZE: Size = Size::new(1060.0, 640.0);
 const CONFIG_SIZE: Size = Size::new(760.0, 440.0);
+/// How far the header's title starts from the window's left edge, in the
+/// screen's points: past the macOS traffic lights, which the zoom does not
+/// scale.
+const TRAFFIC_LIGHTS: f32 = if cfg!(target_os = "macos") { 78.0 } else { 0.0 };
 /// The kinds of inner window, each remembering where it was left.
 const DEVICE: mdi::Kind = "device";
 const SETTINGS: mdi::Kind = "settings";
 
 fn main() -> iced::Result {
+    let prefs = Prefs::load();
     iced::application(App::boot, App::update, App::view)
         .title(|_: &App| "Tessaro".to_string())
         .theme(|_: &App| theme::theme())
         .subscription(App::subscription)
         .scale_factor(|app: &App| app.zoom.scale())
         .window(window::Settings {
-            size: WINDOW,
+            size: prefs.window_size(),
+            position: prefs.window.map_or(window::Position::Default, |at| {
+                window::Position::Specific(Point::new(at.x, at.y))
+            }),
+            maximized: prefs.window.is_some_and(|at| at.maximized),
             min_size: Some(Size::new(800.0, 500.0)),
+            // No title bar of its own: the header takes its place, with the
+            // traffic lights over its left end (`TRAFFIC_LIGHTS`).
+            #[cfg(target_os = "macos")]
+            platform_specific: window::settings::PlatformSpecific {
+                title_hidden: true,
+                titlebar_transparent: true,
+                fullsize_content_view: true,
+            },
             ..window::Settings::default()
         })
         .settings(iced::Settings {
@@ -91,17 +110,29 @@ impl Zoom {
     }
 }
 
-/// What `gui.json`, next to nodes.json, keeps: the zoom, where each kind of
-/// inner window was left, and whether device windows show their messages.
+/// What `gui.json`, next to nodes.json, keeps: the zoom, where the app
+/// window and each kind of inner window was left, and whether device
+/// windows show their messages.
 #[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 struct Prefs {
     scale: Option<f32>,
+    /// The app window, in the screen's points, unzoomed: iced scales a new
+    /// window's size by the zoom, and reports sizes and positions divided
+    /// by it.
+    window: Option<mdi::Placement>,
     #[serde(default)]
     windows: BTreeMap<String, mdi::Placement>,
     messages: Option<bool>,
 }
 
 impl Prefs {
+    /// The app window's size to open with, in the zoom's points.
+    fn window_size(&self) -> Size {
+        let zoom = Zoom::from_scale(self.scale).scale();
+        self.window
+            .map_or(WINDOW, |at| Size::new(at.width / zoom, at.height / zoom))
+    }
+
     fn path() -> std::path::PathBuf {
         tessaro_client::nodes::dir().join("gui.json")
     }
@@ -139,6 +170,22 @@ struct App {
     /// Whether a new device window shows its message log: as the last one
     /// toggled it.
     messages: bool,
+    /// Where the app window is, as `Prefs::window` keeps it; `None` until
+    /// it first reports.
+    window: Option<mdi::Placement>,
+    /// What the app window reported since `window` was last written.
+    moving: Option<Moving>,
+}
+
+/// The app window's geometry not yet written to `gui.json`: the latest it
+/// reported, unzoomed, and when. Written once it has been still for
+/// `SETTLE`, so a drag or a resize is one write.
+#[derive(Debug, Clone, Copy)]
+struct Moving {
+    id: window::Id,
+    position: Option<Point>,
+    size: Option<Size>,
+    at: Instant,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -169,6 +216,17 @@ enum Message {
     Key(Key),
     /// The screen's device pixels per point, at start and when it changes.
     Rescaled(f32),
+    /// The app window opened, moved or resized: whichever it reported.
+    Geometry(window::Id, Option<Point>, Option<Size>),
+    /// While the app window's geometry is unwritten: whether it settled.
+    Settle,
+    /// It settled, and the window has said whether it is maximized.
+    Placed(Moving, bool),
+    /// The header, which stands in for the title bar, was pressed: move
+    /// the app window with the mouse.
+    DragWindow,
+    /// It was double-clicked: maximize or restore the app window.
+    ToggleMaximize,
 }
 
 impl App {
@@ -178,11 +236,13 @@ impl App {
             nodes: NodesView::new(),
             devices: BTreeMap::new(),
             configs: BTreeMap::new(),
-            desk: mdi::Desk::new(WINDOW, prefs.windows),
+            desk: mdi::Desk::new(prefs.window_size(), prefs.windows.clone()),
             next: 1,
             zoom: Zoom::from_scale(prefs.scale),
             dpi: 1.0,
             messages: prefs.messages.unwrap_or(true),
+            window: prefs.window,
+            moving: None,
         };
         app.rescale();
         let dpi = window::oldest()
@@ -194,6 +254,7 @@ impl App {
     fn save(&self) {
         Prefs {
             scale: Some(self.zoom.scale()),
+            window: self.window,
             windows: self.desk.placements().clone(),
             messages: Some(self.messages),
         }
@@ -276,6 +337,43 @@ impl App {
                 self.rescale();
                 Task::none()
             }
+            Message::Geometry(id, position, size) => {
+                if let Some(size) = size {
+                    // The desk's branch has no task.
+                    let _ = self.update(Message::Desk(mdi::Message::Resized(size)));
+                }
+                let zoom = self.zoom.scale();
+                let was = self.moving.take();
+                self.moving = Some(Moving {
+                    id,
+                    position: position
+                        .map(|at| Point::new(at.x * zoom, at.y * zoom))
+                        .or(was.and_then(|was| was.position)),
+                    size: size
+                        .map(|size| size * zoom)
+                        .or(was.and_then(|was| was.size)),
+                    at: Instant::now(),
+                });
+                Task::none()
+            }
+            Message::Settle => match self.moving {
+                Some(moving) if moving.at.elapsed() >= SETTLE => {
+                    self.moving = None;
+                    window::is_maximized(moving.id)
+                        .map(move |maximized| Message::Placed(moving, maximized))
+                }
+                _ => Task::none(),
+            },
+            Message::Placed(moving, maximized) => {
+                let at = placed(self.window, moving, maximized);
+                if self.window != Some(at) {
+                    self.window = Some(at);
+                    self.save();
+                }
+                Task::none()
+            }
+            Message::DragWindow => window::oldest().and_then(window::drag),
+            Message::ToggleMaximize => window::oldest().and_then(window::toggle_maximize),
         }
     }
 
@@ -440,9 +538,16 @@ impl App {
         )
         .height(mdi::DESK_TOP)
         .width(Length::Fill)
-        .padding([0, 10])
+        .padding(iced::Padding {
+            left: 10.0 + TRAFFIC_LIGHTS / self.zoom.scale(),
+            right: 10.0,
+            ..iced::Padding::ZERO
+        })
         .align_y(iced::alignment::Vertical::Center)
         .style(theme::app_header);
+        let header = iced::widget::mouse_area(header)
+            .on_press(Message::DragWindow)
+            .on_double_click(Message::ToggleMaximize);
 
         let empty = || mdi::Window {
             title: String::new(),
@@ -523,6 +628,9 @@ impl App {
         if self.desk.dragging() {
             all.push(event::listen_with(dragging));
         }
+        if self.moving.is_some() {
+            all.push(Subscription::run(settling).map(|()| Message::Settle));
+        }
         Subscription::batch(
             all.into_iter()
                 .chain(workers)
@@ -533,13 +641,19 @@ impl App {
     }
 }
 
-/// The keys the app handles, and the window's size and scale for the desk.
-/// A key a widget took (Esc leaving a text field, Enter submitting one) is
-/// left to it, except the zoom.
-fn keys(event: iced::Event, status: event::Status, _: window::Id) -> Option<Message> {
+/// The keys the app handles, and the window's place, size and scale, for
+/// the desk and `gui.json`. A key a widget took (Esc leaving a text field,
+/// Enter submitting one) is left to it, except the zoom.
+fn keys(event: iced::Event, status: event::Status, id: window::Id) -> Option<Message> {
     match event {
+        iced::Event::Window(window::Event::Opened { position, size }) => {
+            Some(Message::Geometry(id, position, Some(size)))
+        }
+        iced::Event::Window(window::Event::Moved(position)) => {
+            Some(Message::Geometry(id, Some(position), None))
+        }
         iced::Event::Window(window::Event::Resized(size)) => {
-            Some(Message::Desk(mdi::Message::Resized(size)))
+            Some(Message::Geometry(id, None, Some(size)))
         }
         iced::Event::Window(window::Event::Rescaled(dpi)) => Some(Message::Rescaled(dpi)),
         iced::Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => {
@@ -567,6 +681,43 @@ fn keys(event: iced::Event, status: event::Status, _: window::Id) -> Option<Mess
     }
 }
 
+/// Where the app window is now, from where it was and what it reported.
+/// Maximized, only that changes: the geometry stays the one it restores to.
+fn placed(was: Option<mdi::Placement>, moving: Moving, maximized: bool) -> mdi::Placement {
+    let mut at = was.unwrap_or(mdi::Placement {
+        x: 0.0,
+        y: 0.0,
+        width: WINDOW.width,
+        height: WINDOW.height,
+        maximized,
+    });
+    at.maximized = maximized;
+    if !maximized {
+        if let Some(position) = moving.position {
+            (at.x, at.y) = (position.x, position.y);
+        }
+        if let Some(size) = moving.size {
+            (at.width, at.height) = (size.width, size.height);
+        }
+    }
+    at
+}
+
+/// How long the app window stays still before its geometry is written.
+const SETTLE: Duration = Duration::from_secs(1);
+
+/// A tick every quarter of `SETTLE`, while anyone listens: the pool
+/// executor iced runs on has no timer.
+fn settling() -> mpsc::UnboundedReceiver<()> {
+    let (send, receive) = mpsc::unbounded();
+    std::thread::spawn(move || {
+        while send.unbounded_send(()).is_ok() {
+            std::thread::sleep(SETTLE / 4);
+        }
+    });
+    receive
+}
+
 /// While an inner window is dragged: the cursor, wherever it is.
 fn dragging(event: iced::Event, _: event::Status, _: window::Id) -> Option<Message> {
     match event {
@@ -590,5 +741,45 @@ mod tests {
         assert_eq!(Zoom(10).step(1).scale(), 1.1);
         assert_eq!(Zoom(Zoom::MAX).step(1), Zoom(Zoom::MAX));
         assert_eq!(Zoom(Zoom::MIN).step(-1), Zoom(Zoom::MIN));
+    }
+
+    #[test]
+    fn a_maximized_app_window_keeps_what_it_restores_to_and_opens_unzoomed() {
+        let moving = |position, size| Moving {
+            id: window::Id::unique(),
+            position,
+            size,
+            at: Instant::now(),
+        };
+        let at = placed(
+            None,
+            moving(
+                Some(Point::new(100.0, 80.0)),
+                Some(Size::new(1200.0, 800.0)),
+            ),
+            false,
+        );
+        assert_eq!(
+            (at.x, at.y, at.width, at.height),
+            (100.0, 80.0, 1200.0, 800.0)
+        );
+
+        let max = placed(
+            Some(at),
+            moving(None, Some(Size::new(1800.0, 1400.0))),
+            true,
+        );
+        assert!(max.maximized);
+        assert_eq!(
+            (max.x, max.y, max.width, max.height),
+            (100.0, 80.0, 1200.0, 800.0)
+        );
+
+        let prefs = Prefs {
+            scale: Some(2.0),
+            window: Some(max),
+            ..Prefs::default()
+        };
+        assert_eq!(prefs.window_size(), Size::new(600.0, 400.0));
     }
 }

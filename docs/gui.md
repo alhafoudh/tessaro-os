@@ -63,6 +63,25 @@ with the keyboard has the lighter one and a blue border.
   remembered as maximized, next to the size it restores to, not as the
   desk's size. Whether device windows show their Messages log is kept
   there too, as the last window toggled it.
+* **The app window reopens where it was left** (`Prefs::window` in
+  `main.rs`): position, size and whether it was maximized, again with the
+  size it restores to. It is kept in the screen's points, unzoomed, because
+  iced scales a new window's size by the zoom and reports sizes and
+  positions divided by it. The OS reports every step of a drag or resize,
+  so the latest geometry is only held (`Moving`) and written once the
+  window has been still for `SETTLE`; only then is the window asked
+  whether it is maximized (`window::is_maximized`), and a maximized size
+  never overwrites the restored one. The check runs on a ticker thread
+  that lives only while something is unwritten: iced's pool executor has
+  no timer.
+* **On macOS the app header is the app window's title bar** (`main.rs`):
+  the native title is hidden and the title bar transparent over a
+  full-size content view, so only the traffic lights are left, over the
+  header's left end. The header's title starts `TRAFFIC_LIGHTS` points in,
+  divided by the zoom because the zoom scales the header but not the
+  traffic lights. The content view takes the title bar's clicks, so the
+  header drags the window itself (`window::drag`) and maximizes it on a
+  double-click. Other platforms keep their native title bar.
 * **The title-bar icons are drawn, not typed** (`icon.rs`): a `□` from a
   fallback font lands on fractional device pixels at most zooms, so some
   of its edges come out half as thin. The canvas snaps each edge to a whole
