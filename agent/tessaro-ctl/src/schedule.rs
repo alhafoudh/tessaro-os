@@ -14,7 +14,9 @@ use clap::builder::{PossibleValuesParser, TypedValueParser};
 use clap::{Args, Subcommand};
 use protocol::api::{self, CalendarBody, LogsQuery, ScheduleChange, ScheduleRef};
 use protocol::{CalendarCheck, Moment, OnError, ScheduleInfo, ScheduleSpec};
-use tessaro_client::schedule::{duration, now, outcome, parse_timeout, relative};
+use tessaro_client::schedule::{
+    self as shared, command_lines, duration, last_run, now, outcome, parse_timeout, relative,
+};
 
 use crate::connect::Session;
 use crate::style::{self, pad, paint};
@@ -130,12 +132,7 @@ impl Body {
             } else {
                 std::fs::read_to_string(path).map_err(|err| format!("{}: {err}", path.display()))?
             };
-            lines.extend(
-                text.lines()
-                    .map(str::trim)
-                    .filter(|line| !line.is_empty() && !line.starts_with('#'))
-                    .map(str::to_string),
-            );
+            lines.extend(command_lines(&text));
         } else if lines.is_empty() {
             return Ok(None);
         }
@@ -315,20 +312,7 @@ fn list(schedules: &[ScheduleInfo]) {
             .next
             .as_ref()
             .map_or_else(|| "-".to_string(), |next| relative(next.unix, now));
-        let mut last = match &info.last_run {
-            Some(run) if run.succeeded() => paint(
-                style::OK,
-                format!("{}, {}", outcome(run), relative(run.finished.unix, now)),
-            ),
-            Some(run) => paint(
-                style::BAD,
-                format!("{}, {}", outcome(run), relative(run.finished.unix, now)),
-            ),
-            None => paint(style::MUTED, "never"),
-        };
-        if info.running > 0 {
-            last.push_str(&paint(style::WARN, format!(" ({} running)", info.running)));
-        }
+        let last = style::line(&last_run(info, now));
         println!(
             "{} {state} {} {last}",
             pad(style::HEADING, &info.spec.name, 20),
@@ -415,24 +399,10 @@ fn show(info: &ScheduleInfo, check: Option<&CalendarCheck>) {
 }
 
 fn show_upcoming(check: &CalendarCheck, label: &str) {
-    let now = now();
-    if check.next.is_empty() {
-        style::row(label, &paint(style::WARN, "never again"));
-    }
-    for (at, next) in check.next.iter().enumerate() {
-        style::row(if at == 0 { label } else { "" }, &moment(next, now));
-    }
+    style::facts(&shared::upcoming(check, label));
 }
 
 /// `2026-09-28 07:00:00 CEST (in 1 day 15h)`.
-fn moment(moment: &Moment, now: i64) -> String {
-    let local = if moment.local.is_empty() {
-        moment.unix.to_string()
-    } else {
-        moment.local.clone()
-    };
-    format!(
-        "{local} {}",
-        paint(style::MUTED, format!("({})", relative(moment.unix, now)))
-    )
+fn moment(at: &Moment, now: i64) -> String {
+    style::line(&shared::moment(at, now))
 }

@@ -24,6 +24,7 @@ use protocol::SshAccess;
 
 use crate::connect::Session;
 use crate::nodes;
+use crate::text::{Line, Tone};
 
 /// What `ssh-keygen` makes by default, in the order ssh itself tries them.
 pub const DEFAULT_KEYS: &[&str] = &[
@@ -72,6 +73,68 @@ impl Authorized {
             args,
         )
     }
+
+    /// What authorizing did, for the user: authorized or already, or an
+    /// unclaimed device's empty password; and when ssh will ask about the
+    /// host key after all. `key_given` when the user named a key.
+    pub fn lines(&self, node: &str, key_given: bool) -> Vec<Line> {
+        // Same shape as `claimed NAME (id)`: the verb, the device, the detail.
+        let Some(access) = &self.access else {
+            let mut lines = vec![Line::of(Tone::Warn, "unclaimed")
+                .text(" ")
+                .add(Tone::Heading, node)
+                .text(" ")
+                .add(
+                    Tone::Muted,
+                    "(root with an empty password, host key not checked)",
+                )];
+            if key_given {
+                lines.push(Line::of(
+                    Tone::Warn,
+                    "--key is not used: an unclaimed device takes no key",
+                ));
+            }
+            return lines;
+        };
+        let what = if access.added {
+            Line::of(Tone::Ok, "authorized on")
+        } else {
+            Line::of(Tone::Muted, "already authorized on")
+        };
+        let mut lines = vec![what
+            .text(" ")
+            .add(Tone::Heading, node)
+            .text(" ")
+            .add(Tone::Muted, format!("({})", access.fingerprint))];
+        if access.host_keys.is_empty() {
+            lines.push(Line::of(
+                Tone::Warn,
+                "the device did not send its host key; ssh will ask about it",
+            ));
+        }
+        lines
+    }
+}
+
+/// The device's SSH port.
+pub const PORT: u16 = 22;
+
+/// A command as a shell would need it typed.
+pub fn shell_words(argv: &[String]) -> String {
+    argv.iter()
+        .map(|word| {
+            let plain = !word.is_empty()
+                && word
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || "@%+=:,./_-".contains(ch));
+            if plain {
+                word.clone()
+            } else {
+                format!("'{}'", word.replace('\'', "'\\''"))
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// How ssh is told to check the device's host key.
@@ -256,6 +319,12 @@ pub fn ssh_argv(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shell_words_quote_what_needs_it() {
+        let argv = ["echo".to_string(), "a b".to_string(), "it's".to_string()];
+        assert_eq!(shell_words(&argv), "echo 'a b' 'it'\\''s'");
+    }
 
     const KEY: &str =
         "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIO7gEEtj0g4zaawVIwrP4wxLZQ2TqgASR86NTHDJ66jj a@laptop";

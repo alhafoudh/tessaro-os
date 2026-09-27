@@ -4,6 +4,7 @@
 
 use iced::widget::{button, container, text};
 use iced::{border, Border, Color, Element, Font, Theme};
+use tessaro_client::text::{Line, Tone};
 
 /// Manrope, bundled in `fonts/` and loaded in `main.rs`, so the GUI reads the
 /// same on every OS instead of taking whatever sans the host has. Monospace
@@ -38,6 +39,10 @@ pub const TEXT_COLOR: Color = rgb(0xdc_dc_dc);
 pub const MUTED: Color = rgb(0x8a_8d_93);
 pub const PRIMARY: Color = rgb(0x3d_7b_d9);
 const SUCCESS: Color = rgb(0x4c_b8_62);
+const WARNING: Color = rgb(0xe0_a4_3a);
+const DANGER: Color = rgb(0xe5_5b_4d);
+/// Who wrote a journal line, as the ctl's cyan.
+const SOURCE: Color = rgb(0x56_b6_c2);
 /// The selected table row and section list entry: the primary colour dimmed,
 /// so `MUTED` text stays readable on it, not only white.
 const SELECTION: Color = rgb(0x26_45_70);
@@ -55,10 +60,54 @@ pub fn theme() -> Theme {
             text: TEXT_COLOR,
             primary: PRIMARY,
             success: SUCCESS,
-            warning: rgb(0xe0_a4_3a),
-            danger: rgb(0xe5_5b_4d),
+            warning: WARNING,
+            danger: DANGER,
         },
     )
+}
+
+/// The color of a tone of the shared text (`tessaro_client::text`), where
+/// it has one; the rest is the text color.
+pub fn tone_color(tone: Tone) -> Option<Color> {
+    match tone {
+        Tone::Ok => Some(SUCCESS),
+        Tone::Warn | Tone::Secret => Some(WARNING),
+        Tone::Bad => Some(DANGER),
+        Tone::Label | Tone::Muted => Some(MUTED),
+        Tone::Source => Some(SOURCE),
+        Tone::Plain | Tone::Heading | Tone::Cmd => None,
+    }
+}
+
+/// A text style in a tone's color, for a cell that shows a shared line whole.
+pub fn toned(tone: Tone) -> impl Fn(&Theme) -> text::Style {
+    move |_| text::Style {
+        color: tone_color(tone),
+    }
+}
+
+/// A line of the shared text: each span in its tone's color, headings,
+/// commands and secrets bold, the padding kept for monospace columns.
+pub fn text_line<'a, M: 'a>(line: &Line, font: Font) -> Element<'a, M> {
+    let bold = Font {
+        weight: iced::font::Weight::Bold,
+        ..font
+    };
+    let spans: Vec<iced::widget::text::Span<'a, (), Font>> = line
+        .0
+        .iter()
+        .map(|part| {
+            let span = iced::widget::span(part.padded()).font(match part.tone {
+                Tone::Heading | Tone::Cmd | Tone::Secret | Tone::Bad => bold,
+                _ => font,
+            });
+            match tone_color(part.tone) {
+                Some(color) => span.color(color),
+                None => span,
+            }
+        })
+        .collect();
+    iced::widget::rich_text(spans).size(SMALL).font(font).into()
 }
 
 fn line(color: Color) -> Border {

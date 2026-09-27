@@ -105,7 +105,9 @@ the OpenAPI document; polling needs none.
   `GET /api/v1/jobs/{job}?after=N` answers the steps since `N`, the next `N`,
   and whether it is done and how. `DELETE` stops it. The device keeps a job's
   steps (`api/jobs.rs`) while it runs, within the command's own time limit,
-  and for 5 minutes after it ends. `Session::job` polls one to its end.
+  and for 5 minutes after it ends. `Session::job` polls one to its end, and
+  the steps read the same in both clients (`tessaro_client::ping`,
+  `speedtest`, `storage`).
 * **The journal is paged**: `device/logs` answers journalctl's JSON entries
   and a cursor; asking again with it answers only what came since, which is
   how `tessaro-ctl device logs --follow` follows (`Session::logs`).

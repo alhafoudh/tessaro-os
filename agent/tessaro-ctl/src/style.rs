@@ -10,6 +10,7 @@
 // Shadow the std macro: this strips colors when stdout is not a terminal.
 use anstream::println;
 use anstyle::{AnsiColor, Style};
+use tessaro_client::text::{self, Line, Tone};
 
 /// Field names in front of a value: `hostname`, `accepts`, `restarts`.
 pub const LABEL: Style = Style::new().dimmed();
@@ -42,32 +43,41 @@ pub fn pad(style: Style, text: impl std::fmt::Display, width: usize) -> String {
     format!("{style}{text:<width$}{style:#}")
 }
 
-/// A systemd unit's `ActiveState`.
-pub fn unit_state(state: &str) -> Style {
-    match state {
-        "active" => OK,
-        "failed" => BAD,
-        "inactive" => MUTED,
-        _ => WARN,
+/// The style of a tone of the shared text (`tessaro_client::text`).
+pub fn of(tone: Tone) -> Style {
+    match tone {
+        Tone::Plain => Style::new(),
+        Tone::Label => LABEL,
+        Tone::Heading => HEADING,
+        Tone::Ok => OK,
+        Tone::Warn => WARN,
+        Tone::Bad => BAD,
+        Tone::Muted => MUTED,
+        Tone::Secret => SECRET,
+        Tone::Cmd => CMD,
+        Tone::Source => SOURCE,
     }
+}
+
+/// A shared line, painted: each span in its tone, padding inside the codes.
+pub fn line(line: &Line) -> String {
+    line.0
+        .iter()
+        .map(|span| match span.tone {
+            Tone::Plain => span.padded(),
+            tone => pad(of(tone), &span.text, span.width),
+        })
+        .collect()
 }
 
 /// An interface's operstate.
 pub fn link_state(state: &str) -> Style {
-    match state {
-        "up" => OK,
-        "down" | "lowerlayerdown" => BAD,
-        _ => MUTED,
-    }
+    of(text::link_state(state))
 }
 
 /// How full a filesystem is, in percent.
 pub fn usage_level(percent: u64) -> Style {
-    match percent {
-        0..80 => OK,
-        80..95 => WARN,
-        _ => BAD,
-    }
+    of(text::usage_level(percent))
 }
 
 /// `label value` with the label in a column of its own: a row of a
@@ -81,16 +91,14 @@ pub fn sub_row(label: &str, value: &str) {
     println!("    {} {value}", pad(LABEL, label, 9));
 }
 
-/// The label of a one-line result: `reply`, `latency`, `upload`.
-pub fn label(text: &str) -> String {
-    pad(LABEL, text, 9)
+pub fn yes_no(yes: bool) -> String {
+    line(&text::yes_no(yes))
 }
 
-pub fn yes_no(yes: bool) -> String {
-    if yes {
-        paint(OK, "yes")
-    } else {
-        paint(WARN, "no")
+/// Shared facts as rows.
+pub fn facts(facts: &[text::Fact]) {
+    for fact in facts {
+        row(&fact.label, &line(&fact.value));
     }
 }
 
@@ -109,10 +117,16 @@ mod tests {
     }
 
     #[test]
-    fn fuller_is_louder() {
-        assert_eq!(usage_level(10), OK);
-        assert_eq!(usage_level(85), WARN);
-        assert_eq!(usage_level(99), BAD);
+    fn a_painted_line_is_its_plain_text() {
+        let shared = Line::new()
+            .pad(Tone::Label, "reply", 9)
+            .text(" ")
+            .add(Tone::Bad, "lost");
+        assert_eq!(strip_str(&line(&shared)).to_string(), shared.to_string());
+        assert_eq!(
+            line(&shared),
+            format!("{} {}", pad(LABEL, "reply", 9), paint(BAD, "lost"))
+        );
     }
 
     #[test]

@@ -71,8 +71,6 @@ pub fn password(from_stdin: bool, prompt: &str) -> Result<String, String> {
 pub fn new_password(prompt: &str) -> Result<String, String> {
     let first = password(false, prompt)?;
     let again = password(false, "again: ")?;
-    if first != again {
-        return Err("the passwords do not match".to_string());
-    }
+    tessaro_client::actions::root_password(&first, &again)?;
     Ok(first)
 }

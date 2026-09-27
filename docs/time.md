@@ -78,7 +78,8 @@ and `time set` sets the clock by hand while NTP is off. The logic is
   exactly as `timedatectl timesync-status` computes them
   (`NtpSample::offset_and_delay` in `protocol`), and an answer that fails
   timedatectl's own sanity check is treated as none. Formatting is
-  `agent/client/src/clock.rs`, shared by `tessaro-ctl` and the GUI.
+  `agent/client/src/clock.rs`, and what `time show` says is
+  `agent/client/src/describe/time.rs`, shared by `tessaro-ctl` and the GUI.
 * **`time set` is refused while NTP is on**, as timedated refuses it; it is
   for a network without any time server. With no time given, `tessaro-ctl`
   sends the workstation's clock; a `YYYY-MM-DD HH:MM[:SS]` is read in the

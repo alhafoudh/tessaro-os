@@ -169,11 +169,12 @@ Things to know:
 **`tessaro-ctl -n NAME browser devtools` puts the kiosk tab in the
 technician's own Chrome DevTools**: it sends the SSH key as `ssh connect`
 does and runs `ssh -N -L 127.0.0.1:9222:127.0.0.1:9222` until Ctrl-C
-(`tessaro_client::tunnel`, `tessaro-ctl/src/devtools.rs`). In
+(`tessaro_client::devtools` and `tunnel`). In
 `chrome://inspect` the tab is under Remote Target, because 9222 is one of the
 ports Chrome discovers without being configured; `--local-port` takes
-another, which then has to be added under Configure. tessaro-gui runs the
-same tunnel as a job from the Browser page (see [gui.md](gui.md)).
+another, and a port taken here falls back to a free one, which then has to
+be added under Configure. tessaro-gui runs the same tunnel as a job from the
+Browser page (see [gui.md](gui.md)).
 
 * **Open it from `chrome://inspect`, not from `/json`'s
   `devtoolsFrontendUrl` in a tab.** Chromium refuses a DevTools websocket

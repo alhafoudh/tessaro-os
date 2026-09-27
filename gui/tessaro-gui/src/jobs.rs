@@ -5,31 +5,31 @@
 //!
 //! A job is a subscription keyed by its id. Cancelling it drops the
 //! subscription. A device job sees that between two polls and cancels it on
-//! the device; for the rest a watcher thread shuts the connection down,
-//! which ends whatever call the job was in. The transfers themselves are
-//! `tessaro_client::transfer`, the same as `tessaro-ctl files` and
-//! `tessaro-ctl update send`.
+//! the device; the shared flows see it as `Report::stopped` at their next
+//! step, and for a call in flight a watcher thread shuts the connection
+//! down. The flows themselves are `tessaro_client`'s (`files`, `update`,
+//! `ping`, `storage`, `devtools`), the same as `tessaro-ctl`'s.
 
 use std::hash::{Hash, Hasher};
 use std::net::Shutdown;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
 use iced::futures::channel::mpsc as ui;
 use iced::Subscription;
-use protocol::api::{
-    self, CommitBody, Endpoint, FilesQuery, GrowBody, PathBody, PingBody, SpeedtestBody,
-};
-use protocol::files::{self as store, FileEntry, FileKind};
-use protocol::{ImageUpload, JobStarted, UpdatePhase};
+use protocol::api::{self, Endpoint, GrowBody, PingBody, SpeedtestBody};
+use protocol::files::{self as store, FileEntry};
+use protocol::{JobStarted, PingEvent};
 use serde_json::Value;
 use tessaro_client::connect::Session;
 use tessaro_client::nodes::Node;
-use tessaro_client::ssh;
-use tessaro_client::transfer::{self, mb, mtime_of};
+use tessaro_client::report::{self, Report as _};
+use tessaro_client::text::{Line, Tone};
 use tessaro_client::tunnel::{self, Prompts, Tunnel};
+use tessaro_client::update::{self, Plan, Sent};
+use tessaro_client::{devtools, files, ping, ssh, storage};
 
 use crate::worker;
 
@@ -42,7 +42,7 @@ pub enum Kind {
     /// A stored file or directory into the local directory `into`.
     Download { entry: FileEntry, into: PathBuf },
     /// An image, staged, checked and committed.
-    Update(Update),
+    Update(Plan),
     /// `tessaro-ctl device ping`: round trips over the control connection.
     ControlPing { count: u32 },
     /// `tessaro-ctl browser devtools`: the device's DevTools port forwarded
@@ -59,26 +59,19 @@ pub enum Stream {
 }
 
 #[derive(Debug, Clone)]
-pub struct Update {
-    pub image: PathBuf,
-    pub bmap: PathBuf,
-    pub wipe_data: bool,
-    pub repartition: bool,
-    pub verify: bool,
-    pub reboot: bool,
-}
-
-#[derive(Debug, Clone)]
 pub enum Event {
     Progress {
-        label: String,
+        label: Line,
         done: u64,
         total: u64,
     },
     /// One event of a stream.
     Value(serde_json::Value),
     /// A step done, for the log.
-    Line(String),
+    Line(Line),
+    /// The update erases /data: the device comes back as a new node, and
+    /// what this machine knows about it is worthless.
+    Wiped,
     Finished(Result<String, String>),
 }
 
@@ -110,21 +103,25 @@ fn start(spec: &Spec) -> ui::UnboundedReceiver<Event> {
     receive
 }
 
+/// A shared flow's progress, as the job's events. Cancel closes `out`,
+/// which the flow sees as `stopped` at its next step.
 struct Report<'a> {
     out: &'a ui::UnboundedSender<Event>,
 }
 
-impl Report<'_> {
-    fn progress(&self, label: impl Into<String>, done: u64, total: u64) {
-        let _ = self.out.unbounded_send(Event::Progress {
-            label: label.into(),
-            done,
-            total,
-        });
+impl report::Report for Report<'_> {
+    fn progress(&mut self, label: Line, done: u64, total: u64) {
+        let _ = self
+            .out
+            .unbounded_send(Event::Progress { label, done, total });
     }
 
-    fn line(&self, line: impl Into<String>) {
-        let _ = self.out.unbounded_send(Event::Line(line.into()));
+    fn line(&mut self, line: Line) {
+        let _ = self.out.unbounded_send(Event::Line(line));
+    }
+
+    fn stopped(&self) -> bool {
+        self.out.is_closed()
     }
 }
 
@@ -145,20 +142,21 @@ fn run(spec: &Spec, out: &ui::UnboundedSender<Event>) -> Result<String, String> 
             }
         });
     }
-    let report = Report { out };
+    let mut report = Report { out };
     let result = match &spec.kind {
-        Kind::Stream(Stream::Ping(body)) => {
-            stream::<api::network::Ping>(&mut session, body.clone(), out)
-        }
+        Kind::Stream(Stream::Ping(body)) => net_ping(&mut session, body.clone(), out),
         Kind::Stream(Stream::Speedtest(body)) => {
-            stream::<api::network::Speedtest>(&mut session, body.clone(), out)
+            stream::<api::network::Speedtest>(&mut session, body.clone(), out, |_| {})
         }
-        Kind::Stream(Stream::Grow(body)) => stream::<api::storage::Grow>(&mut session, *body, out),
-        Kind::Upload { local, into } => upload(&mut session, local, into, &report),
-        Kind::Download { entry, into } => download(&mut session, entry, into, &report),
-        Kind::Update(update) => update_send(&mut session, update, &report),
-        Kind::ControlPing { count } => control_ping(&mut session, *count, &report),
-        Kind::DevTools => devtools(&mut session, &report),
+        Kind::Stream(Stream::Grow(body)) => grow(&mut session, *body, out),
+        Kind::Upload { local, into } => upload(&mut session, local, into, &mut report),
+        Kind::Download { entry, into } => {
+            files::download(&mut session, &entry.path, Some(into.clone()), &mut report)
+                .map(|summary| summary.line("received").to_string())
+        }
+        Kind::Update(update) => update_send(&mut session, &spec.node, update, &mut report),
+        Kind::ControlPing { count } => control_ping(&mut session, *count, &mut report),
+        Kind::DevTools => open_devtools(&mut session, &mut report),
     };
     done.store(true, Ordering::Relaxed);
     if out.is_closed() {
@@ -168,11 +166,12 @@ fn run(spec: &Spec, out: &ui::UnboundedSender<Event>) -> Result<String, String> 
 }
 
 /// Every event of the job as it came: the page reads them as the job's
-/// event type.
+/// event type. `each` sees them too, for a verdict at the end.
 fn stream<S>(
     session: &mut Session,
     body: S::Body,
     out: &ui::UnboundedSender<Event>,
+    mut each: impl FnMut(&Value),
 ) -> Result<String, String>
 where
     S: Endpoint<Response = JobStarted>,
@@ -180,241 +179,128 @@ where
 {
     session.job::<S, Value>(body, &|| out.is_closed(), |event| {
         let event = event.unwrap_or_else(|unknown| unknown);
+        each(&event);
         let _ = out.unbounded_send(Event::Value(event));
     })?;
     Ok("done".to_string())
 }
 
+/// `tessaro-ctl network ping`: no replies at all is a failure, as there.
+fn net_ping(
+    session: &mut Session,
+    body: PingBody,
+    out: &ui::UnboundedSender<Event>,
+) -> Result<String, String> {
+    let mut failed = false;
+    stream::<api::network::Ping>(session, body, out, |event| {
+        if let Ok(PingEvent::Summary { received: 0, .. }) = serde_json::from_value(event.clone()) {
+            failed = true;
+        }
+    })?;
+    if failed {
+        return Err("no replies".to_string());
+    }
+    Ok("done".to_string())
+}
+
+/// `tessaro-ctl storage grow`: the device's plan first, and the grow only
+/// when it would change something.
+fn grow(
+    session: &mut Session,
+    body: GrowBody,
+    out: &ui::UnboundedSender<Event>,
+) -> Result<String, String> {
+    let plan = storage::check(session)?;
+    let (facts, nothing) = plan.facts();
+    for fact in facts {
+        let line = Line::new()
+            .pad(Tone::Label, fact.label, 12)
+            .text(" ")
+            .join(fact.value);
+        let _ = out.unbounded_send(Event::Line(line));
+    }
+    if let Some(nothing) = nothing {
+        return Ok(nothing.to_string());
+    }
+    if body.check {
+        return Ok("checked".to_string());
+    }
+    stream::<api::storage::Grow>(session, body, out, |_| {})
+        .map_err(|error| format!("{error}; {}", storage::STOPPED_HINT))
+}
+
+/// Each local path into `into`: a file as `into/NAME`, a directory as
+/// `into/NAME` with everything in it.
 fn upload(
     session: &mut Session,
     local: &[PathBuf],
     into: &str,
-    report: &Report,
+    report: &mut Report,
 ) -> Result<String, String> {
-    let mut sent = 0usize;
-    let mut unchanged = 0usize;
+    let mut lines = Vec::new();
     for path in local {
-        let name = file_name(path)?;
-        let target = store::join(into, &name);
-        let meta = std::fs::metadata(path).map_err(|err| format!("{}: {err}", path.display()))?;
-        if meta.is_dir() {
-            session.send::<api::files::Mkdir>(PathBody {
-                path: target.clone(),
-            })?;
-            let mut children: Vec<PathBuf> = std::fs::read_dir(path)
-                .map_err(|err| format!("{}: {err}", path.display()))?
-                .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-                .filter(|child| {
-                    child
-                        .file_name()
-                        .and_then(|name| name.to_str())
-                        .is_some_and(|name| !name.starts_with('.'))
-                })
-                .collect();
-            children.sort();
-            let done = upload(session, &children, &target, report)?;
-            report.line(format!("{target}/: {done}"));
-            continue;
-        }
-        let size = meta.len();
-        let label = format!("sending {target}");
-        let result =
-            transfer::send_file(session, path, &target, size, mtime_of(&meta), |offset| {
-                report.progress(&label, offset, size)
-            })?;
-        match result {
-            Some(_) => {
-                sent += 1;
-                report.line(format!("sent {target} ({})", protocol::size_label(size)));
-            }
-            None => unchanged += 1,
-        }
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| format!("{}: no usable file name", path.display()))?;
+        let summary = files::upload(session, path, Some(&store::join(into, name)), report)?;
+        lines.push(summary.line("sent").to_string());
     }
-    Ok(format!("{sent} sent, {unchanged} already there"))
+    Ok(lines.join("; "))
 }
 
-fn download(
+/// `tessaro-ctl update send`, reporting here, and waiting for the device to
+/// come back when it reboots into the image.
+fn update_send(
     session: &mut Session,
-    entry: &FileEntry,
-    into: &Path,
-    report: &Report,
+    node: &Node,
+    plan: &Plan,
+    report: &mut Report,
 ) -> Result<String, String> {
-    let name = entry
-        .path
-        .rsplit('/')
-        .next()
-        .filter(|name| !name.is_empty())
-        .unwrap_or("files")
-        .to_string();
-    if entry.kind == FileKind::File {
-        let target = into.join(&name);
-        let label = format!("receiving {}", entry.path);
-        transfer::fetch_file(session, entry, &target, |done, total| {
-            report.progress(&label, done, total)
-        })?;
-        return Ok(format!("saved {}", target.display()));
-    }
-
-    let listing = session.call::<api::files::List>(
-        FilesQuery {
-            path: entry.path.clone(),
-            recursive: true,
-        },
-        (),
-    )?;
-    let base = into.join(&name);
-    std::fs::create_dir_all(&base).map_err(|err| format!("{}: {err}", base.display()))?;
-    let prefix = format!("{}/", entry.path);
-    let mut received = 0usize;
-    for item in &listing.entries {
-        let Some(relative) = item.path.strip_prefix(&prefix) else {
-            continue;
-        };
-        let target = base.join(relative.split('/').collect::<PathBuf>());
-        match item.kind {
-            FileKind::Dir => std::fs::create_dir_all(&target)
-                .map_err(|err| format!("{}: {err}", target.display()))?,
-            FileKind::File => {
-                let label = format!("receiving {}", item.path);
-                if transfer::fetch_file(session, item, &target, |done, total| {
-                    report.progress(&label, done, total)
-                })? {
-                    received += 1;
-                }
-            }
+    match update::send(session, plan, report)? {
+        Sent::Staged => Ok("staged; it is applied at the next reboot".to_string()),
+        Sent::Wiped => {
+            let _ = report.out.unbounded_send(Event::Wiped);
+            Ok("sent; the device comes back as a new node".to_string())
+        }
+        Sent::Rebooting => {
+            update::wait_back(
+                &session.node.name,
+                || worker::connect(node).map(|(session, _)| session),
+                report,
+            )?;
+            Ok("applied".to_string())
         }
     }
-    Ok(format!("{received} received into {}", base.display()))
 }
 
-/// What `tessaro-ctl update send` does, reporting here instead.
-fn update_send(session: &mut Session, update: &Update, report: &Report) -> Result<String, String> {
-    let bmap = std::fs::read_to_string(&update.bmap)
-        .map_err(|err| format!("{}: {err}", update.bmap.display()))?;
-    let name = file_name(&update.image)?;
-    let size = std::fs::metadata(&update.image)
-        .map_err(|err| format!("{}: {err}", update.image.display()))?
-        .len();
-
-    let sha256 = transfer::hash(&update.image, |done| report.progress("hashing", done, size))?;
-    report.line(format!("hashed {}", mb(size)));
-    let begun = session.send::<api::update::Begin>(ImageUpload {
-        name: name.clone(),
-        size,
-        sha256,
-        bmap,
-        verify: update.verify,
-        repartition: update.repartition,
-    })?;
-    if begun.phase == UpdatePhase::Receiving {
-        if begun.offset > 0 {
-            report.line(format!("resuming at {}", mb(begun.offset)));
-        }
-        transfer::upload_image(session, &update.image, size, begun.offset, |offset| {
-            report.progress("uploading", offset, size)
-        })?;
-        report.line(format!("uploaded {}", mb(size)));
-    } else {
-        report.line(format!("the device already has {name}"));
+/// `tessaro-ctl device ping`, reporting here.
+fn control_ping(session: &mut Session, count: u32, report: &mut Report) -> Result<String, String> {
+    for line in ping::intro(session) {
+        report.line(line);
     }
-
-    loop {
-        let status = session.fetch::<api::update::Status>()?;
-        match status.phase {
-            UpdatePhase::Verifying => report.progress("verifying", status.verified, status.size),
-            UpdatePhase::Preparing => {
-                report.progress("preparing", status.prepared, status.to_prepare.max(1))
-            }
-            UpdatePhase::Ready | UpdatePhase::Pending => break,
-            UpdatePhase::Failed => {
-                return Err(format!(
-                    "the device refused the image: {}",
-                    status.error.as_deref().unwrap_or("no reason given")
-                ))
-            }
-            UpdatePhase::Idle | UpdatePhase::Receiving => {
-                return Err("the device lost the upload; send it again".to_string())
-            }
-        }
-        std::thread::sleep(Duration::from_secs(1));
-    }
-    report.line("prepared");
-
-    let done = session.send::<api::update::Commit>(CommitBody {
-        wipe_data: update.wipe_data || update.repartition,
-        reboot: update.reboot,
-    })?;
-    Ok(done.message)
-}
-
-fn control_ping(session: &mut Session, count: u32, report: &Report) -> Result<String, String> {
-    if let Some(timing) = session.timing {
-        report.line(format!(
-            "connect {:.1} ms, tls {:.1} ms",
-            timing.connect.as_secs_f64() * 1e3,
-            timing.handshake.as_secs_f64() * 1e3
-        ));
-    }
-    let mut rtts = Vec::new();
-    for seq in 1..=count {
-        let started = std::time::Instant::now();
-        match session.fetch::<api::device::Ping>() {
-            Ok(_) => {
-                let rtt = started.elapsed().as_secs_f64() * 1e3;
-                rtts.push(rtt);
-                report.line(format!("reply {rtt:.1} ms seq={seq}"));
-            }
-            Err(error) => report.line(format!("no reply seq={seq}: {error}")),
-        }
-        report.progress("pinging", u64::from(seq), u64::from(count));
-        if seq < count {
-            std::thread::sleep(Duration::from_secs(1));
-        }
-    }
-    if rtts.is_empty() {
+    let summary = ping::device(session, count, Duration::from_secs(1), report)?;
+    if summary.received() == 0 {
         return Err("no replies".to_string());
     }
-    let average = rtts.iter().sum::<f64>() / rtts.len() as f64;
-    let (min, max) = rtts.iter().fold((f64::MAX, 0f64), |(min, max), rtt| {
-        (min.min(*rtt), max.max(*rtt))
-    });
-    Ok(format!(
-        "{}/{count} replies, min {min:.1} / avg {average:.1} / max {max:.1} ms",
-        rtts.len()
-    ))
+    Ok(summary.line().to_string())
 }
 
-/// What `tessaro-ctl browser devtools` does: the tunnel, open until the job
-/// is cancelled or ssh ends. The device reports a connected DevTools window
+/// `tessaro-ctl browser devtools`: the tunnel, open until the job is
+/// cancelled or ssh ends. The device reports a connected DevTools window
 /// in its `Status`, which the Browser page shows.
-fn devtools(session: &mut Session, report: &Report) -> Result<String, String> {
+fn open_devtools(session: &mut Session, report: &mut Report) -> Result<String, String> {
     let authorized = ssh::authorize(session, None)?;
     let port = tunnel::free_port(tunnel::DEVTOOLS_LOCAL)?;
     let mut forward = Tunnel::open(&authorized, port, tunnel::DEVTOOLS, Prompts::Never)?;
-    report.progress(format!("forwarding localhost:{port}"), 1, 1);
-    report.line(format!(
-        "DevTools on localhost:{port}: open chrome://inspect in Chrome, the kiosk tab is under Remote Target"
-    ));
-    if port != tunnel::DEVTOOLS_LOCAL {
-        report.line(format!(
-            "9222 is taken here: add localhost:{port} under Discover network targets, Configure"
-        ));
-    }
-    report.line(
-        "while DevTools is connected the agent leaves the tab alone; Cancel closes the tunnel",
+    report.progress(
+        Line::of(Tone::Ok, format!("forwarding localhost:{port}")),
+        1,
+        1,
     );
-    while !report.out.is_closed() {
-        if let Some(why) = forward.ended() {
-            return Err(why);
-        }
-        std::thread::sleep(Duration::from_millis(500));
+    for line in devtools::explain(&session.node.name, port, "Cancel closes the tunnel") {
+        report.line(line);
     }
+    devtools::watch(session, &mut forward, report)?;
     Ok("closed".to_string())
-}
-
-fn file_name(path: &Path) -> Result<String, String> {
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .map(str::to_string)
-        .ok_or_else(|| format!("{}: no usable file name", path.display()))
 }

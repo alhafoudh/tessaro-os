@@ -2,7 +2,80 @@
 //! `tessaro-ctl schedule` and the GUI's Schedules page so they say it the
 //! same way, and reading a timeout the way both accept it.
 
-use protocol::ScheduleRun;
+use protocol::{CalendarCheck, Moment, ScheduleInfo, ScheduleRun};
+
+use crate::text::{Fact, Line, Tone};
+
+/// A timeout the way `parse_timeout` reads it back to the same seconds:
+/// `none`, `90s`, `1h30m`, `1d30m`. A form shows this, so saving it
+/// unchanged changes nothing.
+pub fn format_timeout(seconds: u64) -> String {
+    if seconds == 0 {
+        return "none".to_string();
+    }
+    let parts = [
+        (seconds / 86_400, "d"),
+        (seconds / 3600 % 24, "h"),
+        (seconds / 60 % 60, "m"),
+        (seconds % 60, "s"),
+    ];
+    parts
+        .iter()
+        .filter(|(count, _)| *count > 0)
+        .map(|(count, unit)| format!("{count}{unit}"))
+        .collect()
+}
+
+/// The command lines of a run, one a line, as typed or read from a file:
+/// blank lines and lines starting with # are left out.
+pub fn command_lines(text: &str) -> Vec<String> {
+    text.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(str::to_string)
+        .collect()
+}
+
+/// `2026-09-28 07:00:00 CEST (in 1 day 15h)`; the unix time when the
+/// device gave no local one.
+pub fn moment(moment: &Moment, now: i64) -> Line {
+    let local = if moment.local.is_empty() {
+        moment.unix.to_string()
+    } else {
+        moment.local.clone()
+    };
+    Line::plain(format!("{local} ")).add(Tone::Muted, format!("({})", relative(moment.unix, now)))
+}
+
+/// The next times a calendar fires, a fact each, the first under `label`.
+pub fn upcoming(check: &CalendarCheck, label: &str) -> Vec<Fact> {
+    let now = now();
+    if check.next.is_empty() {
+        return vec![Fact::new(label, Line::of(Tone::Warn, "never again"))];
+    }
+    check
+        .next
+        .iter()
+        .enumerate()
+        .map(|(at, next)| Fact::new(if at == 0 { label } else { "" }, moment(next, now)))
+        .collect()
+}
+
+/// How the last run went and when, and how many run now.
+pub fn last_run(info: &ScheduleInfo, now: i64) -> Line {
+    let line = match &info.last_run {
+        Some(run) => Line::of(
+            if run.succeeded() { Tone::Ok } else { Tone::Bad },
+            format!("{}, {}", outcome(run), relative(run.finished.unix, now)),
+        ),
+        None => Line::of(Tone::Muted, "never"),
+    };
+    if info.running > 0 {
+        line.add(Tone::Warn, format!(" ({} running)", info.running))
+    } else {
+        line
+    }
+}
 
 /// A timeout as typed: `90`, `90s`, `10m`, `2h`, `1h30m`; `0` or `none`
 /// for no timeout, as `0`.
@@ -114,6 +187,36 @@ mod tests {
         assert!(parse_timeout("").is_err());
         assert!(parse_timeout("10x").is_err());
         assert!(parse_timeout("m").is_err());
+    }
+
+    #[test]
+    fn a_formatted_timeout_reads_back_the_same() {
+        for seconds in [0, 1, 59, 90, 3600, 5400, 86_400, 88_200, 3605, 90_061] {
+            assert_eq!(
+                parse_timeout(&format_timeout(seconds)),
+                Ok(seconds),
+                "{seconds}"
+            );
+        }
+        assert_eq!(format_timeout(88_200), "1d30m");
+        assert_eq!(format_timeout(0), "none");
+    }
+
+    #[test]
+    fn command_lines_skip_blanks_and_comments() {
+        assert_eq!(
+            command_lines("a\n\n  # note\n b \n"),
+            vec!["a".to_string(), "b".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_moment_without_local_time_shows_the_unix_time() {
+        let at = Moment {
+            unix: 100,
+            local: String::new(),
+        };
+        assert_eq!(moment(&at, 100).to_string(), "100 (now)");
     }
 
     #[test]

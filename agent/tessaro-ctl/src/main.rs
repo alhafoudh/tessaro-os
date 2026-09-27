@@ -36,6 +36,8 @@ use protocol::api::{self, Empty, Endpoint};
 use protocol::keys;
 use protocol::{Applied, Done, EvalResult, KeyInfo, NodeInfo, RestartTarget, Source, Status};
 use serde_json::Value;
+use tessaro_client::access;
+use tessaro_client::describe::device as describe;
 use tessaro_client::nodes::{self, Nodes};
 
 use connect::{Answer, Session, Target, Trust};
@@ -956,52 +958,28 @@ fn run(cli: Cli) -> Result<(), String> {
             },
         ),
         Cmd::Access(AccessCmd::Claim { name, .. }) => {
-            let name = name.unwrap_or_else(tessaro_client::client_name);
-            // A token left over from before an unclaim means nothing now.
-            session.clear_token();
-            let claimed = session.send::<api::access::Claim>(api::NameBody { name })?;
+            let claimed =
+                access::claim(&mut session, name.as_deref().unwrap_or("")).into_result()?;
             remember(&mut nodes, &session, Some(claimed.token.clone()), local)?;
             if json {
                 return print_json(&claimed);
             }
-            println!(
-                "{} {} {}",
-                paint(style::OK, "claimed"),
-                paint(style::HEADING, &session.node.name),
-                paint(style::MUTED, format!("({})", session.node.id))
-            );
+            println!("{}", style::line(&access::done("claimed", &session)));
             println!(
                 "token {} saved in {}",
                 claimed.token_id,
                 nodes::dir().join("nodes.json").display()
             );
             println!();
-            show_once(
-                "root password - shown this once, store it now:",
-                &claimed.root_password,
-            );
-            if let Some(hotspot) = &claimed.hotspot {
-                show_once(
-                    &format!(
-                        "hotspot {} password - shown this once; anyone on the hotspot now is dropped:",
-                        hotspot.ssid
-                    ),
-                    &hotspot.password,
-                );
+            for (intro, secret) in access::secrets(&claimed) {
+                show_once(&intro, &secret);
             }
             Ok(())
         }
         Cmd::Access(AccessCmd::Login { token, .. }) => {
-            session.set_token(token.clone());
-            // Prove the token before storing it.
-            session.fetch::<api::access::Tokens>()?;
+            access::login(&mut session, &token)?;
             remember(&mut nodes, &session, Some(token), local)?;
-            println!(
-                "{} {} {}",
-                paint(style::OK, "logged in to"),
-                paint(style::HEADING, &session.node.name),
-                paint(style::MUTED, format!("({})", session.node.id))
-            );
+            println!("{}", style::line(&access::done("logged in to", &session)));
             Ok(())
         }
         Cmd::Nodes(_) | Cmd::Completion { .. } => unreachable!("handled above"),
@@ -1104,20 +1082,12 @@ fn run(cli: Cli) -> Result<(), String> {
             }
         },
         Cmd::Access(AccessCmd::Unclaim { yes }) => {
-            prompt::confirm_destructive(
-                &session,
-                yes,
-                "remove every token and ssh key and empty the root password",
-            )?;
+            prompt::confirm_destructive(&session, yes, access::UNCLAIM_LOSES)?;
             done::<api::access::Unclaim>(&mut session, Empty {}, (), json)?;
             forget_session(&mut nodes, &session)
         }
         Cmd::Device(DeviceCmd::FactoryReset { yes }) => {
-            prompt::confirm_destructive(
-                &session,
-                yes,
-                "erase every setting, remove every token and ssh key and empty the root password",
-            )?;
+            prompt::confirm_destructive(&session, yes, access::FACTORY_RESET_LOSES)?;
             done::<api::device::FactoryReset>(&mut session, Empty {}, (), json)?;
             forget_session(&mut nodes, &session)
         }
@@ -1279,10 +1249,14 @@ pub(crate) fn done<E: Endpoint<Response = Done>>(
 /// A secret the device will never show again: the intro, then the secret
 /// set off by blank lines so it is easy to select.
 fn show_once(intro: &str, secret: &str) {
-    println!("{}", paint(style::WARN, intro));
-    println!();
-    println!("    {}", paint(style::SECRET, secret));
-    println!();
+    lines(describe::once(intro, secret));
+}
+
+/// Shared lines, each on its own.
+fn lines(lines: Vec<tessaro_client::text::Line>) {
+    for line in lines {
+        println!("{}", style::line(&line));
+    }
 }
 
 /// `value` as pretty JSON with `--json`, otherwise what `human` prints.
@@ -1305,345 +1279,39 @@ pub(crate) fn print_json<T: serde::Serialize>(value: &T) -> Result<(), String> {
 }
 
 fn show_key(key: &KeyInfo) {
-    // Nothing reads a read-only key, so it is the one kind that restarts
-    // nothing - and its value is reported, never set.
-    let read_only = key.applies.is_empty();
-    let current = match (&key.value, &key.default) {
-        (Some(value), _) if read_only => {
-            let shown = if value.is_empty() {
-                paint(style::MUTED, "(none)")
-            } else {
-                value.clone()
-            };
-            format!(
-                "{shown}  {}",
-                paint(style::MUTED, "(read-only, reported by the device)")
-            )
-        }
-        (Some(value), _) => format!("{}  {}", paint(style::OK, value), paint(style::OK, "(set)")),
-        (None, Some(default)) => format!("{default}  {}", paint(style::MUTED, "(default)")),
-        (None, None) => paint(style::MUTED, "(not set)"),
-    };
-    let restarts = key
-        .applies
-        .iter()
-        .map(|consumer| match consumer {
-            protocol::keys::Consumer::Agent => "the agent (invisible on screen)",
-            protocol::keys::Consumer::Browser => "the browser",
-            protocol::keys::Consumer::Weston => "the display (Weston, browser and agent)",
-            protocol::keys::Consumer::Network => {
-                "nothing: the network profiles are switched, and checked before it is saved"
-            }
-            protocol::keys::Consumer::Audio => "nothing: applied to the sound server at once",
-            protocol::keys::Consumer::Firmware => {
-                "nothing: the Pi firmware reads it at the next reboot"
-            }
-            protocol::keys::Consumer::Time => {
-                "nothing on screen: applied to the clock at once; systemd-timesyncd when its servers change"
-            }
-            protocol::keys::Consumer::Proxy => {
-                "the local proxy (tessaro-proxy.service); the browser when the proxy is switched on or off"
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
-
-    let row = style::sub_row;
-    println!("{}", paint(style::HEADING, &key.name));
-    println!("    {}", key.doc);
-    row("value", &current);
-    if key.value.is_some() {
-        if let Some(default) = &key.default {
-            row("default", default);
-        }
-    }
-    row("accepts", &key.values);
-    if !read_only {
-        row("restarts", &restarts);
-    }
-    if key.guarded {
-        row(
-            "note",
-            &paint(
-                style::WARN,
-                format!(
-                    "applied on probation: `{CONFIRM_COMMAND}` within {}s or it reverts",
-                    protocol::CONFIRM_SECONDS
-                ),
-            ),
-        );
-    }
-    if !key.env.is_empty() {
-        row("env", &paint(style::MUTED, &key.env));
-    }
+    lines(describe::key(key));
 }
 
 fn show_node(node: &NodeInfo) {
-    style::row("name", &paint(style::HEADING, &node.name));
-    style::row("node id", &node.id);
-    style::row("machine", &node.machine);
-    style::row("agent", &node.version);
-    style::row("fingerprint", &paint(style::MUTED, &node.fingerprint));
-    style::row("claimed", &style::yes_no(node.claimed));
-}
-
-/// What the device is, one row per thing the firmware says; a field it
-/// does not say is left out.
-fn show_hardware(hardware: &protocol::Hardware) {
-    if let Some(machine) = hardware.machine() {
-        style::row("hardware", &machine);
-    }
-    match (&hardware.board, &hardware.firmware) {
-        (Some(board), Some(firmware)) => style::row(
-            "board",
-            &format!(
-                "{board} {}",
-                paint(style::MUTED, format!("firmware {firmware}"))
-            ),
-        ),
-        (Some(board), None) => style::row("board", board),
-        (None, Some(firmware)) => style::row("firmware", firmware),
-        (None, None) => {}
-    }
-    let arch = paint(style::MUTED, &hardware.arch);
-    match hardware.cpu_line() {
-        Some(cpu) => style::row("cpu", &format!("{cpu} {arch}")),
-        None => style::row("cpu", &arch),
-    }
-    if let Some(serial) = &hardware.serial {
-        style::row("serial", &paint(style::MUTED, serial));
-    }
+    style::facts(&describe::node(node));
 }
 
 fn show_status(status: &Status) {
-    show_node(&status.node);
-    if let Some(os) = &status.os {
-        match &status.image_version {
-            Some(version) => style::row(
-                "os",
-                &format!("{os}, {} {version}", paint(style::LABEL, "image")),
-            ),
-            None => style::row("os", os),
-        }
-    }
-    if let Some(hardware) = &status.hardware {
-        show_hardware(hardware);
-    }
-    style::row("revision", &status.revision.to_string());
-    if let Some(percent) = status.cpu_percent {
-        style::row(
-            "cpu use",
-            &paint(style::usage_level(percent.into()), format!("{percent}%")),
-        );
-    }
-    if let Some(memory) = &status.memory {
-        style::row(
-            "memory",
-            &storage::free_line(memory.available, memory.total, memory.used_percent()),
-        );
-    }
-    if let Some(data) = &status.data {
-        style::row("data", &storage::usage_line(data));
-    }
-    if status.maintenance {
-        style::row(
-            "maintenance",
-            &format!(
-                "{} {} {} {}",
-                paint(style::WARN, "on"),
-                paint(style::MUTED, "-"),
-                paint(style::CMD, "tessaro-ctl browser maintenance off"),
-                paint(style::MUTED, "returns to browser.url")
-            ),
-        );
-    }
-    if status.debug_screen {
-        style::row(
-            "debug screen",
-            &format!(
-                "{} {} {} {}",
-                paint(style::WARN, "on"),
-                paint(style::MUTED, "-"),
-                paint(style::CMD, "tessaro-ctl browser debug off"),
-                paint(style::MUTED, "returns to the page below")
-            ),
-        );
-    }
-    style::row("browser url", &status.kiosk_url);
-    style::row(
-        "showing",
-        &status
-            .current_url
-            .clone()
-            .unwrap_or_else(|| paint(style::WARN, "(cannot tell)")),
-    );
-    style::row(
-        "browser",
-        &if status.browser_answering {
-            paint(style::OK, "answering")
-        } else {
-            paint(style::BAD, "not answering")
-        },
-    );
-    if status.devtools {
-        style::row(
-            "devtools",
-            &format!(
-                "{} {}",
-                paint(style::WARN, "connected"),
-                paint(
-                    style::MUTED,
-                    "- the agent leaves the tab alone until it disconnects"
-                )
-            ),
-        );
-    }
-    for (unit, state) in &status.units {
+    let text = describe::status(status);
+    style::facts(&text.facts);
+    for unit in &text.units {
         println!(
             "  {} {}",
-            pad(style::LABEL, unit, 24),
-            paint(style::unit_state(state), state)
+            pad(style::LABEL, &unit.label, 24),
+            style::line(&unit.value)
         );
     }
-    if let Some(audio) = &status.audio {
-        style::row("audio", &audio::summary(audio));
-    }
-    if let Some(summary) = &status.time {
-        style::row("time", &time::summary(summary));
-    }
-    if status.screen_on == Some(false) {
-        style::row(
-            "screen",
-            &format!(
-                "{} {} {}",
-                paint(style::WARN, "off"),
-                paint(style::MUTED, "-"),
-                paint(style::CMD, "tessaro-ctl screen power on")
-            ),
-        );
-    }
-    if let Some(bridge) = &status.bridge {
-        if bridge.mode != "off" {
-            style::row("page bridge", &bridge.mode);
-        }
-        if !bridge.script.is_empty() {
-            let state = match &bridge.script_problem {
-                Some(problem) => paint(style::BAD, format!("not injected: {problem}")),
-                None => paint(style::OK, "injected"),
-            };
-            style::row("inject", &format!("{} {state}", bridge.script));
-        }
-    }
-    if let Some(pending) = &status.pending {
-        println!(
-            "{} {}={} - {} within {}s or it goes back to {}",
-            paint(style::WARN, "on probation"),
-            pending.key,
-            pending.value,
-            paint(style::CMD, format!("`{CONFIRM_COMMAND}`")),
-            pending.seconds_left,
-            pending.previous_or_default()
-        );
+    style::facts(&text.more);
+    if let Some(pending) = &text.pending {
+        println!("{}", style::line(pending));
     }
 }
 
-/// What `browser eval` came to: the value as JSON, what JavaScript calls it
-/// when JSON cannot hold it, or the exception with where it was thrown.
+/// What `browser eval` came to: the value, or the exception on stderr.
 fn show_eval(result: &EvalResult) {
-    if let Some(exception) = &result.exception {
-        eprintln!(
-            "{} {}",
-            paint(style::BAD, &exception.text),
-            paint(
-                style::MUTED,
-                format!("(line {}, column {})", exception.line, exception.column)
-            )
-        );
-        return;
-    }
-    match (&result.value, &result.description) {
-        (Some(Value::String(text)), _) => println!("{text}"),
-        // Chromium hands a function or a DOM node over as `{}`: its type
-        // says more.
-        (Some(Value::Object(map)), _) if map.is_empty() && result.kind != "object" => {
-            println!("{}", paint(style::MUTED, format!("({})", result.kind)))
-        }
-        (Some(value), _) => println!(
-            "{}",
-            serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string())
-        ),
-        (None, Some(description)) => println!(
-            "{} {}",
-            description,
-            paint(style::MUTED, format!("({})", result.kind))
-        ),
-        (None, None) => println!("{}", paint(style::MUTED, &result.kind)),
+    match describe::eval(result) {
+        Ok(line) => println!("{}", style::line(&line)),
+        Err(line) => eprintln!("{}", style::line(&line)),
     }
 }
-
-/// What keeps a change that is on probation.
-const CONFIRM_COMMAND: &str = "tessaro-ctl screen confirm";
-/// What applies a change the firmware reads at power-on.
-const REBOOT_COMMAND: &str = "tessaro-ctl device reboot";
 
 fn show_applied(applied: &Applied, no_apply: bool) {
-    if applied.changed.is_empty() {
-        println!(
-            "{}",
-            paint(
-                style::MUTED,
-                format!("nothing changed (revision {})", applied.revision)
-            )
-        );
-        return;
-    }
-    println!(
-        "{} {}",
-        paint(style::MUTED, format!("revision {}:", applied.revision)),
-        paint(style::OK, applied.changed.join(", "))
-    );
-    if let Some(audio) = &applied.audio {
-        audio::show_outcome(audio);
-    }
-    if let Some(time) = &applied.time {
-        time::show_outcome(time);
-    }
-    if no_apply {
-        println!("{}", paint(style::MUTED, "saved; nothing restarted"));
-    } else if applied.restarted.is_empty() {
-        if applied.audio.is_none() && applied.time.is_none() && !applied.reboot {
-            println!("{}", paint(style::MUTED, "nothing to restart"));
-        }
-    } else {
-        println!(
-            "{}",
-            paint(
-                style::WARN,
-                format!("restarting {}", applied.restarted.join(", "))
-            )
-        );
-    }
-    if applied.reboot {
-        println!(
-            "{} {}",
-            paint(style::WARN, "takes effect at the next reboot:"),
-            paint(style::CMD, REBOOT_COMMAND)
-        );
-    }
-    if let Some(pending) = &applied.pending {
-        println!();
-        println!(
-            "{} Check the screen, then run\n\n    {}\n\n\
-             within {}s, or it goes back to {} on its own.",
-            paint(
-                style::WARN,
-                format!("{}={} is on probation.", pending.key, pending.value)
-            ),
-            paint(style::CMD, CONFIRM_COMMAND),
-            pending.seconds_left,
-            pending.previous_or_default()
-        );
-    }
+    lines(describe::applied(applied, no_apply));
 }
 
 /// `unit: message`, from one journal JSON object.

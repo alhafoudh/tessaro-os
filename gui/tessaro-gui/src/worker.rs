@@ -16,8 +16,7 @@ use std::time::{Duration, Instant};
 
 use iced::futures::channel::mpsc as ui;
 use iced::Subscription;
-use protocol::api::{self, Empty, Endpoint, NameBody, RestartBody, SetConfig, UnsetConfig};
-use protocol::keys::{self, Consumer};
+use protocol::api::{self, Empty, Endpoint, RestartBody, SetConfig, UnsetConfig};
 use protocol::{Applied, Done, KeyInfo, NodeInfo, RestartTarget, Settings, Status, Verify};
 use serde_json::Value;
 use tessaro_client::connect::{self, Answer, Session, Target, Trust};
@@ -31,9 +30,6 @@ const POLL: Duration = Duration::from_secs(2);
 const POLL_PENDING: Duration = Duration::from_secs(1);
 const RETRY_FIRST: Duration = Duration::from_secs(1);
 const RETRY_MOST: Duration = Duration::from_secs(15);
-/// Longer than the device takes to apply, check and roll back a network
-/// change, as `tessaro-ctl` waits (`net.rs`).
-const NETWORK_CHANGE: Duration = Duration::from_secs(180);
 
 pub enum Request {
     /// Fetch the settings again, whatever the revision says.
@@ -386,7 +382,7 @@ impl Worker {
             Request::Screenshot => self.screenshot(session),
             Request::Call { tag, call, long } => {
                 if long {
-                    session.set_read_timeout(Some(NETWORK_CHANGE));
+                    session.set_read_timeout(Some(tessaro_client::network::CHANGE));
                 }
                 let answer = call(session);
                 session.restore_read_timeout();
@@ -410,8 +406,7 @@ impl Worker {
     /// As the node list's claim does (`nodes_view::commit`), on the session
     /// already open: the device answers only a claim without a token.
     fn claim(&self, session: &mut Session, name: String) -> Result<(), Stop> {
-        session.clear_token();
-        let claimed = match session.request::<api::access::Claim>(Empty {}, NameBody { name }) {
+        let claimed = match tessaro_client::access::claim(session, &name) {
             Answer::Ok(claimed) => claimed,
             Answer::Refused(error) => return self.send(Event::Answer("claim", Err(error))),
             Answer::Lost(why) => {
@@ -422,7 +417,6 @@ impl Worker {
                 return Err(Stop::Lost(why));
             }
         };
-        session.set_token(claimed.token.clone());
         let saved = Nodes::load()
             .and_then(|mut nodes| nodes.remember(session, Some(claimed.token.clone())));
         let value = serde_json::to_value(&claimed).map_err(|err| Stop::Lost(err.to_string()))?;
@@ -447,21 +441,17 @@ impl Worker {
         network: bool,
         request: impl FnOnce(&mut Session) -> Answer<Applied>,
     ) -> Result<(), Stop> {
-        if network {
-            session.set_read_timeout(Some(NETWORK_CHANGE));
-        }
-        let answer = request(session);
-        session.restore_read_timeout();
+        let answer = if network {
+            tessaro_client::network::apply(session, request)
+        } else {
+            request(session)
+        };
         match answer {
             Answer::Ok(applied) => self.send(Event::Applied(Ok(Box::new(applied)))),
             Answer::Refused(error) => self.send(Event::Applied(Err(error))),
             Answer::Lost(why) => {
                 let error = if network {
-                    format!(
-                        "lost the connection while the device applied the change ({why}). \
-                         That is expected when it moved the link this connection came in on: \
-                         the device keeps the change or rolls it back on its own."
-                    )
+                    tessaro_client::network::lost(&why)
                 } else {
                     format!("lost the connection: {why}")
                 };
@@ -492,7 +482,4 @@ fn ask<T>(answer: Result<T, String>) -> Result<T, Stop> {
     answer.map_err(Stop::Lost)
 }
 
-/// Whether a change to `key` is a network change the device verifies.
-pub fn is_network_key(key: &str) -> bool {
-    keys::find(key).is_some_and(|key| key.consumers.contains(&Consumer::Network))
-}
+pub use tessaro_client::network::is_network_key;

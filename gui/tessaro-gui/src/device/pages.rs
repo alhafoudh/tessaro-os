@@ -24,7 +24,7 @@ use protocol::api::{
     self, AudioTestBody, CalendarBody, CertBody, CertQuery, DeleteBody, EvalBody, FilesQuery,
     GrowBody, KeyboardBody, MoveBody, NameBody, NavigateBody, PasswordBody, PathBody, PingBody,
     ProfileQuery, ScheduleChange, ScheduleRef, ScreenPowerBody, SpeedtestBody, SshKeyQuery,
-    TimeSetBody, TokenRef, WifiJoinBody, WifiScanQuery,
+    TokenRef, WifiJoinBody, WifiScanQuery,
 };
 use protocol::files::{self as store, FileEntry, FileKind, FilesListing};
 use protocol::keys;
@@ -32,12 +32,12 @@ use protocol::{
     size_label, Applied, AudioDevice, AudioStatus, AudioTested, CalendarCheck, CertInfo,
     CertsAdded, Claimed, Connector, Done, HotspotCredentials, Net, NetChange, NetProfile,
     NetProfileDetail, OnError, Password, PingEvent, ProxyTested, ScheduleInfo, ScheduleSpec,
-    Secret, SpeedtestEvent, SshKeyInfo, SshKeyRevoked, Storage, StorageGrowEvent, TimeStatus,
-    TokenCreated, TokenInfo, UpdatePhase, UpdateStatus, Verify, WifiNetwork, WifiSecurity,
-    WifiStatus,
+    SpeedtestEvent, SshKeyInfo, SshKeyRevoked, Storage, StorageGrowEvent, TimeStatus, TokenCreated,
+    TokenInfo, UpdatePhase, UpdateStatus, Verify, WifiNetwork, WifiSecurity, WifiStatus,
 };
 use serde_json::Value;
-use tessaro_client::clock;
+use tessaro_client::describe;
+use tessaro_client::text::{Fact, Line};
 use tessaro_client::transfer::date;
 
 use super::{Device, Dialog, Link, Message, Page, Tone};
@@ -75,7 +75,7 @@ pub struct State {
     /// The selected row of each table, by table.
     selected: BTreeMap<&'static str, String>,
     /// Output of the page's streams (ping, speed test, grow), by page.
-    output: BTreeMap<&'static str, Vec<String>>,
+    output: BTreeMap<&'static str, Vec<Line>>,
     /// The last error a page's refresh got, by page.
     errors: BTreeMap<&'static str, String>,
     /// Calls sent and not answered yet, by tag, so a page can say what it
@@ -89,7 +89,7 @@ pub struct Job {
     owner: &'static str,
     label: String,
     pub kind: jobs::Kind,
-    progress: Option<(String, u64, u64)>,
+    progress: Option<(Line, u64, u64)>,
     pub running: bool,
 }
 
@@ -238,7 +238,9 @@ pub enum Msg {
     Authorize(bool),
     /// Whether to open a terminal; the command, and whether a key was sent
     /// (not for an unclaimed device).
-    Authorized(bool, Result<(String, bool), String>),
+    /// Whether to open a terminal, and the ssh command with what
+    /// authorizing did.
+    Authorized(bool, Result<(String, Vec<Line>), String>),
     // files
     FilesUp,
     Upload(bool),
@@ -394,6 +396,24 @@ impl Form {
 
 const ON_ERROR: &[&str] = OnError::NAMES;
 
+/// The Join form's security choice that leaves it to the last scan, as
+/// `tessaro-ctl network wifi join` without `--security` does.
+const AUTO: &str = "auto";
+
+/// `AUTO`, then every security the device takes.
+fn wifi_securities() -> &'static [&'static str] {
+    const CHOICES: [&str; WifiSecurity::NAMES.len() + 1] = {
+        let mut choices = [AUTO; WifiSecurity::NAMES.len() + 1];
+        let mut at = 0;
+        while at < WifiSecurity::NAMES.len() {
+            choices[at + 1] = WifiSecurity::NAMES[at];
+            at += 1;
+        }
+        choices
+    };
+    &CHOICES
+}
+
 /// The schedule dialog: new, or `existing` to change.
 fn schedule_form(existing: Option<&ScheduleInfo>) -> Form {
     let spec = existing
@@ -417,10 +437,8 @@ fn schedule_form(existing: Option<&ScheduleInfo>) -> Form {
         .unwrap_or("stop");
     let timeout = spec
         .timeout_s
-        .map(tessaro_client::schedule::duration)
-        .unwrap_or_default()
-        .replace(' ', "")
-        .replace("min", "m");
+        .map(tessaro_client::schedule::format_timeout)
+        .unwrap_or_default();
     Form::new(
         title,
         "Save",
@@ -462,43 +480,23 @@ fn zones(list: Vec<String>) -> &'static [&'static str] {
     })
 }
 
-/// Under a schedule form's calendar: how systemd reads it and when it fires.
+/// Under a schedule form's calendar: how systemd reads it and when it
+/// fires, as `tessaro-ctl schedule check` prints it.
 fn calendar_note(check: &CalendarCheck) -> String {
-    let now = tessaro_client::schedule::now();
-    let mut note = format!("Reads as: {}", check.normalized.join("  |  "));
-    if check.next.is_empty() {
-        note.push_str("\nNever fires again.");
+    let mut lines: Vec<String> = check
+        .normalized
+        .iter()
+        .map(|form| format!("reads as: {form}"))
+        .collect();
+    for fact in tessaro_client::schedule::upcoming(check, "fires") {
+        let label = if fact.label.is_empty() {
+            String::new()
+        } else {
+            format!("{}: ", fact.label)
+        };
+        lines.push(format!("{label}{}", fact.value));
     }
-    for next in &check.next {
-        note.push_str(&format!(
-            "\nFires {} ({})",
-            next.local,
-            tessaro_client::schedule::relative(next.unix, now)
-        ));
-    }
-    note
-}
-
-/// Overview's rows for what the device is, the same as `tessaro-ctl device
-/// status` prints; a field the firmware does not say is left out.
-fn hardware_facts(hardware: &protocol::Hardware, facts: &mut Vec<(&'static str, String)>) {
-    if let Some(machine) = hardware.machine() {
-        facts.push(("Hardware", machine));
-    }
-    if let Some(board) = &hardware.board {
-        facts.push(("Board", board.clone()));
-    }
-    if let Some(firmware) = &hardware.firmware {
-        facts.push(("Firmware", firmware.clone()));
-    }
-    let cpu = match hardware.cpu_line() {
-        Some(cpu) => format!("{cpu}, {}", hardware.arch),
-        None => hardware.arch.clone(),
-    };
-    facts.push(("CPU", cpu));
-    if let Some(serial) = &hardware.serial {
-        facts.push(("Serial", serial.clone()));
-    }
+    lines.join("\n")
 }
 
 /// The page a tag's answer belongs to, for its error line.
@@ -523,24 +521,6 @@ fn page_of(tag: &str) -> &'static str {
 
 fn parse<T: serde::de::DeserializeOwned>(value: Value) -> Result<T, String> {
     serde_json::from_value(value).map_err(|err| format!("unexpected answer: {err}"))
-}
-
-/// The command as a shell would need it typed.
-fn shell_words(argv: &[String]) -> String {
-    argv.iter()
-        .map(|word| {
-            let plain = !word.is_empty()
-                && word
-                    .chars()
-                    .all(|ch| ch.is_ascii_alphanumeric() || "@%+=:,./_-".contains(ch));
-            if plain {
-                word.clone()
-            } else {
-                format!("'{}'", word.replace('\'', "'\\''"))
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
 }
 
 /// `command` in a new terminal window of the platform's own.
@@ -623,7 +603,7 @@ impl Device {
     fn start_job(&mut self, owner: &'static str, label: impl Into<String>, kind: jobs::Kind) {
         self.next_job += 1;
         let label = label.into();
-        self.log(Tone::Info, format!("started: {label}"));
+        self.log(Tone::Plain, format!("started: {label}"));
         self.jobs.push(Job {
             id: self.next_job,
             owner,
@@ -638,7 +618,7 @@ impl Device {
         self.pages.selected.get(table)
     }
 
-    fn output(&mut self, page: &'static str, line: impl Into<String>) {
+    fn output(&mut self, page: &'static str, line: impl Into<Line>) {
         let lines = self.pages.output.entry(page).or_default();
         lines.push(line.into());
         if lines.len() > 300 {
@@ -832,7 +812,7 @@ impl Device {
                     self.log(Tone::Ok, format!("trusted {}", cert.subject));
                 }
                 for cert in &added.present {
-                    self.log(Tone::Info, format!("already trusted: {}", cert.subject));
+                    self.log(Tone::Plain, format!("already trusted: {}", cert.subject));
                 }
                 self.call("certs", fetch::<api::network::Certs>());
             }
@@ -845,29 +825,17 @@ impl Device {
             "net.profile" => {
                 let detail: NetProfileDetail = parse(value)?;
                 let title = format!("Profile {}", detail.profile.name);
-                self.show_text(title, profile_text(&detail));
+                self.show_text(title, joined(&describe::net::profile(&detail)));
             }
             "proxy.test" => {
                 let tested: ProxyTested = parse(value)?;
-                match (tested.ip, tested.error) {
-                    (Some(ip), _) => self.log(
-                        Tone::Ok,
-                        format!("through the proxy the internet sees {ip}"),
-                    ),
-                    (None, error) => self.log(
-                        Tone::Bad,
-                        format!(
-                            "the proxy did not get through: {}",
-                            error.unwrap_or_else(|| "no answer".to_string())
-                        ),
-                    ),
-                }
+                self.log_line(describe::net::proxy_test(&tested));
             }
             "net.last" => {
                 let last: Option<NetChange> = parse(value)?;
                 let body = match last {
-                    Some(change) => change_text(&change),
-                    None => "no network change recorded since the last boot".to_string(),
+                    Some(change) => joined(&describe::net::change(&change)),
+                    None => "no network change yet".to_string(),
                 };
                 self.show_text("Last network change", body);
             }
@@ -894,11 +862,9 @@ impl Device {
             }
             "audio.test" => {
                 let tested: AudioTested = parse(value)?;
-                let mut line = tested.message;
-                if let (Some(peak), Some(rms)) = (tested.peak_dbfs, tested.rms_dbfs) {
-                    line.push_str(&format!(" (peak {peak:.1} dBFS, average {rms:.1} dBFS)"));
+                for line in describe::audio::test(&tested) {
+                    self.log_line(line);
                 }
-                self.log(Tone::Ok, line);
             }
             "time" => self.pages.time = Some(parse(value)?),
             "time.zones" => {
@@ -966,18 +932,15 @@ impl Device {
             "update" => self.pages.update = Some(parse(value)?),
             "browser.eval" => {
                 let result: protocol::EvalResult = parse(value)?;
-                let line = match (&result.exception, &result.value, &result.description) {
-                    (Some(exception), _, _) => format!(
-                        "! {} (line {}, column {})",
-                        exception.text, exception.line, exception.column
-                    ),
-                    (None, Some(Value::String(text)), _) => text.clone(),
-                    (None, Some(value), _) => value.to_string(),
-                    (None, None, Some(description)) => format!("{description} ({})", result.kind),
-                    (None, None, None) => result.kind.clone(),
-                };
-                for part in line.lines() {
-                    self.output("browser", part.to_string());
+                let line = describe::device::eval(&result).unwrap_or_else(|thrown| thrown);
+                // A pretty-printed value is one span over several lines.
+                if line.0.len() == 1 && line.0[0].text.contains('\n') {
+                    let tone = line.0[0].tone;
+                    for part in line.0[0].text.lines() {
+                        self.output("browser", Line::of(tone, part));
+                    }
+                } else {
+                    self.output("browser", line);
                 }
             }
             "screen.power" => {
@@ -1035,8 +998,16 @@ impl Device {
             }
             jobs::Event::Line(line) => self.output(owner, line),
             jobs::Event::Value(value) => {
-                let line = stream_line(owner, &value);
-                self.output(owner, line);
+                if let Some(line) = stream_line(owner, &value) {
+                    self.output(owner, line);
+                }
+            }
+            jobs::Event::Wiped => {
+                self.log(
+                    Tone::Warn,
+                    "the device comes back unclaimed, with a new name and certificate: find it in the device list and claim it again",
+                );
+                self.forget_here();
             }
             jobs::Event::Finished(result) => {
                 let label = self.jobs[at].label.clone();
@@ -1166,7 +1137,10 @@ impl Device {
                 let name = self.name().to_string();
                 self.form(
                     Form::new(format!("Factory reset {name}"), "Reset", Action::FactoryReset)
-                        .intro("Erase every setting, remove every token and SSH key and empty the root password. The device comes back unclaimed.")
+                        .intro(format!(
+                            "This will {}. The device comes back unclaimed.",
+                            tessaro_client::access::FACTORY_RESET_LOSES
+                        ))
                         .typed(),
                 );
             }
@@ -1234,7 +1208,7 @@ impl Device {
                 self.call("net", fetch::<api::network::Show>());
             }
             Msg::ProxyTest => {
-                self.log(Tone::Info, "testing the proxy ...");
+                self.log(Tone::Plain, "testing the proxy ...");
                 self.call_long("proxy.test", send::<api::network::ProxyTest>(()));
             }
             Msg::ProfileDetail => {
@@ -1360,7 +1334,7 @@ impl Device {
                         .intro("A network change: the device keeps it only if it still reaches its gateway, and rolls it back otherwise.")
                         .field(Field::text("SSID", ssid, "network name"))
                         .field(Field::secret("Password"))
-                        .field(Field::choice("Security", "psk", &WifiSecurity::NAMES))
+                        .field(Field::choice("Security", AUTO, wifi_securities()))
                         .field(Field::check("Hidden", false)),
                 );
             }
@@ -1410,7 +1384,7 @@ impl Device {
             }
             Msg::Test(input) => {
                 self.log(
-                    Tone::Info,
+                    Tone::Plain,
                     if input {
                         "recording a few seconds from the input ..."
                     } else {
@@ -1470,8 +1444,9 @@ impl Device {
             }
             Msg::Password => self.form(
                 Form::new("Root password", "Set", Action::Password)
-                    .intro("The root password for the console and SSH. Leave it empty for a random one, shown once.")
-                    .field(Field::secret("Password")),
+                    .intro("The root password for the console and SSH. Leave both empty for a random one, shown once.")
+                    .field(Field::secret("Password"))
+                    .field(Field::secret("Again")),
             ),
             Msg::Claim => {
                 let name = self.name().to_string();
@@ -1489,7 +1464,10 @@ impl Device {
                 let name = self.name().to_string();
                 self.form(
                     Form::new(format!("Unclaim {name}"), "Unclaim", Action::Unclaim)
-                        .intro("Remove every token and SSH key and empty the root password. Settings stay.")
+                        .intro(format!(
+                            "This will {}. Settings stay.",
+                            tessaro_client::access::UNCLAIM_LOSES
+                        ))
                         .typed(),
                 );
             }
@@ -1507,21 +1485,19 @@ impl Device {
                     blocking::run(move || {
                         let (mut session, _) = crate::worker::connect(&node)?;
                         let authorized = tessaro_client::ssh::authorize(&mut session, None)?;
-                        let command = shell_words(&authorized.argv(22, &[]));
-                        Ok((command, authorized.access.is_some()))
+                        let command = tessaro_client::ssh::shell_words(
+                            &authorized.argv(tessaro_client::ssh::PORT, &[]),
+                        );
+                        Ok((command, authorized.lines(&session.node.name, false)))
                     }),
                     move |result| Message::P(Msg::Authorized(terminal, result)),
                 );
             }
-            Msg::Authorized(terminal, Ok((command, keyed))) => {
-                if keyed {
-                    self.log(Tone::Ok, format!("key authorized: {command}"));
-                } else {
-                    self.log(
-                        Tone::Warn,
-                        format!("unclaimed, root with an empty password, host key not checked: {command}"),
-                    );
+            Msg::Authorized(terminal, Ok((command, lines))) => {
+                for line in lines {
+                    self.log_line(line);
                 }
+                self.log_line(Line::of(Tone::Cmd, command.clone()));
                 if terminal {
                     if let Err(error) = open_terminal(&command) {
                         self.log(Tone::Bad, error);
@@ -1981,30 +1957,37 @@ impl Device {
                 self.call("time", fetch::<api::time::Show>());
             }
             Action::Ntp => {
-                let servers = form.value("Servers").trim();
-                super::check(keys::NTP_SERVERS, servers)?;
-                let on = flag(form.checked("Sync over NTP"));
-                self.set(&[(keys::NTP_ENABLE, on), (keys::NTP_SERVERS, servers)]);
+                // As `tessaro-ctl time ntp on|off --server ...`; emptying the
+                // field goes back to DHCP's servers, as `config unset` would.
+                let servers: Vec<String> = form
+                    .value("Servers")
+                    .split([',', ' '])
+                    .map(str::to_string)
+                    .collect();
+                let mut values =
+                    tessaro_client::actions::ntp_change(form.checked("Sync over NTP"), &servers)?;
+                let had = self
+                    .pages
+                    .time
+                    .as_ref()
+                    .is_some_and(|time| !time.setting_servers.is_empty());
+                if had && !values.contains_key(keys::NTP_SERVERS) {
+                    values.insert(keys::NTP_SERVERS.to_string(), String::new());
+                }
+                if let Some(servers) = values.get(keys::NTP_SERVERS) {
+                    super::check(keys::NTP_SERVERS, servers)?;
+                }
+                let values: Vec<(&str, &str)> = values
+                    .iter()
+                    .map(|(key, value)| (key.as_str(), value.as_str()))
+                    .collect();
+                self.set(&values);
                 self.call("time", fetch::<api::time::Show>());
             }
             Action::SetClock => {
-                let body = if form.checked("Use this computer's clock") {
-                    let usec = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map_err(|_| "this computer's clock is before 1970".to_string())?
-                        .as_micros() as u64;
-                    TimeSetBody {
-                        usec: Some(usec),
-                        local: None,
-                    }
-                } else {
-                    let local = form.value("Time").trim().to_string();
-                    protocol::parse_local_time(&local)?;
-                    TimeSetBody {
-                        usec: None,
-                        local: Some(local),
-                    }
-                };
+                let local =
+                    (!form.checked("Use this computer's clock")).then(|| form.value("Time"));
+                let body = tessaro_client::actions::set_clock(local)?;
                 self.call("time.set", send::<api::time::Set>(body));
             }
             Action::ControlPing => {
@@ -2054,24 +2037,11 @@ impl Device {
                 );
             }
             Action::Proxy => {
-                let url = form.value("URL").trim();
-                if url.is_empty() {
-                    return Err("a URL, please; Proxy off stops using one".to_string());
-                }
-                let mut proxy = keys::parse_proxy(url)?;
-                let user = form.value("User").trim();
-                if !user.is_empty() {
-                    proxy.user = Some(user.to_string());
-                }
-                let password = form.value("Password");
-                if !password.is_empty() {
-                    if proxy.user.is_none() {
-                        return Err("a password needs a user".to_string());
-                    }
-                    proxy.password = Some(password.to_string());
-                }
-                // Encoded back into the URL, then checked as the device will.
-                let url = super::check(keys::PROXY_URL, &proxy.to_string())?;
+                let url = tessaro_client::network::proxy_url(
+                    form.value("URL"),
+                    form.value("User"),
+                    form.value("Password"),
+                )?;
                 let bypass = super::check(keys::PROXY_BYPASS, form.value("Bypass").trim())?;
                 self.set(&[(keys::PROXY_URL, &url), (keys::PROXY_BYPASS, &bypass)]);
                 self.call("net", fetch::<api::network::Show>());
@@ -2081,22 +2051,32 @@ impl Device {
                 if ssid.is_empty() {
                     return Err("the network's name, please".to_string());
                 }
-                let password = form.value("Password").to_string();
-                let security: WifiSecurity = form.value("Security").parse()?;
-                if security != WifiSecurity::Open {
-                    protocol::keys::check_psk(&password)?;
-                }
-                let body = WifiJoinBody {
-                    ssid: ssid.clone(),
-                    psk: (!password.is_empty()).then_some(Secret(password)),
-                    security: Some(security),
-                    hidden: form.checked("Hidden"),
-                    verify: Verify::default(),
+                // As `tessaro-ctl network wifi join`: the last scan says
+                // whether it is open and whether the device knows it.
+                let security = match form.value("Security") {
+                    AUTO => None,
+                    named => Some(named.parse::<WifiSecurity>()?),
                 };
-                self.log(
-                    Tone::Info,
-                    format!("joining {ssid} - this can take a minute"),
-                );
+                let seen = self
+                    .pages
+                    .networks
+                    .iter()
+                    .find(|network| network.ssid == ssid);
+                let psk =
+                    tessaro_client::network::wifi_psk(form.value("Password"), security, seen)?;
+                let verify = Verify::default();
+                self.log_line(tessaro_client::network::notice(
+                    self.name(),
+                    &format!("joining {ssid}"),
+                    &verify,
+                ));
+                let body = WifiJoinBody {
+                    ssid,
+                    psk,
+                    security,
+                    hidden: form.checked("Hidden"),
+                    verify,
+                };
                 self.call_long("wifi.join", send::<api::network::WifiJoin>(body));
             }
             Action::Hotspot => self.call("wifi.hotspot", send::<api::network::HotspotPassword>(())),
@@ -2120,23 +2100,17 @@ impl Device {
                 call::<api::access::TokenRevoke>(TokenRef { id: id.clone() }, ()),
             ),
             Action::Password => {
-                let password = form.value("Password");
-                let password = if password.is_empty() {
-                    None
-                } else {
-                    protocol::check_password(password)?;
-                    Some(password.to_string())
-                };
+                let password = tessaro_client::actions::root_password(
+                    form.value("Password"),
+                    form.value("Again"),
+                )?;
                 self.call(
                     "password",
                     send::<api::access::Password>(PasswordBody { password }),
                 );
             }
             Action::Claim => {
-                let name = match form.value("Claim as").trim() {
-                    "" => tessaro_client::client_name(),
-                    name => name.to_string(),
-                };
+                let name = form.value("Claim as").to_string();
                 if self.request(Request::Claim { name }) {
                     *self.pages.in_flight.entry("claim").or_default() += 1;
                 }
@@ -2159,7 +2133,7 @@ impl Device {
                 let on_error = form.value("On error").parse::<OnError>()?;
                 let name = form.value("Name").trim().to_string();
                 let calendar = form.lines("Calendar");
-                let lines = form.lines("Commands");
+                let lines = tessaro_client::schedule::command_lines(form.value("Commands"));
                 let enabled = form.checked("Enabled");
                 let save = match id {
                     None => send::<api::schedule::Create>(ScheduleSpec {
@@ -2230,14 +2204,19 @@ impl Device {
                 }
                 let repartition = form.checked("Rewrite the whole disk");
                 let wipe_data = form.checked("Erase /data") || repartition;
-                if wipe_data && !form.typed {
+                let plan = tessaro_client::update::Plan {
+                    image: image.clone(),
+                    bmap: bmap.clone(),
+                    wipe_data,
+                    repartition,
+                    verify: !form.checked("Skip the checksum check"),
+                    reboot: form.checked("Reboot to apply"),
+                };
+                let warning = plan.warning(&plan.name()?);
+                if let (Some(warning), false) = (warning, form.typed) {
                     // Destructive after all: ask again, with the name.
                     let mut again = Form::new(form.title.clone(), form.ok, form.action.clone())
-                        .intro(if repartition {
-                            "This rewrites the whole disk: partition table, boot, root and /data. Every setting, the claim and the identity go, and a power cut while it writes needs a physical reflash."
-                        } else {
-                            "This erases /data: every setting, the claim, the browser profile and the device's identity. It comes back unclaimed."
-                        });
+                        .intro(format!("This will {warning}."));
                     again.fields = form
                         .fields
                         .iter()
@@ -2255,31 +2234,8 @@ impl Device {
                     self.form(again.typed());
                     return Ok(());
                 }
-                let label = format!(
-                    "update {}",
-                    image
-                        .file_name()
-                        .map(|name| name.to_string_lossy().into_owned())
-                        .unwrap_or_default()
-                );
-                self.start_job(
-                    "update",
-                    label,
-                    jobs::Kind::Update(jobs::Update {
-                        image: image.clone(),
-                        bmap,
-                        wipe_data,
-                        repartition,
-                        verify: !form.checked("Skip the checksum check"),
-                        reboot: form.checked("Reboot to apply"),
-                    }),
-                );
-                if wipe_data {
-                    self.log(
-                        Tone::Warn,
-                        "the device comes back unclaimed, with a new name and certificate: find it in the device list and claim it again",
-                    );
-                }
+                let label = format!("update {}", plan.name()?);
+                self.start_job("update", label, jobs::Kind::Update(plan));
             }
             Action::UpdateCancel => self.call("update.done", send::<api::update::Cancel>(())),
         }
@@ -2391,21 +2347,13 @@ impl Device {
                 let (label, done, total) = job
                     .progress
                     .clone()
-                    .unwrap_or_else(|| ("starting".to_string(), 0, 1));
-                let detail = if total > 1_000 {
-                    format!("{label}  {} of {}", size_label(done), size_label(total))
-                } else {
-                    label
-                };
+                    .unwrap_or_else(|| (Line::of(Tone::Muted, "starting"), 0, 1));
                 row![
                     text(&job.label).size(theme::SMALL).font(bold()).width(180),
                     progress_bar(0.0..=total.max(1) as f32, done as f32)
                         .length(Length::Fill)
                         .girth(10),
-                    text(detail)
-                        .size(theme::SMALL)
-                        .style(theme::muted)
-                        .width(260),
+                    theme::text_line(&label, iced::Font::MONOSPACE),
                     theme::tool("Cancel", Some(Message::P(Msg::CancelJob(job.id)))),
                 ]
                 .spacing(8)
@@ -2423,12 +2371,11 @@ impl Device {
             .output
             .get(owner)
             .filter(|lines| !lines.is_empty())?;
-        let body = Column::with_children(lines.iter().map(|line| {
-            text(line.clone())
-                .size(theme::SMALL)
-                .font(iced::Font::MONOSPACE)
-                .into()
-        }));
+        let body = Column::with_children(
+            lines
+                .iter()
+                .map(|line| theme::text_line(line, iced::Font::MONOSPACE)),
+        );
         Some(
             container(column![
                 row![
@@ -2557,74 +2504,60 @@ impl Device {
         self.table(name, COLUMNS, rows, Length::Shrink)
     }
 
-    fn overview_view(&self) -> Element<'_, Message> {
-        let yes = |on: bool| if on { "yes" } else { "no" }.to_string();
-        let mut facts = Vec::new();
-        if let Some(info) = &self.info {
-            facts.push(("Name", info.name.clone()));
-            facts.push(("Node id", info.id.clone()));
-            facts.push(("Machine", info.machine.clone()));
-            facts.push(("Agent", info.version.clone()));
-            facts.push(("Certificate", info.fingerprint.clone()));
-            facts.push(("Claimed", yes(self.claimed())));
-        }
-        let mut units = Vec::new();
-        if let Some((status, _)) = &self.status {
-            facts.push(("OS", status.os.clone().unwrap_or_default()));
-            facts.push(("Image", status.image_version.clone().unwrap_or_default()));
-            if let Some(hardware) = &status.hardware {
-                hardware_facts(hardware, &mut facts);
-            }
-            facts.push(("Revision", status.revision.to_string()));
-            if let Some(memory) = &status.memory {
-                facts.push((
-                    "Memory",
-                    format!(
-                        "{} of {} used ({}%)",
-                        size_label(memory.used()),
-                        size_label(memory.total),
-                        memory.used_percent()
-                    ),
-                ));
-            }
-            if let Some(time) = &status.time {
-                let sync = match (time.ntp, time.synchronized) {
-                    (Some(false), _) => "NTP off",
-                    (_, Some(true)) => "in sync",
-                    (_, Some(false)) => "not in sync",
-                    (_, None) => "sync unknown",
+    /// The shared facts (`tessaro_client::describe`) as the same grid:
+    /// the label capitalized, the value in its loudest tone.
+    fn shared_facts<'a>(&self, name: &'static str, facts: Vec<Fact>) -> Element<'a, Message> {
+        const COLUMNS: &[Col] = &[col("", Length::Fixed(150.0)), col("", Length::Fill)];
+        let rows = facts
+            .into_iter()
+            .enumerate()
+            .map(|(at, fact)| {
+                let mut label = fact.label.clone();
+                if let Some(first) = label.get_mut(..1) {
+                    first.make_ascii_uppercase();
+                }
+                let key = if fact.label.is_empty() {
+                    format!("#{at}")
+                } else {
+                    fact.label
                 };
-                facts.push((
-                    "Time",
-                    format!("{}, {sync}", time.timezone.clone().unwrap_or_default()),
-                ));
-            }
-            if let Some(on) = status.screen_on {
-                facts.push(("Screen", if on { "on" } else { "off" }.to_string()));
-            }
-            if let Some(data) = &status.data {
-                facts.push((
-                    "/data",
-                    format!(
-                        "{} of {} used ({}%)",
-                        size_label(data.used),
-                        size_label(data.size),
-                        data.used_percent()
-                    ),
-                ));
-            }
-            units = status
+                (
+                    key,
+                    vec![
+                        cell(label).style(theme::muted).into(),
+                        cell(fact.value.to_string())
+                            .style(theme::toned(fact.value.tone()))
+                            .into(),
+                    ],
+                )
+            })
+            .collect();
+        self.table(name, COLUMNS, rows, Length::Shrink)
+    }
+
+    fn overview_view(&self) -> Element<'_, Message> {
+        // What `tessaro-ctl device status` says, the units in a table of
+        // their own; before the first status, who the device is.
+        let mut facts = Vec::new();
+        let mut units = Vec::new();
+        let mut pending = None;
+        if let Some((status, _)) = &self.status {
+            let described = describe::device::status(status);
+            facts = described.facts;
+            facts.extend(described.more);
+            pending = described.pending;
+            units = described
                 .units
-                .iter()
-                .map(|(unit, state)| {
-                    let state_cell: Element<'_, Message> = match state.as_str() {
-                        "active" => cell(state.clone()).style(text::success).into(),
-                        "failed" => cell(state.clone()).style(text::danger).into(),
-                        _ => cell(state.clone()).style(text::warning).into(),
-                    };
-                    (unit.clone(), vec![cell(unit.clone()).into(), state_cell])
+                .into_iter()
+                .map(|unit| {
+                    let state = cell(unit.value.to_string())
+                        .style(theme::toned(unit.value.tone()))
+                        .into();
+                    (unit.label.clone(), vec![cell(unit.label).into(), state])
                 })
                 .collect();
+        } else if let Some(info) = &self.info {
+            facts = describe::device::node(info);
         }
         const UNITS: &[Col] = &[
             col("Unit", Length::Fixed(260.0)),
@@ -2637,10 +2570,14 @@ impl Device {
                 action("Factory reset", self.when(Msg::FactoryReset)),
             ],
             Vec::new(),
-            vec![
-                self.facts("facts", facts),
-                self.table("units", UNITS, units, Length::Fill),
-            ],
+            pending
+                .map(|pending| theme::text_line(&pending, theme::FONT))
+                .into_iter()
+                .chain([
+                    self.shared_facts("facts", facts),
+                    self.table("units", UNITS, units, Length::Fill),
+                ])
+                .collect(),
         )
     }
 
@@ -2822,10 +2759,11 @@ impl Device {
                         .map(|address| format!("{}/{}", address.address, address.prefix))
                         .collect::<Vec<_>>()
                         .join(", ");
-                    let state: Element<'_, Message> = match interface.state.as_str() {
-                        "up" => cell(interface.state.clone()).style(text::success).into(),
-                        _ => cell(interface.state.clone()).style(theme::muted).into(),
-                    };
+                    let state: Element<'_, Message> = cell(interface.state.clone())
+                        .style(theme::toned(tessaro_client::text::link_state(
+                            &interface.state,
+                        )))
+                        .into();
                     (
                         interface.name.clone(),
                         vec![
@@ -3007,30 +2945,12 @@ impl Device {
                 };
                 let next = info.next.as_ref().map_or_else(
                     || "-".to_string(),
-                    |next| {
-                        format!(
-                            "{} ({})",
-                            next.local,
-                            tessaro_client::schedule::relative(next.unix, now)
-                        )
-                    },
+                    |next| tessaro_client::schedule::moment(next, now).to_string(),
                 );
-                let mut last = match &info.last_run {
-                    Some(run) => format!(
-                        "{}, {}",
-                        tessaro_client::schedule::outcome(run),
-                        tessaro_client::schedule::relative(run.finished.unix, now)
-                    ),
-                    None => "never".to_string(),
-                };
-                if info.running > 0 {
-                    last.push_str(&format!(" - {} running", info.running));
-                }
-                let last: Element<'_, Message> = match &info.last_run {
-                    Some(run) if !run.succeeded() => cell(last).style(text::danger).into(),
-                    Some(_) => cell(last).into(),
-                    None => cell(last).style(theme::muted).into(),
-                };
+                let last = tessaro_client::schedule::last_run(info, now);
+                let last: Element<'_, Message> = cell(last.to_string())
+                    .style(theme::toned(last.tone()))
+                    .into();
                 (
                     info.id.clone(),
                     vec![
@@ -3126,9 +3046,11 @@ impl Device {
                             network.ssid.clone()
                         })
                         .into(),
-                        cell(format!("{}%", network.signal)).into(),
+                        cell(format!("{}%", network.signal))
+                            .style(theme::toned(describe::net::signal_tone(network.signal)))
+                            .into(),
                         cell(network.security.clone()).into(),
-                        cell(format!("{} MHz", network.frequency_mhz)).into(),
+                        cell(describe::net::band(network.frequency_mhz)).into(),
                         cell(network.interface.clone()).into(),
                         cell(network.bssid.clone()).style(theme::muted).into(),
                         cell(state).style(text::success).into(),
@@ -3198,11 +3120,9 @@ impl Device {
                 .iter()
                 .map(|fs| {
                     let percent = fs.used_percent();
-                    let used: Element<'_, Message> = if percent >= 90 {
-                        cell(format!("{percent}%")).style(text::danger).into()
-                    } else {
-                        cell(format!("{percent}%")).into()
-                    };
+                    let used: Element<'_, Message> = cell(format!("{percent}%"))
+                        .style(theme::toned(tessaro_client::text::usage_level(percent)))
+                        .into();
                     (
                         fs.mountpoint.clone(),
                         vec![
@@ -3288,38 +3208,16 @@ impl Device {
         let Some(time) = &self.pages.time else {
             return self.page("time", actions, Vec::new(), Vec::new());
         };
-        const SERVERS: &[Col] = &[
-            col("Source", Length::Fixed(150.0)),
-            col("Servers", Length::Fill),
-        ];
-        let servers = [
-            ("runtime (DHCP's)", &time.servers.runtime),
-            ("system (time.ntp.servers)", &time.servers.system),
-            ("fallback (the image's)", &time.servers.fallback),
-            ("offered by DHCP", &time.servers.dhcp),
-        ]
-        .into_iter()
-        .map(|(source, names)| {
-            (
-                source.to_string(),
-                vec![
-                    cell(source).style(theme::muted).into(),
-                    cell(names.join(" ")).into(),
-                ],
-            )
-        })
-        .collect();
         let mut body = Vec::new();
-        if let Some(error) = &time.error {
-            body.push(
-                text(error.clone())
-                    .size(theme::SMALL)
-                    .style(text::danger)
-                    .into(),
-            );
+        if let Some(error) = describe::time::error(time) {
+            body.push(theme::text_line(&error, theme::FONT));
         }
-        body.push(self.facts("timefacts", time_facts(time)));
-        body.push(self.table("timeservers", SERVERS, servers, Length::Shrink));
+        body.push(self.shared_facts("timefacts", describe::time::facts(time)));
+        body.push(text("Servers").size(theme::SMALL).font(bold()).into());
+        body.push(self.shared_facts("timeservers", describe::time::servers(time)));
+        if let Some(hint) = describe::time::hint(time) {
+            body.push(theme::text_line(&hint, theme::FONT));
+        }
         self.page("time", actions, Vec::new(), body)
     }
 
@@ -3620,76 +3518,15 @@ impl Device {
     }
 
     fn update_view(&self) -> Element<'_, Message> {
-        let mut facts = Vec::new();
+        // What `tessaro-ctl update status` says.
+        let mut lines = Vec::new();
         let mut cancellable = false;
         if let Some(status) = &self.pages.update {
-            let name = status.name.clone().unwrap_or_default();
-            let (phase, detail) = match status.phase {
-                UpdatePhase::Idle => ("idle", "no update under way".to_string()),
-                UpdatePhase::Receiving => (
-                    "receiving",
-                    format!(
-                        "{name}: {} of {}",
-                        size_label(status.received),
-                        size_label(status.size)
-                    ),
-                ),
-                UpdatePhase::Verifying => (
-                    "verifying",
-                    format!(
-                        "{name}: {} of {}",
-                        size_label(status.verified),
-                        size_label(status.size)
-                    ),
-                ),
-                UpdatePhase::Preparing => (
-                    "preparing",
-                    format!(
-                        "{name}: {} of {} checked",
-                        size_label(status.prepared),
-                        size_label(status.to_prepare)
-                    ),
-                ),
-                UpdatePhase::Ready => ("ready", format!("{name} is staged, not committed")),
-                UpdatePhase::Pending => (
-                    "pending",
-                    format!(
-                        "{name} is applied at the next boot{}",
-                        if status.repartition {
-                            ", rewriting the whole disk"
-                        } else if status.wipe_data {
-                            ", and /data is wiped"
-                        } else {
-                            ""
-                        }
-                    ),
-                ),
-                UpdatePhase::Failed => (
-                    "failed",
-                    status
-                        .error
-                        .clone()
-                        .unwrap_or_else(|| "no reason given".to_string()),
-                ),
-            };
             cancellable = !matches!(status.phase, UpdatePhase::Idle);
-            facts.push(("Phase", phase.to_string()));
-            facts.push(("Detail", detail));
-            if let Some(last) = &status.last {
-                facts.push((
-                    "Last update",
-                    format!(
-                        "{} ({}{})",
-                        last.message,
-                        if last.applied {
-                            "applied"
-                        } else {
-                            "not applied"
-                        },
-                        if last.wiped_data { ", /data wiped" } else { "" }
-                    ),
-                ));
-            }
+            lines = tessaro_client::update::status_lines(status)
+                .iter()
+                .map(|line| theme::text_line(line, iced::Font::MONOSPACE))
+                .collect();
         }
         let sending = self
             .jobs
@@ -3712,7 +3549,7 @@ impl Device {
                 ),
             ],
             Vec::new(),
-            vec![self.facts("updatefacts", facts)],
+            vec![Column::with_children(lines).spacing(2).into()],
         )
     }
 }
@@ -3738,254 +3575,30 @@ pub(super) fn page_key(page: Page) -> &'static str {
     }
 }
 
-/// The Time page's facts: what `tessaro-ctl time show` prints, in rows.
-fn time_facts(time: &TimeStatus) -> Vec<(&'static str, String)> {
-    let reported = |value: Option<String>| value.unwrap_or_else(|| "(not reported)".to_string());
-    let yes_no = |value: Option<bool>| value.map(|on| if on { "yes" } else { "no" }.to_string());
-    let mut facts = Vec::new();
-    let zone = time.timezone.clone().map(|zone| {
-        match (&time.zone_abbreviation, time.utc_offset_seconds) {
-            (Some(abbreviation), Some(offset)) => {
-                format!("{zone} ({abbreviation}, {})", clock::utc_offset(offset))
-            }
-            _ => zone,
-        }
-    });
-    facts.push(("Timezone", reported(zone)));
-    if time
-        .timezone
-        .as_deref()
-        .is_some_and(|zone| zone != time.setting_timezone)
-    {
-        facts.push((
-            "Setting",
-            format!(
-                "time.timezone is {}, not applied yet",
-                time.setting_timezone
-            ),
-        ));
-    }
-    facts.push(("Local time", reported(time.local_time.clone())));
-    facts.push(("In sync", reported(yes_no(time.synchronized))));
-    facts.push((
-        "NTP",
-        reported(time.ntp.map(|on| if on { "on" } else { "off" }.to_string())),
-    ));
-    facts.push(("timesyncd", reported(time.timesyncd.clone())));
-    if time.timesyncd.as_deref() == Some("active") {
-        let server = match (&time.server_name, &time.server_address) {
-            (Some(name), Some(address)) if name != address => format!("{name} ({address})"),
-            (Some(name), _) => name.clone(),
-            (None, Some(address)) => address.clone(),
-            (None, None) => "none yet".to_string(),
-        };
-        facts.push(("Server", server));
-        if let Some(poll) = time.poll_interval_usec {
-            facts.push(("Poll interval", format!("every {}", clock::span(poll))));
-        }
-        match &time.last {
-            Some(last) => {
-                facts.push(("Offset", clock::offset(last.offset_usec)));
-                facts.push(("Delay", clock::span(last.delay_usec.unsigned_abs())));
-                facts.push(("Jitter", clock::span(last.jitter_usec)));
-                if let Some(ppm) = time.frequency_ppm() {
-                    facts.push(("Drift", clock::drift(ppm)));
-                }
-                facts.push((
-                    "Root distance",
-                    clock::span(last.root_delay_usec / 2 + last.root_dispersion_usec),
-                ));
-                facts.push((
-                    "Stratum",
-                    format!(
-                        "{} (reference {}, precision {})",
-                        last.stratum,
-                        last.reference,
-                        clock::precision(last.precision)
-                    ),
-                ));
-                if last.leap != 0 {
-                    facts.push(("Leap", clock::leap(last.leap).to_string()));
-                }
-                facts.push(("Answers", last.packet_count.to_string()));
-            }
-            None => facts.push(("Answers", "none yet".to_string())),
-        }
-    }
-    if let (Some(rtc), Some(now)) = (time.rtc_usec, time.now_usec) {
-        facts.push((
-            "Hardware clock",
-            format!("{} from the system clock", clock::offset_between(rtc, now)),
-        ));
-    }
-    facts
-}
-
-/// A stream event as a line, the way `tessaro-ctl` prints it.
-fn stream_line(owner: &str, value: &Value) -> String {
+/// A stream event as a line, the way `tessaro-ctl` prints it; none for a
+/// grow's plan, which the job has already shown.
+fn stream_line(owner: &str, value: &Value) -> Option<Line> {
     if let Ok(event) = serde_json::from_value::<PingEvent>(value.clone()) {
-        return match event {
-            PingEvent::Start { host, address } => format!("PING {host} ({address})"),
-            PingEvent::Reply { seq, bytes, rtt_ms } => {
-                format!("{bytes} bytes: seq={seq} time={rtt_ms:.1} ms")
-            }
-            PingEvent::Timeout { seq } => format!("seq={seq} timed out"),
-            PingEvent::Summary {
-                sent,
-                received,
-                min_ms,
-                avg_ms,
-                max_ms,
-            } => format!(
-                "{sent} sent, {received} received{}",
-                match (min_ms, avg_ms, max_ms) {
-                    (Some(min), Some(avg), Some(max)) =>
-                        format!(", min {min:.1} / avg {avg:.1} / max {max:.1} ms"),
-                    _ => String::new(),
-                }
-            ),
-        };
+        return Some(tessaro_client::ping::event_line(&event));
     }
     if owner == "net" {
         if let Ok(event) = serde_json::from_value::<SpeedtestEvent>(value.clone()) {
-            let mbit =
-                |value: Option<f64>| value.map_or("-".to_string(), |value| format!("{value:.1}"));
-            return match event {
-                SpeedtestEvent::Server { ip, colo, country } => {
-                    format!("server {colo} ({country}), from {ip}")
-                }
-                SpeedtestEvent::Latency {
-                    samples, avg_ms, ..
-                } => format!("latency {} ms ({samples} samples)", mbit(avg_ms)),
-                SpeedtestEvent::Transfer {
-                    direction,
-                    size,
-                    median_mbit,
-                    ..
-                } => format!(
-                    "{direction:?} {}: {} Mbit/s",
-                    protocol::speedtest_size_label(size),
-                    mbit(median_mbit)
-                ),
-                SpeedtestEvent::Result {
-                    download_mbit,
-                    upload_mbit,
-                    latency_ms,
-                } => format!(
-                    "download {} Mbit/s, upload {} Mbit/s, latency {} ms",
-                    mbit(download_mbit),
-                    mbit(upload_mbit),
-                    mbit(latency_ms)
-                ),
-            };
+            return Some(tessaro_client::speedtest::event_line(&event));
         }
     }
     if let Ok(event) = serde_json::from_value::<StorageGrowEvent>(value.clone()) {
-        return match event {
-            StorageGrowEvent::Plan {
-                partition,
-                partition_from,
-                partition_to,
-                filesystem_from,
-                filesystem_to,
-            } => format!(
-                "{partition}: {} -> {}, filesystem {} -> {}",
-                size_label(partition_from),
-                size_label(partition_to),
-                size_label(filesystem_from),
-                size_label(filesystem_to)
-            ),
-            StorageGrowEvent::Step { what, command } => format!("{what}: {command}"),
-            StorageGrowEvent::Grown {
-                partition,
-                filesystem,
-            } => format!(
-                "grown: partition {}, filesystem {}",
-                size_label(partition),
-                size_label(filesystem)
-            ),
-        };
+        return tessaro_client::storage::event_line(&event);
     }
-    value.to_string()
+    Some(Line::plain(value.to_string()))
 }
 
-fn change_text(change: &NetChange) -> String {
-    let mut lines = vec![format!(
-        "{} {}{}",
-        match change.outcome {
-            protocol::ChangeOutcome::Committed => "kept:",
-            protocol::ChangeOutcome::RolledBack => "rolled back:",
-        },
-        change.action,
-        change
-            .profile
-            .as_ref()
-            .map(|profile| format!(" ({profile})"))
-            .unwrap_or_default()
-    )];
-    if let Some(reason) = &change.reason {
-        lines.push(format!("reason: {reason}"));
-    }
-    for check in &change.checks {
-        lines.push(format!(
-            "{} {}: {}",
-            if check.passed { "ok  " } else { "FAIL" },
-            check.name,
-            check.detail
-        ));
-    }
-    if let Some(note) = &change.note {
-        lines.push(note.clone());
-    }
-    lines.join("\n")
-}
-
-fn profile_text(detail: &NetProfileDetail) -> String {
-    let ip = |name: &str, ip: &protocol::NetIpSettings| {
-        format!(
-            "{name}: {}{}{}{}",
-            ip.method,
-            if ip.addresses.is_empty() {
-                String::new()
-            } else {
-                format!(", {}", ip.addresses.join(", "))
-            },
-            ip.gateway
-                .as_ref()
-                .map(|gateway| format!(", gateway {gateway}"))
-                .unwrap_or_default(),
-            if ip.dns.is_empty() {
-                String::new()
-            } else {
-                format!(", dns {}", ip.dns.join(" "))
-            }
-        )
-    };
-    let profile = &detail.profile;
-    let mut lines = vec![
-        format!("{} ({}), uuid {}", profile.name, profile.kind, profile.uuid),
-        format!(
-            "device {}, {}, autoconnect {}, priority {}",
-            profile.device.as_deref().unwrap_or("any"),
-            if profile.active { "active" } else { "inactive" },
-            if profile.autoconnect { "yes" } else { "no" },
-            profile.priority
-        ),
-        ip("ipv4", &detail.ipv4),
-        ip("ipv6", &detail.ipv6),
-    ];
-    if let Some(wifi) = &detail.wifi {
-        lines.push(format!(
-            "wifi {} ({}{})",
-            wifi.ssid,
-            wifi.security,
-            if wifi.hidden { ", hidden" } else { "" }
-        ));
-    }
-    for address in &detail.addresses {
-        lines.push(format!("address {}/{}", address.address, address.prefix));
-    }
-    lines.join("\n")
+/// Shared lines as one text, for a dialog that shows plain text.
+fn joined(lines: &[Line]) -> String {
+    lines
+        .iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[cfg(test)]
@@ -3999,12 +3612,15 @@ mod tests {
             "net",
             &json!({ "event": "reply", "seq": 2, "bytes": 64, "rtt_ms": 1.25 }),
         );
-        assert_eq!(line, "64 bytes: seq=2 time=1.2 ms");
+        assert_eq!(line.unwrap().to_string(), "reply     1.2 ms seq=2 64 bytes");
     }
 
     #[test]
     fn an_unknown_event_is_shown_as_it_came() {
-        assert_eq!(stream_line("net", &json!({ "x": 1 })), r#"{"x":1}"#);
+        assert_eq!(
+            stream_line("net", &json!({ "x": 1 })).unwrap().to_string(),
+            r#"{"x":1}"#
+        );
     }
 
     #[test]
@@ -4012,11 +3628,5 @@ mod tests {
         let form = Form::new("Unclaim", "Unclaim", Action::Unclaim).typed();
         assert!(form.typed);
         assert_eq!(form.value("Device name"), "");
-    }
-
-    #[test]
-    fn words_are_quoted_for_a_shell() {
-        let argv = ["ssh".to_string(), "a b".to_string()];
-        assert_eq!(shell_words(&argv), "ssh 'a b'");
     }
 }

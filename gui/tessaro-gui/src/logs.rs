@@ -3,7 +3,9 @@
 //! Following the journal never ends, and the device window's worker has to
 //! keep polling beside it, so the Log page opens a second session. The
 //! follow asks for the next page every second and stops once nobody listens
-//! (the page or the window closed), which ends the thread.
+//! (the page or the window closed), which ends the thread. A lost
+//! connection is followed again from the last entry's `__CURSOR`, as
+//! `tessaro-ctl device logs --follow` pages with it.
 
 use std::hash::{Hash, Hasher};
 use std::time::Duration;
@@ -62,7 +64,10 @@ fn start(spec: &Spec) -> ui::UnboundedReceiver<Event> {
     receive
 }
 
+/// The backlog first; after a lost connection, from the last entry shown,
+/// so nothing is shown twice.
 fn follow(spec: Spec, out: ui::UnboundedSender<Event>) {
+    let mut cursor: Option<String> = None;
     while !out.is_closed() {
         let lost = match worker::connect(&spec.node) {
             Ok((mut session, _)) => {
@@ -70,9 +75,12 @@ fn follow(spec: Spec, out: ui::UnboundedSender<Event>) {
                 let query = LogsQuery {
                     unit: spec.unit.clone(),
                     lines: Some(BACKLOG),
-                    cursor: None,
+                    cursor: cursor.clone(),
                 };
                 let followed = session.logs(query, true, &|| out.is_closed(), |event| {
+                    if let Some(at) = event.get("__CURSOR").and_then(|at| at.as_str()) {
+                        cursor = Some(at.to_string());
+                    }
                     let _ = out.unbounded_send(Event::Entry(Box::new(Entry::parse(&event))));
                 });
                 match followed {

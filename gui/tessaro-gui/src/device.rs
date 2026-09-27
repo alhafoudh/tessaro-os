@@ -25,6 +25,7 @@ use protocol::keys::{self, Consumer, Kind};
 use protocol::{Applied, KeyInfo, NodeInfo, RestartTarget, Setting, Settings, Source, Status};
 use tessaro_client::journal::Entry;
 use tessaro_client::nodes::Node;
+use tessaro_client::text::{Line, Tone};
 
 use crate::dialog::{self, field};
 use crate::grid::{bold, cell, col, grid, Col};
@@ -43,19 +44,6 @@ pub enum Link {
     Connecting,
     Online,
     Lost(String),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Tone {
-    Info,
-    Ok,
-    Warn,
-    Bad,
-}
-
-struct Line {
-    tone: Tone,
-    text: String,
 }
 
 /// A line of a section's table.
@@ -180,16 +168,7 @@ pub fn rows(
 fn applies(consumers: &[Consumer]) -> String {
     consumers
         .iter()
-        .map(|consumer| match consumer {
-            Consumer::Agent => "agent",
-            Consumer::Browser => "browser",
-            Consumer::Weston => "weston",
-            Consumer::Network => "network",
-            Consumer::Audio => "audio",
-            Consumer::Firmware => "firmware (next reboot)",
-            Consumer::Time => "clock",
-            Consumer::Proxy => "local proxy (browser on switching)",
-        })
+        .map(|consumer| tessaro_client::describe::device::restarts_short(*consumer))
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -738,10 +717,12 @@ impl Device {
     }
 
     fn log(&mut self, tone: Tone, text: impl Into<String>) {
-        self.log.push(Line {
-            tone,
-            text: text.into(),
-        });
+        self.log_line(Line::of(tone, text));
+    }
+
+    /// A line of the shared text, in its own tones.
+    fn log_line(&mut self, line: Line) {
+        self.log.push(line);
         if self.log.len() > LOG_LINES {
             self.log.remove(0);
         }
@@ -821,7 +802,7 @@ impl Device {
                 let was_online = self.link == Link::Online;
                 if !was_online {
                     self.log(
-                        Tone::Info,
+                        Tone::Plain,
                         format!("connected to {} ({})", info.name, info.id),
                     );
                 }
@@ -894,62 +875,19 @@ impl Device {
     }
 
     /// What `tessaro-ctl config set` prints about a change, as log lines.
+    /// What a change did, in the words `tessaro-ctl config set` uses: the
+    /// network change first, when there was one.
     fn log_applied(&mut self, applied: &Applied) {
-        if applied.changed.is_empty() {
-            self.log(
-                Tone::Info,
-                format!("nothing changed (revision {})", applied.revision),
-            );
-            return;
-        }
-        self.log(
-            Tone::Ok,
-            format!(
-                "revision {}: {}",
-                applied.revision,
-                applied.changed.join(", ")
-            ),
-        );
-        if let Some(network) = &applied.network {
-            for check in &network.checks {
-                let tone = if check.passed { Tone::Ok } else { Tone::Bad };
-                self.log(tone, format!("  {}: {}", check.name, check.detail));
+        let network = applied
+            .network
+            .as_ref()
+            .map(tessaro_client::describe::net::change)
+            .unwrap_or_default();
+        let lines = tessaro_client::describe::device::applied(applied, false);
+        for line in network.into_iter().chain(lines) {
+            if !line.is_empty() {
+                self.log_line(line);
             }
-        }
-        if let Some(audio) = &applied.audio {
-            self.log(Tone::Info, audio.clone());
-        }
-        if let Some(time) = &applied.time {
-            let tone = if time.starts_with("saved,") {
-                Tone::Warn
-            } else {
-                Tone::Info
-            };
-            self.log(tone, time.clone());
-        }
-        if !applied.restarted.is_empty() {
-            self.log(
-                Tone::Warn,
-                format!("restarting {}", applied.restarted.join(", ")),
-            );
-        }
-        if applied.reboot {
-            self.log(
-                Tone::Warn,
-                "takes effect at the next reboot: Reboot the device".to_string(),
-            );
-        }
-        if let Some(pending) = &applied.pending {
-            self.log(
-                Tone::Warn,
-                format!(
-                    "{}={} goes back to {} in {}s unless confirmed: check the screen, then Confirm on the Screen page",
-                    pending.key,
-                    pending.value,
-                    pending.previous_or_default(),
-                    pending.seconds_left
-                ),
-            );
         }
     }
 
@@ -1205,7 +1143,7 @@ impl Device {
         let values = BTreeMap::from([(edit.key(), edit.value.clone())]);
         if values.keys().any(|key| crate::worker::is_network_key(key)) {
             self.log(
-                Tone::Info,
+                Tone::Plain,
                 format!(
                     "changing the network; kept only if {} - this can take a minute",
                     protocol::Verify::default().describe()
@@ -1601,17 +1539,11 @@ impl Device {
     }
 
     fn log_view(&self) -> Element<'_, Message> {
-        let lines = Column::with_children(self.log.iter().map(|line| {
-            let text = text(&line.text)
-                .size(theme::SMALL)
-                .font(iced::Font::MONOSPACE);
-            match line.tone {
-                Tone::Info => text.into(),
-                Tone::Ok => text.style(iced::widget::text::success).into(),
-                Tone::Warn => text.style(iced::widget::text::warning).into(),
-                Tone::Bad => text.style(iced::widget::text::danger).into(),
-            }
-        }));
+        let lines = Column::with_children(
+            self.log
+                .iter()
+                .map(|line| theme::text_line(line, iced::Font::MONOSPACE)),
+        );
         container(
             column![
                 row![

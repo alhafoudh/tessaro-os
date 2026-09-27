@@ -12,7 +12,6 @@ use std::net::SocketAddr;
 
 use iced::widget::{column, container, text, text_input};
 use iced::{Element, Length, Task};
-use protocol::api::{self, NameBody};
 use protocol::{Claimed, NodeInfo};
 use tessaro_client::connect::{self, Found, PinAsk, Target, Trust};
 use tessaro_client::nodes::{Node, Nodes};
@@ -942,20 +941,12 @@ fn commit(mode: Mode, peek: Peek, token: String, name: String) -> Result<Outcome
     }
     match mode {
         Mode::Login => {
-            session.set_token(token.clone());
-            // Prove the token before storing it.
-            session.fetch::<api::access::Tokens>()?;
+            tessaro_client::access::login(&mut session, &token)?;
             nodes.remember(&session, Some(token))?;
             Ok(Outcome::LoggedIn(session.node.name.clone()))
         }
         Mode::Claim => {
-            session.clear_token();
-            let name = if name.trim().is_empty() {
-                tessaro_client::client_name()
-            } else {
-                name.trim().to_string()
-            };
-            let claimed = session.send::<api::access::Claim>(NameBody { name })?;
+            let claimed = tessaro_client::access::claim(&mut session, &name).into_result()?;
             nodes.remember(&session, Some(claimed.token.clone()))?;
             Ok(Outcome::Claimed(
                 session.node.name.clone(),

@@ -16,26 +16,23 @@
 //! `network certs`, which is no setting at all.
 
 use std::collections::BTreeMap;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use anstream::{eprintln, print, println};
 use clap::{Args, Subcommand, ValueEnum};
 use protocol::api::{self, Empty};
 use protocol::{
-    keys, speedtest_size_label, Applied, CertInfo, ChangeOutcome, Direction, Net, NetAddress,
-    NetChange, NetInterface, NetProfile, NetProfileDetail, PingEvent, ProxyStatus, Secret,
-    SpeedtestEvent, Verify, WifiNetwork, WifiSecurity, WifiStatus,
+    keys, speedtest_size_label, Applied, CertInfo, Net, NetChange, NetInterface, NetProfile,
+    NetProfileDetail, PingEvent, ProxyStatus, Secret, SpeedtestEvent, Verify, WifiNetwork,
+    WifiSecurity, WifiStatus,
 };
 use serde_json::json;
+use tessaro_client::describe::net as describe;
+use tessaro_client::network;
 
 use crate::connect::{follow_job, Answer, Session};
-use crate::style::{self, pad, paint, yes_no};
+use crate::style::{self, pad, paint};
 use crate::{print, show_applied, show_once};
-
-/// Longer than the device takes to apply, check and roll back a change
-/// (about 90s at most), so its answer is waited for - and short enough that
-/// a connection the change silently broke does not hang the terminal.
-const CHANGE: Duration = Duration::from_secs(180);
 
 /// `tessaro-ctl network ...`.
 #[derive(Subcommand)]
@@ -254,161 +251,35 @@ fn speedtest(
             direct,
         },
         json,
-        |step: SpeedtestEvent| println!("{}", speedtest_line(&step)),
+        |step: SpeedtestEvent| {
+            println!(
+                "{}",
+                style::line(&tessaro_client::speedtest::event_line(&step))
+            )
+        },
     )
 }
 
 /// `--max-size`: one of the sizes the device offers, as `100k`, `1m`, ...
 fn parse_payload(text: &str) -> Result<u64, String> {
-    protocol::SPEEDTEST_SIZES
-        .into_iter()
-        .find(|size| speedtest_size_label(*size) == text.to_ascii_lowercase())
-        .ok_or_else(|| {
-            let offered: Vec<String> = protocol::SPEEDTEST_SIZES.map(speedtest_size_label).into();
-            format!("one of {}", offered.join(", "))
-        })
-}
-
-fn speedtest_line(step: &SpeedtestEvent) -> String {
-    // The headline number in `style`, a missing one muted; the spread and the
-    // sample counts are background.
-    let value = |style: anstyle::Style, v: Option<f64>, unit: &str| match v {
-        Some(v) => paint(style, format!("{v:.1} {unit}")),
-        None => paint(style::MUTED, "n/a"),
-    };
-    let mbit = |style, v| value(style, v, "Mbit/s");
-    let ms = |style, v| value(style, v, "ms");
-    let label = style::label;
-    match step {
-        SpeedtestEvent::Server { ip, colo, country } => format!(
-            "{} Cloudflare {}, seen from {ip} ({country})",
-            label("server"),
-            paint(style::HEADING, colo)
-        ),
-        SpeedtestEvent::Latency {
-            samples,
-            avg_ms,
-            min_ms,
-            max_ms,
-        } => format!(
-            "{} {} {}",
-            label("latency"),
-            ms(style::HEADING, *avg_ms),
-            paint(
-                style::MUTED,
-                format!(
-                    "(min {}, max {}, {samples} samples)",
-                    ms(anstyle::Style::new(), *min_ms),
-                    ms(anstyle::Style::new(), *max_ms)
-                )
-            )
-        ),
-        SpeedtestEvent::Transfer {
-            direction,
-            size,
-            samples,
-            attempts,
-            median_mbit,
-            min_mbit,
-            max_mbit,
-        } => {
-            let direction = match direction {
-                Direction::Download => "download",
-                Direction::Upload => "upload",
-            };
-            // Samples short of the attempts means retries: worth noticing.
-            let counted = if samples < attempts {
-                style::WARN
-            } else {
-                style::MUTED
-            };
-            format!(
-                "{} {} {} {} {}",
-                label(direction),
-                pad(style::HEADING, speedtest_size_label(*size), 5),
-                mbit(style::HEADING, *median_mbit),
-                paint(
-                    style::MUTED,
-                    format!(
-                        "(min {}, max {},",
-                        mbit(anstyle::Style::new(), *min_mbit),
-                        mbit(anstyle::Style::new(), *max_mbit)
-                    )
-                ),
-                paint(counted, format!("{samples}/{attempts} samples)"))
-            )
-        }
-        SpeedtestEvent::Result {
-            download_mbit,
-            upload_mbit,
-            latency_ms,
-        } => format!(
-            "{} download {}, upload {}, latency {}",
-            pad(style::HEADING, "result", 9),
-            mbit(style::OK, *download_mbit),
-            mbit(style::OK, *upload_mbit),
-            ms(style::OK, *latency_ms)
-        ),
-    }
+    tessaro_client::speedtest::parse_size(text)
 }
 
 /// One certificate authority on a line: fingerprint, subject, expiry, and
 /// who issued it when that is not itself.
 fn show_cert(cert: &CertInfo) {
-    let date = tessaro_client::certs::date(cert.not_after);
-    let until = if tessaro_client::certs::expired(cert.not_after) {
-        paint(style::BAD, format!("expired {date}"))
-    } else {
-        paint(style::LABEL, format!("until {date}"))
-    };
-    let issuer = if cert.self_signed {
-        String::new()
-    } else {
-        format!(
-            " {}",
-            paint(style::MUTED, format!("issued by {}", cert.issuer))
-        )
-    };
-    println!(
-        "{}  {}  {until}{issuer}",
-        paint(style::MUTED, &cert.fingerprint),
-        paint(style::HEADING, &cert.subject)
-    );
+    println!("{}", style::line(&describe::cert(cert)));
 }
 
 fn show_proxy(status: &ProxyStatus) {
-    let row = style::row;
-    match &status.url {
-        Some(url) => row("proxy", &paint(style::HEADING, url)),
-        None => row(
-            "proxy",
-            &paint(style::MUTED, "(none: everything goes straight out)"),
-        ),
+    lines(describe::proxy(status));
+}
+
+/// Shared lines, each on its own.
+fn lines(lines: Vec<tessaro_client::text::Line>) {
+    for line in lines {
+        println!("{}", style::line(&line));
     }
-    if status.url.is_some() {
-        row(
-            "bypass",
-            &if status.bypass.is_empty() {
-                paint(style::MUTED, "(loopback only)")
-            } else {
-                status.bypass.join(", ")
-            },
-        );
-    }
-    row(
-        "local proxy",
-        &format!(
-            "{} {}",
-            status.listen,
-            paint(style::unit_state(&status.unit), &status.unit)
-        ),
-    );
-    let hint = if status.url.is_some() {
-        "tessaro-ctl network proxy test"
-    } else {
-        "tessaro-ctl network proxy set http://HOST:PORT"
-    };
-    println!("\n{}", paint(style::CMD, hint));
 }
 
 fn show_net(net: &Net) {
@@ -553,7 +424,7 @@ pub fn run(session: &mut Session, command: NetworkCmd, json: bool) -> Result<(),
             print(json, &status, || show_proxy(&status))
         }
         NetworkCmd::Proxy(ProxyCmd::Set { url, bypass }) => {
-            keys::parse_proxy(&url).map_err(|err| format!("{}: {err}", keys::PROXY_URL))?;
+            let url = network::proxy_url(&url, "", "")?;
             let mut values = BTreeMap::from([(keys::PROXY_URL.to_string(), url)]);
             if let Some(bypass) = bypass {
                 values.insert(keys::PROXY_BYPASS.to_string(), bypass);
@@ -568,17 +439,8 @@ pub fn run(session: &mut Session, command: NetworkCmd, json: bool) -> Result<(),
         }
         NetworkCmd::Proxy(ProxyCmd::Test) => {
             let tested = session.send::<api::network::ProxyTest>(())?;
-            print(json, &tested, || match (&tested.ip, &tested.error) {
-                (Some(ip), _) => println!(
-                    "{} {}",
-                    paint(style::OK, "through the proxy the internet sees"),
-                    paint(style::HEADING, ip)
-                ),
-                (None, error) => println!(
-                    "{} {}",
-                    paint(style::BAD, "the proxy did not get through:"),
-                    error.as_deref().unwrap_or("no answer")
-                ),
+            print(json, &tested, || {
+                println!("{}", style::line(&describe::proxy_test(&tested)))
             })
         }
         NetworkCmd::Certs(CertsCmd::List) => {
@@ -674,7 +536,7 @@ fn wifi(session: &mut Session, json: bool, what: WifiCmd) -> Result<(), String> 
             let doing = format!("joining {ssid}");
             let body = api::WifiJoinBody {
                 ssid,
-                psk: psk.map(Secret),
+                psk,
                 security: security.map(WifiSecurity::from),
                 hidden,
                 verify: verify.verify.clone(),
@@ -703,7 +565,7 @@ fn join_password(
     ssid: &str,
     security: Option<Security>,
     from_stdin: bool,
-) -> Result<Option<String>, String> {
+) -> Result<Option<Secret>, String> {
     let seen = match security {
         Some(_) => None,
         None => {
@@ -717,33 +579,20 @@ fn join_password(
             networks.into_iter().find(|network| network.ssid == ssid)
         }
     };
-    let open = matches!(security, Some(Security::Open))
-        || seen
-            .as_ref()
-            .is_some_and(|network| network.security == "open");
-    if open {
+    let security = security.map(WifiSecurity::from);
+    if network::wifi_open(security, seen.as_ref()) {
         return Ok(None);
     }
-    let known = seen.as_ref().is_some_and(|network| network.known);
-    let prompt = if known {
+    let prompt = if network::wifi_known(seen.as_ref()) {
         format!("WiFi password for {ssid} (empty keeps the saved one): ")
     } else {
         format!("WiFi password for {ssid}: ")
     };
     let psk = crate::prompt::password(from_stdin, &prompt)?;
-    if psk.is_empty() && known {
-        return Ok(None);
-    }
-    protocol::keys::check_psk(&psk)?;
-    Ok(Some(psk))
+    network::wifi_psk(&psk, security, seen.as_ref())
 }
 
-/// Whether `key` is one of the device's network settings, whose change runs
-/// as a verified network transaction.
-pub fn is_network_key(key: &str) -> bool {
-    protocol::keys::find(key)
-        .is_some_and(|key| key.consumers.contains(&protocol::keys::Consumer::Network))
-}
+pub use network::is_network_key;
 
 /// Send one change of network settings - a `config set`, a `config unset`,
 /// a join - with `request`, and wait for the device's verdict, or explain
@@ -758,43 +607,16 @@ pub fn apply(
     if !json {
         eprintln!(
             "{}",
-            paint(
-                style::MUTED,
-                format!(
-                    "{}: {doing}; kept only if {} - this can take a minute...",
-                    session.node.name,
-                    verify.describe()
-                )
-            )
+            style::line(&network::notice(&session.node.name, doing, verify))
         );
     }
-    session.set_read_timeout(Some(CHANGE));
-    let answer = request(session);
-    session.restore_read_timeout();
-
-    let applied = match answer {
+    let applied = match network::apply(session, request) {
         Answer::Ok(applied) => applied,
         // A rolled-back change is the device refusing it, with the reason.
         Answer::Refused(error) => return Err(error),
         Answer::Lost(why) => {
-            eprintln!(
-                "{}",
-                paint(
-                    style::WARN,
-                    format!(
-                        "lost the connection while the device applied the change ({why}).\n\
-                         That is expected when it moved the link this connection came in on: \
-                         the device keeps the change or rolls it back on its own."
-                    )
-                )
-            );
-            eprintln!(
-                "see what it did with: {}",
-                paint(
-                    style::CMD,
-                    "tessaro-ctl network last   (at the new address, if it changed)"
-                )
-            );
+            eprintln!("{}", paint(style::WARN, network::lost(&why)));
+            eprintln!("{}", style::line(&network::lost_hint()));
             return Err("no answer from the device".to_string());
         }
     };
@@ -832,7 +654,7 @@ fn net_ping(
             if let PingEvent::Summary { received: 0, .. } = step {
                 failed = true;
             }
-            println!("{}", ping_line(&step));
+            println!("{}", style::line(&tessaro_client::ping::event_line(&step)));
         },
     )?;
     if failed {
@@ -845,555 +667,72 @@ fn net_ping(
 /// the TLS handshake with asking the device who it is, then round trips on
 /// the session.
 pub fn ping(session: &mut Session, json: bool, count: u32, interval: f64) -> Result<(), String> {
-    if count == 0 {
-        return Err("--count must be at least 1".to_string());
-    }
+    tessaro_client::ping::check_count(count).map_err(|err| format!("--count: {err}"))?;
     let timing = session.timing;
-    let label = style::label;
     if !json {
-        match session.remote.as_ref() {
-            Some((address, _)) => eprintln!(
-                "{}",
-                paint(
-                    style::MUTED,
-                    format!("{} ({address}): the API connection", session.node.name)
-                )
-            ),
-            None => eprintln!(
-                "{}",
-                paint(
-                    style::MUTED,
-                    format!("{}: the local socket", session.node.name)
-                )
-            ),
+        let mut intro = tessaro_client::ping::intro(session).into_iter();
+        if let Some(first) = intro.next() {
+            eprintln!("{}", style::line(&first));
         }
-        if let Some(timing) = timing {
-            println!(
-                "{} {}",
-                label("connect"),
-                paint(style::HEADING, ms(timing.connect))
-            );
-            println!(
-                "{} {} {}",
-                label("tls"),
-                paint(style::HEADING, ms(timing.handshake)),
-                paint(style::MUTED, "(handshake and device id)")
-            );
+        for line in intro {
+            println!("{}", style::line(&line));
         }
     }
 
-    let mut rtts = Vec::new();
-    let mut lost = 0u32;
-    for seq in 1..=count {
-        if seq > 1 {
-            std::thread::sleep(Duration::from_secs_f64(interval.max(0.05)));
-        }
-        let started = Instant::now();
-        match session.fetch::<api::device::Ping>() {
-            Ok(_) => {
-                let rtt = started.elapsed();
-                rtts.push(rtt);
-                if !json {
-                    println!(
-                        "{} {} {}",
-                        label("reply"),
-                        paint(style::HEADING, ms(rtt)),
-                        paint(style::MUTED, format!("seq={seq}"))
-                    );
-                }
-            }
-            Err(error) => {
-                lost = count - seq + 1;
-                if !json {
-                    println!(
-                        "{} {} {}",
-                        label("lost"),
-                        paint(style::BAD, &error),
-                        paint(style::MUTED, format!("seq={seq}"))
-                    );
-                }
-                break;
-            }
-        }
-    }
-
-    let seconds = |d: &Duration| d.as_secs_f64() * 1000.0;
-    let min = rtts.iter().map(seconds).reduce(f64::min);
-    let max = rtts.iter().map(seconds).reduce(f64::max);
-    let avg = (!rtts.is_empty()).then(|| rtts.iter().map(seconds).sum::<f64>() / rtts.len() as f64);
+    let interval = Duration::from_secs_f64(interval.max(0.0));
+    let summary = tessaro_client::ping::device(session, count, interval, &mut Stdout { json })?;
     if json {
+        let seconds = |d: &Duration| d.as_secs_f64() * 1000.0;
         return crate::print_json(&json!({
             "node": session.node.name,
             "connect_ms": timing.map(|t| seconds(&t.connect)),
             "handshake_ms": timing.map(|t| seconds(&t.handshake)),
-            "sent": count,
-            "received": rtts.len(),
-            "rtt_ms": rtts.iter().map(seconds).collect::<Vec<_>>(),
-            "min_ms": min,
-            "avg_ms": avg,
-            "max_ms": max,
+            "sent": summary.sent,
+            "received": summary.received(),
+            "rtt_ms": summary.rtt_ms(),
+            "min_ms": summary.min_ms(),
+            "avg_ms": summary.avg_ms(),
+            "max_ms": summary.max_ms(),
         }));
     }
-    println!(
-        "{}",
-        summary_line(count, rtts.len() as u32, min, avg, max, "answered")
-    );
-    if lost > 0 {
-        return Err("the device stopped answering".to_string());
+    println!("{}", style::line(&summary.line()));
+    if summary.received() < summary.sent {
+        return Err("the device did not answer every ping".to_string());
     }
     Ok(())
 }
 
-fn ms(duration: Duration) -> String {
-    format!("{:.1} ms", duration.as_secs_f64() * 1000.0)
+/// A ping's lines on stdout, as `ping` prints them; nothing with `--json`.
+struct Stdout {
+    json: bool,
 }
 
-fn summary_line(
-    sent: u32,
-    received: u32,
-    min: Option<f64>,
-    avg: Option<f64>,
-    max: Option<f64>,
-    verb: &str,
-) -> String {
-    let loss = ((sent - received.min(sent)) * 100)
-        .checked_div(sent)
-        .unwrap_or(0);
-    let loss_style = match loss {
-        0 => style::OK,
-        100 => style::BAD,
-        _ => style::WARN,
-    };
-    let number = |v: Option<f64>| match v {
-        Some(v) => format!("{v:.1}"),
-        None => "n/a".to_string(),
-    };
-    let spread = match (min, avg, max) {
-        (None, None, None) => String::new(),
-        _ => format!(
-            " {}",
-            paint(
-                style::MUTED,
-                format!(
-                    "(min {}, avg {}, max {} ms)",
-                    paint(anstyle::Style::new(), number(min)),
-                    paint(anstyle::Style::new(), number(avg)),
-                    paint(anstyle::Style::new(), number(max))
-                )
-            )
-        ),
-    };
-    format!(
-        "{} {received}/{sent} {verb}, {}{spread}",
-        pad(style::HEADING, "result", 9),
-        paint(loss_style, format!("{loss}% lost"))
-    )
-}
+impl tessaro_client::report::Report for Stdout {
+    fn progress(&mut self, _: tessaro_client::text::Line, _: u64, _: u64) {}
 
-fn ping_line(step: &PingEvent) -> String {
-    let label = style::label;
-    match step {
-        PingEvent::Start { host, address } => {
-            let target = if host == address {
-                paint(style::HEADING, host)
-            } else {
-                format!("{} ({address})", paint(style::HEADING, host))
-            };
-            format!("{} {target}", label("ping"))
+    fn line(&mut self, line: tessaro_client::text::Line) {
+        if !self.json {
+            println!("{}", style::line(&line));
         }
-        PingEvent::Reply { seq, bytes, rtt_ms } => format!(
-            "{} {} {}",
-            label("reply"),
-            paint(style::HEADING, format!("{rtt_ms:.1} ms")),
-            paint(style::MUTED, format!("seq={seq} {bytes} bytes"))
-        ),
-        PingEvent::Timeout { seq } => format!(
-            "{} {} {}",
-            label("timeout"),
-            paint(style::WARN, "no reply"),
-            paint(style::MUTED, format!("seq={seq}"))
-        ),
-        PingEvent::Summary {
-            sent,
-            received,
-            min_ms,
-            avg_ms,
-            max_ms,
-        } => summary_line(*sent, *received, *min_ms, *avg_ms, *max_ms, "received"),
     }
 }
 
 fn show_profiles(profiles: &[NetProfile]) {
-    if profiles.is_empty() {
-        println!("{}", paint(style::MUTED, "no profiles"));
-    }
-    for profile in profiles {
-        let device = match (&profile.device, profile.active) {
-            (Some(device), true) => pad(style::OK, device, 10),
-            (Some(device), false) => pad(style::MUTED, device, 10),
-            (None, _) => pad(style::MUTED, "-", 10),
-        };
-        let state = if profile.active {
-            pad(style::OK, "active", 7)
-        } else {
-            pad(style::MUTED, "", 7)
-        };
-        let saved = if profile.managed {
-            format!("  {}", paint(style::MUTED, "(managed)"))
-        } else if profile.saved {
-            String::new()
-        } else {
-            format!("  {}", paint(style::MUTED, "(not saved)"))
-        };
-        println!(
-            "{}  {} {device} {state} {} {}  {}{saved}",
-            pad(style::HEADING, &profile.name, 24),
-            pad(style::MUTED, &profile.kind, 9),
-            paint(style::LABEL, "autoconnect"),
-            yes_no(profile.autoconnect),
-            paint(style::MUTED, &profile.uuid),
-        );
-    }
+    lines(describe::profiles(profiles));
 }
 
 fn show_detail(detail: &NetProfileDetail) {
-    let profile = &detail.profile;
-    let none = || paint(style::MUTED, "(none)");
-    let row = style::row;
-    let sub = |label: &str, value: &str| println!("    {} {value}", pad(style::LABEL, label, 15));
-
-    println!(
-        "{} {}",
-        paint(style::HEADING, &profile.name),
-        paint(style::MUTED, format!("({})", profile.uuid))
-    );
-    row("kind", &profile.kind);
-    row(
-        "device",
-        &match (&profile.device, profile.active) {
-            (Some(device), true) => format!("{device}  {}", paint(style::OK, "active")),
-            (Some(device), false) => format!("{device}  {}", paint(style::MUTED, "(not active)")),
-            (None, _) => paint(style::MUTED, "(any, not active)"),
-        },
-    );
-    row(
-        "autoconnect",
-        &format!(
-            "{}  {}",
-            yes_no(profile.autoconnect),
-            paint(style::MUTED, format!("(priority {})", profile.priority))
-        ),
-    );
-    row(
-        "saved",
-        &if profile.managed {
-            format!(
-                "{}  {}",
-                paint(style::OK, "managed"),
-                paint(style::MUTED, "(rendered from settings every boot)")
-            )
-        } else if profile.saved {
-            paint(style::OK, "yes")
-        } else {
-            format!(
-                "{}  {}",
-                paint(style::WARN, "no"),
-                paint(style::MUTED, "(lost at reboot)")
-            )
-        },
-    );
-    if let Some(wifi) = &detail.wifi {
-        row("ssid", &paint(style::HEADING, &wifi.ssid));
-        row("security", &wifi.security);
-        row("hidden", &yes_no(wifi.hidden));
-    }
-    for (family, settings) in [("ipv4", &detail.ipv4), ("ipv6", &detail.ipv6)] {
-        row(family, &settings.method);
-        if !settings.addresses.is_empty() || settings.method == "manual" {
-            sub(
-                "addresses",
-                &if settings.addresses.is_empty() {
-                    none()
-                } else {
-                    settings.addresses.join(", ")
-                },
-            );
-        }
-        if let Some(gateway) = &settings.gateway {
-            sub("gateway", gateway);
-        }
-        if !settings.dns.is_empty() {
-            sub("dns", &settings.dns.join(", "));
-        }
-        if settings.ignore_auto_dns {
-            sub("ignore-auto-dns", &yes_no(true));
-        }
-    }
-    if profile.active {
-        row(
-            "now",
-            &if detail.addresses.is_empty() {
-                paint(style::WARN, "(no address)")
-            } else {
-                detail
-                    .addresses
-                    .iter()
-                    .map(address)
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            },
-        );
-    }
-}
-
-fn address(address: &NetAddress) -> String {
-    format!(
-        "{}/{} {}",
-        address.address,
-        address.prefix,
-        paint(style::MUTED, &address.scope)
-    )
+    lines(describe::profile(detail));
 }
 
 fn show_wifi(status: &WifiStatus) {
-    let row = style::row;
-    let radio = match (status.enabled, status.hardware_enabled) {
-        (true, true) => paint(style::OK, "on"),
-        (false, true) => paint(style::WARN, "off"),
-        (_, false) => format!(
-            "{}  {}",
-            paint(style::BAD, "off"),
-            paint(style::MUTED, "(hardware switch)")
-        ),
-    };
-    row("radio", &radio);
-    if status.devices.is_empty() {
-        println!("{}", paint(style::MUTED, "no WiFi device"));
-    }
-    for device in &status.devices {
-        let network = match &device.ssid {
-            Some(ssid) => {
-                let signal = device
-                    .signal
-                    .map(|signal| {
-                        format!("  {}", paint(signal_style(signal), format!("{signal}%")))
-                    })
-                    .unwrap_or_default();
-                let band = device
-                    .frequency_mhz
-                    .map(|mhz| format!("  {}", paint(style::MUTED, band(mhz))))
-                    .unwrap_or_default();
-                format!("{}{signal}{band}", paint(style::HEADING, ssid))
-            }
-            None => paint(style::MUTED, "(not connected)"),
-        };
-        let state_style = if device.state == "activated" {
-            style::OK
-        } else {
-            style::MUTED
-        };
-        println!(
-            "{} {} {network}",
-            pad(style::HEADING, &device.interface, 12),
-            pad(state_style, &device.state, 13)
-        );
-    }
-    if let Some(ssid) = &status.fallback {
-        row(
-            "fallback",
-            &format!(
-                "{} {} did not connect after boot, so the hotspot is up until the next \
-                 boot; {} tries it again now",
-                paint(style::WARN, "on"),
-                paint(style::HEADING, ssid),
-                paint(style::CMD, "tessaro-ctl network wifi join"),
-            ),
-        );
-    }
+    lines(describe::wifi(status));
 }
 
 fn show_networks(networks: &[WifiNetwork]) {
-    if networks.is_empty() {
-        println!("{}", paint(style::MUTED, "no networks found"));
-    }
-    for network in networks {
-        let name = if network.ssid.is_empty() {
-            pad(style::MUTED, "(hidden)", 24)
-        } else {
-            pad(style::HEADING, &network.ssid, 24)
-        };
-        let state = if network.active {
-            pad(style::OK, "connected", 9)
-        } else if network.known {
-            pad(style::MUTED, "known", 9)
-        } else {
-            pad(style::MUTED, "", 9)
-        };
-        println!(
-            "{name}  {} {} {} {state} {}",
-            pad(
-                signal_style(network.signal),
-                format!("{}%", network.signal),
-                4
-            ),
-            pad(style::MUTED, band(network.frequency_mhz), 5),
-            pad(style::LABEL, &network.security, 12),
-            paint(style::MUTED, &network.bssid)
-        );
-    }
+    lines(describe::networks(networks));
 }
 
-fn signal_style(signal: u8) -> anstyle::Style {
-    match signal {
-        60.. => style::OK,
-        30..=59 => style::WARN,
-        _ => style::BAD,
-    }
-}
-
-fn band(mhz: u32) -> &'static str {
-    match mhz {
-        0..=3000 => "2.4G",
-        3001..=5925 => "5G",
-        _ => "6G",
-    }
-}
-
-fn show_change(change: &NetChange) {
-    let subject = change
-        .profile
-        .as_deref()
-        .map(|name| format!(" {}", paint(style::HEADING, name)))
-        .unwrap_or_default();
-    let uuid = change
-        .uuid
-        .as_deref()
-        .map(|uuid| format!(" {}", paint(style::MUTED, format!("({uuid})"))))
-        .unwrap_or_default();
-    let verdict = match change.outcome {
-        ChangeOutcome::Committed => paint(style::OK, "committed"),
-        ChangeOutcome::RolledBack => paint(style::BAD, "rolled back"),
-    };
-    println!(
-        "{verdict} {}{subject}{uuid}",
-        paint(style::MUTED, &change.action)
-    );
-    for check in &change.checks {
-        let result = if check.passed {
-            paint(style::OK, "passed")
-        } else {
-            paint(style::BAD, "failed")
-        };
-        println!(
-            "{} {result} {}",
-            pad(style::LABEL, &check.name, 12),
-            check.detail
-        );
-    }
-    if let Some(reason) = &change.reason {
-        println!("{} {reason}", pad(style::LABEL, "why", 12));
-    }
-    if let Some(note) = &change.note {
-        println!("{}", paint(style::WARN, note));
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use anstream::adapter::strip_str;
-    use protocol::NetCheck;
-
-    #[test]
-    fn speedtest_lines_strip_to_aligned_plain_text() {
-        assert_eq!(
-            plain(speedtest_line(&SpeedtestEvent::Transfer {
-                direction: Direction::Upload,
-                size: 1_000_000,
-                samples: 3,
-                attempts: 4,
-                median_mbit: Some(42.5),
-                min_mbit: Some(40.0),
-                max_mbit: None,
-            })),
-            "upload    1m    42.5 Mbit/s (min 40.0 Mbit/s, max n/a, 3/4 samples)"
-        );
-        assert_eq!(
-            plain(speedtest_line(&SpeedtestEvent::Result {
-                download_mbit: Some(93.14),
-                upload_mbit: None,
-                latency_ms: Some(12.0),
-            })),
-            "result    download 93.1 Mbit/s, upload n/a, latency 12.0 ms"
-        );
-    }
-
-    #[test]
-    fn max_size_takes_the_offered_sizes_only() {
-        assert_eq!(parse_payload("25M"), Ok(25_000_000));
-        assert_eq!(parse_payload("100k"), Ok(100_000));
-        assert!(parse_payload("5m").is_err());
-    }
-
-    fn plain(text: String) -> String {
-        strip_str(&text).to_string()
-    }
-
-    #[test]
-    fn ping_lines_strip_to_plain_text() {
-        assert_eq!(
-            plain(ping_line(&PingEvent::Reply {
-                seq: 2,
-                bytes: 64,
-                rtt_ms: 0.84
-            })),
-            "reply     0.8 ms seq=2 64 bytes"
-        );
-        assert_eq!(
-            plain(ping_line(&PingEvent::Summary {
-                sent: 4,
-                received: 3,
-                min_ms: Some(0.5),
-                avg_ms: Some(1.0),
-                max_ms: Some(2.0),
-            })),
-            "result    3/4 received, 25% lost (min 0.5, avg 1.0, max 2.0 ms)"
-        );
-        assert_eq!(
-            plain(ping_line(&PingEvent::Summary {
-                sent: 2,
-                received: 0,
-                min_ms: None,
-                avg_ms: None,
-                max_ms: None,
-            })),
-            "result    0/2 received, 100% lost"
-        );
-    }
-
-    #[test]
-    fn bands() {
-        assert_eq!(band(2437), "2.4G");
-        assert_eq!(band(5180), "5G");
-        assert_eq!(band(5955), "6G");
-    }
-
-    #[test]
-    fn a_verdict_reads_the_same_without_color() {
-        // Exercised for the panic-free path; the text is what a script greps.
-        let change = NetChange {
-            outcome: ChangeOutcome::RolledBack,
-            action: "set".into(),
-            profile: Some("Wired connection 1".into()),
-            uuid: Some("abc".into()),
-            reason: Some("the device lost its default route".into()),
-            checks: vec![NetCheck {
-                name: "route".into(),
-                passed: false,
-                detail: "no default route any more".into(),
-            }],
-            note: None,
-        };
-        show_change(&change);
-    }
+pub fn show_change(change: &NetChange) {
+    lines(describe::change(change));
 }

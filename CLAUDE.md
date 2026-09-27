@@ -44,6 +44,7 @@ same change as the behaviour it describes.
 | [docs/networking.md](docs/networking.md) | NetworkManager, the managed profiles and their transactions, hotspot, ping, speed test, the proxy (local tinyproxy, what goes through it), extra certificate authorities |
 | [docs/updates.md](docs/updates.md) | in-place updates, `--repartition`, growing `/data` |
 | [docs/e2e.md](docs/e2e.md) | the qemu RSpec suite: running it, lanes, ports, harness quirks |
+| [docs/clients.md](docs/clients.md) | what `tessaro-ctl` and `tessaro-gui` share in `agent/client` and what each keeps, reporting without printing, tones, lines and facts, adding a command, the differences on purpose |
 | [docs/gui.md](docs/gui.md) | `tessaro-gui`: inner windows, keyboard, the node list, device pages per command group, workers and jobs, the VNC viewer |
 | [docs/setup-portal.md](docs/setup-portal.md) | the welcome page's QR code, captive portal detection, nginx's redirect to the setup page on the API's port, what the page uses, the online indicator |
 
@@ -261,16 +262,25 @@ recipe.
   `network.proxy.url`, whose password is stored as typed (see **Proxy** in
   [docs/networking.md](docs/networking.md)); do not add a second. The VNC
   credential is an image property and must not become a setting.
-* **`agent/client` never prints or prompts.** Both clients link it; a
-  decision (pinning) is passed in, and warnings come back as
-  `Session::notes`. Terminal output stays in `tessaro-ctl`.
+* **Everything both clients do lives in `agent/client`, once**: flows of
+  several requests, how a request is built from what was typed, and what an
+  answer says in words. A binary only parses input, draws and decides; a
+  second copy in `tessaro-ctl` or `tessaro-gui` is a bug waiting to drift
+  (see [docs/clients.md](docs/clients.md)).
+* **`agent/client` never prints or prompts.** Both clients link it. A
+  decision is passed in (`Trust::Pin`) or handed back (`update::Sent`),
+  progress goes to a `report::Report`, and text comes back as
+  `text::Line`/`Fact` spans with a `Tone`, never as painted strings: the
+  ctl paints tones with `style.rs`, the GUI with `theme.rs`. Terminal output
+  stays in `tessaro-ctl`.
 * **`gui/` is its own workspace and never joins `agent/`**: the recipe builds
   every member of that one into the image. It reaches `protocol` and `client`
   by path, and its tasks build into `build/gui-target`.
 * **A new `tessaro-ctl` command gets its place in `tessaro-gui` in the same
   change**: an action on the page of its group (`gui/tessaro-gui/src/device/pages.rs`,
-  the table in [docs/gui.md](docs/gui.md)). Logic both need goes into
-  `agent/client`, not into either binary.
+  the table in [docs/gui.md](docs/gui.md)). Its logic and its words go into
+  `agent/client` first and both call them (**Adding a command** in
+  [docs/clients.md](docs/clients.md)).
 * **What a `tessaro-ctl` read returns reaches the page bridge in the same
   change**, when a bridge call mirrors that read (the call table in
   [docs/bridge.md](docs/bridge.md), `page_action` in `control/bridge.rs`):

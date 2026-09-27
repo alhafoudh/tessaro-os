@@ -20,19 +20,15 @@ into both. So `gui/` has its own `Cargo.lock` and builds into
   settings registry (`keys.rs`),
   so the GUI validates a value with the same `keys::validate` the agent runs
   at `set`.
-* `agent/client` (`tessaro-client`) - what both clients do the same way:
-  finding a device and the pinned session (`connect.rs`), `nodes.json`
-  (`nodes.rs`), sending the SSH key and pinning the host key (`ssh.rs`),
-  the `ssh -N -L` forwards to the device's loopback (`tunnel.rs`),
-  moving files and images in acknowledged chunks (`transfer.rs`), and
-  reading a journal entry (`journal.rs`).
+* `agent/client` (`tessaro-client`) - everything both clients do: the
+  pinned session, the flows (update, file trees, ping, grow, DevTools), how
+  a request is built and what an answer says in words. What is in it, and
+  how it reports without printing, is in [clients.md](clients.md).
 
-**`tessaro-client` never prints or asks.** Where the user has to decide -
-pinning a certificate seen for the first time - the caller passes
-`Trust::Pin` a closure. `tessaro-ctl`'s asks at the keyboard. The GUI's
-accepts only the fingerprint the user already accepted in a dialog. What is
-worth telling the user comes back as `Session::notes`, and a transfer's
-progress goes to a callback.
+**A page shows the client's words, not its own.** A page draws what
+`tessaro_client::describe` and the flows hand back: `Fact`s in a facts
+table (`shared_facts`), `Line`s in the output pane and the log, colored by
+their tones (`theme::text_line`, `theme::toned`).
 
 ## One window, inner windows
 
@@ -270,21 +266,28 @@ pauses.
 polling** (`jobs.rs`). The jobs are the device's own jobs (`network ping`,
 the speed test, `storage grow`, polled with `Session::job`), `device ping`,
 files going up or down, an image update, and the DevTools tunnel
-(localhost:9222, or a free port when 9222 is taken here). A job is a
-subscription keyed by its id: it reports progress, lines and a result to its
-page. Cancel drops it: a device job is cancelled on the device at the next
-poll, and for the rest a watcher thread shuts the socket down, which ends
-whatever call it was in.
+(localhost:9222, or a free port when 9222 is taken here). Each is the
+client's flow (`update::send`, `files::upload`, `ping::device`, ...), with
+the job as its `Report`. A job is a subscription keyed by its id: it
+reports progress, lines and a result to its page. Cancel drops it: a device
+job is cancelled on the device at the next poll, a flow stops at its next
+step (`Report::stopped`), and a watcher thread shuts the socket down, which
+ends whatever call it was in. An update that reboots the device waits for
+it to come back, as `tessaro-ctl update send` does; one that erases `/data`
+forgets the node here.
 
 **The live journal is the same, on its own connection** (`logs.rs`), open
 while the Log page is shown and Live is on, polling the journal's pages
-(`Session::logs`). A new unit filter starts it again. The last 5,000 entries are kept, the newest 500 matching the filter
+(`Session::logs`). A new unit filter starts it again. A lost connection is
+followed again from the last entry's `__CURSOR`, so nothing shows twice.
+The last 5,000 entries are kept, the newest 500 matching the filter
 are drawn, and Pause freezes the table while entries keep arriving.
 
-The transfers are `tessaro_client::transfer`, the same code as `tessaro-ctl
-files` and `tessaro-ctl update send`, so a dropped upload resumes where the
-device says it got to. Files and images are chosen with the system's own
-dialogs (`rfd`).
+The transfers are `tessaro_client::files` and `update`, the same code as
+`tessaro-ctl files` and `tessaro-ctl update send`, so a dropped upload
+resumes where the device says it got to, and a symlink is skipped, never
+followed. Files and images are chosen with the system's own dialogs
+(`rfd`).
 
 ## VNC
 
@@ -320,10 +323,12 @@ dialogs (`rfd`).
    `Page::scope` if settings belong to it (its Configure).
 2. Ask for its data in `refresh_page` with a tag, and keep the answer in
    `take_answer`.
-3. Draw it with `page`, `table` and `facts` in `device/pages.rs`, with its
-   actions as `section::Action`s.
-4. Put long work in a `jobs::Kind`, and give its events a line in
-   `stream_line`.
+3. Draw it with `page`, `table` and `shared_facts` in `device/pages.rs`,
+   with its actions as `section::Action`s. Its words come from
+   `tessaro_client::describe`, written there if they are new
+   (**Adding a command** in [clients.md](clients.md)).
+4. Put long work in a `jobs::Kind` that runs the client's flow, and give a
+   device job's events a line in `stream_line`, from the client.
 
 It then looks and behaves like the other pages: selection, double-click and
 Enter, Up and Down, disabled actions, dialogs.

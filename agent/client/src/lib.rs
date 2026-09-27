@@ -1,23 +1,38 @@
 //! The client side of the Tessaro API, for every program that manages
 //! devices: finding them, opening a pinned session that calls the endpoints
-//! of `protocol::api` by type, and the `nodes.json` this machine keeps about
-//! them.
+//! of `protocol::api` by type, the `nodes.json` this machine keeps about
+//! them - and everything a command does around its requests, so
+//! `tessaro-ctl` and `tessaro-gui` do it once (docs/clients.md).
 //!
 //! Nothing in here prints or asks. Where the user has to decide - pinning a
 //! certificate seen for the first time - the caller passes the decision in
-//! (`connect::Trust::Pin`), and what is worth telling the user comes back as
-//! `Session::notes`.
+//! (`connect::Trust::Pin`); a flow reports its progress to a
+//! `report::Report`; and what is worth telling the user comes back as
+//! `Session::notes` or as `text::Line`s, which each client paints its own
+//! way.
 
+pub mod access;
+pub mod actions;
 pub mod certs;
 pub mod clock;
 pub mod connect;
+pub mod describe;
+pub mod devtools;
+pub mod files;
 mod http;
 pub mod journal;
+pub mod network;
 pub mod nodes;
+pub mod ping;
+pub mod report;
 pub mod schedule;
+pub mod speedtest;
 pub mod ssh;
+pub mod storage;
+pub mod text;
 pub mod transfer;
 pub mod tunnel;
+pub mod update;
 
 /// The same mDNS library `connect::browse` uses, for a caller that browses
 /// for good instead (the GUI) and hands results to `connect::found_service`.

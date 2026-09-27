@@ -11,10 +11,11 @@ use std::collections::BTreeMap;
 use anstream::println;
 use clap::Subcommand;
 use protocol::api;
-use protocol::{keys, AudioDevice, AudioSide, AudioStatus};
+use protocol::{keys, AudioSide, AudioStatus};
+use tessaro_client::describe::audio as describe;
 
 use crate::connect::Session;
-use crate::style::{self, pad, paint};
+use crate::style;
 use crate::{print, show_applied, Toggle};
 
 #[derive(Subcommand)]
@@ -90,23 +91,7 @@ pub fn run(session: &mut Session, command: AudioCmd, json: bool) -> Result<(), S
         }
         AudioCmd::Test { input } => {
             let tested = session.send::<api::audio::Test>(api::AudioTestBody { input })?;
-            print(json, &tested, || {
-                println!("{}", paint(style::OK, &tested.message));
-                if let (Some(peak), Some(rms)) = (tested.peak_dbfs, tested.rms_dbfs) {
-                    println!(
-                        "{} {peak:.1} dBFS  {} {rms:.1} dBFS",
-                        paint(style::LABEL, "peak"),
-                        paint(style::LABEL, "average")
-                    );
-                }
-                if let Some(saved) = &tested.saved {
-                    println!(
-                        "{} {}",
-                        paint(style::MUTED, "listen with"),
-                        paint(style::CMD, format!("tessaro-ctl files download {saved}"))
-                    );
-                }
-            })
+            print(json, &tested, || lines(describe::test(&tested)))
         }
     }
 }
@@ -116,141 +101,16 @@ fn set(session: &mut Session, json: bool, key: &str, value: String) -> Result<()
     print(json, &applied, || show_applied(&applied, false))
 }
 
-/// What a change of the audio.* keys did on the device, one line per side.
-pub fn show_outcome(audio: &str) {
-    if audio.starts_with("saved,") {
-        println!("{}", paint(style::WARN, audio));
-        return;
-    }
-    for side in audio.split("; ") {
-        println!("{}", paint(style::OK, side));
-    }
-}
-
-/// `muted`, `off`, or the volume.
-fn level(side: &AudioSide) -> String {
-    if side.setting == "off" {
-        paint(style::WARN, "off")
-    } else if side.muted {
-        paint(style::WARN, "muted")
-    } else {
-        format!("{}%", side.volume)
-    }
-}
-
-/// The one line `device status` shows: `hdmi 80%`, and why when it is not
-/// what the setting says.
-pub fn summary(status: &AudioStatus) -> String {
-    if !status.running {
-        return paint(style::BAD, "sound server not answering");
-    }
-    let output = &status.output;
-    let playing = match &output.using {
-        Some(device) => device.kind.clone(),
-        None => paint(style::WARN, "no output"),
-    };
-    let why = output
-        .fallback
-        .as_ref()
-        .map(|why| format!(" {}", paint(style::MUTED, format!("({why})"))))
-        .unwrap_or_default();
-    format!("{playing} {}{why}", level(output))
-}
-
 fn show(status: &AudioStatus) {
-    if let Some(err) = &status.error {
-        println!(
-            "{} {}",
-            paint(style::BAD, "the sound server is not answering:"),
-            err
-        );
-        println!();
-    }
-    for (label, side) in [("output", &status.output), ("input", &status.input)] {
-        let using = match &side.using {
-            Some(device) => format!(
-                "{} {}",
-                paint(style::HEADING, &device.description),
-                paint(style::MUTED, format!("({})", device.kind))
-            ),
-            None if status.running => paint(style::WARN, "(none)"),
-            None => paint(style::MUTED, "(unknown)"),
-        };
-        println!(
-            "{} {} {} {using}  {}",
-            pad(style::LABEL, label, 8),
-            side.setting,
-            paint(style::MUTED, "->"),
-            level(side)
-        );
-        if let Some(why) = &side.fallback {
-            println!("{} {}", pad(style::LABEL, "", 8), paint(style::WARN, why));
-        }
-    }
-    println!(
-        "\n{}",
-        paint(
-            style::MUTED,
-            "`tessaro-ctl audio outputs` and `audio inputs` list what is plugged in."
-        )
-    );
+    lines(describe::show(status));
 }
 
 fn list(status: &AudioStatus, side: &AudioSide, word: &str) {
-    if !status.running {
-        println!(
-            "{} {}",
-            paint(style::BAD, "the sound server is not answering:"),
-            status.error.as_deref().unwrap_or("")
-        );
-        return;
-    }
-    if side.devices.is_empty() {
-        println!("{}", paint(style::WARN, format!("no {word}s")));
-    }
-    for device in &side.devices {
-        let marker = if device.in_use {
-            paint(style::OK, "*")
-        } else {
-            " ".to_string()
-        };
-        println!(
-            "{marker} {} {}{}",
-            pad(style::LABEL, &device.kind, 10),
-            paint(style::HEADING, &device.description),
-            note(device)
-        );
-        println!("    {}", paint(style::MUTED, &device.name));
-    }
-    println!(
-        "\n{} {}",
-        paint(style::MUTED, "* in use. Choose one with"),
-        paint(style::CMD, format!("tessaro-ctl audio {word} NAME"))
-    );
-    println!(
-        "{} {}",
-        paint(style::MUTED, "or a kind:"),
-        paint(
-            style::CMD,
-            format!("tessaro-ctl audio {word} auto|usb|jack|...")
-        )
-    );
+    lines(describe::list(status, side, word));
 }
 
-fn note(device: &AudioDevice) -> String {
-    let mut notes = Vec::new();
-    if device.available == Some(false) {
-        notes.push("nothing plugged in");
-    }
-    if device.needs_profile {
-        notes.push("switches its sound card over");
-    }
-    if notes.is_empty() {
-        String::new()
-    } else {
-        format!(
-            "  {}",
-            paint(style::MUTED, format!("({})", notes.join(", ")))
-        )
+fn lines(lines: Vec<tessaro_client::text::Line>) {
+    for line in lines {
+        println!("{}", style::line(&line));
     }
 }

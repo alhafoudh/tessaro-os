@@ -11,6 +11,7 @@ use anstream::{eprintln, println};
 use clap::Subcommand;
 use protocol::api::{self, GrowBody};
 use protocol::{size_label, FsUsage, Partition, Storage, StorageGrowEvent};
+use tessaro_client::storage as shared;
 
 use crate::connect::{follow_job, Session};
 use crate::print;
@@ -63,17 +64,7 @@ pub fn run(session: &mut Session, command: StorageCmd, json: bool) -> Result<(),
 
 /// `2.8 GB free of 4.0 GB (27% used)`, the use colored by how full it is.
 pub fn usage_line(fs: &FsUsage) -> String {
-    free_line(fs.available, fs.size, fs.used_percent())
-}
-
-/// The same line for anything with a size and free space: RAM too.
-pub fn free_line(available: u64, size: u64, percent: u64) -> String {
-    format!(
-        "{} free of {} {}",
-        size_label(available),
-        size_label(size),
-        paint(style::usage_level(percent), format!("({percent}% used)"))
-    )
+    style::line(&shared::usage_line(fs))
 }
 
 fn show(storage: &Storage) {
@@ -177,37 +168,19 @@ fn show_usage(filesystems: &[FsUsage]) {
 
 /// The plan, then - unless `check` - a confirmation and the grow itself.
 fn grow(session: &mut Session, json: bool, check: bool, yes: bool) -> Result<(), String> {
-    let mut plan = None;
-    session.job::<api::storage::Grow, StorageGrowEvent>(
-        GrowBody { check: true },
-        &|| false,
-        |event| {
-            if let Ok(event @ StorageGrowEvent::Plan { .. }) = event {
-                plan = Some(event);
-            }
-        },
-    )?;
-    let Some(plan) = plan else {
-        return Err("the device sent no plan".to_string());
-    };
+    let plan = shared::check(session)?;
     if !json {
-        show_plan(&plan);
+        let (facts, nothing) = plan.facts();
+        style::facts(&facts);
+        if let Some(nothing) = nothing {
+            println!("{}", style::line(&nothing));
+        }
     }
-    let StorageGrowEvent::Plan {
-        partition_from,
-        partition_to,
-        filesystem_from,
-        filesystem_to,
-        ..
-    } = &plan
-    else {
-        unreachable!("only a plan is kept");
-    };
-    if check || (partition_to <= partition_from && filesystem_to <= filesystem_from) {
+    if check || !plan.grows() {
         if json {
             println!(
                 "{}",
-                serde_json::to_string(&plan).expect("events serialize")
+                serde_json::to_string(&plan.0).expect("events serialize")
             );
         }
         return Ok(());
@@ -225,25 +198,10 @@ fn grow(session: &mut Session, json: bool, check: bool, yes: bool) -> Result<(),
         session,
         GrowBody { check: false },
         json,
-        |step: StorageGrowEvent| match step {
-            StorageGrowEvent::Plan { .. } => {}
-            StorageGrowEvent::Step { what, command } => {
-                println!("{} {}", what, paint(style::MUTED, format!("({command})")));
+        |step: StorageGrowEvent| {
+            if let Some(line) = shared::event_line(&step) {
+                println!("{}", style::line(&line));
             }
-            StorageGrowEvent::Grown {
-                partition,
-                filesystem,
-            } => println!(
-                "{} {}",
-                paint(
-                    style::OK,
-                    format!("grew /data to {}", size_label(filesystem))
-                ),
-                paint(
-                    style::MUTED,
-                    format!("(partition {})", size_label(partition))
-                )
-            ),
         },
     )
     .map_err(|error| {
@@ -251,75 +209,7 @@ fn grow(session: &mut Session, json: bool, check: bool, yes: bool) -> Result<(),
             error
         } else {
             eprintln!("{}", paint(style::BAD, "the grow stopped"));
-            format!(
-                "{error}\nrunning `tessaro-ctl storage grow` again picks up where this one stopped"
-            )
+            format!("{error}\n{}", shared::STOPPED_HINT)
         }
     })
-}
-
-fn show_plan(plan: &StorageGrowEvent) {
-    let StorageGrowEvent::Plan {
-        partition,
-        partition_from,
-        partition_to,
-        filesystem_from,
-        filesystem_to,
-    } = plan
-    else {
-        return;
-    };
-    let change = |from: u64, to: u64| {
-        if to > from {
-            format!(
-                "{} -> {}",
-                size_label(from),
-                paint(style::OK, size_label(to))
-            )
-        } else {
-            format!(
-                "{} {}",
-                size_label(from),
-                paint(style::MUTED, "(unchanged)")
-            )
-        }
-    };
-    let row = |label: &str, value: String| style::row(label, &value);
-    row(
-        "partition",
-        format!(
-            "{} {}",
-            paint(style::HEADING, partition),
-            change(*partition_from, *partition_to)
-        ),
-    );
-    row("filesystem", change(*filesystem_from, *filesystem_to));
-    if partition_to <= partition_from && filesystem_to <= filesystem_from {
-        println!(
-            "{}",
-            paint(style::OK, "nothing to grow: /data already fills the disk")
-        );
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use anstream::adapter::strip_str;
-
-    #[test]
-    fn a_usage_line_strips_to_plain_text() {
-        let fs = FsUsage {
-            mountpoint: "/data".into(),
-            source: "/dev/sda3".into(),
-            fstype: "ext4".into(),
-            size: 4_000_000_000,
-            used: 1_000_000_000,
-            available: 2_800_000_000,
-        };
-        assert_eq!(
-            strip_str(&usage_line(&fs)).to_string(),
-            "2.8 GB free of 4.0 GB (27% used)"
-        );
-    }
 }
