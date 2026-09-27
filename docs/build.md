@@ -158,6 +158,16 @@ is how Chromium's `PACKAGECONFIG` and `CHROMIUM_EXTRA_ARGS` are set.
   use `qemu:vnc` plus an SSH tunnel if you need the framebuffer. With the
   kiosk enabled, `qemu:run` shows nothing but the serial console - the browser
   needs `qemu:vnc`.
+* **`qemu:vnc`'s display asks for the password `tessaro`, which needs QEMU
+  built with nettle.** VNC password auth is DES, and oe-core's
+  `qemu-system-native` has no crypto library that provides it: QEMU refuses
+  to start with `Cipher backend does not support DES algorithm`. The password
+  goes in as `-object secret` with `-vnc ...,password-secret=` (`mise.toml`),
+  so no monitor command is needed, and VNC reads at most 8 characters of it.
+  `PACKAGECONFIG:append:pn-qemu-system-native = " nettle"` in
+  `kas/machine/qemux86-64.yml` is a build-time dependency of the host's QEMU
+  only, which is why it is in the machine fragment and not `tessaro.conf`:
+  the image gets no new package and no target recipe rebuilds.
 * **The kiosk needs a real GPU on the build host to render under QEMU.** Only
   the DRM master may allocate KMS dumb buffers, which is how Mesa's
   `kms_swrast` backs GBM when there is no GPU. Weston holds master so Weston

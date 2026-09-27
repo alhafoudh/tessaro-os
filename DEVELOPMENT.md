@@ -45,13 +45,14 @@ sees the right environment (`bitbake -e <recipe>`, `bitbake -c devshell
 ## Running in QEMU
 
 ```sh
-mise run qemu:vnc   # boot it, framebuffer on localhost:5901
+mise run qemu:vnc   # boot it, framebuffer on localhost:5901, VNC password "tessaro"
 mise run qemu:run   # serial console only (Ctrl-a x to exit)
 ```
 
 Use `qemu:vnc` to see the kiosk: `qemu:run` boots with `nographic`, so there is no
 display for the browser. Both boot with `-snapshot`, so nothing a session
-changes survives it.
+changes survives it. The VNC password needs QEMU built with nettle; see
+[docs/build.md](docs/build.md), "Gotchas".
 
 ## From a workstation
 

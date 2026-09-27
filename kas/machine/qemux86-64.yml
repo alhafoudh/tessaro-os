@@ -45,6 +45,11 @@ local_conf_header:
     # snd-ens1370 - with a hard `=` that is parsed after local.conf, so only
     # an :append survives it. The real targets install every module already.
     MACHINE_EXTRA_RRECOMMENDS:append = " kernel-module-snd-hda-intel kernel-module-snd-hda-codec-generic kernel-module-snd-usb-audio"
+    # qemu:vnc puts a password on the display, and VNC's password auth is
+    # DES, which QEMU takes from a crypto library it is built without by
+    # default ("Cipher backend does not support DES algorithm"). Only the
+    # host's QEMU changes; the image does not.
+    PACKAGECONFIG:append:pn-qemu-system-native = " nettle"
 
 # Both keys belong in the entry point of the config chain: an include cannot
 # set them, because meta-moonforge-distro.yml sets distro too and wins by

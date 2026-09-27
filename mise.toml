@@ -597,8 +597,10 @@ fi
 # host, and VNC display 1 is the host's 127.0.0.1:5901 with no -p needed.
 # Not runqemu's publicvnc: that is display 0 on every interface, and
 # something else on the build host already holds 5900.
+# The display asks for the password "tessaro", given as a secret object so
+# no monitor command is needed; VNC's password auth reads 8 characters at most.
 kas-container --runtime-args "$KVM_RUNTIME $GPU_RUNTIME --network=host" shell $KAS_CONFIG \
-    -c "runqemu $WIC ovmf slirp snapshot $KVM_OPT $GPU_OPT serialstdio qemuparams='-vnc 127.0.0.1:1'"
+    -c "runqemu $WIC ovmf slirp snapshot $KVM_OPT $GPU_OPT serialstdio qemuparams='-object secret,id=vncpw,data=tessaro -vnc 127.0.0.1:1,password-secret=vncpw'"
 '''
 
 [tasks."dev:tunnel"]
