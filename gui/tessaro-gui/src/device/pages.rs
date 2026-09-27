@@ -2457,25 +2457,25 @@ impl Device {
         body: Vec<Element<'a, Message>>,
     ) -> Element<'a, Message> {
         // Configure comes first: the page's settings, in their own window.
-        let toolbar = row(self
+        // One flat row, so a narrow page (the VNC panel open) wraps the
+        // buttons onto a second line instead of squeezing them.
+        let mut toolbar = row(self
             .configure()
             .map(|configure| section::action("Configure", Some(configure)))
             .into_iter()
             .chain(list)
             .map(|action| theme::tool(action.label, action.message)))
         .spacing(4);
-        let mut toolbar = row![toolbar].spacing(8);
         if !record.is_empty() {
-            toolbar = toolbar.push(rule::vertical(1)).push(
-                row(record
-                    .into_iter()
-                    .map(|action| theme::tool(action.label, action.message)))
-                .spacing(4),
-            );
+            toolbar = toolbar.push(container(rule::vertical(1)).height(20));
+            for action in record {
+                toolbar = toolbar.push(theme::tool(action.label, action.message));
+            }
         }
         let mut page = column![toolbar
-            .height(24)
-            .align_y(iced::alignment::Vertical::Center)]
+            .align_y(iced::alignment::Vertical::Center)
+            .wrap()
+            .vertical_spacing(4)]
         .spacing(6)
         .height(Length::Fill);
         for part in body {
