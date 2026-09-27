@@ -30,10 +30,13 @@ fn escape(value: &str) -> String {
     out
 }
 
-/// The code as a self-contained `<svg>`: black modules on a white square, so
-/// it stays readable on the page's dark background. Medium
-/// error correction, which a screen photographed at an angle needs more
-/// than a smaller code.
+/// The code as a self-contained `<svg>`: modules in the logo's gradient on a
+/// square of the page's background, so it sits in the dark page instead of
+/// lighting up a white square in it. Light on dark is the inverse of a
+/// printed code; phone cameras read it, but some older scanner apps do not.
+/// The gradient's id is its own, since the SVG goes into the same document
+/// as the logo's. Medium error correction, which a screen photographed at an
+/// angle needs more than a smaller code.
 pub fn svg(payload: &str) -> Result<String, String> {
     let code = QrCode::with_error_correction_level(payload.as_bytes(), EcLevel::M)
         .map_err(|err| format!("QR code: {err}"))?;
@@ -48,8 +51,11 @@ pub fn svg(payload: &str) -> Result<String, String> {
     }
     Ok(format!(
         "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 {size} {size}\" \
-         shape-rendering=\"crispEdges\"><rect width=\"{size}\" height=\"{size}\" \
-         fill=\"#fff\"/><path fill=\"#000\" d=\"{path}\"/></svg>"
+         shape-rendering=\"crispEdges\"><defs><linearGradient id=\"qr-accent\" \
+         x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\"><stop offset=\"0\" stop-color=\"#5cc8ff\"/>\
+         <stop offset=\"1\" stop-color=\"#9d8cff\"/></linearGradient></defs>\
+         <rect width=\"{size}\" height=\"{size}\" fill=\"#0a0d14\"/>\
+         <path fill=\"url(#qr-accent)\" d=\"{path}\"/></svg>"
     ))
 }
 
@@ -89,6 +95,14 @@ mod tests {
         // The finder pattern's top-left module sits just inside the margin.
         assert!(svg.contains("M4 4h1v1h-1z"));
         assert!(!svg.contains("M0 0h"));
+    }
+
+    #[test]
+    fn the_modules_take_the_gradient_on_the_page_background() {
+        let svg = svg(&wifi_payload("tessaro-amber-fox")).unwrap();
+        assert!(svg.contains("<linearGradient id=\"qr-accent\""), "{svg}");
+        assert!(svg.contains("<path fill=\"url(#qr-accent)\""), "{svg}");
+        assert!(svg.contains("fill=\"#0a0d14\""), "{svg}");
     }
 
     #[test]

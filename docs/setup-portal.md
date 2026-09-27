@@ -34,6 +34,11 @@ one tap each. The page never claims the device; claiming stays
   itself and puts it in `welcome.json` as `setup.qr`, next to `setup.url`;
   the page shows it with a written fallback, "or join SSID and open" the
   address.
+* **The code is drawn in the logo's gradient on the page's dark
+  background**, so it belongs to the page instead of lighting up a white
+  square on it. Light modules on dark are the inverse of a printed code:
+  phone cameras read it, some older scanner apps do not, and the written
+  fallback covers those.
 * **The hotspot's address is pinned to 10.42.0.1** (`HOTSPOT_ADDRESS` in
   `nm/profiles.rs`, NM's own default stated in the keyfile), because the
   pieces below name it.
