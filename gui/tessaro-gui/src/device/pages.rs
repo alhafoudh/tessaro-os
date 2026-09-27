@@ -42,7 +42,7 @@ use tessaro_client::transfer::date;
 
 use super::{Device, Dialog, Link, Message, Page, Tone};
 use crate::dialog::{self, field};
-use crate::grid::{bold, cell, col, grid, Col};
+use crate::grid::{bold, cell, col, grid, Cell, Col};
 use crate::section::{self, action};
 use crate::worker::{call, fetch, send, Call, Request};
 use crate::{blocking, jobs, theme};
@@ -1754,6 +1754,7 @@ impl Device {
 
     pub(super) fn primary_step(&mut self, by: i32) {
         if let Some((table, keys)) = self.primary() {
+            let keys = self.tables.ordered(table, &keys);
             if let Some(key) = section::step(&keys, self.selected(table), by) {
                 self.pages.selected.insert(table, key);
             }
@@ -2442,7 +2443,7 @@ impl Device {
         &self,
         name: &'static str,
         columns: &[Col],
-        rows: Vec<(String, Vec<Element<'a, Message>>)>,
+        rows: Vec<(String, Vec<Cell<'a, Message>>)>,
         height: Length,
     ) -> Element<'a, Message> {
         let selected = self.selected(name);
@@ -2450,6 +2451,8 @@ impl Device {
         let keys: Vec<String> = rows.iter().map(|(key, _)| key.clone()).collect();
         let keys_too = keys.clone();
         container(grid(
+            self.tables.state(name),
+            move |event| Message::Table(name.into(), event),
             columns,
             rows.into_iter().map(|(_, cells)| cells).collect(),
             at,
@@ -2759,7 +2762,7 @@ impl Device {
                         .map(|address| format!("{}/{}", address.address, address.prefix))
                         .collect::<Vec<_>>()
                         .join(", ");
-                    let state: Element<'_, Message> = cell(interface.state.clone())
+                    let state: Cell<'_, Message> = cell(interface.state.clone())
                         .style(theme::toned(tessaro_client::text::link_state(
                             &interface.state,
                         )))
@@ -2889,12 +2892,11 @@ impl Device {
             .iter()
             .map(|cert| {
                 let date = tessaro_client::certs::date(cert.not_after);
-                let expires: Element<'_, Message> =
-                    if tessaro_client::certs::expired(cert.not_after) {
-                        cell(format!("{date} expired")).style(text::danger).into()
-                    } else {
-                        cell(date).into()
-                    };
+                let expires: Cell<'_, Message> = if tessaro_client::certs::expired(cert.not_after) {
+                    cell(format!("{date} expired")).style(text::danger).into()
+                } else {
+                    cell(date).into()
+                };
                 (
                     cert.fingerprint.clone(),
                     vec![
@@ -2938,7 +2940,7 @@ impl Device {
             .schedules
             .iter()
             .map(|info| {
-                let state: Element<'_, Message> = if info.spec.enabled {
+                let state: Cell<'_, Message> = if info.spec.enabled {
                     cell("on").style(text::success).into()
                 } else {
                     cell("off").style(text::danger).into()
@@ -2948,7 +2950,7 @@ impl Device {
                     |next| tessaro_client::schedule::moment(next, now).to_string(),
                 );
                 let last = tessaro_client::schedule::last_run(info, now);
-                let last: Element<'_, Message> = cell(last.to_string())
+                let last: Cell<'_, Message> = cell(last.to_string())
                     .style(theme::toned(last.tone()))
                     .into();
                 (
@@ -3108,8 +3110,13 @@ impl Device {
                             cell(partition.name.clone()).into(),
                             cell(partition.label.clone().unwrap_or_default()).into(),
                             cell(partition.fstype.clone().unwrap_or_default()).into(),
-                            cell(size_label(partition.start)).style(theme::muted).into(),
-                            cell(size_label(partition.size)).into(),
+                            cell(size_label(partition.start))
+                                .sort_number(partition.start as f64)
+                                .style(theme::muted)
+                                .into(),
+                            cell(size_label(partition.size))
+                                .sort_number(partition.size as f64)
+                                .into(),
                             cell(partition.mountpoint.clone().unwrap_or_default()).into(),
                         ],
                     )
@@ -3120,7 +3127,7 @@ impl Device {
                 .iter()
                 .map(|fs| {
                     let percent = fs.used_percent();
-                    let used: Element<'_, Message> = cell(format!("{percent}%"))
+                    let used: Cell<'_, Message> = cell(format!("{percent}%"))
                         .style(theme::toned(tessaro_client::text::usage_level(percent)))
                         .into();
                     (
@@ -3129,9 +3136,11 @@ impl Device {
                             cell(fs.mountpoint.clone()).into(),
                             cell(fs.source.clone()).style(theme::muted).into(),
                             cell(fs.fstype.clone()).into(),
-                            cell(size_label(fs.size)).into(),
-                            cell(size_label(fs.used)).into(),
-                            cell(size_label(fs.available)).into(),
+                            cell(size_label(fs.size)).sort_number(fs.size as f64).into(),
+                            cell(size_label(fs.used)).sort_number(fs.used as f64).into(),
+                            cell(size_label(fs.available))
+                                .sort_number(fs.available as f64)
+                                .into(),
                             used,
                         ],
                     )
@@ -3232,7 +3241,7 @@ impl Device {
             col("Plugged", Length::Fixed(70.0)),
             col("", Length::Fill),
         ];
-        let devices = |devices: &[AudioDevice]| -> Vec<(String, Vec<Element<'_, Message>>)> {
+        let devices = |devices: &[AudioDevice]| -> Vec<(String, Vec<Cell<'_, Message>>)> {
             devices
                 .iter()
                 .map(|device| {
@@ -3465,7 +3474,7 @@ impl Device {
                             FileKind::Dir => cell(name).font(bold()).into(),
                             FileKind::File => cell(name).into(),
                         },
-                        cell(size).into(),
+                        cell(size).sort_number(entry.size as f64).into(),
                         cell(date(entry.mtime)).style(theme::muted).into(),
                     ],
                 )

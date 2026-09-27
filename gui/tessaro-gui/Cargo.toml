@@ -26,3 +26,6 @@ rfd = "0.17"
 # in it (mdi.rs). A device's blocking session runs on a thread of its own
 # and talks to the UI through a subscription. `image` shows screenshots.
 iced = { version = "0.14", features = ["advanced", "canvas", "image"] }
+iced_table2 = "0.14.2"
+# Own the cell widgets borrowed by iced_table2's column/row API.
+ouroboros = "0.18"

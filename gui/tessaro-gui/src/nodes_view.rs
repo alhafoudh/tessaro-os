@@ -166,6 +166,7 @@ enum Dialog {
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    Table(crate::grid::Event),
     Select(String),
     Activate(String),
     Filter(String),
@@ -193,6 +194,7 @@ pub enum Message {
 }
 
 pub struct NodesView {
+    pub(super) tables: crate::grid::Tables,
     known: Nodes,
     /// Announced on the network, by mDNS name.
     seen: BTreeMap<String, Found>,
@@ -215,6 +217,7 @@ impl NodesView {
             Err(error) => (Nodes::default(), Some(Err(error))),
         };
         Self {
+            tables: crate::grid::Tables::default(),
             known,
             seen: BTreeMap::new(),
             added: Vec::new(),
@@ -280,6 +283,7 @@ impl NodesView {
     pub fn update(&mut self, message: Message) -> (Task<Message>, Option<Node>) {
         let none = (Task::none(), None);
         match message {
+            Message::Table(event) => (self.tables.update("nodes", event), None),
             Message::Select(key) => {
                 self.selected = Some(key);
                 none
@@ -503,6 +507,7 @@ impl NodesView {
                 if self.dialog.is_none() {
                     let keys: Vec<String> =
                         self.visible_rows().into_iter().map(|row| row.key).collect();
+                    let keys = self.tables.ordered("nodes", &keys);
                     self.selected = section::step(&keys, self.selected.as_ref(), by);
                 }
                 none
@@ -667,6 +672,8 @@ impl NodesView {
         let keys: Vec<String> = rows.iter().map(|row| row.key.clone()).collect();
         let keys_too = keys.clone();
         let table = grid(
+            self.tables.state("nodes"),
+            Message::Table,
             COLUMNS,
             cells.collect(),
             selected_at,
@@ -776,7 +783,14 @@ impl NodesView {
                             .push(field("Device", text(format!("{} ({})", peek.node.name, peek.node.id)).size(theme::SMALL)))
                             .push(field("Address", text(peek.address.to_string()).size(theme::SMALL)))
                             .push(field("Image", text(format!("{} on {}", peek.node.version, peek.node.machine)).size(theme::SMALL)))
-                            .push(field("Certificate", text(&peek.fingerprint).size(theme::SMALL).font(iced::Font::MONOSPACE)));
+                            .push(field(
+                                "Certificate",
+                                text(&peek.fingerprint)
+                                    .size(theme::SMALL)
+                                    .font(iced::Font::MONOSPACE)
+                                    .width(Length::Fill)
+                                    .wrapping(text::Wrapping::Glyph),
+                            ));
                         if !peek.pinned {
                             body = body.push(
                                 text("Not pinned yet. Compare it with the fingerprint `tessaro-ctl device id` shows on the device itself: going on pins it, and from then on only this certificate is trusted.")
@@ -1022,6 +1036,7 @@ mod tests {
             ..found(id, name, &pin)
         };
         let view = NodesView {
+            tables: crate::grid::Tables::default(),
             known: Nodes {
                 nodes: vec![node("n1", "kiosk-1", false), node("n3", "kiosk-3", false)],
             },

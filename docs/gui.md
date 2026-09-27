@@ -197,6 +197,20 @@ table keeps its full width.
 with the actions on the page first and those on the selected row after them,
 then its tables. Anything that is a list is a table.
 
+Tables use `iced_table2`: drag a header divider to resize a column, and
+scroll horizontally when the columns exceed the window width. Dividers are
+always visible in the header; body rows have a continuous background. Click a
+column title to cycle ascending, descending, then original order; an arrow
+marks the active sort. Text sorts case-insensitively with numbers in natural
+order, and formatted sizes use their underlying byte counts. Selection,
+double-click actions and keyboard navigation follow the displayed rows.
+
+Column widths and sorting are saved in `gui.json`, separately for the node
+list and each device's tables (including settings and the journal), and
+restored when the app or window opens again. A resize is saved when the drag
+ends. The journal follows new entries in its original order; choosing a sort
+turns off auto-follow until the original order is restored.
+
 **Right-clicking a table cell selects its row and offers Copy of the cell's
 text as shown** (`copy_menu.rs`, wrapped around every cell in `grid.rs`).
 The text is read back from the cell's widgets through `operate`, so no page

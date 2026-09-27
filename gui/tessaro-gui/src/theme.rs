@@ -264,17 +264,18 @@ pub fn table_header(_: &Theme) -> container::Style {
     filled(CHROME)
 }
 
-/// A table row: the selected one in a dimmed primary colour, every other one
-/// faintly striped so a wide row is easy to follow.
-pub fn table_row(selected: bool, odd: bool) -> impl Fn(&Theme) -> container::Style {
-    move |_| match (selected, odd) {
-        (true, _) => container::Style {
-            text_color: Some(Color::WHITE),
-            ..filled(SELECTION)
-        },
-        (false, true) => filled(STRIPE),
-        (false, false) => filled(PANEL),
-    }
+/// iced_table2 paints the entire row, including the space below header dividers.
+/// Give it our table colors instead of painting separate cell backgrounds.
+pub fn table_theme() -> Theme {
+    use iced::theme::palette::{Extended, Pair};
+    Theme::custom_with_fn("Tessaro tables", theme().palette(), |palette| {
+        let mut extended = Extended::generate(palette);
+        extended.background.base = Pair::new(PANEL, TEXT_COLOR);
+        extended.background.weak = Pair::new(STRIPE, TEXT_COLOR);
+        extended.background.strong = Pair::new(CHROME, TEXT_COLOR);
+        extended.primary.weak = Pair::new(SELECTION, Color::WHITE);
+        extended
+    })
 }
 
 /// The dialog title strip.

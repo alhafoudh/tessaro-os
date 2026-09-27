@@ -112,7 +112,7 @@ impl Zoom {
 
 /// What `gui.json`, next to nodes.json, keeps: the zoom, where the app
 /// window and each kind of inner window was left, and whether device
-/// windows show their messages.
+/// windows show their messages, plus column widths and sorting per table.
 #[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 struct Prefs {
     scale: Option<f32>,
@@ -123,6 +123,8 @@ struct Prefs {
     #[serde(default)]
     windows: BTreeMap<String, mdi::Placement>,
     messages: Option<bool>,
+    #[serde(default)]
+    tables: BTreeMap<String, grid::Preferences>,
 }
 
 impl Prefs {
@@ -157,6 +159,7 @@ impl Prefs {
 }
 
 struct App {
+    table_preferences: BTreeMap<String, grid::Preferences>,
     nodes: NodesView,
     devices: BTreeMap<mdi::Id, Device>,
     /// The settings windows: each one's device window and prefix.
@@ -234,6 +237,7 @@ impl App {
         let prefs = Prefs::load();
         let mut app = Self {
             nodes: NodesView::new(),
+            table_preferences: prefs.tables.clone(),
             devices: BTreeMap::new(),
             configs: BTreeMap::new(),
             desk: mdi::Desk::new(prefs.window_size(), prefs.windows.clone()),
@@ -244,6 +248,8 @@ impl App {
             window: prefs.window,
             moving: None,
         };
+        app.nodes.tables =
+            grid::Tables::new(prefs.tables.get("nodes").cloned().unwrap_or_default());
         app.rescale();
         let dpi = window::oldest()
             .and_then(window::scale_factor)
@@ -257,6 +263,7 @@ impl App {
             window: self.window,
             windows: self.desk.placements().clone(),
             messages: Some(self.messages),
+            tables: self.table_preferences.clone(),
         }
         .save();
     }
@@ -378,7 +385,13 @@ impl App {
     }
 
     fn nodes_update(&mut self, message: nodes_view::Message) -> Task<Message> {
+        let remember = matches!(&message, nodes_view::Message::Table(event) if event.remember());
         let (task, open) = self.nodes.update(message);
+        if remember {
+            self.table_preferences
+                .insert("nodes".into(), self.nodes.tables.preferences());
+            self.save();
+        }
         let task = task.map(Message::Nodes);
         if let Some(node) = open {
             self.open(node);
@@ -391,14 +404,23 @@ impl App {
             self.configure(id, &scope.prefix);
         }
         let toggled = matches!(message, device::Message::ToggleLog);
+        let remember = matches!(&message, device::Message::Table(_, event) if event.remember());
         let Some(device) = self.devices.get_mut(&id) else {
             return Task::none();
         };
         let task = device
             .update(message)
             .map(move |message| Message::Device(id, message));
+        if remember {
+            self.table_preferences.insert(
+                format!("device:{}", device.node.id),
+                device.tables.preferences(),
+            );
+        }
         if toggled {
             self.messages = device.log_open();
+        }
+        if toggled || remember {
             self.save();
         }
         task
@@ -473,7 +495,14 @@ impl App {
         }
         let id = self.next;
         self.next += 1;
-        self.devices.insert(id, Device::new(node, self.messages));
+        let preferences = self
+            .table_preferences
+            .get(&format!("device:{}", node.id))
+            .cloned()
+            .unwrap_or_default();
+        let mut device = Device::new(node, self.messages);
+        device.tables = grid::Tables::new(preferences);
+        self.devices.insert(id, device);
         self.desk.open(id, DEVICE, DEVICE_SIZE);
     }
 
@@ -741,6 +770,42 @@ mod tests {
         assert_eq!(Zoom(10).step(1).scale(), 1.1);
         assert_eq!(Zoom(Zoom::MAX).step(1), Zoom(Zoom::MAX));
         assert_eq!(Zoom(Zoom::MIN).step(-1), Zoom(Zoom::MIN));
+    }
+
+    #[test]
+    fn gui_preferences_restore_table_widths_and_sorting_and_read_older_files() {
+        let old: Prefs =
+            serde_json::from_str(r#"{"scale":1.2,"messages":false,"windows":{}}"#).unwrap();
+        assert!(old.tables.is_empty());
+        let mut tables = grid::Tables::default();
+        let _ = tables.update::<()>(
+            "files",
+            grid::Event::Drag {
+                column: 1,
+                width: 90.0,
+                offset: 45.0,
+            },
+        );
+        // A partially completed drag never replaces the last saved width.
+        let pending = serde_json::to_value(tables.preferences()).unwrap();
+        assert!(pending["files"]["widths"].as_object().unwrap().is_empty());
+        let _ = tables.update::<()>("files", grid::Event::Release);
+        let _ = tables.update::<()>("files", grid::Event::Sort(1));
+        let _ = tables.update::<()>("files", grid::Event::Sort(1));
+        let prefs = Prefs {
+            tables: BTreeMap::from([("device:node-1".into(), tables.preferences())]),
+            ..old
+        };
+        let json = serde_json::to_string(&prefs).unwrap();
+        let decoded: Prefs = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.scale, Some(1.2));
+        assert_eq!(decoded.messages, Some(false));
+        let restored = grid::Tables::new(decoded.tables["device:node-1"].clone());
+        assert_eq!(restored.preferences(), tables.preferences());
+        let values = serde_json::to_value(restored.preferences()).unwrap();
+        assert_eq!(values["files"]["widths"]["1"], 135.0);
+        assert_eq!(values["files"]["sort"]["column"], 1);
+        assert_eq!(values["files"]["sort"]["descending"], true);
     }
 
     #[test]

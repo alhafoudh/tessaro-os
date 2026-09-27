@@ -258,6 +258,7 @@ enum Dialog {
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    Table(String, crate::grid::Event),
     /// Open the settings window of a group, or raise it (`main.rs`).
     Configure(Scope),
     /// The settings window with this prefix was closed.
@@ -417,6 +418,7 @@ pub enum Restart {
 }
 
 pub struct Device {
+    pub(super) tables: crate::grid::Tables,
     pub node: Node,
     pub link: Link,
     requests: Option<mpsc::Sender<Request>>,
@@ -475,6 +477,7 @@ impl Device {
     /// window left it.
     pub fn new(node: Node, log_open: bool) -> Self {
         Self {
+            tables: crate::grid::Tables::default(),
             node,
             link: Link::Connecting,
             requests: None,
@@ -893,6 +896,7 @@ impl Device {
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::Table(name, event) => return self.tables.update(&name, event),
             Message::Configure(scope) => {
                 self.configs.entry(scope.prefix.clone()).or_insert(Config {
                     scope,
@@ -1076,6 +1080,7 @@ impl Device {
                     .into_iter()
                     .map(|row| row.key)
                     .collect();
+                let keys = self.tables.ordered(&format!("config:{prefix}"), &keys);
                 let next = section::step(&keys, config.selected.as_ref(), by);
                 if let Some(config) = self.configs.get_mut(&prefix) {
                     config.selected = next;
@@ -1356,19 +1361,28 @@ impl Device {
         ];
         let cells = shown.iter().map(|entry| {
             let message = cell(entry.message.clone());
-            let message: Element<'_, Message> = match entry.priority {
+            let message: crate::grid::Cell<'_, Message> = match entry.priority {
                 Some(0..=3) => message.style(text::danger).into(),
                 Some(4) => message.style(text::warning).into(),
                 Some(7) => message.style(theme::muted).into(),
                 _ => message.into(),
             };
             vec![
-                cell(entry.clock()).style(theme::muted).into(),
+                cell(entry.clock())
+                    .sort_number(entry.time.unwrap_or_default() as f64)
+                    .style(theme::muted)
+                    .into(),
                 cell(entry.source.clone()).into(),
                 message,
             ]
         });
-        let table = crate::grid::grid_following(COLUMNS, cells.collect(), journal.paused.is_none());
+        let table = crate::grid::grid_following(
+            self.tables.state("journal"),
+            |event| Message::Table("journal".into(), event),
+            COLUMNS,
+            cells.collect(),
+            journal.paused.is_none(),
+        );
 
         let state: Element<'_, Message> = match (&journal.state, journal.live) {
             (_, false) => text("stopped")
@@ -1447,16 +1461,19 @@ impl Device {
             let value = cell(row.value.clone());
             vec![
                 if row.guarded {
-                    iced::widget::tooltip(
-                        cell("!").style(text::warning),
-                        text("guarded: reverts on its own unless confirmed").size(theme::SMALL),
-                        iced::widget::tooltip::Position::Right,
-                    )
-                    .into()
+                    crate::grid::Cell::from(cell("!").style(text::warning)).map(|content| {
+                        iced::widget::tooltip(
+                            content,
+                            text("guarded: reverts on its own unless confirmed").size(theme::SMALL),
+                            iced::widget::tooltip::Position::Right,
+                        )
+                        .into()
+                    })
                 } else {
                     cell("").into()
                 },
-                self.with_doc(&row.key, cell(row.short.clone()).into()),
+                crate::grid::Cell::from(cell(row.short.clone()))
+                    .map(|content| self.with_doc(&row.key, content)),
                 if muted {
                     value.style(theme::muted).into()
                 } else {
@@ -1484,6 +1501,8 @@ impl Device {
             .into()
         } else {
             grid(
+                self.tables.state(&format!("config:{}", scope.prefix)),
+                move |event| Message::Table(format!("config:{}", scope.prefix), event),
                 COLUMNS,
                 cells.collect(),
                 selected_at,
