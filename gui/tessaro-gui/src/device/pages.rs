@@ -2756,31 +2756,38 @@ impl Device {
             .status
             .as_ref()
             .is_some_and(|(status, _)| status.screen_on == Some(false));
+        let mut toolbar = row![
+            theme::tool("Configure", self.configure()),
+            theme::tool(
+                "Use this mode",
+                self.selected("modes").and_then(|_| self.when(Msg::UseMode))
+            ),
+            theme::tool(
+                if screen_off {
+                    "Screen on"
+                } else {
+                    "Screen off"
+                },
+                self.when(Msg::ScreenPower(screen_off)),
+            ),
+            theme::tool("Show keyboard", self.when(Msg::Keyboard(true))),
+            theme::tool("Hide keyboard", self.when(Msg::Keyboard(false))),
+        ]
+        .spacing(4)
+        .align_y(iced::alignment::Vertical::Center);
+        // A guarded change reverts on its own: the countdown is on the
+        // button that keeps it.
+        if let Some((status, at)) = &self.status {
+            if let Some(pending) = &status.pending {
+                let left = pending.seconds_left.saturating_sub(at.elapsed().as_secs());
+                toolbar = toolbar.push(theme::confirm_tool(
+                    format!("Confirm ({left}s)"),
+                    Message::ConfirmPending,
+                ));
+            }
+        }
         column![
-            row![
-                theme::tool("Configure", self.configure()),
-                theme::tool(
-                    "Use this mode",
-                    self.selected("modes").and_then(|_| self.when(Msg::UseMode))
-                ),
-                theme::tool(
-                    if screen_off {
-                        "Screen on"
-                    } else {
-                        "Screen off"
-                    },
-                    self.when(Msg::ScreenPower(screen_off)),
-                ),
-                theme::tool("Show keyboard", self.when(Msg::Keyboard(true))),
-                theme::tool("Hide keyboard", self.when(Msg::Keyboard(false))),
-                text(
-                    "A mode is guarded: it reverts on its own unless confirmed in the status bar."
-                )
-                .size(theme::SMALL)
-                .style(theme::muted),
-            ]
-            .spacing(4)
-            .align_y(iced::alignment::Vertical::Center),
+            toolbar,
             self.table("modes", COLUMNS, rows, Length::Fixed(TABLE_HEIGHT)),
         ]
         .spacing(4)
@@ -2917,11 +2924,7 @@ impl Device {
                         .and_then(|()| self.when(Msg::ProxyTest)),
                 ),
             ],
-            vec![action(
-                "Profile details",
-                self.selected("profiles")
-                    .and_then(|_| self.when(Msg::ProfileDetail)),
-            )],
+            vec![],
             vec![
                 self.facts("netfacts", facts),
                 self.table(

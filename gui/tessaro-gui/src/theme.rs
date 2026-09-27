@@ -37,6 +37,7 @@ pub const BORDER: Color = rgb(0x3c_3f_44);
 pub const TEXT_COLOR: Color = rgb(0xdc_dc_dc);
 pub const MUTED: Color = rgb(0x8a_8d_93);
 pub const PRIMARY: Color = rgb(0x3d_7b_d9);
+const SUCCESS: Color = rgb(0x4c_b8_62);
 /// The selected table row and section list entry: the primary colour dimmed,
 /// so `MUTED` text stays readable on it, not only white.
 const SELECTION: Color = rgb(0x26_45_70);
@@ -53,7 +54,7 @@ pub fn theme() -> Theme {
             background: BACKGROUND,
             text: TEXT_COLOR,
             primary: PRIMARY,
-            success: rgb(0x4c_b8_62),
+            success: SUCCESS,
             warning: rgb(0xe0_a4_3a),
             danger: rgb(0xe5_5b_4d),
         },
@@ -113,12 +114,36 @@ fn primary_button(_: &Theme, status: button::Status) -> button::Style {
     }
 }
 
+/// Keeping a change that otherwise reverts on its own.
+fn success_button(_: &Theme, status: button::Status) -> button::Style {
+    let background = match status {
+        button::Status::Active | button::Status::Disabled => SUCCESS,
+        button::Status::Hovered => rgb(0x5e_c9_74),
+        button::Status::Pressed => rgb(0x3e_9a_51),
+    };
+    button::Style {
+        background: Some(background.into()),
+        text_color: Color::WHITE,
+        border: line(background),
+        ..button::Style::default()
+    }
+}
+
 /// A toolbar button. `None` shows it disabled.
 pub fn tool<'a, M: Clone + 'a>(label: &'a str, on_press: Option<M>) -> Element<'a, M> {
     button(text(label).size(SMALL))
         .padding([2, 8])
         .style(chrome_button)
         .on_press_maybe(on_press)
+        .into()
+}
+
+/// A green toolbar button, for confirming a guarded change.
+pub fn confirm_tool<'a, M: Clone + 'a>(label: String, message: M) -> Element<'a, M> {
+    button(text(label).size(SMALL))
+        .padding([2, 8])
+        .style(success_button)
+        .on_press(message)
         .into()
 }
 

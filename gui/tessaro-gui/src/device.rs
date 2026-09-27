@@ -943,7 +943,7 @@ impl Device {
             self.log(
                 Tone::Warn,
                 format!(
-                    "{}={} goes back to {} in {}s unless confirmed: check the screen, then Confirm",
+                    "{}={} goes back to {} in {}s unless confirmed: check the screen, then Confirm on the Screen page",
                     pending.key,
                     pending.value,
                     pending.previous_or_default(),
@@ -1676,20 +1676,15 @@ impl Device {
             bar = bar.push(space::horizontal());
             if let Some(pending) = &status.pending {
                 let left = pending.seconds_left.saturating_sub(at.elapsed().as_secs());
-                bar = bar
-                    .push(
-                        small(format!(
-                            "{}={} reverts to {} in {left}s",
-                            pending.key,
-                            pending.value,
-                            pending.previous_or_default()
-                        ))
-                        .style(iced::widget::text::warning),
-                    )
-                    .push(theme::default_button(
-                        "Confirm",
-                        Some(Message::ConfirmPending),
-                    ));
+                bar = bar.push(
+                    small(format!(
+                        "{}={} reverts to {} in {left}s",
+                        pending.key,
+                        pending.value,
+                        pending.previous_or_default()
+                    ))
+                    .style(iced::widget::text::warning),
+                );
             }
         }
         container(bar)
@@ -1846,7 +1841,7 @@ impl Device {
             }
             if info.guarded {
                 body = body.push(
-                    text("Guarded: the change reverts on its own unless it is confirmed from the status bar.")
+                    text("Guarded: the change reverts on its own unless it is confirmed on the Screen page.")
                         .size(theme::SMALL)
                         .style(iced::widget::text::warning),
                 );

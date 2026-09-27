@@ -245,9 +245,11 @@ Restart browser, weston or agent, and Reboot, the restarts confirmed first,
 and the VNC and Messages toggles. There is no toolbar row under it. **Refresh is the window's, not a
 page's**: it fetches `Status`, the settings and what the page shown asks
 for, so no page or settings window has a Refresh of its own. The status bar
-shows the device's `Status`, and a guarded change's countdown with Confirm;
-that is the one Confirm, since a guarded change can come from a setting as
-well as from the Screen page.
+shows the device's `Status`, and a guarded change's countdown on every page.
+**The one Confirm is a green button in the Screen page's toolbar**, shown
+only while a change waits, with the seconds left in its label: every guarded
+key is a `screen.*` one, whether it came from "Use this mode" or from a
+setting.
 
 **Dialogs are one generic form** (`pages::Form`), confirmed with Enter. A
 destructive one - factory reset, unclaim, growing `/data`, an update that
