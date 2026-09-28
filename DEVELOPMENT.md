@@ -158,6 +158,9 @@ mise run gui:lint            # cargo fmt --check plus clippy
 mise run gui:build           # a release build for this machine
 ```
 
+On macOS, the release build also creates
+`build/gui-target/release/Tessaro.app`, with its Dock and Finder icon.
+
 How it works is in [docs/gui.md](docs/gui.md).
 
 ## End-to-end tests

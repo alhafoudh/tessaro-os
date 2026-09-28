@@ -7,6 +7,20 @@ every command group, the live journal, a screenshot and a live VNC view. It
 is built with [iced](https://iced.rs) on the workstation (`mise run gui:run`)
 and is never part of the image.
 
+**On macOS, `mise run gui:build` also creates
+`build/gui-target/release/Tessaro.app`.** Open that bundle in Finder or copy
+it to Applications. `mise run gui:run` builds and runs a debug bundle with
+the same Dock icon while keeping terminal output. Both use
+`gui/package-macos.sh`, with the version from `gui/Cargo.toml`, and an ad-hoc
+signature for local use; distribution signing and notarization are separate.
+Direct `cargo run` still runs a bare executable without the bundle's icon.
+
+The app icon's editable source, transparent 1024px PNG and multi-resolution
+ICNS are in `gui/tessaro-gui/icons/`. After editing `tessaro.svg`, export it
+as a transparent 1024 × 1024 `tessaro.png`, then run
+`sh gui/tessaro-gui/icons/generate-macos.sh` on macOS to regenerate
+`Tessaro.icns`. Normal builds use the checked-in ICNS.
+
 ## Where it lives
 
 **`gui/` is a workspace of its own, not a member of `agent/`.** The

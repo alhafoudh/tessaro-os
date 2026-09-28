@@ -219,7 +219,16 @@ exec "$bin" "$@"
 description = "Run tessaro-gui, the desktop client, on this host"
 dir = "{{config_root}}/gui"
 env = { CARGO_TARGET_DIR = "{{config_root}}/build/gui-target" }
-run = "cargo run -p tessaro-gui"
+run = '''
+set -e
+if [ "$(uname -s)" = Darwin ]; then
+    cargo build -p tessaro-gui
+    app=$(sh package-macos.sh "$CARGO_TARGET_DIR/debug/tessaro-gui")
+    exec "$app/Contents/MacOS/tessaro-gui"
+else
+    exec cargo run -p tessaro-gui
+fi
+'''
 
 [tasks."gui:build"]
 description = "Build tessaro-gui for this host, release"
@@ -228,7 +237,11 @@ env = { CARGO_TARGET_DIR = "{{config_root}}/build/gui-target" }
 run = '''
 set -e
 cargo build --release -p tessaro-gui
-echo "$CARGO_TARGET_DIR/release/tessaro-gui"
+if [ "$(uname -s)" = Darwin ]; then
+    sh package-macos.sh "$CARGO_TARGET_DIR/release/tessaro-gui"
+else
+    echo "$CARGO_TARGET_DIR/release/tessaro-gui"
+fi
 '''
 
 [tasks."gui:test"]
