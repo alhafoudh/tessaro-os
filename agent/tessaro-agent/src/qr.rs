@@ -14,9 +14,25 @@ use qrcode::{Color, EcLevel, QrCode};
 /// Modules of light margin around the code, the minimum the standard asks.
 const QUIET: usize = 4;
 
-/// Geometry of the approved badge, in its own SVG coordinates.
+/// How far each module is drawn in from its cell's edges, leaving a gap of
+/// twice this to its neighbour.
+const INSET: f64 = 0.07;
+/// Radius of a module's rounded corners.
+const CORNER: f64 = 0.18;
+/// One module's outline, from its top edge just right of the top-left corner:
+/// straight edges of `1 - 2 * (INSET + CORNER)` between quarter-rounds of
+/// `CORNER`.
+const MODULE_OUTLINE: &str =
+    "h.5q.18 0 .18 .18v.5q0 .18 -.18 .18h-.5q-.18 0 -.18 -.18v-.5q0 -.18 .18 -.18z";
+
+/// The Wi-Fi badge in the middle, its size and corner radius in the units of
+/// `qr-wifi.svg`. Those are laid out against a code `BADGE_REFERENCE` units
+/// wide (a version 3 code, 29 modules, plus the quiet zone), and the badge is
+/// scaled by the actual size over that, so it covers the same share of every
+/// version.
 const BADGE_SIZE: f64 = 8.8;
 const BADGE_RADIUS: f64 = 2.4;
+const BADGE_REFERENCE: f64 = 37.0;
 const WIFI_ICON: &str = include_str!("qr-wifi.svg");
 
 /// `WIFI:T:nopass;S:<ssid>;;` for an open network, which is what the hotspot
@@ -49,7 +65,7 @@ pub fn svg(payload: &str) -> Result<String, String> {
     let width = code.width();
     let size = width + 2 * QUIET;
     let center = size as f64 / 2.0;
-    let badge_scale = size as f64 / 37.0;
+    let badge_scale = size as f64 / BADGE_REFERENCE;
     let badge_start = center - BADGE_SIZE * badge_scale / 2.0;
     let markers = [
         (QUIET, QUIET),
@@ -67,8 +83,8 @@ pub fn svg(payload: &str) -> Result<String, String> {
         {
             continue;
         }
-        // Inset each module, retaining a small gap and rounded corners.
-        write!(path, "M{:.2} {:.2}h.5q.18 0 .18 .18v.5q0 .18 -.18 .18h-.5q-.18 0 -.18 -.18v-.5q0 -.18 .18 -.18z", x as f64 + 0.25, y as f64 + 0.07).unwrap();
+        let (left, top) = (x as f64 + INSET + CORNER, y as f64 + INSET);
+        write!(path, "M{left:.2} {top:.2}{MODULE_OUTLINE}").unwrap();
     }
     let mut svg = format!(
         "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 {size} {size}\" \
@@ -79,14 +95,27 @@ pub fn svg(payload: &str) -> Result<String, String> {
          <rect width=\"{size}\" height=\"{size}\" fill=\"#0a0d14\"/>\
          <path fill=\"url(#qr-accent)\" d=\"{path}\"/>"
     );
+    // Each finder pattern as three nested rounded squares: 7 modules of
+    // gradient, 5 of background, 3 of gradient.
     for (x, y) in markers {
-        write!(svg,
-            "<rect x=\"{x}\" y=\"{y}\" width=\"7\" height=\"7\" rx=\"1.1\" fill=\"url(#qr-accent)\"/>\
+        let (ring, eye) = ((x + 1, y + 1), (x + 2, y + 2));
+        write!(
+            svg,
+            "<rect x=\"{x}\" y=\"{y}\" width=\"7\" height=\"7\" rx=\"1.1\" \
+             fill=\"url(#qr-accent)\"/>\
              <rect x=\"{}\" y=\"{}\" width=\"5\" height=\"5\" rx=\"0.7\" fill=\"#0a0d14\"/>\
-             <rect x=\"{}\" y=\"{}\" width=\"3\" height=\"3\" rx=\"0.5\" fill=\"url(#qr-accent)\"/>",
-            x + 1, y + 1, x + 2, y + 2).unwrap();
+             <rect x=\"{}\" y=\"{}\" width=\"3\" height=\"3\" rx=\"0.5\" \
+             fill=\"url(#qr-accent)\"/>",
+            ring.0, ring.1, eye.0, eye.1
+        )
+        .unwrap();
     }
-    write!(svg, "<g transform=\"translate({badge_start} {badge_start}) scale({badge_scale})\">{WIFI_ICON}</g></svg>").unwrap();
+    write!(
+        svg,
+        "<g transform=\"translate({badge_start} {badge_start}) scale({badge_scale})\">\
+         {WIFI_ICON}</g></svg>"
+    )
+    .unwrap();
     Ok(svg)
 }
 
@@ -97,8 +126,8 @@ fn touches_badge(x: usize, y: usize, center: f64, scale: f64) -> bool {
     let radius = BADGE_RADIUS * scale;
     let core_half = (BADGE_SIZE / 2.0 - BADGE_RADIUS) * scale;
     let distance = |coordinate: usize| {
-        let start = coordinate as f64 + 0.07;
-        let end = coordinate as f64 + 0.93;
+        let start = coordinate as f64 + INSET;
+        let end = coordinate as f64 + 1.0 - INSET;
         (center - core_half - end)
             .max(start - center - core_half)
             .max(0.0)
@@ -159,7 +188,7 @@ mod tests {
         assert!(touches_badge(14, 18, center, 1.0));
         assert!(touches_badge(15, 14, center, 1.0));
         assert!(touches_badge(14, 14, center, 1.0));
-        assert!(!touches_badge(13, 13, 18.0, 1.0));
+        assert!(!touches_badge(13, 13, center, 1.0));
         assert!(!touches_badge(13, 18, center, 1.0));
         assert!(!touches_badge(23, 18, center, 1.0));
     }

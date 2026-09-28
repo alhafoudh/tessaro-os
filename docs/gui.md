@@ -13,13 +13,15 @@ it to Applications. `mise run gui:run` builds and runs a debug bundle with
 the same Dock icon while keeping terminal output. Both use
 `gui/package-macos.sh`, with the version from `gui/Cargo.toml`, and an ad-hoc
 signature for local use; distribution signing and notarization are separate.
-Direct `cargo run` still runs a bare executable without the bundle's icon.
+`cargo run` alone runs the bare executable, without the bundle's icon.
 
 The app icon's editable source, transparent 1024px PNG and multi-resolution
 ICNS are in `gui/tessaro-gui/icons/`. After editing `tessaro.svg`, export it
 as a transparent 1024 × 1024 `tessaro.png`, then run
 `sh gui/tessaro-gui/icons/generate-macos.sh` on macOS to regenerate
-`Tessaro.icns`. Normal builds use the checked-in ICNS.
+`Tessaro.icns`. Normal builds use the checked-in ICNS. The welcome page
+(`tessaro-selftest/files/index.html`) inlines the same mark's paths, so a
+change to the mark goes into both.
 
 ## Where it lives
 
@@ -53,7 +55,7 @@ cannot be closed or lost behind anything but the windows opened from it.
 The inner windows drag by the title bar, resize from the bottom-right
 corner, maximize with the title-bar button or a double-click, and close
 with ×. The last window clicked is on top. Title bars are dark; the window
-with the keyboard has the lighter one and a blue border.
+with the keyboard has the lighter one and a purple border.
 
 * Built from iced's `stack` (the node list, then one layer per window, in
   z-order), `pin` (its position) and `opaque`, so a window hides what is
@@ -112,9 +114,15 @@ node list when no window is open or the list was clicked last:
 A key a widget took - Esc leaving a text field, Enter submitting one - is
 left to it; the zoom always works.
 
-**One dark look** (`theme.rs`). There is no light variant, and it does not
-follow the system. Every colour and style is a named constant or function
-there, so windows cannot drift apart. The UI font is Manrope, bundled in
+**One dark look, in the welcome page's colours** (`theme.rs`), so the
+client and the kiosk's own screen read as one product. The page's CSS
+variables in `tessaro-selftest/files/index.html` are the source: its
+near-black background is the desk, its blue and purple glows are the
+chrome and the selection, and its accents and status colours are the
+GUI's. The page's translucent cards and lines become solid colours, since
+iced draws no gradients or blending behind them. There is no light
+variant and no following the system theme. Every colour and style is a
+named constant or function there, so windows cannot drift apart. The UI font is Manrope, bundled in
 `gui/tessaro-gui/fonts/` (SIL OFL, `OFL.txt` beside it) as static Regular
 and Bold files, so the GUI reads the same on every OS; iced alone would take
 whatever sans the host has. Monospace text (`Font::MONOSPACE`) is left to

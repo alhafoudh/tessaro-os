@@ -296,7 +296,7 @@ claims it, next to a QR code that opens the setup portal on a phone (see
 
 The details and setup panels have equal dimensions, with the hotspot name
 above the QR code and the setup address below it. Narrow screens stack the
-panels. Without a setup QR (including devices with no Wi-Fi interface), the
+panels and may scroll; wider ones never show a scrollbar. Without a setup QR (including devices with no Wi-Fi interface), the
 details panel stands centered on its own; an active protected hotspot's SSID
 stays in those details. The claim instruction remains until the device is
 claimed.

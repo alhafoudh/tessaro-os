@@ -1,6 +1,10 @@
-//! The one look, dark: small text, tight padding, grey chrome and striped
-//! tables. There is no light variant and no following the system's. Every
-//! style the views use comes from here, so the windows cannot drift apart.
+//! The one look, dark: small text, tight padding and striped tables, in the
+//! welcome page's palette (`tessaro-selftest/files/index.html`): its near-black
+//! background, faintly lifted panels, its blue and purple glows as chrome and
+//! selection, its cyan and purple accents and its status colours. Solid
+//! colours only, no gradients. There is no light variant and no following the
+//! system's. Every style the views use comes from here, so the windows cannot
+//! drift apart.
 
 use iced::widget::{button, container, text};
 use iced::{border, Border, Color, Element, Font, Theme};
@@ -24,33 +28,39 @@ const fn rgb(hex: u32) -> Color {
     )
 }
 
-/// Behind everything: the desk the inner windows sit on.
-pub const DESK: Color = rgb(0x17_18_1a);
-/// A window's body and the default background.
-pub const BACKGROUND: Color = rgb(0x1e_1f_22);
-/// Tables, dialogs, the message log.
-pub const PANEL: Color = rgb(0x26_28_2c);
+/// Behind everything: the desk the inner windows sit on. The page's `--bg`.
+pub const DESK: Color = rgb(0x0a_0d_14);
+/// A window's body and the default background: the desk lifted a little,
+/// so a window stands off it.
+pub const BACKGROUND: Color = rgb(0x0f_13_1d);
+/// Tables, dialogs, the message log: the page's `--card` over the body.
+pub const PANEL: Color = rgb(0x14_19_25);
 /// Every other table row.
-pub const STRIPE: Color = rgb(0x2a_2c_30);
-/// Header strips, table headers, status bars.
-pub const CHROME: Color = rgb(0x2f_31_36);
-pub const BORDER: Color = rgb(0x3c_3f_44);
-pub const TEXT_COLOR: Color = rgb(0xdc_dc_dc);
-pub const MUTED: Color = rgb(0x8a_8d_93);
-pub const PRIMARY: Color = rgb(0x3d_7b_d9);
-const SUCCESS: Color = rgb(0x4c_b8_62);
-const WARNING: Color = rgb(0xe0_a4_3a);
-const DANGER: Color = rgb(0xe5_5b_4d);
+pub const STRIPE: Color = rgb(0x18_1e_2c);
+/// Header strips, table headers, status bars: the page's blue glow.
+pub const CHROME: Color = rgb(0x10_24_3a);
+/// The page's `--line`, a step stronger so edges hold at 1px.
+pub const BORDER: Color = rgb(0x22_2c_3e);
+pub const TEXT_COLOR: Color = rgb(0xea_f0_f8);
+/// The page's `--dim`.
+pub const MUTED: Color = rgb(0x8e_9b_b0);
+/// The page's `--accent`.
+pub const PRIMARY: Color = rgb(0x5c_c8_ff);
+/// The page's `--accent-2`: the window with the keyboard.
+const ACCENT: Color = rgb(0x9d_8c_ff);
+const SUCCESS: Color = rgb(0x5f_e0_a6);
+const WARNING: Color = rgb(0xff_c6_6b);
+const DANGER: Color = rgb(0xff_7a_7a);
 /// Who wrote a journal line, as the ctl's cyan.
-const SOURCE: Color = rgb(0x56_b6_c2);
-/// The selected table row and section list entry: the primary colour dimmed,
-/// so `MUTED` text stays readable on it, not only white.
-const SELECTION: Color = rgb(0x26_45_70);
-const BUTTON: Color = rgb(0x3a_3d_42);
+const SOURCE: Color = PRIMARY;
+/// The selected table row and section list entry: the page's purple glow
+/// lifted, so `MUTED` text stays readable on it, not only the text colour.
+const SELECTION: Color = rgb(0x2a_23_4d);
+const BUTTON: Color = rgb(0x16_2a_42);
 /// A hovered button, and the hovered entry of a cell's Copy menu.
-pub const BUTTON_HOVER: Color = rgb(0x46_49_4f);
-const BUTTON_BORDER: Color = rgb(0x4a_4d_52);
-const BUTTON_TEXT: Color = rgb(0xe6_e6_e6);
+pub const BUTTON_HOVER: Color = rgb(0x1e_37_55);
+const BUTTON_BORDER: Color = rgb(0x2a_42_62);
+const BUTTON_TEXT: Color = TEXT_COLOR;
 
 pub fn theme() -> Theme {
     Theme::custom(
@@ -118,12 +128,12 @@ fn line(color: Color) -> Border {
     }
 }
 
-/// Buttons in the chrome: light text on a grey that lifts on hover.
+/// Buttons in the chrome: light text on a blue that lifts on hover.
 fn chrome_button(_: &Theme, status: button::Status) -> button::Style {
     let (background, text_color) = match status {
         button::Status::Active => (BUTTON, BUTTON_TEXT),
-        button::Status::Hovered => (BUTTON_HOVER, Color::WHITE),
-        button::Status::Pressed => (CHROME, Color::WHITE),
+        button::Status::Hovered => (BUTTON_HOVER, TEXT_COLOR),
+        button::Status::Pressed => (CHROME, TEXT_COLOR),
         button::Status::Disabled => (
             Color { a: 0.5, ..BUTTON },
             Color {
@@ -144,35 +154,33 @@ fn chrome_button(_: &Theme, status: button::Status) -> button::Style {
 fn primary_button(_: &Theme, status: button::Status) -> button::Style {
     let background = match status {
         button::Status::Active => PRIMARY,
-        button::Status::Hovered => rgb(0x52_8d_e6),
-        button::Status::Pressed => rgb(0x32_67_b8),
+        button::Status::Hovered => rgb(0x80_d4_ff),
+        button::Status::Pressed => rgb(0x45_b2_eb),
         button::Status::Disabled => Color { a: 0.4, ..PRIMARY },
     };
     button::Style {
         background: Some(background.into()),
         text_color: if status == button::Status::Disabled {
-            Color {
-                a: 0.5,
-                ..Color::WHITE
-            }
+            Color { a: 0.5, ..DESK }
         } else {
-            Color::WHITE
+            DESK
         },
         border: line(background),
         ..button::Style::default()
     }
 }
 
-/// Keeping a change that otherwise reverts on its own.
+/// Keeping a change that otherwise reverts on its own. Dark text, as on the
+/// primary button: the page's green is too light for white.
 fn success_button(_: &Theme, status: button::Status) -> button::Style {
     let background = match status {
         button::Status::Active | button::Status::Disabled => SUCCESS,
-        button::Status::Hovered => rgb(0x5e_c9_74),
-        button::Status::Pressed => rgb(0x3e_9a_51),
+        button::Status::Hovered => rgb(0x86_e9_bd),
+        button::Status::Pressed => rgb(0x4c_c7_92),
     };
     button::Style {
         background: Some(background.into()),
-        text_color: Color::WHITE,
+        text_color: DESK,
         border: line(background),
         ..button::Style::default()
     }
@@ -273,7 +281,7 @@ pub fn table_theme() -> Theme {
         extended.background.base = Pair::new(PANEL, TEXT_COLOR);
         extended.background.weak = Pair::new(STRIPE, TEXT_COLOR);
         extended.background.strong = Pair::new(CHROME, TEXT_COLOR);
-        extended.primary.weak = Pair::new(SELECTION, Color::WHITE);
+        extended.primary.weak = Pair::new(SELECTION, TEXT_COLOR);
         extended
     })
 }
@@ -317,7 +325,7 @@ pub fn desk(_: &Theme) -> container::Style {
 pub fn frame(focused: bool) -> impl Fn(&Theme) -> container::Style {
     move |_| container::Style {
         border: Border {
-            color: if focused { PRIMARY } else { BORDER },
+            color: if focused { ACCENT } else { BORDER },
             width: 1.0,
             radius: border::radius(3),
         },
@@ -333,13 +341,13 @@ pub fn frame(focused: bool) -> impl Fn(&Theme) -> container::Style {
     }
 }
 
-/// An inner window's title bar: dark, the one with the keyboard lighter
-/// and in white. The frame's border is what marks it in colour.
+/// An inner window's title bar: dark, the one with the keyboard in the blue
+/// glow and full text colour. The frame's border is what marks it in colour.
 pub fn frame_title(focused: bool) -> impl Fn(&Theme) -> container::Style {
     move |_| {
         if focused {
             container::Style {
-                text_color: Some(Color::WHITE),
+                text_color: Some(TEXT_COLOR),
                 ..filled(CHROME)
             }
         } else {
@@ -361,7 +369,7 @@ pub fn nav(selected: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
         };
         button::Style {
             background: Some(background.into()),
-            text_color: if selected { Color::WHITE } else { TEXT_COLOR },
+            text_color: TEXT_COLOR,
             border: border::rounded(0),
             ..button::Style::default()
         }

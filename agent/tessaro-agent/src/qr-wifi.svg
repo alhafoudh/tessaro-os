@@ -1,6 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="8.8" height="8.8" viewBox="0 0 8.8 8.8" aria-label="Wi-Fi">
   <rect width="8.8" height="8.8" rx="2.4" fill="#0a0d14"/>
-  <g transform="translate(0.88 0.88) scale(0.011)" fill="#82adff">
+  <!-- The QR's gradient (#5cc8ff to #9d8cff, qr.rs) at the centre, where the icon sits. -->
+  <g transform="translate(0.88 0.88) scale(0.011)" fill="#7caaff">
     <!--!Font Awesome Free v7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free Copyright 2026 Fonticons, Inc.-->
     <path class="wifi-wave outer" d="M320 160C229.1 160 146.8 196 86.3 254.6C73.6 266.9 53.3 266.6 41.1 253.9C28.9 241.2 29.1 220.9 41.8 208.7C113.7 138.9 211.9 96 320 96C428.1 96 526.3 138.9 598.3 208.7C611 221 611.3 241.3 599 253.9C586.7 266.5 566.4 266.9 553.8 254.6C493.2 196 410.9 160 320 160z"/>
     <path d="M272 496C272 469.5 293.5 448 320 448C346.5 448 368 469.5 368 496C368 522.5 346.5 544 320 544C293.5 544 272 522.5 272 496z"/>

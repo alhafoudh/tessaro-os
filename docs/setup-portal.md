@@ -42,7 +42,8 @@ one tap each. The page never claims the device; claiming stays
   The corner markers and separated modules have rounded corners. A Wi-Fi
   icon sits in a rounded central cutout; modules touching the cutout are
   omitted whole. High error correction makes room for the icon, whose
-  waves pulse gradually outward using the welcome page's CSS.
+  waves pulse gradually outward using the welcome page's CSS, and hold
+  still under `prefers-reduced-motion`.
 * **The hotspot's address is pinned to 10.42.0.1** (`HOTSPOT_ADDRESS` in
   `nm/profiles.rs`, NM's own default stated in the keyfile), because the
   pieces below name it.
