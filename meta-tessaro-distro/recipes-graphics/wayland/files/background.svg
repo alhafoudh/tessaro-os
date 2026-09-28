@@ -1,0 +1,28 @@
+<!--
+  The Weston wallpaper: the welcome page's field and its two glows, with a
+  faint dot grid over the middle. Everything fades to the flat #0a0d14 in the
+  outer 160px, the background-color weston-init.bbappend fills a larger
+  output with, so the square has no seam. Rendered by generate-background.sh.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1920">
+<defs>
+  <radialGradient id="glow-a" cx="560" cy="620" r="900" gradientUnits="userSpaceOnUse">
+    <stop stop-color="#12304d" stop-opacity=".95"/><stop offset=".6" stop-color="#10243a" stop-opacity=".35"/><stop offset="1" stop-color="#10243a" stop-opacity="0"/></radialGradient>
+  <radialGradient id="glow-b" cx="1400" cy="1340" r="900" gradientUnits="userSpaceOnUse">
+    <stop stop-color="#241b44" stop-opacity=".95"/><stop offset=".6" stop-color="#1d1733" stop-opacity=".35"/><stop offset="1" stop-color="#1d1733" stop-opacity="0"/></radialGradient>
+  <radialGradient id="dots-fade" cx="960" cy="960" r="960" gradientUnits="userSpaceOnUse">
+    <stop stop-color="#fff"/><stop offset=".55" stop-color="#fff" stop-opacity=".7"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient>
+  <linearGradient id="edge-h-fade"><stop stop-color="#fff" stop-opacity="0"/><stop offset=".083" stop-color="#fff"/><stop offset=".917" stop-color="#fff"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+  <linearGradient id="edge-v-fade" x2="0" y2="1"><stop stop-color="#fff" stop-opacity="0"/><stop offset=".083" stop-color="#fff"/><stop offset=".917" stop-color="#fff"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+  <mask id="dots-mask"><rect width="1920" height="1920" fill="url(#dots-fade)"/></mask>
+  <mask id="edge-h"><rect width="1920" height="1920" fill="url(#edge-h-fade)"/></mask>
+  <mask id="edge-v"><rect width="1920" height="1920" fill="url(#edge-v-fade)"/></mask>
+  <pattern id="dots" width="40" height="40" patternUnits="userSpaceOnUse"><circle cx="20" cy="20" r="1.6" fill="#b8c8e6" fill-opacity=".09"/></pattern>
+</defs>
+<rect width="1920" height="1920" fill="#0a0d14"/>
+<g mask="url(#edge-h)"><g mask="url(#edge-v)">
+<rect width="1920" height="1920" fill="url(#glow-a)"/>
+<rect width="1920" height="1920" fill="url(#glow-b)"/>
+<rect width="1920" height="1920" fill="url(#dots)" mask="url(#dots-mask)"/>
+</g></g>
+</svg>

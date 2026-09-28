@@ -233,3 +233,34 @@ installed plugin headers (`weston.pc`), so changing it never rebuilds Weston.
   freezes on the last frame meanwhile.
 * **`device status` shows a `screen off` row**, and the page bridge offers the
   same as `tessaro.screen.off()` and `on()`.
+
+## Boot splash and wallpaper
+
+**Both use the welcome page's palette, so the screen goes from boot to page
+without a jump in colour**: `#0a0d14` for the field, `#5cc8ff` to `#9d8cff`
+for the mark and the bar. Each is a PNG rendered from an SVG beside it by a
+script there, and the PNG is what the build uses, so an edited SVG needs the
+script run and both committed.
+
+* **The boot splash is psplash, themed at compile time**
+  (`meta-tessaro-distro/recipes-core/psplash/`). psplash has no runtime
+  theme: the logo comes from `SPLASH_IMAGES`, the colours from
+  `psplash-colors.h` and the bar's frame from `base-images/psplash-bar.png`,
+  and the bbappend replaces the last two in the source before configure.
+  `SPLASH_IMAGES:rpi` is set as well, or `meta-moonforge-raspberrypi`'s
+  Moonforge logo wins on the Pi.
+* **psplash draws a pixel fully or not at all** (`psplash_fb_draw_image` in
+  `psplash-fb.c` tests only whether alpha is non-zero), so the logo and the
+  bar's frame carry no alpha: the background colour and the mark's glow are
+  painted into the image. The background is one solid colour, the bar itself
+  a plain rect in one colour 4px inside the frame, and neither image is
+  scaled: the logo is centred at its own size (the `fullscreen`
+  `PACKAGECONFIG`), the bar sits at 5/6 of the height (`psplash.c`).
+* **The wallpaper is Weston's `background.png`**
+  (`meta-tessaro-distro/recipes-graphics/wayland/files/`), a 1920x1920 square
+  shown `centered`, so a landscape and a portrait panel both get a crop of it
+  at native pixels. In its outer 160px it fades to exactly the
+  `background-color` in `weston-init.bbappend`, which fills a larger output,
+  so there is no seam. Light noise dithers it because the dark gradients band
+  at 8 bits per channel. It must never look blank: a plain wallpaper cannot
+  be told apart from an uninitialised framebuffer or an empty browser window.

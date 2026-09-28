@@ -1,0 +1,9 @@
+<!--
+  The progress bar's frame. psplash draws the bar itself as a plain rect 4px
+  inside this image, in the colours of psplash-colors.h, so only the frame can
+  be rounded.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="320" height="14">
+<rect width="320" height="14" fill="#0a0d14"/>
+<rect x="1" y="1" width="318" height="12" rx="6" fill="#141a26" stroke="#263247" stroke-width="2"/>
+</svg>

@@ -33,7 +33,7 @@ same change as the behaviour it describes.
 | [docs/agent.md](docs/agent.md) | deadlines, the pledge-fed watchdog, the CDP session |
 | [docs/settings.md](docs/settings.md) | `state.json`, templates and placeholders, read-only keys, the claim model, names, completion, maintenance mode, debug screen |
 | [docs/api.md](docs/api.md) | the HTTP API: endpoint types, the OpenAPI document and Swagger UI, the socket and TLS, pinning and Bearer tokens, errors, jobs and log pages, connections |
-| [docs/display.md](docs/display.md) | Weston scaling and resolution, hotplug, on-screen keyboard, screen power |
+| [docs/display.md](docs/display.md) | Weston scaling and resolution, hotplug, on-screen keyboard, screen power, boot splash and wallpaper |
 | [docs/bridge.md](docs/bridge.md) | the injected script, `window.tessaro` and its modes, who may call, `browser eval` |
 | [docs/remote-access.md](docs/remote-access.md) | VNC mirror and its PAM auth, SSH and `ssh connect` keys |
 | [docs/audio.md](docs/audio.md) | PipeWire units, how `audio.*` is applied, `auto` |

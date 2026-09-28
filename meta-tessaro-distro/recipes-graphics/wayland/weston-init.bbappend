@@ -1,19 +1,19 @@
-# Replace Moonforge's wallpaper with the Tessaro one: dark green with scattered
-# pale squares. Moonforge ships a plain white background.png, which is
-# impossible to tell apart from an uninitialised framebuffer or a blank browser
-# window - the exact ambiguity that made the kiosk bring-up hard to read under
-# QEMU. The squares keep that property: a blank screen is still obviously blank.
+# Replace Moonforge's wallpaper with the Tessaro one: the welcome page's dark
+# field and glows under a faint dot grid, rendered from files/background.svg
+# by files/generate-background.sh. Moonforge ships a plain white
+# background.png, which is impossible to tell apart from an uninitialised
+# framebuffer or a blank browser window - the exact ambiguity that made the
+# kiosk bring-up hard to read under QEMU. The glows and dots keep that
+# property: a blank screen is still obviously blank.
 #
-# It is a 1920x1920 square, centre-cropped from the source art, so that the same
-# file serves a landscape and a portrait panel: whichever way the display is
-# turned, the visible window is a crop of the square and the art is never
-# stretched. See the background-type sed in do_install:append for the other half
-# of this.
+# It is a 1920x1920 square so that the same file serves a landscape and a
+# portrait panel: whichever way the display is turned, the visible window is a
+# crop of the square and the art is never stretched. See the background-type
+# sed in do_install:append for the other half of this.
 #
-# The size is also a memory decision. The source art was 10240x5760, which is
-# ~236MB once desktop-shell has decoded it - not something the 1GB Pi can spare
-# for a wallpaper. 1920x1920 is ~14MB and covers every panel we ship on at
-# native pixels.
+# The size is also a memory decision: desktop-shell keeps the wallpaper
+# decoded, and the 1GB Pi cannot spare much for it. 1920x1920 is ~14MB and
+# covers every panel we ship on at native pixels.
 #
 # meta-moonforge-graphics already puts "file://background.png" in SRC_URI and
 # installs it. This layer has the higher BBFILE_PRIORITY (20 vs 6), so its
@@ -108,15 +108,15 @@ do_install:append() {
     # both resample the art on every output that is not exactly square.)
     #
     # background-color is what fills the frame on an output larger than the
-    # image in both axes - a 4K panel at scale=1. It is the square's own field
-    # colour, so the seam is invisible; ARGB, and the alpha has to be there or
-    # the fill is transparent and the frame shows black.
+    # image in both axes - a 4K panel at scale=1. It is the colour the square
+    # fades to at its edges, so the seam is invisible; ARGB, and the alpha has
+    # to be there or the fill is transparent and the frame shows black.
     #
     # A sed rather than our own copy of weston.ini: the delta is these keys, and
     # forking the file would mean silently dropping whatever Moonforge changes
     # in it next. oe-core's own do_install patches this file the same way.
     sed -i -e '/^\[shell\]/a background-type=centered' \
-           -e '/^\[shell\]/a background-color=0xff042120' \
+           -e '/^\[shell\]/a background-color=0xff0a0d14' \
         ${D}${sysconfdir}/xdg/weston/weston.ini
 
     # Drop the [screen-share] section this file inherits from oe-core through

@@ -23,6 +23,7 @@ It provides:
   `/etc/resolv.conf` alone, and the unit that keeps `/var/lib/NetworkManager`
   on `/data` instead of tmpfs.
 * `recipes-graphics/wayland/weston-init.bbappend` - the desktop background.
+* `recipes-core/psplash/` - the boot splash's logo, colours and progress bar.
 * `wic/` - the genericx86-64 partition layout.
 
 The layer is activated by the machine fragments in `kas/machine/`, each of
