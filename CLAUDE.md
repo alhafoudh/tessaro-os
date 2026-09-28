@@ -119,6 +119,11 @@ Use the mise tasks rather than calling `kas-container` directly:
 
 Exit the QEMU serial console with `Ctrl-a x`.
 
+**Real test devices are listed in `DEV_MACHINES.txt`** at the repo root, if
+it exists: their names, IPs and how to reach them from this host. It is
+per-user and gitignored, so read it before asking which device to use, and
+reach a device with `mise run ctl:run -- -n <IP> ...`.
+
 **Task names are `<artifact>:<action>[:<variant>]`**, and an action means the
 same thing in every group (`build`, `run`, `test`, `lint`). A new task goes
 into the group of the artifact it acts on; `dev:*` holds workstation plumbing

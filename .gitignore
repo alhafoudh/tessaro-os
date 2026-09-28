@@ -43,6 +43,8 @@
 
 # Per-workstation settings: build host, flash device, tunnel addresses
 /mise.local.toml
+# Per-user list of test devices and how to reach them (CLAUDE.md)
+/DEV_MACHINES.txt
 
 # Images pulled from the build host by `mise run image:pull`
 /*.wic
