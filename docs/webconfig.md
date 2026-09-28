@@ -93,6 +93,12 @@ Data always among them. A page's Configure opens the settings it owns in a
 dialog over the page, with the GUI's scopes (`Page::scope`: the WiFi keys
 are on WiFi, not Network), and only where the scope has settings.
 
+* **The Screen panel stands where the GUI's VNC panel does**, beside every
+  page (`shell/ScreenPanel.tsx`), opened from the title bar and remembered
+  in the browser's `localStorage`. A browser has no VNC client, so it is a
+  screenshot every 3 s (the GUI's `LIVE_SHOT`), taken only while the panel
+  is open, the tab visible and the device answering, never two at once.
+  VNC itself stays the native clients' ([remote-access.md](remote-access.md)).
 * **Row actions act on the selected row**; double-click or Enter opens it,
   as in the GUI. A page never asks for the name of something its table
   already shows.

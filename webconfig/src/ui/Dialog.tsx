@@ -1,10 +1,22 @@
 // The GUI's dialogs (dialog.rs): centred over a dimmed page, a title strip,
 // the body, the buttons bottom right. Enter presses the default button, Esc
 // closes. The page underneath stays as it was.
+//
+// A dialog is drawn on document.body, not where it is opened: it is a
+// form, and one opened from another (Edit from Configure) would otherwise
+// be a form inside a form, which a browser drops - its OK would submit the
+// dialog underneath. The last one on the body is the one on top.
 
 import { useEffect, useRef, type FormEvent, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 
 import { Button } from "./controls";
+
+/** Whether `form` is the dialog on top, the one keys go to. */
+function onTop(form: HTMLFormElement | null): boolean {
+  const open = document.querySelectorAll("form[role=dialog]");
+  return form !== null && open[open.length - 1] === form;
+}
 
 export function Dialog({
   title,
@@ -55,7 +67,7 @@ export function Dialog({
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
+      if (event.key === "Escape" && onTop(body.current)) {
         event.stopPropagation();
         onClose();
       }
@@ -66,12 +78,15 @@ export function Dialog({
 
   const submitted = (event: FormEvent) => {
     event.preventDefault();
+    // React bubbles an event through the component tree, portal or not:
+    // the dialog underneath must not take this one's submit for its own.
+    event.stopPropagation();
     if (onSubmit && !busy && !disabled) {
       onSubmit();
     }
   };
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-2" role="presentation">
       <form
         ref={body}
@@ -95,7 +110,8 @@ export function Dialog({
           </Button>
         </div>
       </form>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

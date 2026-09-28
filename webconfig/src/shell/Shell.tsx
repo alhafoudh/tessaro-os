@@ -1,6 +1,7 @@
 // Webconfig's window, laid out as a GUI device window (device.rs): the
 // title bar with the device tools, the menu on the left (a drawer on a
-// phone), the page, the Messages pane and the status bar.
+// phone), the page with the live Screen panel beside it where the GUI has
+// its VNC panel, the Messages pane and the status bar.
 
 import { useEffect, useState, type ReactNode } from "react";
 import { NavLink, useLocation } from "react-router";
@@ -13,6 +14,7 @@ import { useSession } from "../session/SessionContext";
 import { ownSections } from "../settings/scope";
 import { Button, LineView } from "../ui/controls";
 import { Confirm } from "../ui/dialogs";
+import { ScreenPanel, useScreenPanel } from "./ScreenPanel";
 import { StatusBar } from "./StatusBar";
 
 type Restart = Schemas["RestartTarget"] | "reboot";
@@ -49,6 +51,7 @@ export function Shell({ children }: { children: ReactNode }) {
   // Open where there is room for it beside the page; a phone opens it from
   // the title bar.
   const [showMessages, setShowMessages] = useState(() => window.matchMedia("(min-width: 768px)").matches);
+  const [showScreen, setShowScreen] = useScreenPanel();
   const [asking, setAsking] = useState<Restart | null>(null);
   const location = useLocation();
   const name = status?.node.name ?? "the device";
@@ -107,6 +110,13 @@ export function Shell({ children }: { children: ReactNode }) {
           <Button onClick={() => setAsking("agent")}>Restart agent</Button>
           <Button onClick={() => setAsking("reboot")}>Reboot</Button>
           <span className="mx-0.5 h-4 w-px bg-border" />
+          <Button
+            kind={showScreen ? "primary" : "tool"}
+            onClick={() => setShowScreen(!showScreen)}
+            aria-pressed={showScreen}
+          >
+            Screen
+          </Button>
           <Button onClick={() => setShowMessages((open) => !open)} aria-pressed={showMessages}>
             Messages
           </Button>
@@ -123,7 +133,11 @@ export function Shell({ children }: { children: ReactNode }) {
           {sections.map((section) => link(`/settings/${section}`, sectionTitle(section)))}
         </nav>
         {menu && <div className="absolute inset-0 z-30 bg-black/45 md:hidden" onClick={() => setMenu(false)} />}
-        <main className="min-w-0 flex-1 overflow-auto p-2">{children}</main>
+        {/* The screen beside the page, as the GUI's VNC panel; under it on a phone. */}
+        <div className="flex min-w-0 flex-1 flex-col md:flex-row">
+          <main className="min-h-0 min-w-0 flex-1 overflow-auto p-2">{children}</main>
+          {showScreen && <ScreenPanel onClose={() => setShowScreen(false)} />}
+        </div>
       </div>
       {showMessages && (
         <div className="border-t border-border bg-panel px-1.5 py-1">
