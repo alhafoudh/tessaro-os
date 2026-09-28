@@ -289,11 +289,6 @@ else
     echo "tessaro-weston-config: remote access on, VNC on $VNC_ADDRESS:$VNC_PORT"
 fi
 
-if [ "$scale_override" = none ] && [ "$resolution" = preferred ]; then
-    echo "tessaro-weston-config: KIOSK_SCALE=none, writing no [output] sections"
-    exit 0
-fi
-
 for dev in "$DRM_ROOT"/card*-*; do
     [ -r "$dev/status" ] || continue
     [ "$(cat "$dev/status")" = connected ] || continue
@@ -350,7 +345,12 @@ for dev in "$DRM_ROOT"/card*-*; do
         why="auto from ${width:-unknown}px"
     fi
 
-    printf '\n[output]\nname=%s\n' "$name" >> "$OUT"
+    # max-bpc=8 keeps the link on 8-bit RGB. Weston's default of 16 lets the
+    # driver pick deep colour, and where the link cannot carry deep RGB, vc4
+    # falls back to 12-bit YCbCr 4:2:2 in limited range: the monitor's
+    # conversion back loses levels and dark gradients band. Nothing above
+    # Weston renders more than 8 bits per channel, so deep colour gains nothing.
+    printf '\n[output]\nname=%s\nmax-bpc=8\n' "$name" >> "$OUT"
     if [ -n "$scale" ]; then
         printf 'scale=%s\n' "$scale" >> "$OUT"
     fi

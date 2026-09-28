@@ -42,6 +42,17 @@ connector will be called, the config is generated per boot:
   `state.json`, so it survives the agent restarting with Weston, and the boot
   oneshot reverts a change still pending at boot: a reboot is not a confirm.
   The timer is monotonic, never the wall clock.
+* **Every generated `[output]` sets `max-bpc=8`, so the link stays on 8-bit
+  RGB.** Weston's default is 16 (`weston-drm.man`), which lets the driver pick
+  deep colour. Where the link cannot carry deep RGB, vc4 falls back to 12-bit
+  YCbCr 4:2:2 in limited range (`HDMI_CSC_*` in
+  `/sys/kernel/debug/dri/0/hdmi0_regs` holds the RGB-to-BT.709 matrix, and
+  `max_requested_bpc=12` in `.../state`). The monitor's conversion back to RGB
+  then loses levels and dark gradients band visibly, even though Chromium's
+  frame, captured as PNG, is smooth and dithered. Nothing above Weston
+  renders more than 8 bits per channel, so deep colour gains nothing. This is
+  why an `[output]` is written for every connector even under `KIOSK_SCALE=none`
+  with the preferred mode: it then carries only `name=` and `max-bpc=`.
 * **The technician-facing file is still `/etc/xdg/weston/weston.ini`**, which is
   on the `/etc` overlay and persists. It is the base the generator copies, and
   any connector already named there (any `name=` line) is left alone - so

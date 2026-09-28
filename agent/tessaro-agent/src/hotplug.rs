@@ -257,8 +257,9 @@ mod tests {
 
     #[test]
     fn a_new_screen_counts_even_with_no_output_sections() {
-        // KIOSK_SCALE=none and preferred: the generator writes no [output]
-        // at all, but a device booted with no screen still needs a restart.
+        // A base weston.ini that already names the connector: the generator
+        // writes no [output] of its own, but a device booted with no screen
+        // still needs a restart.
         assert!(verdict(&config("(none)", ""), &config("HDMI-A-1", "")).is_some());
     }
 
