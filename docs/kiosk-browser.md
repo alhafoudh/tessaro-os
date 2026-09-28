@@ -294,6 +294,13 @@ claimed and, until it is, the `tessaro-ctl access claim --node NAME` that
 claims it, next to a QR code that opens the setup portal on a phone (see
 [setup-portal.md](setup-portal.md)).
 
+The details and setup panels have equal dimensions, with the hotspot name
+above the QR code and the setup address below it. Narrow screens stack the
+panels. Without a setup QR (including devices with no Wi-Fi interface), the
+details panel stands centered on its own; an active protected hotspot's SSID
+stays in those details. The claim instruction remains until the device is
+claimed.
+
 * **The values come from `/welcome.json`, which the agent keeps current.**
   `watch_welcome` in `control/watchers.rs` writes
   `/run/tessaro-kiosk/welcome.json` every 5s, and at once after a claim, an

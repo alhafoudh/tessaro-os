@@ -40,7 +40,7 @@
   body {
     margin: 0;
     padding: clamp(18px, 4.5vmin, 64px);
-    overflow: hidden;
+    overflow: auto;
     font-family: system-ui, "DejaVu Sans", "Liberation Sans", sans-serif;
     background: var(--bg);
     color: var(--fg);
@@ -84,7 +84,7 @@
     align-items: center;
     text-align: center;
     gap: clamp(14px, 2.8vmin, 34px);
-    max-width: 92vw;
+    width: min(100%, 1240px);
   }
 
   /* The Tessaro mark, inline so it also works before network setup. */
@@ -119,7 +119,10 @@
 
   .card {
     display: grid;
-    grid-template-columns: auto auto;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-content: center;
+    margin: 0;
+    min-width: 0;
     column-gap: clamp(18px, 4vmin, 56px);
     row-gap: clamp(8px, 1.6vmin, 18px);
     align-items: baseline;
@@ -138,6 +141,7 @@
   }
   .card dd {
     margin: 0;
+    overflow-wrap: anywhere;
     font-variant-numeric: tabular-nums;
   }
   .card dd .ip { display: block; }
@@ -159,10 +163,10 @@
   .status.offline   { color: var(--bad); }
 
   .panels {
-    display: flex;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     align-items: stretch;
-    justify-content: center;
+    width: 100%;
     gap: clamp(14px, 3vmin, 40px);
   }
 
@@ -170,6 +174,7 @@
      opens the setup portal. Its colours are in the SVG itself (qr.rs): the
      logo's gradient on the page's background. */
   .setup {
+    min-width: 0;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -180,15 +185,30 @@
     border-radius: clamp(12px, 2vmin, 22px);
     background: var(--card);
   }
+  .setup .hotspot-info { display: grid; gap: 0.35em; max-width: 100%; }
+  .setup .hotspot-label {
+    color: var(--dim);
+    font-size: clamp(0.7rem, 2.1vmin, 1.47rem);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .setup .hotspot-ssid { font-size: clamp(1rem, 2.6vmin, 1.8rem); overflow-wrap: anywhere; }
+  @media (max-width: 700px) {
+    body { height: auto; min-height: 100%; }
+    .panels { grid-template-columns: minmax(0, 1fr); grid-auto-rows: 1fr; }
+    .card { padding: 24px; column-gap: 18px; }
+    .hint { overflow-wrap: anywhere; }
+  }
+  .panels:not(.has-setup) { grid-template-columns: minmax(0, 1fr); max-width: 660px; }
   .setup[hidden] { display: none; }
   .setup .qr {
+    max-width: 100%;
     width: clamp(150px, 30vmin, 360px);
     aspect-ratio: 1;
     border-radius: clamp(6px, 1vmin, 12px);
     overflow: hidden;
   }
-  .setup .qr svg { display: block; width: 100%; height: 100%; }
-  .setup .title { font-size: clamp(1rem, 3vmin, 2.1rem); }
+  .setup .qr > svg { display: block; width: 100%; height: 100%; }
   .setup .or {
     color: var(--dim);
     font-size: clamp(0.75rem, 1.9vmin, 1.25rem);
@@ -210,6 +230,16 @@
   }
 
   .stale { opacity: 0.45; transition: opacity 0.6s; }
+
+  .wifi-wave {
+    animation: wifi-pulse 4.8s ease-in-out infinite;
+  }
+  .wifi-wave.inner { animation-delay: -4.8s; }
+  .wifi-wave.outer { animation-delay: -4.1s; }
+  @keyframes wifi-pulse {
+    0%, 75%, 100% { opacity: 0.12; }
+    30% { opacity: 1; }
+  }
 
   @media (prefers-reduced-motion: reduce) {
     .glow { animation: none; }
@@ -235,12 +265,12 @@
   <p class="product" id="product">tessaro-os</p>
   <h1 id="node">Welcome</h1>
 
-  <div class="panels">
-    <dl class="card stale" id="card">
+  <div class="panels stale" id="panels">
+    <dl class="card" id="card">
       <dt>IP address</dt>
       <dd id="addresses">-</dd>
       <dt class="hotspot" hidden>Hotspot</dt>
-      <dd class="hotspot" id="hotspot" hidden></dd>
+      <dd class="hotspot" id="hotspot-fallback" hidden></dd>
       <dt>Internet</dt>
       <dd><span class="status unknown" id="online">Checking</span></dd>
       <dt>Status</dt>
@@ -248,9 +278,9 @@
     </dl>
 
     <div class="setup" id="setup" hidden>
-      <div class="title">Scan to set up</div>
+      <div class="hotspot-info"><span class="hotspot-label">Hotspot</span><span class="hotspot-ssid" id="hotspot"></span></div>
       <div class="qr" id="qr"></div>
-      <div class="or">or join <b id="setup-ssid"></b> and open <b id="setup-url"></b></div>
+      <div class="or">Once connected, open <b id="setup-url"></b></div>
     </div>
   </div>
 
@@ -260,8 +290,8 @@
 <script>
   // Polls /welcome.json and fills the page. Everything goes in through
   // textContent, never as markup - except the QR code, an SVG the agent draws
-  // from nothing but numbers (qr.rs). When the endpoint does not answer the
-  // last values stay on screen, dimmed.
+  // from numeric geometry and a bundled Wi-Fi icon (qr.rs). When the
+  // endpoint does not answer, the last values stay on screen, dimmed.
   (function () {
     var POLL_MS = 5000;
     var shownQr = null;
@@ -295,7 +325,8 @@
       // the password is a secret and never reaches this file.
       var ssid = s.hotspot && s.hotspot.ssid;
       el("hotspot").textContent = ssid || "";
-      document.querySelectorAll(".hotspot").forEach(function (n) { n.hidden = !ssid; });
+      el("hotspot-fallback").textContent = ssid || "";
+      document.querySelectorAll(".hotspot").forEach(function (n) { n.hidden = !ssid || !!s.setup; });
 
       var claim = el("claim");
       claim.className = "status " + (s.claimed ? "claimed" : "unclaimed");
@@ -313,12 +344,12 @@
       // the hotspot is open and the QR carries no password.
       var setup = s.setup;
       el("setup").hidden = !setup;
+      el("panels").classList.toggle("has-setup", !!setup);
       if (setup) {
         if (setup.qr !== shownQr) {
           el("qr").innerHTML = setup.qr;
           shownQr = setup.qr;
         }
-        el("setup-ssid").textContent = ssid || "";
         el("setup-url").textContent = setup.url;
       }
     }
@@ -326,8 +357,8 @@
     function poll() {
       fetch("/welcome.json", { cache: "no-store" })
         .then(function (r) { if (!r.ok) throw r.status; return r.json(); })
-        .then(function (s) { render(s); el("card").classList.remove("stale"); })
-        .catch(function () { el("card").classList.add("stale"); })
+        .then(function (s) { render(s); el("panels").classList.remove("stale"); })
+        .catch(function () { el("panels").classList.add("stale"); })
         .then(function () { setTimeout(poll, POLL_MS); });
     }
     poll();
