@@ -105,34 +105,41 @@ pub fn disk() -> (Vec<u8>, String) {
 /// A fake sysfs and udev tree under `dir` in which `disk()` is this
 /// device's own disk: sda1 boot, sda2 root (booted as `root=`), sda3 data.
 pub fn device(dir: &Path) -> Probe {
-    let devices = dir.join("sys/devices/pci0/sda");
+    device_on_disk(dir, "sda")
+}
+
+/// The same layout on an SD, USB or NVMe disk with Linux's partition names.
+pub fn device_on_disk(dir: &Path, disk: &str) -> Probe {
+    let devices = dir.join("sys/devices/pci0").join(disk);
     let class = dir.join("sys/class/block");
     let by_partuuid = dir.join("dev/disk/by-partuuid");
+    let by_label = dir.join("dev/disk/by-label");
     fs::create_dir_all(&class).unwrap();
     fs::create_dir_all(&by_partuuid).unwrap();
-    for (name, number, start, size, uuid) in [
-        ("sda1", 1, 2048, 2048, BOOT_PARTUUID),
-        ("sda2", 2, 4096, 12288, ROOT_PARTUUID),
-        (
-            "sda3",
-            3,
-            16384,
-            8192,
-            "cccccccc-0000-0000-0000-000000000000",
-        ),
+    fs::create_dir_all(&by_label).unwrap();
+    let separator = if disk.ends_with(|c: char| c.is_ascii_digit()) {
+        "p"
+    } else {
+        ""
+    };
+    for (number, start, size, uuid) in [
+        (1, 2048, 2048, BOOT_PARTUUID),
+        (2, 4096, 12288, ROOT_PARTUUID),
+        (3, 16384, 8192, "cccccccc-0000-0000-0000-000000000000"),
     ] {
-        let part = devices.join(name);
+        let name = format!("{disk}{separator}{number}");
+        let part = devices.join(&name);
         fs::create_dir_all(&part).unwrap();
         fs::write(part.join("partition"), format!("{number}\n")).unwrap();
         fs::write(part.join("start"), format!("{start}\n")).unwrap();
         fs::write(part.join("size"), format!("{size}\n")).unwrap();
-        symlink(&part, class.join(name)).unwrap();
+        symlink(&part, class.join(&name)).unwrap();
         symlink(format!("../../{name}"), by_partuuid.join(uuid)).unwrap();
     }
     // The disk itself is in the class too, and has no partition file. It
     // is 16 MiB, room for `disk()` and some to spare.
     fs::write(devices.join("size"), format!("{DISK_SECTORS}\n")).unwrap();
-    symlink(&devices, class.join("sda")).unwrap();
+    symlink(&devices, class.join(disk)).unwrap();
     let cmdline = dir.join("cmdline");
     fs::write(
         &cmdline,
@@ -143,6 +150,7 @@ pub fn device(dir: &Path) -> Probe {
         cmdline,
         sys_block: class,
         by_partuuid,
+        by_label,
     }
 }
 

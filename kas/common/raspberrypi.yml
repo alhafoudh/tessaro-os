@@ -1,0 +1,37 @@
+# Firmware loads Linux directly from the selected SD, USB or NVMe boot disk.
+header:
+  version: 16
+  includes:
+    - kas/common/tessaro.yml
+    - repo: meta-moonforge
+      file: kas/include/layer/meta-moonforge-raspberrypi.yml
+
+local_conf_header:
+  25_tessaro-machine: |
+    # The pinned U-Boot lacks Pi 5 USB/NVMe support. The Pi firmware supports
+    # these boot media and can load the kernel with its bundled initramfs.
+    RPI_USE_U_BOOT = "0"
+    # Load-bearing, and no layer supplies it: meta-moonforge sets WKS_FILE
+    # only in its own kas examples, so without this rpi-base.inc's weak
+    # default builds from sdimage-raspberrypi.wks - boot and rootfs, no
+    # /data - and nothing fails at build time. On the device LABEL=data is
+    # missing, the /etc overlay never mounts, dropbear cannot write a host
+    # key (ssh closes before the version exchange) and Chromium cannot
+    # create its profile, so the screen stays on the Weston background.
+    WKS_FILE = "tessaro-image-base-raspberrypi.wks.in"
+    # Keep Image as the updater's kernel filename on every Pi target.
+    RPI_EXTRA_IMAGE_BOOT_FILES = "${KERNEL_IMAGETYPE}-initramfs-${MACHINE}.bin;${KERNEL_IMAGETYPE}"
+    TESSARO_KERNEL_FILE = "${KERNEL_IMAGETYPE}"
+    # udev resolves the root label before the update hook and root mount.
+    # Give USB enclosures time to appear in the initramfs.
+    CMDLINE_ROOT_PARTITION = "LABEL=root"
+    # Only rpi-cmdline, so no other recipe that reads CMDLINE picks it up.
+    CMDLINE:append:pn-rpi-cmdline = " roottimeout=30 console=tty1"
+    # Full KMS, so the kernel owns HDMI and hotplug works (docs/display.md,
+    # "Display hotplug"); raspberrypi3-64 defaults to fake KMS.
+    VC4DTBO = "vc4-kms-v3d"
+    # tessaro.txt holds the agent-managed firmware settings (device.gpu_mem)
+    # and must be included last. [all] first, so a conditional section above
+    # it cannot confine the kernel line or the include to one board.
+    RPI_EXTRA_CONFIG = "[all]\narm_64bit=1\nkernel=${KERNEL_IMAGETYPE}\ninclude tessaro.txt"
+    TESSARO_BOOT_CONFIG_DIR = "/boot"

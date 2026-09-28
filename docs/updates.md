@@ -101,8 +101,12 @@ Things to know:
   for this.
 * **The Pi cannot pin its disk signature** - this wic has no `--diskid`, and
   derives it from `SOURCE_DATE_EPOCH` - but nothing there names a PARTUUID
-  (`root=/dev/mmcblk0p2`, device nodes in fstab), so for MBR images the
+  (`root=LABEL=root`, filesystem labels in fstab), so for MBR images the
   layout check compares partition geometry instead.
+  The initramfs hook and `agent/update/src/layout.rs` resolve the root label
+  through udev and find the other partitions on that disk. Migrating from
+  U-Boot requires replacing the boot configuration too; see **Pi storage
+  boot** in [build.md](build.md#pi-storage-boot).
 * **The root partition is a fixed `TESSARO_ROOTFS_SIZE` (4096M), the ESP a
   fixed `TESSARO_ESP_SIZE` (256M), the Pi's boot partition 512M.** A later
   image has to fit the partition already on the disk, and the ESP holds two
@@ -116,7 +120,7 @@ Things to know:
   the boot partition still has one kernel file to swap and bootimg-efi picks
   it up by itself - as `bzImage-initramfs-<machine>.bin`, which is the
   `KIOSK_KERNEL_FILE` the agent extracts. On the Pi the bundle is installed
-  as `Image`, the name `boot.scr` loads. The price: any change to
+  as `Image`, the name the firmware loads through `config.txt`. The price: any change to
   `tessaro-flash`, and so to the agent workspace, re-bundles the kernel, and
   every update then swaps it.
 * **The initramfs is modelled on `core-image-initramfs-boot`, plus our

@@ -129,6 +129,14 @@ CORE_IMAGE_EXTRA_INSTALL += " \
     tessaro-time \
 "
 
+# The boot disk's own partitions, by label on that disk only: /data for the
+# /etc overlay on every machine (OVERLAYFS_ETC_DEVICE), and the Pi's /boot,
+# which its wks keeps out of fstab. See docs/build.md, "Pi storage boot".
+CORE_IMAGE_EXTRA_INSTALL += " \
+    tessaro-disk \
+"
+CORE_IMAGE_EXTRA_INSTALL:append:rpi = " tessaro-disk-boot"
+
 # Remote access, on every image rather than only development ones.
 #
 # Until now an SSH server came exclusively from debug-tweaks, which

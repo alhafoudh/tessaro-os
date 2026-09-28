@@ -47,15 +47,17 @@ local_conf_header:
     # kernel with CONFIG_DEVTMPFS_MOUNT=y - so /dev is populated before /sbin/init
     # runs and blkid can resolve the label.
     #
-    # The one ambiguity is two attached disks both carrying a "data" label -
-    # typically the USB stick the device was flashed from, left plugged in.
-    # blkid then picks whichever it finds first. Device nodes are no safer
-    # there: that same stick often enumerates as /dev/sda ahead of the
-    # internal disk. Pull the flashing medium.
+    # Only the "data" on the disk / is on counts: a second disk with that
+    # label (the USB stick the device was flashed from, left plugged in)
+    # would otherwise win whenever blkid finds it first. The preinit pastes
+    # this value into its mount command line, so it is a command
+    # substitution: tessaro-disk-part (recipes-core/tessaro-disk) looks the
+    # label up on the root's disk, and a device whose root disk has no such
+    # partition falls back to any disk's.
     #
     # A machine fragment can still override this with a plain path if a board
     # needs it.
-    OVERLAYFS_ETC_DEVICE = "LABEL=data"
+    OVERLAYFS_ETC_DEVICE = "$(/usr/libexec/tessaro/tessaro-disk-part data || echo LABEL=data)"
     # In-place image updates (tessaro-ctl update), without A/B partitions:
     # the device stages the new image on /data, and at the next boot an
     # initramfs rewrites the root partition before anything mounts it.

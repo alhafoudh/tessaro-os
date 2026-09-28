@@ -1,0 +1,12 @@
+# /dev/disk/tessaro/<label> for every labelled partition on the disk / is
+# on, and for none elsewhere: /dev/disk/by-label/<label> points at whichever
+# disk with that label udev saw last, a stray USB stick included. After
+# 60-persistent-storage.rules, which reads the label.
+ACTION=="remove", GOTO="tessaro_disk_end"
+SUBSYSTEM!="block", GOTO="tessaro_disk_end"
+ENV{DEVTYPE}!="partition", GOTO="tessaro_disk_end"
+ENV{ID_FS_LABEL_ENC}!="?*", GOTO="tessaro_disk_end"
+
+PROGRAM=="/usr/libexec/tessaro/tessaro-disk-part --on-root-disk %k", SYMLINK+="disk/tessaro/$env{ID_FS_LABEL_ENC}"
+
+LABEL="tessaro_disk_end"

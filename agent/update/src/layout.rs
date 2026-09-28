@@ -13,13 +13,14 @@ use serde::{Deserialize, Serialize};
 use crate::ptable::{self, Partition, SECTOR};
 use crate::{megabytes, BOOT_PARTITION, DATA_PARTITION, ROOT_PARTITION};
 
-/// Where to look. `/proc/cmdline`, `/sys/class/block`, `/dev/disk/by-partuuid`
+/// Where to look. `/proc/cmdline`, `/sys/class/block`, udev's partition links
 /// on a device; a temporary tree in the tests.
 #[derive(Debug, Clone)]
 pub struct Probe {
     pub cmdline: PathBuf,
     pub sys_block: PathBuf,
     pub by_partuuid: PathBuf,
+    pub by_label: PathBuf,
 }
 
 impl Default for Probe {
@@ -28,6 +29,7 @@ impl Default for Probe {
             cmdline: "/proc/cmdline".into(),
             sys_block: "/sys/class/block".into(),
             by_partuuid: "/dev/disk/by-partuuid".into(),
+            by_label: "/dev/disk/by-label".into(),
         }
     }
 }
@@ -61,6 +63,9 @@ pub fn probe(probe: &Probe) -> Result<Layout, String> {
     let name = if let Some(uuid) = spec.strip_prefix("PARTUUID=") {
         link_name(&probe.by_partuuid.join(uuid.to_ascii_lowercase()))
             .ok_or_else(|| format!("no partition has PARTUUID {uuid}"))?
+    } else if let Some(label) = spec.strip_prefix("LABEL=") {
+        link_name(&probe.by_label.join(label))
+            .ok_or_else(|| format!("no partition has LABEL {label}"))?
     } else if let Some(device) = spec.strip_prefix("/dev/") {
         device.to_string()
     } else {
@@ -156,8 +161,8 @@ pub fn check(layout: &Layout, image: &[Partition]) -> Result<(), String> {
 
     // An MBR PARTUUID is the disk signature plus the number, and this wic
     // cannot pin the signature - but nothing on an MBR image names one
-    // either: the Pi boots root=/dev/mmcblk0p2 and its fstab uses device
-    // nodes. There the geometry is the whole check. GPT images name their
+    // either: the Pi boots root=LABEL=root and its fstab uses filesystem
+    // labels. There the geometry is the whole check. GPT images name their
     // PARTUUIDs in grub.cfg and fstab, and the wks pins them.
     let mbr = is_mbr(&root.partuuid) && is_mbr(&layout.root.partuuid);
     if !mbr && (root.partuuid != layout.root.partuuid || boot.partuuid != layout.boot.partuuid) {
@@ -269,6 +274,36 @@ mod tests {
         let probe = fake(dir.path(), "/dev/sda2");
         let layout = super::probe(&probe).unwrap();
         assert_eq!(layout.root.partuuid, ROOT);
+    }
+
+    #[test]
+    fn root_by_label_on_sd_usb_and_nvme() {
+        for (disk, root, boot) in [
+            ("mmcblk0", "mmcblk0p2", "mmcblk0p1"),
+            ("sda", "sda2", "sda1"),
+            ("nvme0n1", "nvme0n1p2", "nvme0n1p1"),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let probe = testing::device_on_disk(dir.path(), disk);
+            std::os::unix::fs::symlink(format!("../../{root}"), probe.by_label.join("root"))
+                .unwrap();
+            fs::write(&probe.cmdline, "root=LABEL=root rootwait ro\n").unwrap();
+            let layout = super::probe(&probe).unwrap();
+            assert_eq!(layout.disk, disk);
+            assert_eq!(layout.root.name, root);
+            assert_eq!(layout.boot.name, boot);
+            check(&layout, &image()).unwrap();
+        }
+    }
+
+    #[test]
+    fn missing_root_label_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let probe = fake(dir.path(), "LABEL=missing");
+        assert_eq!(
+            super::probe(&probe).unwrap_err(),
+            "no partition has LABEL missing"
+        );
     }
 
     #[test]

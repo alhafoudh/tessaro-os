@@ -1,0 +1,42 @@
+#!/bin/sh
+# The partitions of the disk / is on, found by filesystem label, so a stray
+# disk carrying the same label (a USB stick labelled "boot" or "data", the
+# medium the device was flashed from) is never picked up in their place.
+#
+#   tessaro-disk-part LABEL       print /dev/<partition> of the partition
+#                                 labelled LABEL on that disk
+#   tessaro-disk-part --on-root-disk NAME
+#                                 succeed if partition NAME is on that disk
+#
+# The first form runs in the overlayfs-etc preinit, before udev, and reads
+# the labels with blkid. The second is 61-tessaro-disk.rules, where udev has
+# read the label already. Both need only /proc, /sys and /dev.
+
+# The kernel name of the disk / is mounted from.
+root_disk() {
+	majmin=$(awk '$5 == "/" { m = $3 } END { print m }' /proc/self/mountinfo)
+	[ -n "$majmin" ] || return 1
+	disk=$(readlink -f "/sys/dev/block/$majmin/..") || return 1
+	[ -e "$disk/dev" ] || return 1
+	echo "${disk##*/}"
+}
+
+disk=$(root_disk) || exit 1
+
+if [ "$1" = "--on-root-disk" ]; then
+	parent=$(readlink -f "/sys/class/block/$2/..") || exit 1
+	[ "${parent##*/}" = "$disk" ]
+	exit
+fi
+
+for number in /sys/class/block/$disk/*/partition; do
+	[ -e "$number" ] || continue
+	dir=${number%/partition}
+	case "$(blkid "/dev/${dir##*/}")" in
+		*" LABEL=\"$1\""*)
+			echo "/dev/${dir##*/}"
+			exit 0
+			;;
+	esac
+done
+exit 1

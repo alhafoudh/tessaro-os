@@ -1,72 +1,9 @@
-# Raspberry Pi 3 Model B+, 64-bit (aarch64, Cortex-A53).
-#
-# meta-raspberrypi's raspberrypi3-64 covers the 3B and the 3B+; the device tree
-# for the B+ (bcm2710-rpi-3-b-plus.dtb) is in RPI_KERNEL_DEVICETREE and the
-# firmware picks the right one at boot, so one image serves both.
-#
-# meta-moonforge-raspberrypi documents itself as Pi 4/5 support, but it carries
-# nothing board-specific: a psplash framebuffer config, a udev rule and the
-# mmcblk wic layout, all of which apply to the 3B+ as well. It also pulls in
-# meta-raspberrypi and meta-lts-mixins (u-boot) and sets ENABLE_UART,
-# RPI_USE_U_BOOT and the Synaptics firmware license flag.
+# Raspberry Pi 3B and 3B+, 64-bit (Cortex-A53). NVMe requires a USB enclosure.
+# The BSP includes each board's device tree; firmware selects it at boot.
 header:
   version: 16
   includes:
-    - kas/common/tessaro.yml
-    - repo: meta-moonforge
-      file: kas/include/layer/meta-moonforge-raspberrypi.yml
-
-local_conf_header:
-  25_tessaro-machine: |
-    # /boot (vfat, firmware + u-boot), rootfs, /data - from
-    # meta-moonforge-raspberrypi/wic/. /data is found by label, set in
-    # kas/common/tessaro.yml; here it would be /dev/mmcblk0p3, and it becomes
-    # /dev/sda3 the moment someone boots the same image off USB.
-    #
-    # This line is load-bearing and no layer supplies it: meta-moonforge ships
-    # the wks but sets WKS_FILE only in its own kas examples, so without it
-    # rpi-base.inc's weak default wins and the image is built from
-    # meta-raspberrypi's sdimage-raspberrypi.wks - boot and rootfs only, no
-    # /data at all. Nothing fails at build time. On the device the preinit
-    # cannot find LABEL=data, the /etc overlay never mounts, and everything
-    # that needs to write to /etc or /data dies at once: dropbear cannot
-    # generate a host key (ssh connects, then closes before the version
-    # exchange) and Chromium cannot create its --user-data-dir, so the screen
-    # stays on the Weston background.
-    WKS_FILE = "tessaro-image-base-raspberrypi.wks.in"
-    # That file is Moonforge's with a fixed-size root and a larger boot
-    # partition, for in-place updates - see its header.
-    #
-    # The kernel with its bundled initramfs is deployed as
-    # Image-initramfs-<machine>.bin, but boot.scr loads `Image` from the boot
-    # partition (fatload ... @@KERNEL_IMAGETYPE@@), so the bundle is installed
-    # under that name in place of the plain kernel. The rest of the line is
-    # rpi-base.inc's own u-boot entry. TESSARO_KERNEL_FILE is the name an
-    # update swaps.
-    RPI_EXTRA_IMAGE_BOOT_FILES = "${KERNEL_IMAGETYPE}-initramfs-${MACHINE}.bin;${KERNEL_IMAGETYPE} u-boot.bin;${SDIMG_KERNELIMAGE} boot.scr"
-    TESSARO_KERNEL_FILE = "${KERNEL_IMAGETYPE}"
-    # Full KMS, not the fake KMS raspberrypi3-64 defaults to. Under fake KMS
-    # the firmware owns HDMI: a screen missing at power-on is never brought up,
-    # and a monitor switched off and on comes back with the firmware scaling
-    # Weston's old framebuffer into whatever mode it picked, which looks like
-    # squashed text. Under full KMS the kernel's vc4 driver owns it, reads the
-    # EDID again and sends real hotplug uevents, which Weston and the agent's
-    # hotplug watcher (docs/display.md, "Display hotplug") act on. config.txt's
-    # hdmi_* options are ignored from here on; video= on the kernel command
-    # line replaces them.
-    VC4DTBO = "vc4-kms-v3d"
-    # The 3B+ has 1GB of RAM shared with the GPU, and Chromium is the heaviest
-    # thing in the image. Under full KMS the GPU draws from the kernel's CMA
-    # pool (the overlay's default, 256M). What the firmware keeps for itself,
-    # gpu_mem, still feeds its hardware video decoder, and that is a device
-    # setting, device.gpu_mem, not a build constant: GPU_MEM stays unset, and
-    # the agent writes gpu_mem= into tessaro.txt on the boot partition, which
-    # the line below makes config.txt include last. [all] first, so a
-    # conditional section above it cannot confine the include to one board.
-    # Devices flashed without the line get it from the agent at boot.
-    RPI_EXTRA_CONFIG = "[all]\ninclude tessaro.txt"
-    # Where that config.txt is on the running device, for the agent.
-    TESSARO_BOOT_CONFIG_DIR = "/boot"
+    - kas/common/raspberrypi.yml
 
 # Both keys belong in the entry point of the config chain: an include cannot
 # set them, because meta-moonforge-distro.yml sets distro too and wins by
