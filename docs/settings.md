@@ -115,8 +115,8 @@ kiosk origin, Weston restarts - taking the browser and agent with it - for a
   `.migrated`. A `config set` or `config get` of an old name is refused with
   the new one - there are no aliases.
 
-**Every client goes through the API** - `tessaro-ctl`, `tessaro-gui`, the
-setup page, anyone's own program - over HTTPS on `access.listen` or plain on
+**Every client goes through the API** - `tessaro-ctl`, `tessaro-gui`,
+Webconfig, anyone's own program - over HTTPS on `access.listen` or plain on
 the root-only local socket. How it is built, the certificate and pinning,
 and how a client authenticates are in [api.md](api.md).
 
@@ -133,8 +133,16 @@ and how a client authenticates are in [api.md](api.md).
   with a note saying so; once it is claimed, they refuse it again until
   `access login`.
 * **A claimed device answers only who it is without a token**: `device/id`,
-  `device/ping` and the claim itself, which refuses. Everything else wants
-  `Authorization: Bearer <token>`.
+  `device/ping` and the claim itself, which refuses, and a browser's
+  signing in and out. Everything else wants `Authorization: Bearer <token>`,
+  or a browser session that stands for one.
+* **A browser session is a token's, never a credential of its own**
+  (**Sessions** in [webconfig.md](webconfig.md)): it ends when its token is
+  revoked, the device unclaimed or reset, after `access.session_timeout`
+  unused (a week by default), and when the agent stops - except for a
+  restart the agent makes itself to apply a change, which hands the
+  sessions to the next process. A session never changes whether the device
+  is claimed.
 * **The first `claim` wins.** It gets a token and the root password becomes a
   random 20-character one, which `tessaro-ctl` shows exactly once. Order
   matters for power loss: the password is set first, then the token

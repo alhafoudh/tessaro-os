@@ -1,0 +1,154 @@
+{
+  "function": "audio::show",
+  "input": {
+    "error": "the input went away",
+    "input": {
+      "devices": [],
+      "fallback": null,
+      "muted": true,
+      "setting": "auto",
+      "using": null,
+      "volume": 50
+    },
+    "output": {
+      "devices": [],
+      "fallback": "no USB speaker, playing on HDMI",
+      "muted": false,
+      "setting": "usb",
+      "using": {
+        "available": true,
+        "description": "HDMI",
+        "in_use": true,
+        "kind": "hdmi",
+        "name": "alsa_output.hdmi",
+        "needs_profile": false
+      },
+      "volume": 80
+    },
+    "running": true
+  },
+  "output": [
+    [
+      [
+        "bad",
+        "the sound server is not answering:",
+        0
+      ],
+      [
+        "plain",
+        " the input went away",
+        0
+      ]
+    ],
+    [],
+    [
+      [
+        "label",
+        "output",
+        8
+      ],
+      [
+        "plain",
+        " usb ",
+        0
+      ],
+      [
+        "muted",
+        "->",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "heading",
+        "HDMI",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "(hdmi)",
+        0
+      ],
+      [
+        "plain",
+        "  ",
+        0
+      ],
+      [
+        "plain",
+        "80%",
+        0
+      ]
+    ],
+    [
+      [
+        "label",
+        "",
+        8
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "warn",
+        "no USB speaker, playing on HDMI",
+        0
+      ]
+    ],
+    [
+      [
+        "label",
+        "input",
+        8
+      ],
+      [
+        "plain",
+        " auto ",
+        0
+      ],
+      [
+        "muted",
+        "->",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "warn",
+        "(none)",
+        0
+      ],
+      [
+        "plain",
+        "  ",
+        0
+      ],
+      [
+        "warn",
+        "muted",
+        0
+      ]
+    ],
+    [],
+    [
+      [
+        "muted",
+        "`tessaro-ctl audio outputs` and `audio inputs` list what is plugged in.",
+        0
+      ]
+    ]
+  ]
+}

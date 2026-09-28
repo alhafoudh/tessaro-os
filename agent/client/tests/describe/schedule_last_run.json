@@ -1,0 +1,112 @@
+{
+  "function": "schedule::last_run",
+  "input": {
+    "infos": [
+      {
+        "calendar": [
+          "daily"
+        ],
+        "enabled": true,
+        "id": "a1",
+        "last_run": {
+          "finished": {
+            "local": "",
+            "unix": 1789995170
+          },
+          "result": "success",
+          "started": {
+            "local": "",
+            "unix": 1789990000
+          },
+          "status": "0"
+        },
+        "last_trigger": null,
+        "lines": [
+          "tessaro-ctl screen power off"
+        ],
+        "name": "night",
+        "next": null,
+        "on_error": "stop",
+        "running": 0,
+        "timeout_s": null,
+        "units": "tessaro-schedule-a1*"
+      },
+      {
+        "calendar": [
+          "Mon..Fri 07:00"
+        ],
+        "enabled": false,
+        "id": "b2",
+        "last_run": {
+          "finished": {
+            "local": "",
+            "unix": 1789999955
+          },
+          "result": "exit-code",
+          "started": {
+            "local": "",
+            "unix": 1789999000
+          },
+          "status": "1"
+        },
+        "last_trigger": null,
+        "lines": [
+          "false"
+        ],
+        "name": "morning",
+        "next": null,
+        "on_error": "continue",
+        "running": 2,
+        "timeout_s": 90,
+        "units": "tessaro-schedule-b2*"
+      },
+      {
+        "calendar": [
+          "hourly"
+        ],
+        "enabled": true,
+        "id": "c3",
+        "last_run": null,
+        "last_trigger": null,
+        "lines": [
+          "true"
+        ],
+        "name": "never-ran",
+        "next": null,
+        "on_error": "stop",
+        "running": 0,
+        "timeout_s": null,
+        "units": "tessaro-schedule-c3*"
+      }
+    ],
+    "now": 1790000000
+  },
+  "output": [
+    [
+      [
+        "ok",
+        "success, 1h 20min ago",
+        0
+      ]
+    ],
+    [
+      [
+        "bad",
+        "exit-code 1, 45s ago",
+        0
+      ],
+      [
+        "warn",
+        " (2 running)",
+        0
+      ]
+    ],
+    [
+      [
+        "muted",
+        "never",
+        0
+      ]
+    ]
+  ]
+}

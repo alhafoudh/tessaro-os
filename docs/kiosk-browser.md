@@ -291,8 +291,8 @@ styled like the maintenance page, and shows what someone standing at a fresh
 device needs to reach it: the node name, its IPv4 addresses, the hotspot's
 SSID while the hotspot is up, whether the device is online, whether it is
 claimed and, until it is, the `tessaro-ctl access claim --node NAME` that
-claims it, next to a QR code that opens the setup portal on a phone (see
-[setup-portal.md](setup-portal.md)).
+claims it, next to a QR code that opens Quick Setup on a phone (see
+[quick-setup.md](quick-setup.md)).
 
 The details and setup panels have equal dimensions, with the hotspot name
 above the QR code and the setup address below it. Narrow screens stack the

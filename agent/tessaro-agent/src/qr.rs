@@ -1,6 +1,6 @@
 //! The QR code on the welcome page that joins a phone to the open hotspot,
-//! after which the phone's captive portal check opens the setup portal
-//! (docs/setup-portal.md).
+//! after which the phone's captive portal check opens Quick Setup
+//! (docs/quick-setup.md).
 //!
 //! The payload is the `WIFI:` format every phone camera reads. The SVG is
 //! drawn here from the module matrix, with rounded modules on a viewBox

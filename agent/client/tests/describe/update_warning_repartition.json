@@ -1,0 +1,9 @@
+{
+  "function": "update::warning",
+  "input": {
+    "name": "tessaro.wic.zst",
+    "repartition": true,
+    "wipe_data": false
+  },
+  "output": "rewrite the whole disk with tessaro.wic.zst (partition table, boot, root and /data: every setting, the claim and the identity go, and a power cut while it writes needs a physical reflash)"
+}

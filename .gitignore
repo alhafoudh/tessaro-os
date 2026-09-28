@@ -25,6 +25,13 @@
 # The same for gui/, whose tasks build into build/gui-target.
 /gui/target/
 
+# Webconfig's dependencies and its generated API types, remade by
+# `mise run webconfig:setup` and `webconfig:gen`; its build goes to
+# build/webconfig.
+/webconfig/node_modules/
+/webconfig/src/api/schema.d.ts
+/webconfig/dist/
+
 # Build output and shared caches. No trailing slash on cache: in a worktree
 # it is a symlink to the main checkout's (CLAUDE.md), which `/cache/` misses.
 /build/

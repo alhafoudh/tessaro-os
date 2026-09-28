@@ -1,0 +1,71 @@
+{
+  "function": "time::hint_and_error",
+  "input": {
+    "can_ntp": true,
+    "error": "timesyncd did not answer",
+    "frequency": null,
+    "last": null,
+    "local_rtc": null,
+    "local_time": null,
+    "now_usec": null,
+    "ntp": true,
+    "poll_interval_max_usec": null,
+    "poll_interval_min_usec": null,
+    "poll_interval_usec": null,
+    "root_distance_max_usec": null,
+    "rtc_usec": null,
+    "server_address": null,
+    "server_name": null,
+    "servers": {
+      "dhcp": [
+        "192.0.2.1"
+      ],
+      "fallback": [
+        "time.example.test"
+      ],
+      "link": [],
+      "runtime": [
+        "192.0.2.1"
+      ],
+      "system": []
+    },
+    "setting_servers": [],
+    "setting_timezone": "UTC",
+    "synchronized": false,
+    "timesyncd": "failed",
+    "timezone": "UTC",
+    "utc_offset_seconds": null,
+    "zone_abbreviation": null
+  },
+  "output": {
+    "error": [
+      [
+        "bad",
+        "not everything could be read:",
+        0
+      ],
+      [
+        "plain",
+        " timesyncd did not answer",
+        0
+      ]
+    ],
+    "hint": [
+      [
+        "muted",
+        "not in sync? name a reachable server:",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "cmd",
+        "tessaro-ctl time ntp on --server HOST",
+        0
+      ]
+    ]
+  }
+}

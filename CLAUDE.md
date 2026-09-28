@@ -46,7 +46,8 @@ same change as the behaviour it describes.
 | [docs/e2e.md](docs/e2e.md) | the qemu RSpec suite: running it, lanes, ports, harness quirks |
 | [docs/clients.md](docs/clients.md) | what `tessaro-ctl` and `tessaro-gui` share in `agent/client` and what each keeps, reporting without printing, tones, lines and facts, adding a command, the differences on purpose |
 | [docs/gui.md](docs/gui.md) | `tessaro-gui`: inner windows, keyboard, the node list, device pages per command group, workers and jobs, the VNC viewer |
-| [docs/setup-portal.md](docs/setup-portal.md) | the welcome page's QR code, captive portal detection, nginx's redirect to the setup page on the API's port, what the page uses, the online indicator |
+| [docs/webconfig.md](docs/webconfig.md) | Webconfig: browser sessions, tickets and the activity rule, the handover across restarts, opening it from ctl and the GUI, the pages, the describe port and its golden fixtures, serving and caching, the frontend and its codegen, the dev proxy, the bitbake build and `bitbake-lock.json` |
+| [docs/quick-setup.md](docs/quick-setup.md) | the welcome page's QR code, captive portal detection, nginx's redirect to Quick Setup on the API's port, what the page uses, the online indicator |
 
 **Writing docs** (in `docs/` and in this file):
 
@@ -108,6 +109,12 @@ Use the mise tasks rather than calling `kas-container` directly:
 | `mise run gui:run` | Run `tessaro-gui`, the desktop client, from this checkout |
 | `mise run gui:build` | Release `tessaro-gui` for this host |
 | `mise run gui:test` / `gui:lint` | Its unit tests; `cargo fmt --check` plus clippy |
+| `mise run webconfig:setup` | `npm ci` for Webconfig |
+| `mise run webconfig:gen` | Webconfig's API types from `agent/protocol/openapi.json` |
+| `mise run webconfig:run` | Webconfig's dev server, the API proxied to `TESSARO_WEBCONFIG_TARGET` (default the qemu forward) |
+| `mise run webconfig:build` | Webconfig into `build/webconfig`, which `agent:integration` serves |
+| `mise run webconfig:test` / `webconfig:lint` | Its unit tests, the golden fixtures and `bitbake-lock.json`; tsc, ESLint and Prettier |
+| `mise run webconfig:lock` | `bitbake-lock.json` from `package-lock.json`, after any change to the dependencies |
 | `mise run dev:tunnel` | Workstation: autossh VNC/SSH forwards to the build host |
 
 Exit the QEMU serial console with `Ctrl-a x`.
@@ -286,6 +293,21 @@ recipe.
   the table in [docs/gui.md](docs/gui.md)). Its logic and its words go into
   `agent/client` first and both call them (**Adding a command** in
   [docs/clients.md](docs/clients.md)).
+* **A new `tessaro-ctl` command gets its Webconfig action in the same
+  change too**, on the page of its group in `webconfig/src/pages/`, unless
+  it is native-only (the terminal, DevTools over SSH, discovery), which
+  [docs/webconfig.md](docs/webconfig.md) says so of.
+* **Webconfig's words are a port of `agent/client`'s**
+  (`webconfig/src/describe/`), and a golden fixture pins every ported
+  function: a new or changed describe function gets a fixture in
+  `agent/client/tests/describe/` and its renderer in both `tests/describe.rs`
+  and `renderers.ts` (**The pages** in [docs/webconfig.md](docs/webconfig.md)).
+  Floats go through `fixed()`, never `toFixed`.
+* **A change to `webconfig/package-lock.json` rewrites
+  `webconfig/bitbake-lock.json` in the same change** (`mise run
+  webconfig:lock`): the recipe fetches only what that file lists. Keep
+  Webconfig's tools on Node 22.11 (Vite 6, not 7): that is bitbake's
+  `nodejs-native`.
 * **What a `tessaro-ctl` read returns reaches the page bridge in the same
   change**, when a bridge call mirrors that read (the call table in
   [docs/bridge.md](docs/bridge.md), `page_action` in `control/bridge.rs`):
@@ -298,7 +320,11 @@ recipe.
   `agent/protocol/openapi.json` in the same change
   (`UPDATE_OPENAPI=1 cargo test -p tessaro-agent openapi`). Nothing streams:
   a long command is a job, polled ([docs/api.md](docs/api.md)). Port 7400
-  serves the API, the setup page and Swagger UI, and nothing else.
+  serves the API, Webconfig and Swagger UI, and nothing else.
+* **A browser session is a token's, never a credential of its own**
+  (`api/sessions.rs`): it must end with its token, and must never decide
+  whether the device is claimed. A browser write from another origin stays
+  refused (`guard` in `api/mod.rs`); do not add CORS.
 
 **Command-line output is colored, and any new CLI must be too.** Print through
 anstream's `println!`/`eprintln!` (imported to shadow the std macros) with the

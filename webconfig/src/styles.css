@@ -1,0 +1,96 @@
+/* Webconfig's one look, the desktop GUI's: dark, small text, tight padding,
+   grey chrome and striped tables. The colors and sizes are theme.rs's
+   (gui/tessaro-gui/src/theme.rs); change them there and here together. */
+
+@import "tailwindcss";
+
+@font-face {
+  font-family: "Manrope";
+  src: url("./fonts/Manrope-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-display: block;
+}
+
+@font-face {
+  font-family: "Manrope";
+  src: url("./fonts/Manrope-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-display: block;
+}
+
+@theme {
+  --font-sans: "Manrope", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
+
+  --text-base: 13px;
+  --text-base--line-height: 1.35;
+  --text-sm: 12px;
+  --text-sm--line-height: 1.35;
+
+  --color-desk: #0a0d14;
+  --color-background: #0f131d;
+  --color-panel: #141925;
+  --color-stripe: #181e2c;
+  --color-chrome: #10243a;
+  --color-border: #222c3e;
+  --color-text: #eaf0f8;
+  --color-muted: #8e9bb0;
+  --color-primary: #5cc8ff;
+  --color-primary-hover: #80d4ff;
+  --color-primary-pressed: #45b2eb;
+  --color-accent: #9d8cff;
+  --color-success: #5fe0a6;
+  --color-success-hover: #86e9bd;
+  --color-success-pressed: #4cc792;
+  --color-warning: #ffc66b;
+  --color-danger: #ff7a7a;
+  --color-source: #5cc8ff;
+  --color-selection: #2a234d;
+  --color-button: #162a42;
+  --color-button-hover: #1e3755;
+  --color-button-border: #2a4262;
+  --color-button-text: #eaf0f8;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-desk text-base text-text font-sans antialiased;
+    margin: 0;
+  }
+
+  ::selection {
+    background: var(--color-selection);
+  }
+
+  input,
+  select,
+  textarea {
+    @apply bg-background text-text border border-border rounded-[2px] px-1.5 py-0.5 text-sm outline-none;
+  }
+
+  input:focus,
+  select:focus,
+  textarea:focus {
+    @apply border-primary;
+  }
+
+  input:disabled,
+  select:disabled,
+  textarea:disabled {
+    @apply opacity-50;
+  }
+
+  input[type="checkbox"] {
+    @apply accent-primary p-0;
+  }
+
+  input[type="range"] {
+    @apply accent-primary border-0 px-0;
+  }
+}

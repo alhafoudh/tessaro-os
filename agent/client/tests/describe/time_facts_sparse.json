@@ -1,0 +1,126 @@
+{
+  "function": "time::facts",
+  "input": {
+    "can_ntp": false,
+    "error": "timedated did not answer",
+    "frequency": null,
+    "last": null,
+    "local_rtc": null,
+    "local_time": null,
+    "now_usec": 1790000000000000,
+    "ntp": null,
+    "poll_interval_max_usec": null,
+    "poll_interval_min_usec": null,
+    "poll_interval_usec": 64000000,
+    "root_distance_max_usec": null,
+    "rtc_usec": null,
+    "server_address": null,
+    "server_name": null,
+    "servers": {
+      "dhcp": [],
+      "fallback": [],
+      "link": [],
+      "runtime": [],
+      "system": []
+    },
+    "setting_servers": [],
+    "setting_timezone": "UTC",
+    "synchronized": null,
+    "timesyncd": "active",
+    "timezone": null,
+    "utc_offset_seconds": null,
+    "zone_abbreviation": null
+  },
+  "output": [
+    {
+      "label": "timezone",
+      "value": [
+        [
+          "muted",
+          "(not reported)",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "local time",
+      "value": [
+        [
+          "muted",
+          "(not reported)",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "in sync",
+      "value": [
+        [
+          "muted",
+          "(not reported)",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "ntp",
+      "value": [
+        [
+          "bad",
+          "not available on this image",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "timesyncd",
+      "value": [
+        [
+          "ok",
+          "active",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "server",
+      "value": [
+        [
+          "warn",
+          "none yet",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "poll",
+      "value": [
+        [
+          "plain",
+          "every 1min 4s",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "answers",
+      "value": [
+        [
+          "warn",
+          "none yet",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "hw clock",
+      "value": [
+        [
+          "muted",
+          "none",
+          0
+        ]
+      ]
+    }
+  ]
+}

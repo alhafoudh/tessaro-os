@@ -1,0 +1,107 @@
+{
+  "function": "audio::show",
+  "input": {
+    "error": null,
+    "input": {
+      "devices": [],
+      "fallback": null,
+      "muted": false,
+      "setting": "auto",
+      "using": null,
+      "volume": 25
+    },
+    "output": {
+      "devices": [],
+      "fallback": null,
+      "muted": false,
+      "setting": "off",
+      "using": null,
+      "volume": 80
+    },
+    "running": false
+  },
+  "output": [
+    [
+      [
+        "label",
+        "output",
+        8
+      ],
+      [
+        "plain",
+        " off ",
+        0
+      ],
+      [
+        "muted",
+        "->",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "(unknown)",
+        0
+      ],
+      [
+        "plain",
+        "  ",
+        0
+      ],
+      [
+        "warn",
+        "off",
+        0
+      ]
+    ],
+    [
+      [
+        "label",
+        "input",
+        8
+      ],
+      [
+        "plain",
+        " auto ",
+        0
+      ],
+      [
+        "muted",
+        "->",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "(unknown)",
+        0
+      ],
+      [
+        "plain",
+        "  ",
+        0
+      ],
+      [
+        "plain",
+        "25%",
+        0
+      ]
+    ],
+    [],
+    [
+      [
+        "muted",
+        "`tessaro-ctl audio outputs` and `audio inputs` list what is plugged in.",
+        0
+      ]
+    ]
+  ]
+}

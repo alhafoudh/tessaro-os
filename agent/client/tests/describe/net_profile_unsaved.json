@@ -1,0 +1,219 @@
+{
+  "function": "net::profile",
+  "input": {
+    "addresses": [],
+    "ipv4": {
+      "addresses": [
+        "10.0.0.5/8"
+      ],
+      "dns": [],
+      "gateway": null,
+      "ignore_auto_dns": false,
+      "method": "auto"
+    },
+    "ipv6": {
+      "addresses": [],
+      "dns": [],
+      "gateway": null,
+      "ignore_auto_dns": false,
+      "method": "manual"
+    },
+    "profile": {
+      "active": false,
+      "autoconnect": false,
+      "device": null,
+      "kind": "ethernet",
+      "managed": false,
+      "name": "Wired connection 1",
+      "priority": 0,
+      "saved": false,
+      "uuid": "9a0b"
+    },
+    "wifi": null
+  },
+  "output": [
+    [
+      [
+        "heading",
+        "Wired connection 1",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "(9a0b)",
+        0
+      ]
+    ],
+    [
+      [
+        "label",
+        "kind",
+        12
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "plain",
+        "ethernet",
+        0
+      ]
+    ],
+    [
+      [
+        "label",
+        "device",
+        12
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "(any, not active)",
+        0
+      ]
+    ],
+    [
+      [
+        "label",
+        "autoconnect",
+        12
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "warn",
+        "no",
+        0
+      ],
+      [
+        "plain",
+        "  ",
+        0
+      ],
+      [
+        "muted",
+        "(priority 0)",
+        0
+      ]
+    ],
+    [
+      [
+        "label",
+        "saved",
+        12
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "warn",
+        "no",
+        0
+      ],
+      [
+        "plain",
+        "  ",
+        0
+      ],
+      [
+        "muted",
+        "(lost at reboot)",
+        0
+      ]
+    ],
+    [
+      [
+        "label",
+        "ipv4",
+        12
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "plain",
+        "auto",
+        0
+      ]
+    ],
+    [
+      [
+        "plain",
+        "    ",
+        0
+      ],
+      [
+        "label",
+        "addresses",
+        15
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "plain",
+        "10.0.0.5/8",
+        0
+      ]
+    ],
+    [
+      [
+        "label",
+        "ipv6",
+        12
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "plain",
+        "manual",
+        0
+      ]
+    ],
+    [
+      [
+        "plain",
+        "    ",
+        0
+      ],
+      [
+        "label",
+        "addresses",
+        15
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "(none)",
+        0
+      ]
+    ]
+  ]
+}

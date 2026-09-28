@@ -77,7 +77,12 @@ start.
   claim cases claim, check and unclaim inside one SSH command, with a
   local-socket unclaim in a `trap`; `ssh-key`, which has to log in by key
   while claimed, first starts a guard on the guest that unclaims after a
-  timeout if no key gets in.
+  timeout if no key gets in. The `webconfig` lane claims over the API
+  instead, and between its claim and unclaim goes nowhere near SSH: it waits
+  on the API, and every case unclaims with its token in `ensure`.
+* **A browser is `Browser` in `support/api.rb`**: the API from the host
+  with `Origin` and `Sec-Fetch-Site` as a browser sends them, keeping the
+  cookies it is given, so session cases need no real browser.
 * **It retunes the agent for the run** with `tessaro-ctl config set --no-apply` over
   the guest's local socket (short probes and backoff, no periodic refresh) and
   unsets those keys afterwards. The VM runs with `snapshot`, so a power-off

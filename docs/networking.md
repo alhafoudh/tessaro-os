@@ -223,8 +223,8 @@ renders, `txn.rs` switches) and `ping.rs`.
   device itself.** `tessaro-captive.conf` (tessaro-portal) in
   `/etc/NetworkManager/dnsmasq-shared.d/` maps only the probe host names to
   10.42.0.1, which is why the address is pinned; every other name resolves
-  as before. How that opens the setup portal is in
-  [setup-portal.md](setup-portal.md).
+  as before. How that opens Quick Setup is in
+  [quick-setup.md](quick-setup.md).
 * **Scanning from the hotspot goes through a station interface beside it**
   (`nm/sidescan.rs`), because an access point cannot scan on most radios:
   mac80211 refuses it unless the driver sets `NL80211_FEATURE_AP_SCAN`

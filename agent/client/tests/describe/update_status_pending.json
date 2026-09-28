@@ -1,0 +1,68 @@
+{
+  "function": "update::status_lines",
+  "input": {
+    "error": null,
+    "last": {
+      "applied": true,
+      "attempts": 1,
+      "message": "applied tessaro.wic.zst",
+      "source": "tessaro-flash",
+      "wiped_data": false
+    },
+    "name": "tessaro.wic.zst",
+    "phase": "pending",
+    "prepared": 0,
+    "received": 0,
+    "repartition": true,
+    "size": 0,
+    "to_prepare": 0,
+    "verified": 0,
+    "wipe_data": true
+  },
+  "output": [
+    [
+      [
+        "heading",
+        "tessaro.wic.zst",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "ok",
+        "is applied at the next boot",
+        0
+      ],
+      [
+        "warn",
+        ", rewriting the whole disk",
+        0
+      ]
+    ],
+    [
+      [
+        "label",
+        "last update",
+        12
+      ],
+      [
+        "plain",
+        " applied tessaro.wic.zst (",
+        0
+      ],
+      [
+        "ok",
+        "applied",
+        0
+      ],
+      [
+        "plain",
+        ")",
+        0
+      ]
+    ]
+  ]
+}

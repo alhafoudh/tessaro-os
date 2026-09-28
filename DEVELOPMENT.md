@@ -9,7 +9,8 @@ workstation, and test the agent. How each subsystem works is in
 - Linux x86_64 with Docker, for the builds. [kas](https://kas.readthedocs.io/)
   provides `kas-container`, which runs every build in its own container.
 - [mise](https://mise.jdx.dev/): `mise trust && mise install` pins Rust (the
-  version Chromium's layers dictate) and installs `bmaptool`.
+  version Chromium's layers dictate) and Node (the one bitbake builds
+  Webconfig with), and installs `bmaptool`.
 - `zstd` on the build host and the workstation: images ship as `.wic.zst`,
   and `bmaptool` and `qemu:unpack` run it to decompress them. macOS does not
   have it (`brew install zstd`).
@@ -186,6 +187,26 @@ On macOS, the release build also creates
 
 How it works is in [docs/gui.md](docs/gui.md).
 
+## Webconfig
+
+Webconfig is the device's management pages in a browser, a React app in
+`webconfig/` that the image builds (`tessaro-webconfig`) and the agent
+serves at `/` on port 7400. Its API types are generated from
+`agent/protocol/openapi.json`.
+
+```sh
+mise run webconfig:setup     # npm ci
+mise run webconfig:run       # dev server on http://localhost:5173, API proxied to the qemu forward
+mise run webconfig:test      # unit tests, the golden fixtures, bitbake-lock.json current
+mise run webconfig:lint      # tsc, ESLint, Prettier
+mise run webconfig:build     # into build/webconfig, which agent:integration serves
+mise run webconfig:lock      # after changing a dependency
+```
+
+`TESSARO_WEBCONFIG_TARGET=https://ADDRESS:7400 mise run webconfig:run`
+points the dev server at a real device. How it works is in
+[docs/webconfig.md](docs/webconfig.md).
+
 ## End-to-end tests
 
 `mise run e2e:run` boots the qemux86-64 image and provokes what the agent
@@ -230,6 +251,7 @@ is in `build/e2e/`. Lanes, ports and the harness are explained in
 | `meta-tessaro-distro/` | the product layer: distro config, image additions, recipes, wks files |
 | `agent/` | `tessaro-agent`, `tessaro-ctl`, the API's types, the client library and the updater |
 | `gui/` | `tessaro-gui`, the desktop client (a workspace of its own) |
+| `webconfig/` | Webconfig, the management pages the device serves to a browser |
 | `test/e2e/` | the end-to-end suite |
 | `docs/` | how each subsystem works |
 | `mise.toml` | every task |

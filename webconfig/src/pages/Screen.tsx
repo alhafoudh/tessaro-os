@@ -1,0 +1,210 @@
+// The GUI's Screen page (pages.rs modes_view, device.rs screenshot_view):
+// the display modes and the screen's own controls, with the green Confirm
+// that keeps a change on probation counting down beside them; below, what
+// is on screen now, once or every few seconds while Live is on.
+
+import { useQuery } from "@tanstack/react-query";
+import { useCallback, useEffect, useRef, useState } from "react";
+
+import { answer, client, failure } from "../api/client";
+import { useDevice } from "../device/DeviceContext";
+import { PageFrame } from "../shell/PageFrame";
+import { useSecondsLeft } from "../shell/StatusBar";
+import { Button, ErrorLine } from "../ui/controls";
+import { Table } from "../ui/Table";
+import type { PageInfo } from "./registry";
+
+/** worker.rs LIVE_SHOT: how often Live takes a screenshot. */
+const LIVE_MS = 3000;
+
+export function Screen({ info }: { info: PageInfo }) {
+  const { status, settings, link, set, log, refresh } = useDevice();
+  const online = link === "online";
+  const left = useSecondsLeft();
+  const [selected, setSelected] = useState<string | null>(null);
+
+  const modes = useQuery({
+    queryKey: ["screen", "modes"],
+    queryFn: () => answer(client.GET("/api/v1/screen/modes")),
+  });
+  const current = settings?.settings.find((setting) => setting.key === "screen.resolution")?.value ?? "";
+
+  const rows = (modes.data ?? []).flatMap((connector) =>
+    connector.modes.map((mode, at) => ({
+      key: `${connector.name} ${mode}`,
+      cells: [
+        connector.name,
+        mode,
+        <span className="text-muted">{mode === current ? "set" : at === 0 ? "preferred" : ""}</span>,
+      ],
+    })),
+  );
+
+  const applyMode = (key: string | null) => {
+    if (!key) return;
+    const mode = key.slice(key.indexOf(" ") + 1);
+    void set({ "screen.resolution": mode }).catch(() => undefined);
+  };
+
+  const done = async (pending: Promise<{ message: string }>) => {
+    try {
+      log((await pending).message, "ok");
+    } catch (error) {
+      log(failure(error).message, "bad");
+    }
+    refresh();
+  };
+
+  const screenOff = status?.screen_on === false;
+  const power = async (on: boolean) => {
+    try {
+      const answered = await answer(client.POST("/api/v1/screen/power", { body: { on } }));
+      log(answered.on ? "screen on" : "screen off", "ok");
+    } catch (error) {
+      log(failure(error).message, "bad");
+    }
+    refresh();
+  };
+
+  return (
+    <PageFrame
+      title={info.title}
+      scope={info.scope}
+      tools={
+        <>
+          <Button disabled={!online || !selected} onClick={() => applyMode(selected)}>
+            Use this mode
+          </Button>
+          <Button disabled={!online} onClick={() => void power(screenOff)}>
+            {screenOff ? "Screen on" : "Screen off"}
+          </Button>
+          <Button
+            disabled={!online}
+            onClick={() =>
+              void done(answer(client.POST("/api/v1/screen/keyboard", { body: { show: true, selector: null } })))
+            }
+          >
+            Show keyboard
+          </Button>
+          <Button
+            disabled={!online}
+            onClick={() =>
+              void done(answer(client.POST("/api/v1/screen/keyboard", { body: { show: false, selector: null } })))
+            }
+          >
+            Hide keyboard
+          </Button>
+          {/* A guarded change reverts on its own: the countdown is on the
+              button that keeps it. */}
+          {status?.pending && left !== null && (
+            <Button kind="success" onClick={() => void done(answer(client.POST("/api/v1/screen/confirm")))}>
+              Confirm ({left}s)
+            </Button>
+          )}
+        </>
+      }
+    >
+      <Table
+        columns={[{ title: "Output", width: "140px" }, { title: "Mode", width: "160px" }, { title: "" }]}
+        rows={rows}
+        selected={selected}
+        onSelect={setSelected}
+        onActivate={(key) => online && applyMode(key)}
+        empty={modes.isFetching ? "asking the device ..." : "no modes reported"}
+        maxHeight="170px"
+      />
+      <ErrorLine error={modes.error ? failure(modes.error).message : null} />
+      <Screenshot name={status?.node.name ?? "screen"} online={online} />
+    </PageFrame>
+  );
+}
+
+interface Shot {
+  url: string;
+  at: number;
+}
+
+function Screenshot({ name, online }: { name: string; online: boolean }) {
+  const { log } = useDevice();
+  const [shot, setShot] = useState<Shot | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [live, setLive] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
+  const taking = useRef(false);
+
+  // Only the newest picture keeps its object URL.
+  useEffect(
+    () => () => {
+      if (shot) URL.revokeObjectURL(shot.url);
+    },
+    [shot],
+  );
+
+  const take = useCallback(async () => {
+    if (taking.current) return;
+    taking.current = true;
+    try {
+      const blob = await answer(client.GET("/api/v1/screen/screenshot", { parseAs: "blob" }));
+      setShot({ url: URL.createObjectURL(blob), at: Date.now() });
+      setError(null);
+    } catch (problem) {
+      setError(failure(problem).message);
+    } finally {
+      taking.current = false;
+    }
+  }, []);
+
+  // Live shots are taken only while this page is shown: leaving it
+  // unmounts the timer.
+  useEffect(() => {
+    if (!live || !online) return;
+    void take();
+    const timer = setInterval(() => void take(), LIVE_MS);
+    return () => clearInterval(timer);
+  }, [live, online, take]);
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const save = () => {
+    if (!shot) return;
+    const file = `${name}-${Math.floor(Date.now() / 1000)}.jpg`;
+    const link = document.createElement("a");
+    link.href = shot.url;
+    link.download = file;
+    link.click();
+    log(`saved ${file}`, "ok");
+  };
+
+  return (
+    <div className="flex min-h-0 flex-col gap-1">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Button disabled={!online} onClick={() => void take()}>
+          Take
+        </Button>
+        <Button kind={live ? "primary" : "tool"} aria-pressed={live} onClick={() => setLive((on) => !on)}>
+          {live ? "Live (3s): on" : "Live (3s)"}
+        </Button>
+        <Button disabled={!shot} onClick={save}>
+          Save
+        </Button>
+        {error ? (
+          <span className="text-sm text-danger">{error}</span>
+        ) : (
+          shot && (
+            <span className="text-sm text-muted">taken {Math.max(0, Math.floor((now - shot.at) / 1000))}s ago</span>
+          )
+        )}
+      </div>
+      <div className="flex min-h-48 items-center justify-center border border-border bg-panel p-1">
+        {shot ? (
+          <img src={shot.url} alt="What the screen shows" className="max-h-[70vh] max-w-full object-contain" />
+        ) : (
+          <span className="text-sm text-muted">no screenshot yet</span>
+        )}
+      </div>
+    </div>
+  );
+}

@@ -1,0 +1,31 @@
+{
+  "function": "net::change",
+  "input": {
+    "action": "join",
+    "checks": [],
+    "note": null,
+    "outcome": "committed",
+    "profile": null,
+    "reason": null,
+    "uuid": null
+  },
+  "output": [
+    [
+      [
+        "ok",
+        "committed",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "join",
+        0
+      ]
+    ]
+  ]
+}

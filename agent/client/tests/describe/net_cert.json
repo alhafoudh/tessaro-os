@@ -1,0 +1,85 @@
+{
+  "function": "net::cert",
+  "input": [
+    {
+      "fingerprint": "AB:CD",
+      "issuer": "Corp Root CA",
+      "not_after": 4102444800,
+      "self_signed": true,
+      "subject": "Corp Root CA"
+    },
+    {
+      "fingerprint": "12:34",
+      "issuer": "Corp Root CA",
+      "not_after": 951782400,
+      "self_signed": false,
+      "subject": "Corp Issuing CA"
+    }
+  ],
+  "output": [
+    [
+      [
+        "muted",
+        "AB:CD",
+        0
+      ],
+      [
+        "plain",
+        "  ",
+        0
+      ],
+      [
+        "heading",
+        "Corp Root CA",
+        0
+      ],
+      [
+        "plain",
+        "  ",
+        0
+      ],
+      [
+        "label",
+        "until 2100-01-01",
+        0
+      ]
+    ],
+    [
+      [
+        "muted",
+        "12:34",
+        0
+      ],
+      [
+        "plain",
+        "  ",
+        0
+      ],
+      [
+        "heading",
+        "Corp Issuing CA",
+        0
+      ],
+      [
+        "plain",
+        "  ",
+        0
+      ],
+      [
+        "bad",
+        "expired 2000-02-29",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "issued by Corp Root CA",
+        0
+      ]
+    ]
+  ]
+}

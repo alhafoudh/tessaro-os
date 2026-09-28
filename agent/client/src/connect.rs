@@ -626,6 +626,15 @@ impl Session {
         self.token.is_some()
     }
 
+    /// The address this session reaches the device at; none over the local
+    /// socket.
+    pub fn address(&self) -> Option<SocketAddr> {
+        match &self.dial {
+            Dial::Remote { address, .. } => Some(*address),
+            Dial::Local(_) => None,
+        }
+    }
+
     /// One request, its answer as the endpoint's type.
     pub fn call<E: Endpoint>(
         &mut self,

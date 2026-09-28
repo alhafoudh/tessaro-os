@@ -1,0 +1,83 @@
+{
+  "function": "update::status_lines",
+  "input": {
+    "error": null,
+    "last": {
+      "applied": false,
+      "attempts": 1,
+      "message": "the root partition was too small",
+      "source": "tessaro-flash",
+      "wiped_data": true
+    },
+    "name": "tessaro-os-raspberrypi5-0.1.0-ee15eb7.wic.zst",
+    "phase": "receiving",
+    "prepared": 0,
+    "received": 125000000,
+    "repartition": false,
+    "size": 734003200,
+    "to_prepare": 0,
+    "verified": 0,
+    "wipe_data": false
+  },
+  "output": [
+    [
+      [
+        "warn",
+        "receiving",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "heading",
+        "tessaro-os-raspberrypi5-0.1.0-ee15eb7.wic.zst",
+        0
+      ],
+      [
+        "plain",
+        ": 125.0 MB of 734.0 MB (17%) - run ",
+        0
+      ],
+      [
+        "cmd",
+        "`update send`",
+        0
+      ],
+      [
+        "plain",
+        " again to resume",
+        0
+      ]
+    ],
+    [
+      [
+        "label",
+        "last update",
+        12
+      ],
+      [
+        "plain",
+        " the root partition was too small (",
+        0
+      ],
+      [
+        "bad",
+        "not applied",
+        0
+      ],
+      [
+        "warn",
+        ", /data wiped",
+        0
+      ],
+      [
+        "plain",
+        ")",
+        0
+      ]
+    ]
+  ]
+}

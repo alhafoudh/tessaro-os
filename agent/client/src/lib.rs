@@ -33,6 +33,7 @@ pub mod text;
 pub mod transfer;
 pub mod tunnel;
 pub mod update;
+pub mod webconfig;
 
 /// The same mDNS library `connect::browse` uses, for a caller that browses
 /// for good instead (the GUI) and hands results to `connect::found_service`.

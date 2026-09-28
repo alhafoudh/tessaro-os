@@ -49,7 +49,7 @@ const PRIORITY: i32 = 100;
 /// What the hotspot's name starts with.
 pub const HOTSPOT_PREFIX: &str = "tessaro-";
 
-/// The device's own address on the hotspot, where the setup portal answers.
+/// The device's own address on the hotspot, where Quick Setup answers.
 /// `tessaro-captive.conf` (tessaro-network) and `20-tessaro-portal.conf`
 /// (tessaro-selftest) name it too.
 pub const HOTSPOT_ADDRESS: &str = "10.42.0.1";

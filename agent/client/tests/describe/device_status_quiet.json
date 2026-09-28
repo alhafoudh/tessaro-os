@@ -1,0 +1,249 @@
+{
+  "function": "device::status",
+  "input": {
+    "audio": {
+      "error": "no socket",
+      "input": {
+        "devices": [],
+        "fallback": null,
+        "muted": false,
+        "setting": "auto",
+        "using": null,
+        "volume": 0
+      },
+      "output": {
+        "devices": [],
+        "fallback": null,
+        "muted": true,
+        "setting": "auto",
+        "using": null,
+        "volume": 0
+      },
+      "running": false
+    },
+    "bridge": {
+      "mode": "off",
+      "script": "",
+      "script_problem": null
+    },
+    "browser_answering": true,
+    "cpu_percent": null,
+    "current_url": "http://127.0.0.1/",
+    "data": null,
+    "debug_screen": false,
+    "devtools": false,
+    "hardware": {
+      "arch": "x86_64",
+      "board": null,
+      "cores": 1,
+      "cpu": null,
+      "firmware": "SeaBIOS",
+      "model": null,
+      "serial": null,
+      "vendor": null
+    },
+    "image_version": null,
+    "kiosk_url": "http://127.0.0.1/",
+    "maintenance": false,
+    "memory": null,
+    "node": {
+      "claimed": false,
+      "fingerprint": "AB:CD:EF",
+      "id": "3f2a9c1d",
+      "machine": "qemux86-64",
+      "name": "lobby-kiosk",
+      "version": "1.0.0"
+    },
+    "os": "Tessaro 0.1.0",
+    "pending": null,
+    "revision": 1,
+    "screen_on": true,
+    "time": {
+      "ntp": false,
+      "synchronized": null,
+      "timezone": null
+    },
+    "units": {
+      "weston.service": "active"
+    }
+  },
+  "output": {
+    "facts": [
+      {
+        "label": "name",
+        "value": [
+          [
+            "heading",
+            "lobby-kiosk",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "node id",
+        "value": [
+          [
+            "plain",
+            "3f2a9c1d",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "machine",
+        "value": [
+          [
+            "plain",
+            "qemux86-64",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "agent",
+        "value": [
+          [
+            "plain",
+            "1.0.0",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "fingerprint",
+        "value": [
+          [
+            "muted",
+            "AB:CD:EF",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "claimed",
+        "value": [
+          [
+            "warn",
+            "no",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "os",
+        "value": [
+          [
+            "plain",
+            "Tessaro 0.1.0",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "firmware",
+        "value": [
+          [
+            "plain",
+            "SeaBIOS",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "cpu",
+        "value": [
+          [
+            "plain",
+            "1 core ",
+            0
+          ],
+          [
+            "muted",
+            "x86_64",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "revision",
+        "value": [
+          [
+            "plain",
+            "1",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "browser url",
+        "value": [
+          [
+            "plain",
+            "http://127.0.0.1/",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "showing",
+        "value": [
+          [
+            "plain",
+            "http://127.0.0.1/",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "browser",
+        "value": [
+          [
+            "ok",
+            "answering",
+            0
+          ]
+        ]
+      }
+    ],
+    "more": [
+      {
+        "label": "audio",
+        "value": [
+          [
+            "bad",
+            "sound server not answering",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "time",
+        "value": [
+          [
+            "plain",
+            "(unknown timezone), ",
+            0
+          ],
+          [
+            "warn",
+            "NTP off",
+            0
+          ]
+        ]
+      }
+    ],
+    "pending": null,
+    "units": [
+      {
+        "label": "weston.service",
+        "value": [
+          [
+            "ok",
+            "active",
+            0
+          ]
+        ]
+      }
+    ]
+  }
+}

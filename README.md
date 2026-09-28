@@ -43,10 +43,15 @@ touches, and the URL survives reboots and image updates.
   to the device and your page loads them from `http://127.0.0.1/files/`, with
   or without a network.
 - **Owned by whoever claims it first.** A fresh device has no password, and
-  until it is claimed anyone on its network can manage it with `tessaro-ctl`
-  or `tessaro-gui`. Claiming gives you a token, pins the device's certificate
-  and sets a random root password; from then on only token holders get in.
-  Everything goes over TLS.
+  until it is claimed anyone on its network can manage it with `tessaro-ctl`,
+  `tessaro-gui` or Webconfig. Claiming gives you a token, pins the device's
+  certificate and sets a random root password; from then on only token
+  holders get in. Everything goes over TLS.
+- **Managed from a browser too.** Webconfig, at `https://<device>:7400/`, is
+  the device's own management pages: Quick Setup for a fresh device, and
+  everything the desktop client does but its VNC view and SSH terminal. A
+  phone on the device's hotspot is sent there by itself. `tessaro-ctl access
+  webconfig` opens it signed in.
 
 ## Quick start
 

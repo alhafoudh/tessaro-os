@@ -92,6 +92,16 @@ as it likes - a table instead of rows, a dialog instead of a line.
 4. Its place in the GUI in the same change (the table in
    [gui.md](gui.md)): a form or button that calls the same client function,
    showing the same lines.
+5. Its place in Webconfig in the same change, on its group's page
+   (`webconfig/src/pages/`), unless it is native-only. Webconfig cannot link
+   `agent/client`, so its words are a port pinned by golden fixtures
+   (**The pages** in [webconfig.md](webconfig.md)): a new describe function
+   gets a fixture there too.
+
+**Opening Webconfig is shared too** (`webconfig.rs`): the address this
+session reached the device at, with a one-time ticket in its fragment on a
+claimed device, and the host's way of opening a URL; `tessaro-ctl access
+webconfig` and the GUI's Access page both call it.
 
 A check that only one client needs - a GUI form's field being empty - stays
 in that client. A second copy of anything in step 2 is the thing to avoid.

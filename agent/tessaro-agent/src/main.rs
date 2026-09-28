@@ -292,6 +292,9 @@ async fn start_control(
         kiosk_url.to_string(),
         proxy,
     );
+    // Before the first request, which may bring one of their cookies.
+    // naked: load_sessions is blocking() under within()
+    control.load_sessions().await;
 
     let server = api::Server::new(Arc::clone(&control), &device.paths, Arc::clone(log));
     if let Err(err) = api::spawn_unix(Arc::clone(&server), socket.clone(), stop.subscribe()) {

@@ -1,0 +1,180 @@
+{
+  "function": "ping::event_line",
+  "input": [
+    {
+      "address": "192.0.2.7",
+      "event": "start",
+      "host": "example.test"
+    },
+    {
+      "address": "192.0.2.7",
+      "event": "start",
+      "host": "192.0.2.7"
+    },
+    {
+      "bytes": 64,
+      "event": "reply",
+      "rtt_ms": 1.234,
+      "seq": 1
+    },
+    {
+      "event": "timeout",
+      "seq": 2
+    },
+    {
+      "avg_ms": 1.25,
+      "event": "summary",
+      "max_ms": 1.5,
+      "min_ms": 1.0,
+      "received": 3,
+      "sent": 4
+    },
+    {
+      "avg_ms": null,
+      "event": "summary",
+      "max_ms": null,
+      "min_ms": null,
+      "received": 0,
+      "sent": 2
+    }
+  ],
+  "output": [
+    [
+      [
+        "label",
+        "ping",
+        9
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "heading",
+        "example.test",
+        0
+      ],
+      [
+        "plain",
+        " (192.0.2.7)",
+        0
+      ]
+    ],
+    [
+      [
+        "label",
+        "ping",
+        9
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "heading",
+        "192.0.2.7",
+        0
+      ]
+    ],
+    [
+      [
+        "label",
+        "reply",
+        9
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "heading",
+        "1.2 ms",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "seq=1 64 bytes",
+        0
+      ]
+    ],
+    [
+      [
+        "label",
+        "timeout",
+        9
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "warn",
+        "no reply",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "seq=2",
+        0
+      ]
+    ],
+    [
+      [
+        "heading",
+        "result",
+        9
+      ],
+      [
+        "plain",
+        " 3/4 received, ",
+        0
+      ],
+      [
+        "warn",
+        "25% lost",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "(min 1.0, avg 1.2, max 1.5 ms)",
+        0
+      ]
+    ],
+    [
+      [
+        "heading",
+        "result",
+        9
+      ],
+      [
+        "plain",
+        " 0/2 received, ",
+        0
+      ],
+      [
+        "bad",
+        "100% lost",
+        0
+      ]
+    ]
+  ]
+}

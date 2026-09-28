@@ -95,7 +95,10 @@ answers everything:
 | `data.set(name, value)`, `data.unset(name)` | actions | `config set data.NAME=...` / `unset` |
 
 Nothing under `access`, `ssh`, `update` or `device factory-reset`, and no
-`config set` of anything but `data.*`, is reachable from a page.
+`config set` of anything but `data.*`, is reachable from a page. That
+includes Webconfig's browser sessions and tickets (`access/session`,
+`access/ticket`): they are credentials, and the kiosk page is not a
+manager of the device.
 
 * **`data.set` restarts nothing when no template uses the key.** A `data.*` is
   read by the templates and by this bridge only, so a value no template names
@@ -116,7 +119,7 @@ Nothing under `access`, `ssh`, `update` or `device factory-reset`, and no
   being offline.** It shares that call's request and cache: an answer from
   Cloudflare's trace at 1.1.1.1 resolves `true`, anything else `false`. The
   result also feeds the welcome page's online indicator (see **Online** in
-  [setup-portal.md](setup-portal.md)).
+  [quick-setup.md](quick-setup.md)).
 
 ## Who may call
 

@@ -1,0 +1,57 @@
+{
+  "function": "storage::plan",
+  "input": {
+    "filesystem_from": 990000000,
+    "filesystem_to": 990000000,
+    "partition": "/dev/sda3",
+    "partition_from": 1000000000,
+    "partition_to": 64000000000,
+    "phase": "plan"
+  },
+  "output": {
+    "facts": [
+      {
+        "label": "partition",
+        "value": [
+          [
+            "heading",
+            "/dev/sda3",
+            0
+          ],
+          [
+            "plain",
+            " ",
+            0
+          ],
+          [
+            "plain",
+            "1.0 GB -> ",
+            0
+          ],
+          [
+            "ok",
+            "64.0 GB",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "filesystem",
+        "value": [
+          [
+            "plain",
+            "990.0 MB ",
+            0
+          ],
+          [
+            "muted",
+            "(unchanged)",
+            0
+          ]
+        ]
+      }
+    ],
+    "grows": true,
+    "nothing": null
+  }
+}

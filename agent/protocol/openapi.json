@@ -3,7 +3,7 @@
   "info": {
     "title": "Tessaro device API",
     "version": "1.0.0",
-    "description": "The API of one Tessaro device, over HTTPS on port 7400 with the device's own self-signed certificate: pin its SHA-256 fingerprint (`/api/v1/device/id`, the mDNS `fp` record). An unclaimed device answers everything without a token; once claimed, everything but identification and the claim needs `Authorization: Bearer <token>`."
+    "description": "The API of one Tessaro device, over HTTPS on port 7400 with the device's own self-signed certificate: pin its SHA-256 fingerprint (`/api/v1/device/id`, the mDNS `fp` record). An unclaimed device answers everything without a token; once claimed, everything but identification, the claim and signing in needs `Authorization: Bearer <token>`, or a Webconfig browser session's cookie."
   },
   "tags": [
     {
@@ -157,7 +157,9 @@
             "description": "Done.",
             "content": {
               "application/json": {
-                "schema": true
+                "schema": {
+                  "$ref": "#/components/schemas/WelcomeInfo"
+                }
               }
             }
           },
@@ -559,6 +561,181 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Password"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/access/session": {
+      "get": {
+        "operationId": "access.Session",
+        "tags": [
+          "access"
+        ],
+        "summary": "Who this request is: claimed or not, and by which token, if any. Webconfig asks it first.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebSession"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "access.SignIn",
+        "tags": [
+          "access"
+        ],
+        "summary": "Sign a browser in with a token: the answer sets its session cookie.",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SignInBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebSession"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "access.SignOut",
+        "tags": [
+          "access"
+        ],
+        "summary": "Sign this browser out: its session ends and the cookie is cleared.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Done"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/access/ticket": {
+      "post": {
+        "operationId": "access.TicketCreate",
+        "tags": [
+          "access"
+        ],
+        "summary": "A one-time ticket, redeemable for a minute, that signs a browser in as this request's token.",
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ticket"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/access/ticket/redeem": {
+      "post": {
+        "operationId": "access.Redeem",
+        "tags": [
+          "access"
+        ],
+        "summary": "Sign a browser in with a ticket: the answer sets its session cookie.",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RedeemBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebSession"
                 }
               }
             }
@@ -2694,6 +2871,20 @@
                   "format": "binary"
                 }
               }
+            },
+            "headers": {
+              "x-tessaro-size": {
+                "description": "The whole file's size, bytes.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "x-tessaro-mtime": {
+                "description": "The file's mtime, seconds since the epoch.",
+                "schema": {
+                  "type": "string"
+                }
+              }
             }
           },
           "default": {
@@ -2984,6 +3175,11 @@
             "type": "string",
             "const": "internal",
             "description": "500: the device failed to answer."
+          },
+          {
+            "type": "string",
+            "const": "cross-origin",
+            "description": "403: a browser request from another site, or a browser write with\nthe wrong content type."
           }
         ]
       },
@@ -3517,6 +3713,102 @@
         ],
         "description": "RAM, in bytes, from `/proc/meminfo`. `available` is `MemAvailable`: what\ncan be handed out without swapping, page cache included."
       },
+      "WelcomeInfo": {
+        "type": "object",
+        "properties": {
+          "node": {
+            "type": "string"
+          },
+          "addresses": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WelcomeAddress"
+            },
+            "description": "Global IPv4 addresses, with the interface each is on."
+          },
+          "hotspot": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WelcomeHotspot"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "While the hotspot is up."
+          },
+          "claimed": {
+            "type": "boolean"
+          },
+          "online": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether the last public address lookup answered; `None` until one\nhas been tried."
+          },
+          "setup": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WelcomeSetup"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "While the hotspot is up and the device unclaimed."
+          }
+        },
+        "required": [
+          "node",
+          "addresses",
+          "claimed"
+        ],
+        "description": "What the welcome page shows, the body of `welcome.json` too."
+      },
+      "WelcomeAddress": {
+        "type": "object",
+        "properties": {
+          "address": {
+            "type": "string"
+          },
+          "interface": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "address",
+          "interface"
+        ]
+      },
+      "WelcomeHotspot": {
+        "type": "object",
+        "properties": {
+          "ssid": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ssid"
+        ]
+      },
+      "WelcomeSetup": {
+        "type": "object",
+        "properties": {
+          "qr": {
+            "type": "string",
+            "description": "An SVG QR code that joins a phone to the hotspot."
+          },
+          "url": {
+            "type": "string",
+            "description": "Where Quick Setup is on the hotspot."
+          }
+        },
+        "required": [
+          "qr",
+          "url"
+        ]
+      },
       "LogsQuery": {
         "type": "object",
         "properties": {
@@ -3550,7 +3842,9 @@
         "properties": {
           "entries": {
             "type": "array",
-            "items": true,
+            "items": {
+              "$ref": "#/components/schemas/JournalEntry"
+            },
             "description": "journalctl's JSON entries, oldest first: `MESSAGE`,\n`SYSLOG_IDENTIFIER`, `PRIORITY`, `__REALTIME_TIMESTAMP` and the rest."
           },
           "cursor": {
@@ -3565,6 +3859,71 @@
           "entries"
         ],
         "description": "A page of the journal."
+      },
+      "JournalEntry": {
+        "type": "object",
+        "properties": {
+          "MESSAGE": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JournalText"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "SYSLOG_IDENTIFIER": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "PRIORITY": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`0` (emergency) to `7` (debug), as a string.",
+            "default": null
+          },
+          "__REALTIME_TIMESTAMP": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Microseconds since the epoch, as a string.",
+            "default": null
+          },
+          "_SYSTEMD_UNIT": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          }
+        },
+        "additionalProperties": true,
+        "description": "One journal entry as journalctl writes it: the fields a client reads,\nand whatever else the entry has. Only described, for the API's\ndocument: the entries pass through as they are."
+      },
+      "JournalText": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "uint8",
+              "minimum": 0,
+              "maximum": 255
+            }
+          }
+        ],
+        "description": "A journal field: text, or its bytes when it is not UTF-8."
       },
       "RestartBody": {
         "type": "object",
@@ -3714,6 +4073,114 @@
           }
         }
       },
+      "WebSession": {
+        "type": "object",
+        "properties": {
+          "claimed": {
+            "type": "boolean"
+          },
+          "fresh": {
+            "type": "boolean",
+            "description": "Unclaimed and nothing set yet: Webconfig opens on Quick Setup."
+          },
+          "via": {
+            "$ref": "#/components/schemas/Via"
+          },
+          "token": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TokenInfo"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The token the request came in with, directly or through a session.",
+            "default": null
+          },
+          "timeout": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "How long a browser session lasts without use, in seconds\n(`access.session_timeout`)."
+          }
+        },
+        "required": [
+          "claimed",
+          "fresh",
+          "via",
+          "timeout"
+        ],
+        "description": "Who a browser is to the device: what Webconfig asks first\n(docs/webconfig.md)."
+      },
+      "Via": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "anonymous",
+            "description": "No credential: the device is unclaimed, or the endpoint is public."
+          },
+          {
+            "type": "string",
+            "const": "token",
+            "description": "An `Authorization: Bearer` token."
+          },
+          {
+            "type": "string",
+            "const": "session",
+            "description": "A browser session's cookie."
+          },
+          {
+            "type": "string",
+            "const": "local",
+            "description": "The local socket."
+          }
+        ],
+        "description": "How a request was let in."
+      },
+      "SignInBody": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string",
+            "description": "One of the device's tokens, `tsr_...`."
+          }
+        },
+        "required": [
+          "token"
+        ]
+      },
+      "Ticket": {
+        "type": "object",
+        "properties": {
+          "ticket": {
+            "type": "string"
+          },
+          "expires_in": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Seconds it can still be redeemed in."
+          }
+        },
+        "required": [
+          "ticket",
+          "expires_in"
+        ],
+        "description": "A one-time ticket that signs a browser in: `tessaro-ctl access\nwebconfig` puts it in the address it opens."
+      },
+      "RedeemBody": {
+        "type": "object",
+        "properties": {
+          "ticket": {
+            "type": "string",
+            "description": "From `access/ticket`, once."
+          }
+        },
+        "required": [
+          "ticket"
+        ]
+      },
       "SshKeyBody": {
         "type": "object",
         "properties": {
@@ -3843,6 +4310,13 @@
             ],
             "description": "What this device has set, if anything.",
             "default": null
+          },
+          "input": {
+            "$ref": "#/components/schemas/KeyInput",
+            "description": "The control an editor offers for it. Defaulted for older devices.",
+            "default": {
+              "kind": "text"
+            }
           }
         },
         "required": [
@@ -3897,6 +4371,93 @@
           }
         ],
         "description": "What has to happen for a changed value to take effect."
+      },
+      "KeyInput": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "flag"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "description": "A checkbox: `1` or `0`."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "choices": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "kind": {
+                "type": "string",
+                "const": "choice"
+              }
+            },
+            "required": [
+              "kind",
+              "choices"
+            ],
+            "description": "One of these."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "min": {
+                "type": "integer",
+                "format": "int64"
+              },
+              "max": {
+                "type": "integer",
+                "format": "int64"
+              },
+              "kind": {
+                "type": "string",
+                "const": "int"
+              }
+            },
+            "required": [
+              "kind",
+              "min",
+              "max"
+            ],
+            "description": "A whole number in a range."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "text"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "description": "Text."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "read-only"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "description": "Nothing to enter: the device reports it."
+          }
+        ],
+        "description": "How a value is entered. `config set` checks what is entered either way."
       },
       "ConfigQuery": {
         "type": "object",
@@ -6444,7 +7005,9 @@
         "properties": {
           "events": {
             "type": "array",
-            "items": true,
+            "items": {
+              "$ref": "#/components/schemas/JobEvent"
+            },
             "description": "Its steps from number `after` on, in order: `PingEvent`s,\n`SpeedtestEvent`s or `StorageGrowEvent`s, by the job."
           },
           "next": {
@@ -6472,6 +7035,401 @@
         ],
         "description": "What a job did since `after`."
       },
+      "JobEvent": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/PingEvent"
+          },
+          {
+            "$ref": "#/components/schemas/SpeedtestEvent"
+          },
+          {
+            "$ref": "#/components/schemas/StorageGrowEvent"
+          }
+        ],
+        "description": "One step of a job, of the kind the job is. Only described, for the\nAPI's document."
+      },
+      "PingEvent": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "host": {
+                "type": "string"
+              },
+              "address": {
+                "type": "string"
+              },
+              "event": {
+                "type": "string",
+                "const": "start"
+              }
+            },
+            "required": [
+              "event",
+              "host",
+              "address"
+            ],
+            "description": "The address the host resolved to."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "seq": {
+                "type": "integer",
+                "format": "uint16",
+                "minimum": 0,
+                "maximum": 65535
+              },
+              "bytes": {
+                "type": "integer",
+                "format": "uint",
+                "minimum": 0
+              },
+              "rtt_ms": {
+                "type": "number",
+                "format": "double"
+              },
+              "event": {
+                "type": "string",
+                "const": "reply"
+              }
+            },
+            "required": [
+              "event",
+              "seq",
+              "bytes",
+              "rtt_ms"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "seq": {
+                "type": "integer",
+                "format": "uint16",
+                "minimum": 0,
+                "maximum": 65535
+              },
+              "event": {
+                "type": "string",
+                "const": "timeout"
+              }
+            },
+            "required": [
+              "event",
+              "seq"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "sent": {
+                "type": "integer",
+                "format": "uint32",
+                "minimum": 0
+              },
+              "received": {
+                "type": "integer",
+                "format": "uint32",
+                "minimum": 0
+              },
+              "min_ms": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "format": "double"
+              },
+              "avg_ms": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "format": "double"
+              },
+              "max_ms": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "format": "double"
+              },
+              "event": {
+                "type": "string",
+                "const": "summary"
+              }
+            },
+            "required": [
+              "event",
+              "sent",
+              "received"
+            ]
+          }
+        ],
+        "description": "One step of `net-ping`, in the order they arrive."
+      },
+      "SpeedtestEvent": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "ip": {
+                "type": "string"
+              },
+              "colo": {
+                "type": "string",
+                "description": "The Cloudflare data centre answering, as an airport code."
+              },
+              "country": {
+                "type": "string"
+              },
+              "phase": {
+                "type": "string",
+                "const": "server"
+              }
+            },
+            "required": [
+              "phase",
+              "ip",
+              "colo",
+              "country"
+            ],
+            "description": "Where Cloudflare sees the device from."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "samples": {
+                "type": "integer",
+                "format": "uint32",
+                "minimum": 0
+              },
+              "avg_ms": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "format": "double"
+              },
+              "min_ms": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "format": "double"
+              },
+              "max_ms": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "format": "double"
+              },
+              "phase": {
+                "type": "string",
+                "const": "latency"
+              }
+            },
+            "required": [
+              "phase",
+              "samples"
+            ],
+            "description": "Round trips of an empty request, less the server's own time."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "direction": {
+                "$ref": "#/components/schemas/Direction"
+              },
+              "size": {
+                "type": "integer",
+                "format": "uint64",
+                "minimum": 0
+              },
+              "samples": {
+                "type": "integer",
+                "format": "uint32",
+                "minimum": 0
+              },
+              "attempts": {
+                "type": "integer",
+                "format": "uint32",
+                "minimum": 0
+              },
+              "median_mbit": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "format": "double"
+              },
+              "min_mbit": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "format": "double"
+              },
+              "max_mbit": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "format": "double"
+              },
+              "phase": {
+                "type": "string",
+                "const": "transfer"
+              }
+            },
+            "required": [
+              "phase",
+              "direction",
+              "size",
+              "samples",
+              "attempts"
+            ],
+            "description": "Every sample of one payload size in one direction."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "download_mbit": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "format": "double"
+              },
+              "upload_mbit": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "format": "double"
+              },
+              "latency_ms": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "format": "double"
+              },
+              "phase": {
+                "type": "string",
+                "const": "result"
+              }
+            },
+            "required": [
+              "phase"
+            ],
+            "description": "The median at the largest size that produced samples: small payloads\nnever leave slow start and under-report a fast link."
+          }
+        ],
+        "description": "One step of `speedtest`, in the order they arrive."
+      },
+      "Direction": {
+        "type": "string",
+        "enum": [
+          "download",
+          "upload"
+        ]
+      },
+      "StorageGrowEvent": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "partition": {
+                "type": "string",
+                "description": "The partition, `/dev/sda3`."
+              },
+              "partition_from": {
+                "type": "integer",
+                "format": "uint64",
+                "minimum": 0
+              },
+              "partition_to": {
+                "type": "integer",
+                "format": "uint64",
+                "minimum": 0
+              },
+              "filesystem_from": {
+                "type": "integer",
+                "format": "uint64",
+                "minimum": 0
+              },
+              "filesystem_to": {
+                "type": "integer",
+                "format": "uint64",
+                "minimum": 0
+              },
+              "phase": {
+                "type": "string",
+                "const": "plan"
+              }
+            },
+            "required": [
+              "phase",
+              "partition",
+              "partition_from",
+              "partition_to",
+              "filesystem_from",
+              "filesystem_to"
+            ],
+            "description": "What would change. Equal sizes mean that part is already done; both\nequal, that there is nothing to grow."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "what": {
+                "type": "string"
+              },
+              "command": {
+                "type": "string"
+              },
+              "phase": {
+                "type": "string",
+                "const": "step"
+              }
+            },
+            "required": [
+              "phase",
+              "what",
+              "command"
+            ],
+            "description": "About to run `command`."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "partition": {
+                "type": "integer",
+                "format": "uint64",
+                "minimum": 0
+              },
+              "filesystem": {
+                "type": "integer",
+                "format": "uint64",
+                "minimum": 0
+              },
+              "phase": {
+                "type": "string",
+                "const": "grown"
+              }
+            },
+            "required": [
+              "phase",
+              "partition",
+              "filesystem"
+            ],
+            "description": "The sizes afterwards, read back from the kernel and the filesystem."
+          }
+        ],
+        "description": "One step of `storage-grow`, in the order they arrive. Sizes in bytes."
+      },
       "JobRef": {
         "type": "object",
         "properties": {
@@ -6488,12 +7446,21 @@
       "token": {
         "type": "http",
         "scheme": "bearer"
+      },
+      "session": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "__Host-tessaro-{node id}",
+        "description": "Set by signing in (`access/session`, `access/ticket/redeem`) or claiming from a browser. Browser requests must come from the device's own origin."
       }
     }
   },
   "security": [
     {
       "token": []
+    },
+    {
+      "session": []
     }
   ]
 }

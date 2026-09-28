@@ -1,33 +1,49 @@
-//! The files the API server serves besides the API: the setup page at `/`
-//! and Swagger UI at `/api/docs/`. Both are read-only trees in the image.
+//! The files the API server serves besides the API: Webconfig at `/` and
+//! Swagger UI at `/api/docs/`. Both are read-only trees in the image.
 
 use std::path::{Path, PathBuf};
 
 use crate::deadline::blocking;
 
-/// The largest file served; the page, its fonts and Swagger UI's bundle all
-/// fit with room to spare.
+/// The largest file served; Webconfig's bundles, its fonts and Swagger UI's
+/// bundle all fit with room to spare.
 const MAX: u64 = 8 * 1024 * 1024;
+
+/// Where Vite puts what it builds with a hash in the name: a new build is a
+/// new name, so these never change and may be cached for good.
+const ASSETS: &str = "assets/";
 
 pub struct File {
     pub content_type: &'static str,
     pub body: Vec<u8>,
+    /// Its name has its content's hash: cache it for good.
+    pub immutable: bool,
 }
 
 /// `request` (the URL path below `root`'s mount) as a file under `root`: a
 /// directory is its `index.html`. With `fallback`, a path that is no file
-/// is `index.html` itself, the way the setup page wants every path it does
-/// not know answered. `None` when there is nothing to serve.
+/// is `index.html` itself - Webconfig's routes are paths of its own - unless
+/// it names a file (has a `.` in its last part) or is under `assets/`: a
+/// missing script answered with the page would fail as a syntax error rather
+/// than a 404. `None` when there is nothing to serve.
 pub async fn read(root: &Path, request: &str, fallback: bool) -> Option<File> {
     let path = resolve(root, request)?;
     let root = root.to_path_buf();
+    let relative = request.trim_start_matches('/');
+    let immutable = relative.starts_with(ASSETS);
+    let last = relative.rsplit('/').next().unwrap_or("");
+    let fallback = fallback && !immutable && !last.contains('.');
     // naked: blocking() is under within()
-    blocking("reading a static file", move || {
+    let file = blocking("reading a static file", move || {
         Ok(load(&path).or_else(|| fallback.then(|| load(&root.join("index.html"))).flatten()))
     })
     .await
     .ok()
-    .flatten()
+    .flatten()?;
+    Some(File {
+        immutable: immutable && !file.content_type.starts_with("text/html"),
+        ..file
+    })
 }
 
 /// Below `root`, and nowhere else: no `..`, no hidden names.
@@ -55,6 +71,7 @@ fn load(path: &Path) -> Option<File> {
     Some(File {
         content_type: content_type(&path),
         body: std::fs::read(&path).ok()?,
+        immutable: false,
     })
 }
 
@@ -63,14 +80,18 @@ fn content_type(path: &Path) -> &'static str {
         "html" => "text/html; charset=utf-8",
         "js" => "text/javascript; charset=utf-8",
         "css" => "text/css; charset=utf-8",
-        "json" => "application/json",
+        "json" | "map" => "application/json",
+        "webmanifest" => "application/manifest+json",
+        "txt" => "text/plain; charset=utf-8",
         "svg" => "image/svg+xml",
         "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "webp" => "image/webp",
         "ico" => "image/x-icon",
         "woff2" => "font/woff2",
         "woff" => "font/woff",
         "ttf" => "font/ttf",
-        "map" => "application/json",
+        "wasm" => "application/wasm",
         _ => "application/octet-stream",
     }
 }
@@ -93,6 +114,7 @@ mod tests {
         assert!(page.content_type.starts_with("text/html"));
         let font = read(root, "/fonts/a.woff2", false).await.unwrap();
         assert_eq!(font.content_type, "font/woff2");
+        assert!(!font.immutable);
 
         assert!(read(root, "/nothing", false).await.is_none());
         assert_eq!(
@@ -102,5 +124,23 @@ mod tests {
         assert!(read(root, "/../etc/passwd", true).await.is_none());
         assert!(read(root, "/.hidden", false).await.is_none());
         assert!(read(&root.join("missing"), "/", true).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn hashed_assets_are_immutable_and_never_the_page() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("index.html"), "<p>app</p>").unwrap();
+        std::fs::create_dir(dir.path().join("assets")).unwrap();
+        std::fs::write(dir.path().join("assets/index-abc123.js"), "js").unwrap();
+
+        let root = dir.path();
+        let script = read(root, "/assets/index-abc123.js", true).await.unwrap();
+        assert!(script.immutable);
+        assert!(script.content_type.starts_with("text/javascript"));
+        assert!(read(root, "/assets/index-old.js", true).await.is_none());
+        assert!(read(root, "/favicon.ico", true).await.is_none());
+        let route = read(root, "/network/wifi", true).await.unwrap();
+        assert_eq!(route.body, b"<p>app</p>");
+        assert!(!route.immutable);
     }
 }

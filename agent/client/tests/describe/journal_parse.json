@@ -1,0 +1,44 @@
+{
+  "function": "journal::parse",
+  "input": [
+    {
+      "MESSAGE": "the browser stopped answering",
+      "PRIORITY": "4",
+      "SYSLOG_IDENTIFIER": "tessaro-agent",
+      "_SYSTEMD_UNIT": "tessaro-agent.service",
+      "__REALTIME_TIMESTAMP": "1758729600123456"
+    },
+    {
+      "MESSAGE": [
+        104,
+        105
+      ],
+      "PRIORITY": "7",
+      "_SYSTEMD_UNIT": "weston.service"
+    },
+    {
+      "MESSAGE": "no fields",
+      "PRIORITY": "x"
+    }
+  ],
+  "output": [
+    {
+      "clock": "16:00:00",
+      "message": "the browser stopped answering",
+      "priority": 4,
+      "source": "tessaro-agent"
+    },
+    {
+      "clock": "",
+      "message": "hi",
+      "priority": 7,
+      "source": "weston.service"
+    },
+    {
+      "clock": "",
+      "message": "no fields",
+      "priority": null,
+      "source": "?"
+    }
+  ]
+}

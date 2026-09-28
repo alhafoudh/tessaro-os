@@ -39,6 +39,7 @@ use serde_json::Value;
 use tessaro_client::access;
 use tessaro_client::describe::device as describe;
 use tessaro_client::nodes::{self, Nodes};
+use tessaro_client::webconfig;
 
 use connect::{Answer, Session, Target, Trust};
 use style::{pad, paint};
@@ -274,6 +275,15 @@ enum AccessCmd {
     /// The device's root password.
     #[command(subcommand)]
     Password(PasswordCmd),
+    /// Open Webconfig, the device's management pages, in the browser. On a
+    /// claimed device it arrives signed in, through a one-time ticket in the
+    /// address, never the token.
+    Webconfig {
+        /// Print the address, ticket included, instead of opening a browser:
+        /// for a machine without one. The ticket is good for a minute, once.
+        #[arg(long)]
+        print: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -980,6 +990,20 @@ fn run(cli: Cli) -> Result<(), String> {
             access::login(&mut session, &token)?;
             remember(&mut nodes, &session, Some(token), local)?;
             println!("{}", style::line(&access::done("logged in to", &session)));
+            Ok(())
+        }
+        Cmd::Access(AccessCmd::Webconfig { print }) => {
+            let address = webconfig::address(&mut session)?;
+            if print {
+                println!("{}", address.url);
+                return Ok(());
+            }
+            webconfig::open(&address.url)?;
+            println!(
+                "{} {}",
+                paint(style::OK, "opened"),
+                paint(style::CMD, &address.shown)
+            );
             Ok(())
         }
         Cmd::Nodes(_) | Cmd::Completion { .. } => unreachable!("handled above"),

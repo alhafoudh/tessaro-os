@@ -10,7 +10,7 @@
   up, whether the device is claimed and online, and the setup QR code while
   the hotspot is open - come from /welcome.json, which tessaro-agent keeps
   current in /run/tessaro-kiosk and nginx serves. The page asks for it every
-  5s; see docs/kiosk-browser.md, "The welcome page", and docs/setup-portal.md.
+  5s; see docs/kiosk-browser.md, "The welcome page", and docs/quick-setup.md.
 -->
 <html lang="en">
 <head>
@@ -180,7 +180,7 @@
   }
 
   /* The setup QR: joins a phone to the open hotspot, whose sign-in sheet then
-     opens the setup portal. Its colours are in the SVG itself (qr.rs): the
+     opens Quick Setup. Its colours are in the SVG itself (qr.rs): the
      logo's gradient on the page's background. */
   .setup {
     min-width: 0;

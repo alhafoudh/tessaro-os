@@ -1,0 +1,40 @@
+{
+  "function": "update::status_lines",
+  "input": {
+    "error": null,
+    "last": null,
+    "name": "tessaro.wic.zst",
+    "phase": "preparing",
+    "prepared": 250000,
+    "received": 1000000,
+    "repartition": false,
+    "size": 1000000,
+    "to_prepare": 750000,
+    "verified": 1000000,
+    "wipe_data": false
+  },
+  "output": [
+    [
+      [
+        "warn",
+        "preparing",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "heading",
+        "tessaro.wic.zst",
+        0
+      ],
+      [
+        "plain",
+        ": 0.2 MB of 0.8 MB checked (33%)",
+        0
+      ]
+    ]
+  ]
+}

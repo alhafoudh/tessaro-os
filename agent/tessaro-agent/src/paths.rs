@@ -31,8 +31,8 @@ pub struct Paths {
     /// root:www 0750, never by the agent: without it there is no captive
     /// portal on the hotspot.
     pub portal_dir: PathBuf,
-    /// The setup page's files, which the API server serves at `/`.
-    pub portal_root: PathBuf,
+    /// Webconfig's files, which the API server serves at `/`.
+    pub webconfig_root: PathBuf,
     /// Swagger UI's files, served at `/api/docs/`.
     pub api_docs: PathBuf,
     pub shadow: PathBuf,
@@ -172,7 +172,7 @@ impl Paths {
             policy_base: path("KIOSK_POLICY_BASE", "/usr/lib/tessaro-kiosk/policy.json"),
             socket: path("KIOSK_SOCKET", protocol::DEFAULT_SOCKET),
             portal_dir: path("KIOSK_PORTAL_DIR", "/run/tessaro-portal"),
-            portal_root: path("KIOSK_PORTAL_ROOT", "/usr/share/tessaro-portal"),
+            webconfig_root: path("KIOSK_WEBCONFIG_ROOT", "/usr/share/tessaro-webconfig"),
             api_docs: path("KIOSK_API_DOCS", "/usr/share/tessaro-api/docs"),
             shadow: path("KIOSK_SHADOW", "/etc/shadow"),
             machine_id: path("KIOSK_MACHINE_ID", "/etc/machine-id"),

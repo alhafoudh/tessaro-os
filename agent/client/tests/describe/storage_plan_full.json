@@ -1,0 +1,63 @@
+{
+  "function": "storage::plan",
+  "input": {
+    "filesystem_from": 63000000000,
+    "filesystem_to": 63000000000,
+    "partition": "/dev/sda3",
+    "partition_from": 64000000000,
+    "partition_to": 64000000000,
+    "phase": "plan"
+  },
+  "output": {
+    "facts": [
+      {
+        "label": "partition",
+        "value": [
+          [
+            "heading",
+            "/dev/sda3",
+            0
+          ],
+          [
+            "plain",
+            " ",
+            0
+          ],
+          [
+            "plain",
+            "64.0 GB ",
+            0
+          ],
+          [
+            "muted",
+            "(unchanged)",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "filesystem",
+        "value": [
+          [
+            "plain",
+            "63.0 GB ",
+            0
+          ],
+          [
+            "muted",
+            "(unchanged)",
+            0
+          ]
+        ]
+      }
+    ],
+    "grows": false,
+    "nothing": [
+      [
+        "ok",
+        "nothing to grow: /data already fills the disk",
+        0
+      ]
+    ]
+  }
+}

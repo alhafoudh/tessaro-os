@@ -1,0 +1,25 @@
+{
+  "function": "device::applied",
+  "input": {
+    "applied": {
+      "audio": null,
+      "changed": [],
+      "network": null,
+      "pending": null,
+      "reboot": false,
+      "restarted": [],
+      "revision": 7,
+      "time": null
+    },
+    "no_apply": false
+  },
+  "output": [
+    [
+      [
+        "muted",
+        "nothing changed (revision 7)",
+        0
+      ]
+    ]
+  ]
+}

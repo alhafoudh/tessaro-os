@@ -1,7 +1,7 @@
 //! The Tessaro API: the types on the wire, the endpoints that carry them and
 //! the configuration key registry.
 //!
-//! Every client - tessaro-ctl, tessaro-gui, the setup page, anyone's own
+//! Every client - tessaro-ctl, tessaro-gui, Webconfig, anyone's own
 //! program - speaks the HTTP API that `api` defines, over TLS on TCP or
 //! plain over the local unix socket (docs/api.md). `Command` is the agent's
 //! own model of what it can be asked: each endpoint maps its request onto
@@ -573,11 +573,51 @@ impl Command {
 pub struct LogPage {
     /// journalctl's JSON entries, oldest first: `MESSAGE`,
     /// `SYSLOG_IDENTIFIER`, `PRIORITY`, `__REALTIME_TIMESTAMP` and the rest.
+    #[schemars(with = "Vec<JournalEntry>")]
     pub entries: Vec<Value>,
     /// Where the next page starts: send it back as `cursor` to get only
     /// what came after. The one sent when nothing new came, `None` for an
     /// empty journal.
     pub cursor: Option<String>,
+}
+
+/// One journal entry as journalctl writes it: the fields a client reads,
+/// and whatever else the entry has. Only described, for the API's
+/// document: the entries pass through as they are.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct JournalEntry {
+    #[serde(rename = "MESSAGE", default)]
+    pub message: Option<JournalText>,
+    #[serde(rename = "SYSLOG_IDENTIFIER", default)]
+    pub syslog_identifier: Option<String>,
+    /// `0` (emergency) to `7` (debug), as a string.
+    #[serde(rename = "PRIORITY", default)]
+    pub priority: Option<String>,
+    /// Microseconds since the epoch, as a string.
+    #[serde(rename = "__REALTIME_TIMESTAMP", default)]
+    pub realtime_timestamp: Option<String>,
+    #[serde(rename = "_SYSTEMD_UNIT", default)]
+    pub systemd_unit: Option<String>,
+    #[serde(flatten)]
+    pub rest: BTreeMap<String, Value>,
+}
+
+/// A journal field: text, or its bytes when it is not UTF-8.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum JournalText {
+    Text(String),
+    Bytes(Vec<u8>),
+}
+
+/// One step of a job, of the kind the job is. Only described, for the
+/// API's document.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum JobEvent {
+    Ping(PingEvent),
+    Speedtest(SpeedtestEvent),
+    StorageGrow(StorageGrowEvent),
 }
 
 /// A job the device started: poll it at `/api/v1/jobs/{job}`.
@@ -591,6 +631,7 @@ pub struct JobStarted {
 pub struct JobPage {
     /// Its steps from number `after` on, in order: `PingEvent`s,
     /// `SpeedtestEvent`s or `StorageGrowEvent`s, by the job.
+    #[schemars(with = "Vec<JobEvent>")]
     pub events: Vec<Value>,
     /// What to send as `after` next.
     pub next: u64,
@@ -1058,6 +1099,26 @@ pub struct KeyInfo {
     /// What this device has set, if anything.
     #[serde(default)]
     pub value: Option<String>,
+    /// The control an editor offers for it. Defaulted for older devices.
+    #[serde(default)]
+    pub input: KeyInput,
+}
+
+/// How a value is entered. `config set` checks what is entered either way.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum KeyInput {
+    /// A checkbox: `1` or `0`.
+    Flag,
+    /// One of these.
+    Choice { choices: Vec<String> },
+    /// A whole number in a range.
+    Int { min: i64, max: i64 },
+    /// Text.
+    #[default]
+    Text,
+    /// Nothing to enter: the device reports it.
+    ReadOnly,
 }
 
 impl From<&keys::Key> for KeyInfo {
@@ -1071,6 +1132,7 @@ impl From<&keys::Key> for KeyInfo {
             values: key.kind.describe(),
             default: None,
             value: None,
+            input: key.kind.input(),
         }
     }
 }
@@ -1452,6 +1514,80 @@ pub struct TokenInfo {
 pub struct TokenCreated {
     pub id: String,
     pub token: String,
+}
+
+/// What the welcome page shows, the body of `welcome.json` too.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct WelcomeInfo {
+    pub node: String,
+    /// Global IPv4 addresses, with the interface each is on.
+    pub addresses: Vec<WelcomeAddress>,
+    /// While the hotspot is up.
+    pub hotspot: Option<WelcomeHotspot>,
+    pub claimed: bool,
+    /// Whether the last public address lookup answered; `None` until one
+    /// has been tried.
+    pub online: Option<bool>,
+    /// While the hotspot is up and the device unclaimed.
+    pub setup: Option<WelcomeSetup>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct WelcomeAddress {
+    pub address: String,
+    pub interface: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct WelcomeHotspot {
+    pub ssid: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct WelcomeSetup {
+    /// An SVG QR code that joins a phone to the hotspot.
+    pub qr: String,
+    /// Where Quick Setup is on the hotspot.
+    pub url: String,
+}
+
+/// Who a browser is to the device: what Webconfig asks first
+/// (docs/webconfig.md).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct WebSession {
+    pub claimed: bool,
+    /// Unclaimed and nothing set yet: Webconfig opens on Quick Setup.
+    pub fresh: bool,
+    pub via: Via,
+    /// The token the request came in with, directly or through a session.
+    #[serde(default)]
+    pub token: Option<TokenInfo>,
+    /// How long a browser session lasts without use, in seconds
+    /// (`access.session_timeout`).
+    pub timeout: u64,
+}
+
+/// How a request was let in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum Via {
+    /// No credential: the device is unclaimed, or the endpoint is public.
+    Anonymous,
+    /// An `Authorization: Bearer` token.
+    Token,
+    /// A browser session's cookie.
+    Session,
+    /// The local socket.
+    Local,
+}
+
+/// A one-time ticket that signs a browser in: `tessaro-ctl access
+/// webconfig` puts it in the address it opens.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Ticket {
+    pub ticket: String,
+    /// Seconds it can still be redeemed in.
+    pub expires_in: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

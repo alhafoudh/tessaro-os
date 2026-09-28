@@ -1,0 +1,19 @@
+{
+  "function": "device::eval",
+  "input": {
+    "description": "function f() {}",
+    "exception": null,
+    "kind": "function",
+    "value": {}
+  },
+  "output": {
+    "line": [
+      [
+        "muted",
+        "(function)",
+        0
+      ]
+    ],
+    "thrown": false
+  }
+}

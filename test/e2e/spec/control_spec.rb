@@ -3,7 +3,7 @@
 module AgentE2E
   # The control plane: settings, the debug screen, maintenance mode, the
   # claim model, ssh keys, the resolution probation, the file store, eval,
-  # the page bridge, screen power and the setup portal.
+  # the page bridge, screen power and Quick Setup's captive portal.
   RSpec.describe "the control plane" do
     include_context "a booted VM"
 
@@ -208,9 +208,9 @@ module AgentE2E
     # qemu has no WiFi, so there is no hotspot: the hotspot's address goes on
     # the loopback instead, which puts the guest's own probes on the
     # portal's subnet and runs them through nginx and the captive flag
-    # exactly as a phone's would. The setup page and its API are asked from
-    # the host, over the forward of port 7400, as a phone would over TLS.
-    it "portal: a phone's probe is sent to the setup page on the API's port until the first saved change, " \
+    # exactly as a phone's would. Webconfig and its API are asked from the
+    # host, over the forward of port 7400, as a phone would over TLS.
+    it "portal: a phone's probe is sent to Quick Setup on the API's port until the first saved change, " \
        "and the page and its API answer there" do
       # busybox wget prints the redirect with -S, and then fails to follow
       # it to https: what matters is where it points.
@@ -221,7 +221,7 @@ module AgentE2E
       expect(guest.run(probe, allow_failure: true)).to match(setup)
       page = api.get("/")
       expect(page.status).to eq(200)
-      expect(page.body).to include("<title>Tessaro setup</title>")
+      expect(page.body).to include("<title>Tessaro Webconfig</title>")
       welcome = api.get("/api/v1/device/welcome")
       expect(welcome.json).to include("online", "node")
       expect(api.get("/api/v1/config?key=network.wifi.captive").json["settings"].first["value"]).to eq("1")
@@ -231,14 +231,14 @@ module AgentE2E
                      { values: { "time.timezone" => "Europe/Bratislava", "network.wifi.captive" => "0" } })
       expect(set.status).to eq(200), set.body
       journal.wait_for(/^settings revision \d+: .*time\.timezone.* changed by [\d.]+$/, timeout: 30)
-      journal.wait_for(/^setup portal: no sign-in sheet for phones on the hotspot$/, timeout: 15)
+      journal.wait_for(/^quick setup: no sign-in sheet for phones on the hotspot$/, timeout: 15)
       expect(guest.run("tessaro-ctl config get time.timezone")).to include("Europe/Bratislava")
       # The real server's answer, or a dropped connection where the VM has
-      # no internet - never the setup page.
+      # no internet - never Quick Setup.
       expect(guest.run(probe, allow_failure: true)).not_to match(setup)
 
       expect(api.post("/api/v1/config/set", { values: { "network.wifi.captive" => "1" } }).status).to eq(200)
-      journal.wait_for(/^setup portal: a phone joining the hotspot gets the sign-in sheet$/, timeout: 15)
+      journal.wait_for(/^quick setup: a phone joining the hotspot gets the sign-in sheet$/, timeout: 15)
       expect(guest.run(probe, allow_failure: true)).to match(setup)
 
       # The API documents itself on the same port.

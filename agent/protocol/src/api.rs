@@ -30,8 +30,9 @@ use crate::{
     Connector, Done, EvalResult, HotspotCredentials, ImageUpload, JobPage, JobStarted, KeyInfo,
     LogPage, Net, NetChange, NetProfile, NetProfileDetail, NodeInfo, OnError, ProxyStatus,
     ProxyTested, Received, RestartTarget, ScheduleInfo, ScheduleSpec, ScreenPower, Secret,
-    Settings, SshAccess, SshKeyInfo, SshKeyRevoked, Storage, TimeStatus, TokenCreated, TokenInfo,
-    UpdateBegun, UpdateStatus, Verify, WifiNetwork, WifiSecurity, WifiStatus,
+    Settings, SshAccess, SshKeyInfo, SshKeyRevoked, Storage, Ticket, TimeStatus, TokenCreated,
+    TokenInfo, UpdateBegun, UpdateStatus, Verify, WebSession, WelcomeInfo, WifiNetwork,
+    WifiSecurity, WifiStatus,
 };
 
 /// The API's version, in every path. A change a client of this version
@@ -41,6 +42,10 @@ pub const VERSION: &str = "v1";
 /// Where a raw download says how large the whole file is, and its mtime.
 pub const HEADER_SIZE: &str = "x-tessaro-size";
 pub const HEADER_MTIME: &str = "x-tessaro-mtime";
+
+/// A browser request someone made, not a background refresh: only these
+/// keep a browser session alive (docs/webconfig.md).
+pub const HEADER_ACTIVITY: &str = "x-tessaro-activity";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Method {
@@ -75,6 +80,23 @@ pub enum Action {
     Poll { job: String, after: u64 },
     /// Stop a job.
     Cancel { job: String },
+    /// Browser sessions, which the server keeps itself.
+    Web(Web),
+}
+
+/// What a browser asks of its session (docs/webconfig.md).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Web {
+    /// Who the request is: a `WebSession`.
+    Session,
+    /// Trade a token for a session cookie.
+    SignIn { token: String },
+    /// End this browser's session.
+    SignOut,
+    /// A one-time ticket for this request's token.
+    Ticket,
+    /// Trade a ticket for a session cookie.
+    Redeem { ticket: String },
 }
 
 /// A request body that is not JSON: the bytes of an upload, as they are.
@@ -124,6 +146,8 @@ pub trait Endpoint {
     const RAW_BODY: bool = false;
     /// The answer is `respond`'s `Raw`, not JSON; this is its content type.
     const RAW_RESPONSE: Option<&'static str> = None;
+    /// The headers a raw answer carries, with what each says.
+    const RAW_HEADERS: &'static [(&'static str, &'static str)] = &[];
 
     type Params: Serialize + DeserializeOwned + JsonSchema;
     type Body: Serialize + DeserializeOwned + JsonSchema;
@@ -154,6 +178,7 @@ pub struct Route {
     pub public: bool,
     pub raw_body: bool,
     pub raw_response: Option<&'static str>,
+    pub raw_headers: &'static [(&'static str, &'static str)],
     /// The path's `{name}`s and the query's pairs, and the body, into what
     /// to do.
     pub decode: Decode,
@@ -181,6 +206,7 @@ impl Route {
             public: E::PUBLIC,
             raw_body: E::RAW_BODY,
             raw_response: E::RAW_RESPONSE,
+            raw_headers: E::RAW_HEADERS,
             decode: decode::<E>,
             respond: E::respond,
             schemas: |generator| Schemas {
@@ -335,12 +361,16 @@ pub enum ErrorCode {
     RateLimited,
     /// 500: the device failed to answer.
     Internal,
+    /// 403: a browser request from another site, or a browser write with
+    /// the wrong content type.
+    CrossOrigin,
 }
 
 impl ErrorCode {
     pub fn status(self) -> u16 {
         match self {
             ErrorCode::BadRequest => 400,
+            ErrorCode::CrossOrigin => 403,
             ErrorCode::TokenRequired | ErrorCode::InvalidToken => 401,
             ErrorCode::NotFound => 404,
             ErrorCode::TooLarge => 413,
@@ -449,6 +479,18 @@ pub struct NameBody {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct TokenRef {
     pub id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SignInBody {
+    /// One of the device's tokens, `tsr_...`.
+    pub token: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct RedeemBody {
+    /// From `access/ticket`, once.
+    pub ticket: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -750,7 +792,7 @@ pub mod device {
         /// What the welcome page shows: the setup QR code and address,
         /// whether the device is online. Asking keeps the online check
         /// running for a while.
-        Welcome: Get "/api/v1/device/welcome" (Empty, ()) -> Value
+        Welcome: Get "/api/v1/device/welcome" (Empty, ()) -> WelcomeInfo
             = |_, _| Action::Run(Command::Welcome);
 
         /// A page of the journal. Following it is asking again with the
@@ -806,6 +848,34 @@ pub mod access {
         /// Set the root password, or generate one and answer with it.
         Password: Post "/api/v1/access/password" (Empty, PasswordBody) -> crate::Password
             = |_, body| Action::Run(Command::PasswordSet { password: body.password });
+
+        /// Who this request is: claimed or not, and by which token, if any.
+        /// Webconfig asks it first.
+        Session: Get "/api/v1/access/session" (Empty, ()) -> WebSession
+            { const PUBLIC: bool = true; }
+            = |_, _| Action::Web(Web::Session);
+
+        /// Sign a browser in with a token: the answer sets its session
+        /// cookie.
+        SignIn: Post "/api/v1/access/session" (Empty, SignInBody) -> WebSession
+            { const PUBLIC: bool = true; }
+            = |_, body| Action::Web(Web::SignIn { token: body.token });
+
+        /// Sign this browser out: its session ends and the cookie is cleared.
+        SignOut: Delete "/api/v1/access/session" (Empty, ()) -> Done
+            { const PUBLIC: bool = true; }
+            = |_, _| Action::Web(Web::SignOut);
+
+        /// A one-time ticket, redeemable for a minute, that signs a browser
+        /// in as this request's token.
+        TicketCreate: Post "/api/v1/access/ticket" (Empty, ()) -> Ticket
+            = |_, _| Action::Web(Web::Ticket);
+
+        /// Sign a browser in with a ticket: the answer sets its session
+        /// cookie.
+        Redeem: Post "/api/v1/access/ticket/redeem" (Empty, RedeemBody) -> WebSession
+            { const PUBLIC: bool = true; }
+            = |_, body| Action::Web(Web::Redeem { ticket: body.ticket });
     }
 }
 
@@ -1200,6 +1270,10 @@ pub mod files {
         Read: Get "/api/v1/files/content" (ReadQuery, ()) -> Blob
             {
                 const RAW_RESPONSE: Option<&'static str> = Some("application/octet-stream");
+                const RAW_HEADERS: &'static [(&'static str, &'static str)] = &[
+                    (HEADER_SIZE, "The whole file's size, bytes."),
+                    (HEADER_MTIME, "The file's mtime, seconds since the epoch."),
+                ];
                 fn respond(result: Value) -> Result<Answer, String> {
                     let mut raw = raw_data(&result, "application/octet-stream")?;
                     raw.headers.push((HEADER_SIZE, result["size"].to_string()));
@@ -1311,7 +1385,7 @@ mod tests {
     }
 
     #[test]
-    fn only_identification_and_claim_are_public() {
+    fn only_identification_claim_and_signing_in_are_public() {
         let public: Vec<&str> = all()
             .iter()
             .filter(|route| route.public)
@@ -1322,7 +1396,11 @@ mod tests {
             [
                 "/api/v1/device/id",
                 "/api/v1/device/ping",
-                "/api/v1/access/claim"
+                "/api/v1/access/claim",
+                "/api/v1/access/session",
+                "/api/v1/access/session",
+                "/api/v1/access/session",
+                "/api/v1/access/ticket/redeem"
             ]
         );
     }

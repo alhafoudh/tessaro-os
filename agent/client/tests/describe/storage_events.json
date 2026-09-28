@@ -1,0 +1,55 @@
+{
+  "function": "storage::event_line",
+  "input": [
+    {
+      "filesystem_from": 990000000,
+      "filesystem_to": 29990000000,
+      "partition": "/dev/mmcblk0p3",
+      "partition_from": 1000000000,
+      "partition_to": 30000000000,
+      "phase": "plan"
+    },
+    {
+      "command": "sfdisk -N 3 /dev/mmcblk0",
+      "phase": "step",
+      "what": "growing the partition"
+    },
+    {
+      "filesystem": 29990000000,
+      "partition": 30000000000,
+      "phase": "grown"
+    }
+  ],
+  "output": [
+    null,
+    [
+      [
+        "plain",
+        "growing the partition ",
+        0
+      ],
+      [
+        "muted",
+        "(sfdisk -N 3 /dev/mmcblk0)",
+        0
+      ]
+    ],
+    [
+      [
+        "ok",
+        "grew /data to 30.0 GB",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "(partition 30.0 GB)",
+        0
+      ]
+    ]
+  ]
+}

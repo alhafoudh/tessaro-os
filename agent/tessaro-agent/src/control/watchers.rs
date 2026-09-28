@@ -63,7 +63,7 @@ impl Control {
     /// 15s, so a `set` that starts using the key is answered within that.
     ///
     /// The same lookup is the online indicator: while the welcome page is on
-    /// screen, or the setup portal was read in the last 2 minutes, it is asked
+    /// screen, or Quick Setup was read in the last 2 minutes, it is asked
     /// every minute, since that is someone watching the indicator and waiting
     /// on a cable or a WiFi join. A device showing its real page asks neither.
     pub fn watch_public_ip(self: &Arc<Self>) {
@@ -124,7 +124,7 @@ impl Control {
     }
 
     /// Is anyone looking at the online indicator: the welcome page on screen,
-    /// or the setup portal read within the last 2 minutes?
+    /// or Quick Setup read within the last 2 minutes?
     async fn online_watched(&self) -> bool {
         const PORTAL: Duration = Duration::from_secs(120);
         if lock(&self.portal_seen).is_some_and(|at| at.elapsed() < PORTAL) {
@@ -148,7 +148,7 @@ impl Control {
         is_welcome(&template, &self.paths.selftest_origin)
     }
 
-    /// The setup portal read the device's state: keep the online check going.
+    /// Quick Setup read the device's state: keep the online check going.
     pub(crate) fn portal_seen(&self) {
         *lock(&self.portal_seen) = Some(Instant::now());
     }
@@ -192,12 +192,12 @@ impl Control {
         .await;
         match written {
             Ok(true) => self.log.info(if on {
-                "setup portal: a phone joining the hotspot gets the sign-in sheet"
+                "quick setup: a phone joining the hotspot gets the sign-in sheet"
             } else {
-                "setup portal: no sign-in sheet for phones on the hotspot"
+                "quick setup: no sign-in sheet for phones on the hotspot"
             }),
             Ok(false) => {}
-            Err(err) => self.log.info(format!("setup portal: {err}")),
+            Err(err) => self.log.info(format!("quick setup: {err}")),
         }
     }
 
@@ -292,7 +292,7 @@ impl Control {
         });
     }
 
-    /// What the welcome page shows, which the setup portal shows too.
+    /// What the welcome page shows, which Quick Setup shows too.
     pub(crate) async fn welcome(&self) -> Result<serde_json::Value, String> {
         let paths = self.paths.clone();
         let net = blocking("reading the network", move || {
@@ -838,7 +838,7 @@ struct Welcome<'a> {
 /// interface each is on: those are what someone reads off the screen to reach
 /// the device. The hotspot is `null` unless it is up; `online` is `null`
 /// until the first lookup. `setup` - the QR code that joins a phone to the
-/// hotspot, and the portal's address - is there only while the hotspot is up
+/// hotspot, and Quick Setup's address - is there only while the hotspot is up
 /// and the device is unclaimed, which is when the hotspot is open.
 fn welcome_value(welcome: &Welcome) -> serde_json::Value {
     let addresses: Vec<_> = welcome
@@ -868,7 +868,7 @@ fn welcome_value(welcome: &Welcome) -> serde_json::Value {
         .map(|qr| {
             serde_json::json!({
                 "qr": qr,
-                // The API's port, where the agent serves the setup page;
+                // The API's port, where the agent serves Webconfig;
                 // nginx on port 80 sends a typed http://10.42.0.1/ there too.
                 "url": format!(
                     "https://{}:{}/",
@@ -1011,6 +1011,24 @@ mod tests {
 
         let body = welcome_value(&welcome("lobby", &net, None, false, None));
         assert_eq!(body["setup"], serde_json::Value::Null, "no hotspot: no QR");
+    }
+
+    /// The API documents the body as `WelcomeInfo`; every field of it
+    /// survives the round trip, so the document is what is sent.
+    #[test]
+    fn the_welcome_body_is_what_the_api_documents() {
+        let net = net(vec![interface(
+            "eth0",
+            "ethernet",
+            &[("192.168.1.42", "ipv4", "global")],
+        )]);
+        for body in [
+            welcome_value(&welcome("lobby", &net, None, true, None)),
+            welcome_value(&welcome("lobby", &net, Some("t"), false, Some(true))),
+        ] {
+            let typed: protocol::WelcomeInfo = serde_json::from_value(body.clone()).unwrap();
+            assert_eq!(serde_json::to_value(typed).unwrap(), body);
+        }
     }
 
     #[test]

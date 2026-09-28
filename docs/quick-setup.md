@@ -1,27 +1,30 @@
-# The setup portal
+# Quick Setup
 
 **A phone sets a device up without a laptop: it scans the QR code on the
 welcome page, joins the hotspot, and the phone's own captive portal sheet
-opens a one-page setup served by the device.** From there it joins WiFi,
-sets Ethernet to DHCP or a static address, sets the kiosk page, the device
-name and the timezone, and flips maintenance mode and the debug screen with
-one tap each. The page never claims the device; claiming stays
-`tessaro-ctl access claim`, and closes the portal.
+opens Quick Setup, the first page of Webconfig ([webconfig.md](webconfig.md)).**
+From there it joins WiFi, sets Ethernet to DHCP or a static address, sets
+the kiosk page, the device name and the timezone, and flips maintenance
+mode and the debug screen with one tap each. Everything else is on
+Webconfig's other pages, one menu entry away. Quick Setup does not claim the
+device; claiming is on the Access page, or `tessaro-ctl access claim`.
 
 ## How long each part lasts
 
-* **The page answers at `https://10.42.0.1:7400/` for as long as the device
-  is unclaimed and its hotspot is up.** A claim closes it: the page carries
-  no token, the API answers it `401 token-required`, and the page says setup
-  is closed. From then on the device is managed by whoever claimed it.
-* **The sign-in sheet ends sooner: with the first change the page saves.**
-  `network.wifi.captive` (on by default) turns the sheet on, and the page
-  adds `network.wifi.captive=0` to its first successful change
-  (`withCaptiveOff` in `index.html`): whoever made the change found the
-  page, and a phone joining later should not be sent there uninvited. The
-  page's first toggle turns it back on. A claim ends it too.
-* **The QR code stays until the claim**, with the page it leads to; after
-  the sheet is off, the phone joins and the written address opens the page.
+* **Webconfig answers at `https://10.42.0.1:7400/` for as long as the
+  hotspot is up.** Unclaimed, it needs nobody signed in; once claimed, it
+  shows its sign-in page first (see **Sessions** in
+  [webconfig.md](webconfig.md)). Quick Setup stays in its menu either way.
+* **Webconfig opens on Quick Setup only on a fresh device**, unclaimed with
+  nothing set (`WebSession.fresh`); any other device opens on Overview.
+* **The sign-in sheet ends sooner: with the first change Quick Setup
+  saves.** `network.wifi.captive` (on by default) turns the sheet on, and
+  the page adds `network.wifi.captive=0` to its first successful change
+  (`save` in `webconfig/src/pages/QuickSetup.tsx`): whoever made the change
+  found the page, and a phone joining later should not be sent there
+  uninvited. The page's first toggle turns it back on. A claim ends it too.
+* **The QR code stays until the claim**; after the sheet is off, the phone
+  joins and the written address opens the page.
 
 ## From the QR code to the sheet
 
@@ -56,9 +59,8 @@ one tap each. The page never claims the device; claiming stays
   `local=`, so its AAAA query gets no answer instead of Apple's real IPv6
   address: an iPhone prefers that address, sends it over cellular (the
   hotspot has no IPv6) and shows the real "Success" page in the sheet. The
-  file never changes; the
-  sheet is switched in nginx, so turning it off does not restart the hotspot
-  under the phone.
+  file never changes; the sheet is switched in nginx, so turning it off does
+  not restart the hotspot under the phone.
 * **nginx decides per probe, from a flag file.** Every request whose `Host`
   is not 10.42.0.1 is a probe (`20-tessaro-portal.conf`). While
   `/run/tessaro-portal/captive` exists it gets a `302` to
@@ -78,12 +80,13 @@ one tap each. The page never claims the device; claiming stays
 
 ## Where it is served
 
-* **The page and its API are the agent's, on the API's port over TLS**
-  ([api.md](api.md)). The agent serves `/usr/share/tessaro-portal` at `/`
-  (`KIOSK_PORTAL_ROOT`, `api/statics.rs`), every path it does not know
-  answered with `index.html`, and the page calls `/api/v1/...` on its own
-  origin. The phone's browser shows a warning for the self-signed
-  certificate before the page; that is accepted.
+* **Webconfig and its API are the agent's, on the API's port over TLS**
+  ([api.md](api.md)); see **Serving** in [webconfig.md](webconfig.md). The
+  phone's browser shows a warning for the self-signed certificate before
+  the page; that is accepted.
+* **The captive plumbing is its own recipe, `tessaro-portal`**: the nginx
+  server block, the dnsmasq drop-in and the flag's tmpfiles line. It pulls
+  in `tessaro-webconfig`, the page the probes are sent to.
 * **nginx on port 80 only redirects.** It listens on every address and
   answers only 10.42.0.0/24: the hotspot's address may not exist yet when
   nginx starts, so it cannot `listen` on it. The loopback server
@@ -94,17 +97,17 @@ one tap each. The page never claims the device; claiming stays
   workers can read it and only root writes. The agent never makes it:
   without it there is no captive portal.
 
-## What the page may do
+## What the page does
 
-**Everything the API offers, as anyone unclaimed may** (the claim model in
-[settings.md](settings.md)): nothing is restricted by address, and the page
-uses a few endpoints. The journal names the phone by its address, and every
-change goes through the same validation, network transaction and rollback
-as one from `tessaro-ctl`.
+**What the API offers anyone who may manage the device** (the claim model
+in [settings.md](settings.md)). The journal names the phone by its address,
+and every change goes through the same validation, network transaction and
+rollback as one from `tessaro-ctl`.
 
-* **It reads** `device/welcome` (which keeps the online check running, see
-  below), `device/status` and `config`, every 5s, `network/wifi/scan`, and
-  `time/zones`.
+* **It reads** `device/welcome` every 5s while it is shown (which keeps the
+  online check running, see below), the status and settings every page
+  reads, `network/wifi/scan` when its WiFi section opens, and `time/zones`
+  when its Device section opens.
 * **It changes** settings with `config/set` and joins WiFi with
   `network/wifi/join`.
 * **A change that takes the hotspot down loses its answer**: renaming the
@@ -113,18 +116,21 @@ as one from `tessaro-ctl`.
   device cannot reach the new network's gateway it rolls back to the hotspot
   on its own, as for `tessaro-ctl network wifi join`, and the welcome page
   shows the result.
-* **Opening the WiFi section scans, from beside the hotspot.** The page asks
-  once per load, and the scan runs on a station interface next to the
-  hotspot, so the phone stays connected (see **Scanning from the hotspot**
-  in [networking.md](networking.md)). A radio that cannot have that
-  interface lists nothing new, so the page always offers a typed SSID.
+* **Opening the WiFi section scans, from beside the hotspot.** The scan runs
+  on a station interface next to the hotspot, so the phone stays connected
+  (see **Scanning from the hotspot** in [networking.md](networking.md)). A
+  radio that cannot have that interface lists nothing new, so the page
+  always offers a typed SSID.
+* **It leaves a field the user has typed into alone** while the settings
+  refresh underneath. Maintenance and the debug screen are one change each,
+  using the maintenance URL and debug template already set.
 
 ## Online
 
 **"Online" is whether the agent's last lookup of the public address
 answered**: Cloudflare's trace at `https://1.1.1.1/cdn-cgi/trace` (`net.rs`),
 the lookup behind `network.public_ip`. It is not the cached address, which a
-failure leaves in place. The welcome page and the setup page show it, and
+failure leaves in place. The welcome page and Quick Setup show it, and
 `tessaro.network.online()` answers it to the kiosk page (see
 [bridge.md](bridge.md)).
 
@@ -134,15 +140,6 @@ failure leaves in place. The welcome page and the setup page show it, and
   own rule of running only while a template uses `{network.public_ip}`,
   since a link may be metered. `null` in `welcome.json` means it has not
   been asked yet.
-
-## The page
-
-**`tessaro-portal/files/index.html` is one scrolling page of accordion
-sections**, no windows, in tessaro-gui's palette and Manrope (the fonts are
-copied from `gui/tessaro-gui/fonts/`), everything inline so it works on a
-hotspot with no internet. It leaves a field the user has typed into alone.
-Maintenance and the debug screen are one change each, using the
-maintenance URL and debug template already set.
 
 ## Testing
 

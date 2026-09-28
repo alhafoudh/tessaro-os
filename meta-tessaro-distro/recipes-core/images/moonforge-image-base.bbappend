@@ -102,8 +102,14 @@ CORE_IMAGE_EXTRA_INSTALL += " \
     tessaro-selftest \
 "
 
-# The setup portal a phone opens from the welcome page's QR code, on the
-# hotspot only. See docs/setup-portal.md.
+# Webconfig, the device's management pages, which the agent serves at /
+# on port 7400. See docs/webconfig.md.
+CORE_IMAGE_EXTRA_INSTALL += " \
+    tessaro-webconfig \
+"
+
+# What sends a phone that joins the hotspot to Quick Setup, a page of
+# Webconfig. See docs/quick-setup.md.
 CORE_IMAGE_EXTRA_INSTALL += " \
     tessaro-portal \
 "

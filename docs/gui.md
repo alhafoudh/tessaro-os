@@ -266,7 +266,7 @@ applies and stays, Default unsets.**
 | Audio | `audio show`, outputs and inputs, choosing one, volume, mute, `audio test` for the tone and the recording |
 | Time | `time show` and its servers, `time timezone` (a choice of `time zones`), `time ntp on|off` with servers, `time sync`, `time set` (this computer's clock or a typed time) |
 | Schedules | `schedule list`, `create` and `set` in one dialog (multi-line calendar and commands, checked with `schedule check` as you type), `enable`/`disable`, `run`, `remove`, `logs` (the Log page, filtered to the schedule's runs) |
-| Access | `access claim` (while unclaimed), `access token create`, `list`, `revoke`, `access password set`, `access unclaim` (while claimed) |
+| Access | `access claim` (while unclaimed), `access token create`, `list`, `revoke`, `access password set`, `access unclaim` (while claimed), `access webconfig` (Open Webconfig) |
 | SSH | `ssh keys list` and `revoke`, `ssh connect` (authorize the key, open a terminal) |
 | Files | `files list` as a browser, `upload` (files or a folder), `download`, `mkdir`, `move`, `rm` |
 | Update | `update status`, `update send` with progress, `update cancel` |

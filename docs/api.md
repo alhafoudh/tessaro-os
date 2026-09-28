@@ -1,7 +1,7 @@
 # The API
 
 **One HTTP API is the only way into a device.** `tessaro-ctl`, `tessaro-gui`,
-the setup page on a phone and anyone's own program all call the same
+Webconfig in a browser and anyone's own program all call the same
 endpoints, so none of them can do what the others cannot, and every change
 goes through the same validation, transactions and journal lines. The page
 bridge (`window.tessaro`, [bridge.md](bridge.md)) is the one other way in,
@@ -17,7 +17,9 @@ answers (`Response`). The agent routes on those types (`api::all`, served by
 (`Session::call::<api::device::Status>` in `agent/client/src/connect.rs`).
 Sending the wrong body or reading the wrong answer is a compile error in
 Rust, and cannot drift from what the device serves. There is no code
-generator in between: the Rust clients use the types themselves.
+generator in between for the Rust clients, which use the types themselves;
+Webconfig's TypeScript types are generated from the OpenAPI document
+([webconfig.md](webconfig.md)).
 
 * **Paths are `/api/v1/<group>/...`**, the group being the `tessaro-ctl`
   command group that does the same thing. `{name}` in a path is a field of
@@ -33,6 +35,10 @@ generator in between: the Rust clients use the types themselves.
   `UPDATE_OPENAPI=1 cargo test -p tessaro-agent openapi` rewrites it. Every
   schema is what schemars derives from the Rust type, serde attributes
   included, so the document cannot describe a field the code does not have.
+  A field the agent passes through as JSON (a job's steps, journal entries)
+  is described by a schema-only type (`JobEvent`, `JournalEntry` in
+  `protocol/src/lib.rs`, via `#[schemars(with)]`), and a raw answer's
+  headers by `Endpoint::RAW_HEADERS`, so a generator gets real types.
 * **Swagger UI is its own recipe**, `tessaro-api-docs`: swagger-ui-dist's
   released files with our `swagger-initializer.js`. `utoipa-swagger-ui`
   downloads the same files at build time, which the offline cargo build of
@@ -51,8 +57,8 @@ generator in between: the Rust clients use the types themselves.
   power. Not group accessible on purpose - Chromium runs as `weston`, and a
   compromised browser must not be one `connect()` from the control plane.
   `tessaro-ctl` on the device uses it when no `--node` is given.
-* **The same port serves the setup page** at `/`, from
-  `/usr/share/tessaro-portal` ([setup-portal.md](setup-portal.md)), and
+* **The same port serves Webconfig** at `/`, from
+  `/usr/share/tessaro-webconfig` ([webconfig.md](webconfig.md)), and
   Swagger UI at `/api/docs/`. Nothing else is served on 7400.
 
 ## Trust and auth
@@ -62,8 +68,8 @@ self-signed, so there is no chain to check; clients compare its SHA-256 with
 the one stored for that node id before a token is sent, and a mismatch is a
 hard stop. The fingerprint is in `GET /api/v1/device/id` and in the mDNS
 `fp` record. A session holds every later connection to the same
-certificate (`Session::redial`). A browser - Swagger UI, the setup page -
-shows its own warning for the self-signed certificate; that is accepted.
+certificate (`Session::redial`). A browser - Swagger UI, Webconfig - shows
+its own warning for the self-signed certificate; that is accepted.
 
 **The token is a Bearer token.** `Authorization: Bearer tsr_...` on every
 request. Who may do what is the claim model in
@@ -74,6 +80,23 @@ endpoint, is ignored rather than refused. Failed tokens are rate-limited per
 address (`Limiter` in `api/mod.rs`); a valid token always gets in. Nothing
 is restricted by address or subnet.
 
+**A browser signs in with a session cookie instead**, because it can
+neither pin the certificate nor keep a token safe: trading a token, a
+one-time ticket or a claim for a cookie that stands in for that token
+(**Sessions** in [webconfig.md](webconfig.md)). Without an
+`Authorization` header the agent reads its cookie, and a good session is
+let in as the token it stands for. `access/session`, `access/ticket/redeem`
+and signing out are public, like the claim.
+
+**Browser requests only from the device's own origin** (`guard` in
+`api/mod.rs`). A request with `Sec-Fetch-Site: cross-site` or `same-site` is
+refused, and so is a write whose `Origin` is not `https://<Host>` or whose
+body is not `application/json` (`application/octet-stream` for a raw one):
+403 `cross-origin`. A form on another site could otherwise post a change to
+an unclaimed device, or with a signed-in browser's cookie. There is no CORS:
+another site's page cannot read an answer either. A request with neither
+header is not a browser's and passes.
+
 ## Answers
 
 * **Success is 200 with the endpoint's JSON**, or the bytes of a raw
@@ -82,7 +105,8 @@ is restricted by address or subnet.
   `x-tessaro-size` and `x-tessaro-mtime`.
 * **A refusal is `{"error", "code"}`** (`ApiError`), with the status the
   code names (`ErrorCode::status`): 400 for a query or body that does not
-  parse, 401 for a missing or invalid token, 404, 413, 422 for everything
+  parse, 401 for a missing or invalid token, 403 for a browser request from
+  elsewhere, 404, 413, 422 for everything
   the device itself refused (`error` says why), 429 for a rate-limited
   address, 500. `code` is what a program branches on; `error` is for people.
 * **Uploads are raw bodies**, one piece of at most `UPDATE_CHUNK` per

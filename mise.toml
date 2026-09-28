@@ -5,6 +5,10 @@ python = "3.12.11"
 # toolchain to the same version so `cargo test` cannot pass on a language
 # feature the image's compiler does not have.
 rust = "1.95.0"
+# Webconfig is built by bitbake with the nodejs-native meta-browser brings
+# for Chromium. The same version here, so a dependency that needs a newer
+# Node fails on the workstation, not in the image build.
+node = "22.11.0"
 # For `mise run image:flash`. Not on PyPI, so it comes straight from the upstream
 # repo; mise installs it into its own tool dir, no venv to manage. The version
 # is the git tag verbatim, and upstream tags carry a "v" - "3.9.0" asks for a
@@ -96,8 +100,9 @@ curl -sf -X PUT "http://127.0.0.1:9222/json/new?about:blank" >/dev/null
 # the host. Drive it from another terminal with
 #   TESSARO_SOCKET=<sandbox>/agent.sock tessaro-ctl device status
 #   tessaro-ctl --node 127.0.0.1:17400 access claim
-# or open the setup page and the API at https://127.0.0.1:17400/. Swagger UI
-# comes from its recipe and is not here.
+# or open Webconfig and the API at https://127.0.0.1:17400/ once
+# `mise run webconfig:build` has built it. Swagger UI comes from its recipe
+# and is not here.
 sandbox="$(mktemp -d)"
 mkdir -p "$sandbox/etc"
 printf 'root::19000:0:99999:7:::\n' > "$sandbox/etc/shadow"
@@ -124,7 +129,7 @@ KIOSK_SYSTEMD_UNIT_DIR="$sandbox/units" \
 KIOSK_LEGACY_OVERRIDE=/nonexistent \
 KIOSK_API_LISTEN=127.0.0.1:17400 \
 KIOSK_PORTAL_DIR="$sandbox/portal" \
-KIOSK_PORTAL_ROOT="{{config_root}}/meta-tessaro-distro/recipes-browser/tessaro-portal/files" \
+KIOSK_WEBCONFIG_ROOT="{{config_root}}/build/webconfig" \
 KIOSK_MDNS=off \
 KIOSK_URL="data:text/html,<h1>integration target</h1>" \
 KIOSK_CDP_URL=http://127.0.0.1:9222 \
@@ -259,6 +264,45 @@ set -e
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 '''
+
+[tasks."webconfig:setup"]
+description = "Install Webconfig's dependencies from package-lock.json"
+dir = "{{config_root}}/webconfig"
+run = "npm ci --no-audit --no-fund"
+
+[tasks."webconfig:gen"]
+description = "Generate Webconfig's API types from agent/protocol/openapi.json"
+dir = "{{config_root}}/webconfig"
+run = "npm run gen"
+
+[tasks."webconfig:lock"]
+description = "Write bitbake-lock.json, what the tessaro-webconfig recipe fetches, from package-lock.json"
+dir = "{{config_root}}/webconfig"
+run = "npm run lock"
+
+[tasks."webconfig:run"]
+description = "Webconfig's dev server on http://localhost:5173, the API proxied to TESSARO_WEBCONFIG_TARGET (default the qemu forward)"
+dir = "{{config_root}}/webconfig"
+run = "npm run dev"
+
+[tasks."webconfig:build"]
+description = "Build Webconfig into build/webconfig, where agent:integration serves it from"
+dir = "{{config_root}}/webconfig"
+run = "npm run build"
+
+[tasks."webconfig:test"]
+description = "Webconfig's unit tests, the result text against the golden fixtures, and bitbake-lock.json being current"
+dir = "{{config_root}}/webconfig"
+run = '''
+set -e
+npm test
+npm run lock:check
+'''
+
+[tasks."webconfig:lint"]
+description = "Type check, ESLint and Prettier on Webconfig"
+dir = "{{config_root}}/webconfig"
+run = "npm run lint"
 
 [tasks."image:build"]
 description = "Build the image for $TESSARO_MACHINE (default qemux86-64)"

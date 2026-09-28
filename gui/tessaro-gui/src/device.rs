@@ -1921,6 +1921,7 @@ mod tests {
             values: String::new(),
             default: None,
             value: None,
+            input: protocol::KeyInput::Text,
         };
         let keys = BTreeMap::from([(template.name.clone(), template)]);
         let rows = rows(&settings(), &keys, &Scope::of("data"));

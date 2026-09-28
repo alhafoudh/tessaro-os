@@ -1,0 +1,33 @@
+{
+  "function": "device::eval",
+  "input": {
+    "description": null,
+    "exception": {
+      "column": 5,
+      "line": 1,
+      "text": "ReferenceError: nope is not defined"
+    },
+    "kind": "undefined",
+    "value": null
+  },
+  "output": {
+    "line": [
+      [
+        "bad",
+        "ReferenceError: nope is not defined",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "(line 1, column 5)",
+        0
+      ]
+    ],
+    "thrown": true
+  }
+}

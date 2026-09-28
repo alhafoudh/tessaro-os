@@ -1,0 +1,57 @@
+{
+  "function": "audio::test",
+  "input": {
+    "message": "recorded 3 seconds from the USB microphone",
+    "peak_dbfs": -6.25,
+    "rms_dbfs": -23.45,
+    "saved": "audio-test.wav"
+  },
+  "output": [
+    [
+      [
+        "ok",
+        "recorded 3 seconds from the USB microphone",
+        0
+      ]
+    ],
+    [
+      [
+        "label",
+        "peak",
+        0
+      ],
+      [
+        "plain",
+        " -6.2 dBFS  ",
+        0
+      ],
+      [
+        "label",
+        "average",
+        0
+      ],
+      [
+        "plain",
+        " -23.4 dBFS",
+        0
+      ]
+    ],
+    [
+      [
+        "muted",
+        "listen with",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "cmd",
+        "tessaro-ctl files download audio-test.wav",
+        0
+      ]
+    ]
+  ]
+}

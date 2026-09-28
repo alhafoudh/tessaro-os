@@ -1,0 +1,289 @@
+{
+  "function": "time::facts",
+  "input": {
+    "can_ntp": true,
+    "error": null,
+    "frequency": -809000,
+    "last": {
+      "delay_usec": -4512000,
+      "jitter_usec": 850,
+      "leap": 1,
+      "offset_usec": -1234,
+      "packet_count": 17,
+      "precision": -25,
+      "received_usec": 1789999999000000,
+      "reference": "GPS",
+      "root_delay_usec": 12345,
+      "root_dispersion_usec": 850,
+      "spike": true,
+      "stratum": 2,
+      "version": 4
+    },
+    "local_rtc": true,
+    "local_time": "2026-09-21 12:13:20",
+    "now_usec": 1790000000000000,
+    "ntp": true,
+    "poll_interval_max_usec": 2048000000,
+    "poll_interval_min_usec": 32000000,
+    "poll_interval_usec": 2048000000,
+    "root_distance_max_usec": 5000000,
+    "rtc_usec": 1790000000300000,
+    "server_address": "192.0.2.123",
+    "server_name": "pool.ntp.org",
+    "servers": {
+      "dhcp": [
+        "192.0.2.1"
+      ],
+      "fallback": [
+        "time1.google.com",
+        "time2.google.com"
+      ],
+      "link": [],
+      "runtime": [],
+      "system": [
+        "pool.ntp.org"
+      ]
+    },
+    "setting_servers": [
+      "pool.ntp.org"
+    ],
+    "setting_timezone": "Europe/Vienna",
+    "synchronized": true,
+    "timesyncd": "active",
+    "timezone": "Europe/Bratislava",
+    "utc_offset_seconds": 7200,
+    "zone_abbreviation": "CEST"
+  },
+  "output": [
+    {
+      "label": "timezone",
+      "value": [
+        [
+          "plain",
+          "Europe/Bratislava",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "(CEST, UTC+02:00)",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "",
+      "value": [
+        [
+          "warn",
+          "time.timezone is Europe/Vienna, not applied yet",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "local time",
+      "value": [
+        [
+          "plain",
+          "2026-09-21 12:13:20",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "in sync",
+      "value": [
+        [
+          "ok",
+          "yes",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "ntp",
+      "value": [
+        [
+          "ok",
+          "on",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "timesyncd",
+      "value": [
+        [
+          "ok",
+          "active",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "server",
+      "value": [
+        [
+          "plain",
+          "pool.ntp.org ",
+          0
+        ],
+        [
+          "muted",
+          "(192.0.2.123)",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "poll",
+      "value": [
+        [
+          "plain",
+          "every 34min 8s",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "(32.00s to 34min 8s)",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "offset",
+      "value": [
+        [
+          "plain",
+          "-1.2ms",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "delay",
+      "value": [
+        [
+          "plain",
+          "4.51s",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "jitter",
+      "value": [
+        [
+          "plain",
+          "850µs",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "drift",
+      "value": [
+        [
+          "plain",
+          "-12.344 ppm ",
+          0
+        ],
+        [
+          "muted",
+          "(the kernel's frequency correction)",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "root dist.",
+      "value": [
+        [
+          "plain",
+          "7.0ms",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "(max 5.00s)",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "stratum",
+      "value": [
+        [
+          "plain",
+          "2 ",
+          0
+        ],
+        [
+          "muted",
+          "(reference GPS, precision 2^-25, 30ns)",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "leap",
+      "value": [
+        [
+          "warn",
+          "a leap second is added at the end of the day",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "answers",
+      "value": [
+        [
+          "plain",
+          "1.00s ago, 17 so far",
+          0
+        ],
+        [
+          "plain",
+          ", ",
+          0
+        ],
+        [
+          "warn",
+          "the last one was an outlier",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "hw clock",
+      "value": [
+        [
+          "plain",
+          "300.0ms ahead from the system clock",
+          0
+        ],
+        [
+          "warn",
+          " (keeps local time)",
+          0
+        ]
+      ]
+    }
+  ]
+}

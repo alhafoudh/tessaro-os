@@ -1,0 +1,124 @@
+{
+  "function": "device::applied",
+  "input": {
+    "applied": {
+      "audio": "hdmi at 80%; input off",
+      "changed": [
+        "screen.resolution",
+        "audio.volume"
+      ],
+      "network": null,
+      "pending": {
+        "key": "screen.resolution",
+        "previous": "1920x1080",
+        "seconds_left": 30,
+        "value": "1280x720"
+      },
+      "reboot": true,
+      "restarted": [
+        "weston.service"
+      ],
+      "revision": 43,
+      "time": "saved, the clock is kept by NTP"
+    },
+    "no_apply": false
+  },
+  "output": [
+    [
+      [
+        "muted",
+        "revision 43:",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "ok",
+        "screen.resolution, audio.volume",
+        0
+      ]
+    ],
+    [
+      [
+        "ok",
+        "hdmi at 80%",
+        0
+      ]
+    ],
+    [
+      [
+        "ok",
+        "input off",
+        0
+      ]
+    ],
+    [
+      [
+        "warn",
+        "saved, the clock is kept by NTP",
+        0
+      ]
+    ],
+    [
+      [
+        "warn",
+        "restarting weston.service",
+        0
+      ]
+    ],
+    [
+      [
+        "warn",
+        "takes effect at the next reboot:",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "cmd",
+        "tessaro-ctl device reboot",
+        0
+      ]
+    ],
+    [],
+    [
+      [
+        "warn",
+        "screen.resolution=1280x720 is on probation.",
+        0
+      ],
+      [
+        "plain",
+        " Check the screen, then run",
+        0
+      ]
+    ],
+    [],
+    [
+      [
+        "plain",
+        "    ",
+        0
+      ],
+      [
+        "cmd",
+        "tessaro-ctl screen confirm",
+        0
+      ]
+    ],
+    [],
+    [
+      [
+        "plain",
+        "within 30s, or it goes back to 1920x1080 on its own.",
+        0
+      ]
+    ]
+  ]
+}

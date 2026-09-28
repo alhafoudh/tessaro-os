@@ -36,9 +36,11 @@ use protocol::{
     TokenInfo, UpdatePhase, UpdateStatus, Verify, WifiNetwork, WifiSecurity, WifiStatus,
 };
 use serde_json::Value;
+use tessaro_client::connect::Answer;
 use tessaro_client::describe;
 use tessaro_client::text::{Fact, Line};
 use tessaro_client::transfer::date;
+use tessaro_client::webconfig;
 
 use super::{Device, Dialog, Link, Message, Page, Tone};
 use crate::dialog::{self, field};
@@ -233,6 +235,7 @@ pub enum Msg {
     Password,
     Claim,
     Unclaim,
+    Webconfig,
     // ssh
     KeyRevoke,
     Authorize(bool),
@@ -872,6 +875,10 @@ impl Device {
                 self.timezone_form(zones);
             }
             "tokens" => self.pages.tokens = parse(value)?,
+            "webconfig" => {
+                let shown: String = parse(value)?;
+                self.log(Tone::Ok, format!("opened {shown}"));
+            }
             "token.new" => {
                 let created: TokenCreated = parse(value)?;
                 self.secret(
@@ -1442,6 +1449,19 @@ impl Device {
                     );
                 }
             }
+            // On the worker, which has the session: a claimed device issues
+            // the ticket the address carries.
+            Msg::Webconfig => self.call(
+                "webconfig",
+                Box::new(|session| {
+                    let opened = webconfig::address(session)
+                        .and_then(|address| webconfig::open(&address.url).map(|()| address.shown));
+                    match opened {
+                        Ok(shown) => Answer::Ok(Value::String(shown)),
+                        Err(error) => Answer::Refused(error),
+                    }
+                }),
+            ),
             Msg::Password => self.form(
                 Form::new("Root password", "Set", Action::Password)
                     .intro("The root password for the console and SSH. Leave both empty for a random one, shown once.")
@@ -3400,6 +3420,7 @@ impl Device {
                     "Unclaim ...",
                     self.when(Msg::Unclaim).filter(|_| self.claimed()),
                 ),
+                action("Open Webconfig", self.when(Msg::Webconfig)),
             ],
             vec![action(
                 "Revoke",

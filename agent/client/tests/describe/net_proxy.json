@@ -1,0 +1,60 @@
+{
+  "function": "net::proxy_test",
+  "input": [
+    {
+      "error": null,
+      "ip": "203.0.113.9"
+    },
+    {
+      "error": "connection refused",
+      "ip": null
+    },
+    {
+      "error": null,
+      "ip": null
+    }
+  ],
+  "output": [
+    [
+      [
+        "ok",
+        "through the proxy the internet sees",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "heading",
+        "203.0.113.9",
+        0
+      ]
+    ],
+    [
+      [
+        "bad",
+        "the proxy did not get through:",
+        0
+      ],
+      [
+        "plain",
+        " connection refused",
+        0
+      ]
+    ],
+    [
+      [
+        "bad",
+        "the proxy did not get through:",
+        0
+      ],
+      [
+        "plain",
+        " no answer",
+        0
+      ]
+    ]
+  ]
+}

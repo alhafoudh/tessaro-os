@@ -16,14 +16,17 @@
 //!   Failed tokens are counted per address, and an address that keeps
 //!   failing is refused for a minute.
 //!
-//! Besides the API, the same port serves the setup page at `/` and Swagger
-//! UI at `/api/docs/`, and `/api/v1/openapi.json` (`protocol::openapi`).
+//! Besides the API, the same port serves Webconfig at `/` and Swagger UI at
+//! `/api/docs/`, and `/api/v1/openapi.json` (`protocol::openapi`). A
+//! browser signs in to a claimed device with a session cookie instead of a
+//! token (`sessions`, docs/webconfig.md).
 //!
 //! Every wait on a client is bounded - the TLS handshake, each body, each
 //! connection's whole life - so a client that connects and says nothing
 //! costs one task until its deadline, never a stuck server.
 
 mod jobs;
+pub mod sessions;
 mod statics;
 
 use std::collections::HashMap;
@@ -38,11 +41,14 @@ use std::time::Duration;
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full, Limited};
 use hyper::body::Incoming;
-use hyper::header::{HeaderValue, AUTHORIZATION, CACHE_CONTROL, CONTENT_TYPE, LOCATION};
+use hyper::header::{
+    HeaderName, HeaderValue, AUTHORIZATION, CACHE_CONTROL, CONTENT_TYPE, COOKIE, HOST, LOCATION,
+    ORIGIN, SET_COOKIE,
+};
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
-use protocol::api::{self, Action, Answer, ApiError, ErrorCode, Method, Route};
-use protocol::JobStarted;
+use protocol::api::{self, Action, Answer, ApiError, ErrorCode, Method, Route, Web};
+use protocol::{JobStarted, Via, WebSession};
 use serde_json::Value;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, UnixListener};
@@ -57,6 +63,16 @@ use crate::paths::Paths;
 use crate::sync::lock;
 
 use jobs::Jobs;
+use sessions::{Owner, Sessions};
+
+/// Sent by every browser that sends `Origin` too: whose page made the request.
+const SEC_FETCH_SITE: HeaderName = HeaderName::from_static("sec-fetch-site");
+
+/// Webconfig's pages: its own scripts, styles and fonts only; screenshots
+/// and downloads are `blob:` URLs, the setup QR code an SVG `data:` one.
+const WEBCONFIG_CSP: &str = "default-src 'self'; img-src 'self' blob: data:; \
+    style-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; \
+    form-action 'self'";
 
 const HANDSHAKE: Duration = Duration::from_secs(10);
 /// A connection is closed, gracefully, after this long: a client keeps one
@@ -95,9 +111,10 @@ pub struct Server {
     routes: Vec<Route>,
     jobs: Arc<Jobs>,
     limiter: Limiter,
+    sessions: Arc<Sessions>,
     /// The OpenAPI document, built once.
     openapi: Bytes,
-    portal_root: PathBuf,
+    webconfig_root: PathBuf,
     api_docs: PathBuf,
 }
 
@@ -105,13 +122,14 @@ impl Server {
     pub fn new(control: Arc<Control>, paths: &Paths, log: Arc<Log>) -> Arc<Self> {
         let document = protocol::openapi::document(env!("CARGO_PKG_VERSION"));
         Arc::new(Self {
+            sessions: control.sessions(),
             control,
             log,
             routes: api::all(),
             jobs: Arc::new(Jobs::default()),
             limiter: Limiter::default(),
             openapi: Bytes::from(serde_json::to_vec_pretty(&document).unwrap_or_default()),
-            portal_root: paths.portal_root.clone(),
+            webconfig_root: paths.webconfig_root.clone(),
             api_docs: paths.api_docs.clone(),
         })
     }
@@ -286,7 +304,7 @@ impl Server {
         if let Some(rest) = path.strip_prefix("/api/docs/") {
             // naked: statics::read is blocking() under within()
             return match statics::read(&self.api_docs, rest, false).await {
-                Some(file) => bytes(StatusCode::OK, file.content_type, Bytes::from(file.body)),
+                Some(file) => static_file(file),
                 None => not_found(),
             };
         }
@@ -298,12 +316,24 @@ impl Server {
             return error(
                 StatusCode::METHOD_NOT_ALLOWED,
                 ErrorCode::BadRequest,
-                "the setup page is read only",
+                "only the API under /api/ takes writes",
             );
         }
         // naked: statics::read is blocking() under within()
-        match statics::read(&self.portal_root, &path, true).await {
-            Some(file) => bytes(StatusCode::OK, file.content_type, Bytes::from(file.body)),
+        match statics::read(&self.webconfig_root, &path, true).await {
+            Some(file) => {
+                let html = file.content_type.starts_with("text/html");
+                let mut response = static_file(file);
+                if html {
+                    // Webconfig loads nothing from elsewhere and runs no
+                    // inline script: whatever got into a page could not.
+                    response.headers_mut().insert(
+                        HeaderName::from_static("content-security-policy"),
+                        HeaderValue::from_static(WEBCONFIG_CSP),
+                    );
+                }
+                response
+            }
             None => not_found(),
         }
     }
@@ -328,10 +358,24 @@ impl Server {
         };
         let route = *route;
 
-        let caller = match self.authenticate(origin, &request, route.public) {
-            Ok(caller) => caller,
-            Err(refusal) => return refused(refusal),
+        if let Err(refusal) = guard(request.headers(), method, route.raw_body) {
+            return refused(refusal);
+        }
+        let (admitted, stale) = self.authenticate(origin, &request, route.public);
+        let (caller, via) = match admitted {
+            Ok(admitted) => admitted,
+            Err(refusal) => {
+                let mut response = refused(refusal);
+                if stale {
+                    set_cookie(&mut response, &self.sessions.clear_cookie());
+                }
+                return response;
+            }
         };
+        let from_browser = request.headers().contains_key(ORIGIN)
+            || request.headers().contains_key(SEC_FETCH_SITE);
+        let active = is_active(request.headers());
+        let cookie = self.cookie(request.headers()).map(str::to_string);
 
         let mut pairs = captured;
         let query = request.uri().query().unwrap_or("");
@@ -381,9 +425,17 @@ impl Server {
             Err(err) => return error(StatusCode::BAD_REQUEST, ErrorCode::BadRequest, &err),
         };
 
-        match action {
+        let claim = route.path == <api::access::Claim as api::Endpoint>::PATH;
+        let mut response = match action {
             Action::Run(command) => {
                 let reply = self.control.handle(&caller, command).await; // naked: Control bounds every call it makes
+                                                                         // A browser that claims gets its session in the same answer:
+                                                                         // on the hotspot the phone is dropped right after it, and a
+                                                                         // second request to sign in would never arrive.
+                let session = match (&reply.result, claim && from_browser) {
+                    (Ok(claimed), true) => self.claim_session(claimed),
+                    _ => None,
+                };
                 let mut response = match reply.result.and_then(route.respond) {
                     Ok(Answer::Json(value)) => json(StatusCode::OK, &value),
                     Ok(Answer::Raw(raw)) => {
@@ -398,12 +450,19 @@ impl Server {
                     }
                     Err(err) => error(StatusCode::UNPROCESSABLE_ENTITY, ErrorCode::Refused, &err),
                 };
+                if let Some(set) = session {
+                    set_cookie(&mut response, &set);
+                }
                 if let Some(after) = reply.after {
                     let (sent, out) = tokio::sync::oneshot::channel();
                     response.body_mut().sent = Some(sent);
                     self.after(after, out);
                 }
                 response
+            }
+            Action::Web(web) => {
+                // naked: web waits only through Control, whose reads are blocking() under within()
+                self.web(web, &caller, via, cookie.as_deref()).await
             }
             Action::Start(command) => match self
                 .control
@@ -432,6 +491,210 @@ impl Server {
                     &format!("no job {job}"),
                 ),
             },
+        };
+
+        let has_cookie = response.headers().contains_key(SET_COOKIE);
+        match (&cookie, via) {
+            // A session someone is using lasts another timeout from now,
+            // in the browser too.
+            (Some(id), Via::Session) if active && !has_cookie => {
+                set_cookie(
+                    &mut response,
+                    &self.sessions.set_cookie(id, self.control.session_timeout()),
+                );
+            }
+            // A cookie from a session that has ended - every browser brings
+            // one after the agent restarted - is forgotten.
+            _ if stale && !has_cookie => set_cookie(&mut response, &self.sessions.clear_cookie()),
+            _ => {}
+        }
+        response
+    }
+
+    /// The session cookie a request carries, if any.
+    fn cookie<'a>(&self, headers: &'a hyper::HeaderMap) -> Option<&'a str> {
+        headers
+            .get_all(COOKIE)
+            .iter()
+            .filter_map(|value| value.to_str().ok())
+            .find_map(|header| self.sessions.session_in(header))
+    }
+
+    /// The `Set-Cookie` for a session of the token a claim just issued.
+    fn claim_session(&self, claimed: &Value) -> Option<String> {
+        let token_id = claimed["token_id"].as_str()?;
+        let owner = Owner {
+            token_id: token_id.to_string(),
+            token_sha: self.control.token_sha(token_id)?,
+        };
+        let timeout = self.control.session_timeout();
+        match self.sessions.create(owner, timeout) {
+            Ok(id) => Some(self.sessions.set_cookie(&id, timeout)),
+            Err(err) => {
+                self.log
+                    .info(format!("api: no session for the claim: {err}"));
+                None
+            }
+        }
+    }
+
+    /// What a browser asks of its session.
+    async fn web(
+        &self,
+        web: Web,
+        caller: &Caller,
+        via: Via,
+        cookie: Option<&str>,
+    ) -> Response<Body> {
+        let peer = match caller {
+            Caller::Token { peer, .. } | Caller::Anonymous { peer } => Some(*peer),
+            Caller::Local | Caller::Page => None,
+        };
+        let timeout = self.control.session_timeout();
+        match web {
+            Web::Session => {
+                let session = self.web_session(caller, via).await; // naked: web_session reads through blocking() under within()
+                json(StatusCode::OK, &serde_json::json!(session))
+            }
+            Web::SignOut => {
+                if let Some(id) = cookie {
+                    self.sessions.end(id);
+                }
+                let mut response = json(
+                    StatusCode::OK,
+                    &serde_json::json!(protocol::Done::new("signed out")),
+                );
+                set_cookie(&mut response, &self.sessions.clear_cookie());
+                response
+            }
+            Web::Ticket => {
+                let Caller::Token { id, .. } = caller else {
+                    return error(
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        ErrorCode::Refused,
+                        "a ticket is issued for a token; ask with `Authorization: Bearer`",
+                    );
+                };
+                if via != Via::Token {
+                    return error(
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        ErrorCode::Refused,
+                        "a browser session cannot issue tickets",
+                    );
+                }
+                let Some(token_sha) = self.control.token_sha(id) else {
+                    return error(
+                        StatusCode::UNAUTHORIZED,
+                        ErrorCode::InvalidToken,
+                        "invalid token",
+                    );
+                };
+                let owner = Owner {
+                    token_id: id.clone(),
+                    token_sha,
+                };
+                match self.sessions.ticket(owner) {
+                    Ok(ticket) => json(
+                        StatusCode::OK,
+                        &serde_json::json!(protocol::Ticket {
+                            ticket,
+                            expires_in: sessions::TICKET_LIFE.as_secs(),
+                        }),
+                    ),
+                    Err(err) => error(StatusCode::UNPROCESSABLE_ENTITY, ErrorCode::Refused, &err),
+                }
+            }
+            Web::SignIn { token } => {
+                if !self.control.claimed() {
+                    return error(
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        ErrorCode::Refused,
+                        "this device is unclaimed: it needs no signing in",
+                    );
+                }
+                let owner = self.control.verify(token.trim()).and_then(|id| {
+                    let token_sha = self.control.token_sha(&id)?;
+                    Some(Owner {
+                        token_id: id,
+                        token_sha,
+                    })
+                });
+                // naked: sign_in waits only through web_session, blocking() under within()
+                self.sign_in(owner, peer, timeout, "a token that is not the device's")
+                    .await
+            }
+            Web::Redeem { ticket } => {
+                let owner = self.sessions.redeem(ticket.trim()).filter(|owner| {
+                    self.control.token_sha(&owner.token_id).as_deref()
+                        == Some(owner.token_sha.as_str())
+                });
+                // naked: sign_in waits only through web_session, blocking() under within()
+                self.sign_in(
+                    owner,
+                    peer,
+                    timeout,
+                    "a ticket that is used up, expired or unknown",
+                )
+                .await
+            }
+        }
+    }
+
+    /// A new session for `owner`, its cookie set in the answer; or, without
+    /// one, a strike against `peer`.
+    async fn sign_in(
+        &self,
+        owner: Option<Owner>,
+        peer: Option<SocketAddr>,
+        timeout: Duration,
+        what: &str,
+    ) -> Response<Body> {
+        if let Some(peer) = peer {
+            if self.limiter.refused(peer.ip()) {
+                return error(
+                    StatusCode::TOO_MANY_REQUESTS,
+                    ErrorCode::RateLimited,
+                    "too many failed attempts from this address; try again in a minute",
+                );
+            }
+        }
+        let Some(owner) = owner else {
+            if let Some(peer) = peer {
+                self.limiter.strike(peer.ip());
+                self.log
+                    .info(format!("api: {peer} tried to sign in with {what}"));
+            }
+            return error(
+                StatusCode::UNAUTHORIZED,
+                ErrorCode::InvalidToken,
+                "invalid token",
+            );
+        };
+        let id = match self.sessions.create(owner.clone(), timeout) {
+            Ok(id) => id,
+            Err(err) => return error(StatusCode::INTERNAL_SERVER_ERROR, ErrorCode::Internal, &err),
+        };
+        let caller = Caller::Token {
+            id: owner.token_id,
+            peer: peer.unwrap_or_else(|| SocketAddr::from(([127, 0, 0, 1], 0))),
+        };
+        let session = self.web_session(&caller, Via::Session).await; // naked: web_session reads through blocking() under within()
+        let mut response = json(StatusCode::OK, &serde_json::json!(session));
+        set_cookie(&mut response, &self.sessions.set_cookie(&id, timeout));
+        response
+    }
+
+    async fn web_session(&self, caller: &Caller, via: Via) -> WebSession {
+        let token = match caller {
+            Caller::Token { id, .. } => self.control.token_info(id),
+            _ => None,
+        };
+        WebSession {
+            claimed: self.control.claimed(),
+            fresh: self.control.fresh().await, // naked: fresh reads state.json through blocking() under within()
+            via,
+            token,
+            timeout: self.control.session_timeout().as_secs(),
         }
     }
 
@@ -448,23 +711,120 @@ impl Server {
         });
     }
 
+    /// Who is asking and how they got in, and whether they brought the
+    /// cookie of a session that has ended - which is forgotten whether the
+    /// request is then let in or not.
     fn authenticate(
         &self,
         origin: Origin,
         request: &Request<Incoming>,
         public: bool,
-    ) -> Result<Caller, ApiError> {
+    ) -> (Result<(Caller, Via), ApiError>, bool) {
         let peer = match origin {
-            Origin::Local => return Ok(Caller::Local),
+            Origin::Local => return (Ok((Caller::Local, Via::Local)), false),
             Origin::Remote(peer) => peer,
         };
-        let token = request
-            .headers()
+        let headers = request.headers();
+        let token = headers
             .get(AUTHORIZATION)
             .and_then(|value| value.to_str().ok())
             .and_then(|value| value.strip_prefix("Bearer "))
             .map(str::trim);
-        admit(&self.control, &self.limiter, &self.log, peer, token, public)
+        // A token wins over a cookie: ctl and the GUI never send one, and a
+        // browser never sends a token.
+        let mut stale = false;
+        if token.is_none() {
+            if let Some(id) = self.cookie(headers) {
+                let owner = self.sessions.check(
+                    id,
+                    self.control.session_timeout(),
+                    is_active(headers),
+                    |token_id| self.control.token_sha(token_id),
+                );
+                match owner {
+                    Some(owner) => {
+                        let caller = Caller::Token {
+                            id: owner.token_id,
+                            peer,
+                        };
+                        return (Ok((caller, Via::Session)), false);
+                    }
+                    // Not a strike: the cookie was the device's own, and it
+                    // is the browser's next request after a restart.
+                    None => {
+                        stale = true;
+                        self.log
+                            .debug(format!("api: {peer} brought an ended session's cookie"));
+                    }
+                }
+            }
+        }
+        let admitted =
+            admit(&self.control, &self.limiter, &self.log, peer, token, public).map(|caller| {
+                let via = match caller {
+                    Caller::Token { .. } => Via::Token,
+                    _ => Via::Anonymous,
+                };
+                (caller, via)
+            });
+        (admitted, stale)
+    }
+}
+
+/// The request is someone's doing, not a page refreshing itself.
+fn is_active(headers: &hyper::HeaderMap) -> bool {
+    headers.contains_key(api::HEADER_ACTIVITY)
+}
+
+/// Browser requests only from the device's own origin. Another site's page
+/// cannot read the answers - there is no CORS - but it could make the
+/// browser send a write, with a cookie, or to an unclaimed device with none.
+/// A request with neither `Origin` nor `Sec-Fetch-Site` is not a browser's
+/// (ctl, the GUI, curl) and passes.
+fn guard(headers: &hyper::HeaderMap, method: Method, raw_body: bool) -> Result<(), ApiError> {
+    let refuse = |error: &str| ApiError {
+        error: error.to_string(),
+        code: ErrorCode::CrossOrigin,
+    };
+    let text = |name| {
+        headers
+            .get(name)
+            .and_then(|value: &HeaderValue| value.to_str().ok())
+    };
+    // `none` is someone typing the address; `same-site` is another port of
+    // the same host, which is another origin.
+    if matches!(text(SEC_FETCH_SITE), Some("cross-site" | "same-site")) {
+        return Err(refuse("a request from another site"));
+    }
+    if method == Method::Get {
+        return Ok(());
+    }
+    let Some(origin) = text(ORIGIN) else {
+        return Ok(());
+    };
+    let host = text(HOST).unwrap_or("");
+    if host.is_empty() || origin != format!("https://{host}") {
+        return Err(refuse("a request from another origin"));
+    }
+    // A form can post text/plain across sites without asking; a JSON or
+    // an octet-stream body cannot, so insisting on them closes that door
+    // even for a browser that sends no Origin.
+    let expected = if raw_body {
+        "application/octet-stream"
+    } else {
+        "application/json"
+    };
+    match text(CONTENT_TYPE) {
+        Some(given) if given.split(';').next().map(str::trim) != Some(expected) => {
+            Err(refuse(&format!("the body must be {expected}")))
+        }
+        _ => Ok(()),
+    }
+}
+
+fn set_cookie(response: &mut Response<Body>, value: &str) {
+    if let Ok(value) = HeaderValue::from_str(value) {
+        response.headers_mut().append(SET_COOKIE, value);
     }
 }
 
@@ -570,6 +930,36 @@ fn bytes(status: StatusCode, content_type: &str, body: Bytes) -> Response<Body> 
     let mut response = Response::new(Body::new(body));
     *response.status_mut() = status;
     with_headers(response, content_type)
+}
+
+/// A static file: a hashed asset is cached for good, everything else is
+/// asked for again. A page may not be framed by another site, and nothing
+/// is sniffed into another type.
+fn static_file(file: statics::File) -> Response<Body> {
+    let html = file.content_type.starts_with("text/html");
+    let mut response = bytes(StatusCode::OK, file.content_type, Bytes::from(file.body));
+    let headers = response.headers_mut();
+    if file.immutable {
+        headers.insert(
+            CACHE_CONTROL,
+            HeaderValue::from_static("public, max-age=31536000, immutable"),
+        );
+    }
+    headers.insert(
+        HeaderName::from_static("x-content-type-options"),
+        HeaderValue::from_static("nosniff"),
+    );
+    if html {
+        headers.insert(
+            HeaderName::from_static("x-frame-options"),
+            HeaderValue::from_static("DENY"),
+        );
+        headers.insert(
+            HeaderName::from_static("referrer-policy"),
+            HeaderValue::from_static("no-referrer"),
+        );
+    }
+    response
 }
 
 fn json(status: StatusCode, value: &Value) -> Response<Body> {
@@ -777,6 +1167,97 @@ mod tests {
         let (status, body) = ask(&socket, get("/api/v1/openapi.json")).await;
         assert_eq!(status, 200);
         assert!(body.contains("\"openapi\": \"3.1.0\""));
+    }
+
+    fn headers(pairs: &[(&'static str, &str)]) -> hyper::HeaderMap {
+        let mut map = hyper::HeaderMap::new();
+        for (name, value) in pairs {
+            map.insert(*name, HeaderValue::from_str(value).unwrap());
+        }
+        map
+    }
+
+    #[test]
+    fn only_the_device_s_own_origin_may_write_from_a_browser() {
+        let code = |pairs: &[(&'static str, &str)], method, raw| {
+            guard(&headers(pairs), method, raw).map_err(|refusal| refusal.code)
+        };
+        let own = [
+            ("host", "192.0.2.1:7400"),
+            ("origin", "https://192.0.2.1:7400"),
+            ("content-type", "application/json"),
+        ];
+        // Not a browser: ctl, the GUI, curl.
+        assert_eq!(code(&[("host", "x")], Method::Post, false), Ok(()));
+        assert_eq!(code(&own, Method::Post, false), Ok(()));
+        assert_eq!(code(&own[..2], Method::Post, false), Ok(()), "no body");
+        assert_eq!(
+            code(
+                &[
+                    ("host", "192.0.2.1:7400"),
+                    ("origin", "https://192.0.2.1:7400"),
+                    ("content-type", "application/octet-stream"),
+                ],
+                Method::Put,
+                true
+            ),
+            Ok(())
+        );
+
+        let refused = Err(ErrorCode::CrossOrigin);
+        let elsewhere = [
+            ("host", "192.0.2.1:7400"),
+            ("origin", "https://evil.test"),
+            ("content-type", "application/json"),
+        ];
+        assert_eq!(code(&elsewhere, Method::Post, false), refused);
+        let plain_http = [
+            ("host", "192.0.2.1:7400"),
+            ("origin", "http://192.0.2.1:7400"),
+        ];
+        assert_eq!(code(&plain_http, Method::Delete, false), refused);
+        let form = [
+            ("host", "192.0.2.1:7400"),
+            ("origin", "https://192.0.2.1:7400"),
+            ("content-type", "text/plain"),
+        ];
+        assert_eq!(code(&form, Method::Post, false), refused);
+        assert_eq!(
+            code(&own, Method::Put, true),
+            refused,
+            "JSON for a raw body"
+        );
+
+        // Another site's page may not even read through the browser's cookie.
+        for site in ["cross-site", "same-site"] {
+            let from = [("host", "192.0.2.1:7400"), ("sec-fetch-site", site)];
+            assert_eq!(code(&from, Method::Get, false), refused, "{site}");
+        }
+        for site in ["same-origin", "none"] {
+            let from = [("host", "192.0.2.1:7400"), ("sec-fetch-site", site)];
+            assert_eq!(code(&from, Method::Get, false), Ok(()), "{site}");
+        }
+        // A GET is answered to its own origin only anyway.
+        assert_eq!(code(&elsewhere, Method::Get, false), Ok(()));
+    }
+
+    #[tokio::test]
+    async fn the_session_cookie_is_read_among_others() {
+        let fx = crate::control::fixture();
+        let server = Server::new(
+            Arc::clone(&fx.control),
+            &fx.paths,
+            Arc::new(Log::buffered(true)),
+        );
+        let name = server.sessions.cookie_name().to_string();
+        let mut map = hyper::HeaderMap::new();
+        map.append(COOKIE, HeaderValue::from_static("a=b"));
+        map.append(
+            COOKIE,
+            HeaderValue::from_str(&format!("c=d; {name}=abc")).unwrap(),
+        );
+        assert_eq!(server.cookie(&map), Some("abc"));
+        assert_eq!(server.cookie(&hyper::HeaderMap::new()), None);
     }
 
     #[tokio::test]

@@ -1,0 +1,574 @@
+{
+  "function": "device::status",
+  "input": {
+    "audio": {
+      "error": null,
+      "input": {
+        "devices": [],
+        "fallback": null,
+        "muted": false,
+        "setting": "off",
+        "using": null,
+        "volume": 50
+      },
+      "output": {
+        "devices": [],
+        "fallback": "no USB speaker",
+        "muted": false,
+        "setting": "auto",
+        "using": {
+          "available": true,
+          "description": "HDMI",
+          "in_use": true,
+          "kind": "hdmi",
+          "name": "alsa_output.hdmi"
+        },
+        "volume": 80
+      },
+      "running": true
+    },
+    "bridge": {
+      "mode": "read",
+      "script": "inject.js",
+      "script_problem": "no such file"
+    },
+    "browser_answering": false,
+    "cpu_percent": 97,
+    "current_url": null,
+    "data": {
+      "available": 800000000,
+      "fstype": "ext4",
+      "mountpoint": "/data",
+      "size": 8000000000,
+      "source": "/dev/mmcblk0p3",
+      "used": 7200000000
+    },
+    "debug_screen": true,
+    "devtools": true,
+    "hardware": {
+      "arch": "aarch64",
+      "board": "c04170",
+      "cores": 4,
+      "cpu": "BCM2712",
+      "firmware": "2025-01-01",
+      "model": "5 Model B",
+      "serial": "10000000abcdef",
+      "vendor": "Raspberry Pi"
+    },
+    "image_version": "0.1.0-ee15eb7",
+    "kiosk_url": "https://example.test/board",
+    "maintenance": true,
+    "memory": {
+      "available": 1000000000,
+      "total": 4000000000
+    },
+    "node": {
+      "claimed": true,
+      "fingerprint": "AB:CD:EF",
+      "id": "3f2a9c1d",
+      "machine": "raspberrypi5",
+      "name": "lobby-kiosk",
+      "version": "1.0.0"
+    },
+    "os": "Tessaro 0.1.0",
+    "pending": {
+      "key": "screen.resolution",
+      "previous": null,
+      "seconds_left": 25,
+      "value": "1280x720"
+    },
+    "revision": 42,
+    "screen_on": false,
+    "time": {
+      "ntp": true,
+      "synchronized": false,
+      "timezone": "Europe/Bratislava"
+    },
+    "units": {
+      "nginx.service": "activating",
+      "tessaro-kiosk.service": "failed",
+      "tessaro-proxy.service": "inactive",
+      "weston.service": "active"
+    }
+  },
+  "output": {
+    "facts": [
+      {
+        "label": "name",
+        "value": [
+          [
+            "heading",
+            "lobby-kiosk",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "node id",
+        "value": [
+          [
+            "plain",
+            "3f2a9c1d",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "machine",
+        "value": [
+          [
+            "plain",
+            "raspberrypi5",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "agent",
+        "value": [
+          [
+            "plain",
+            "1.0.0",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "fingerprint",
+        "value": [
+          [
+            "muted",
+            "AB:CD:EF",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "claimed",
+        "value": [
+          [
+            "ok",
+            "yes",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "os",
+        "value": [
+          [
+            "plain",
+            "Tessaro 0.1.0, ",
+            0
+          ],
+          [
+            "label",
+            "image",
+            0
+          ],
+          [
+            "plain",
+            " 0.1.0-ee15eb7",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "hardware",
+        "value": [
+          [
+            "plain",
+            "Raspberry Pi 5 Model B",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "board",
+        "value": [
+          [
+            "plain",
+            "c04170 ",
+            0
+          ],
+          [
+            "muted",
+            "firmware 2025-01-01",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "cpu",
+        "value": [
+          [
+            "plain",
+            "BCM2712, 4 cores ",
+            0
+          ],
+          [
+            "muted",
+            "aarch64",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "serial",
+        "value": [
+          [
+            "muted",
+            "10000000abcdef",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "revision",
+        "value": [
+          [
+            "plain",
+            "42",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "cpu use",
+        "value": [
+          [
+            "bad",
+            "97%",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "memory",
+        "value": [
+          [
+            "plain",
+            "1.0 GB free of 4.0 GB ",
+            0
+          ],
+          [
+            "ok",
+            "(75% used)",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "data",
+        "value": [
+          [
+            "plain",
+            "800.0 MB free of 8.0 GB ",
+            0
+          ],
+          [
+            "warn",
+            "(90% used)",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "maintenance",
+        "value": [
+          [
+            "warn",
+            "on",
+            0
+          ],
+          [
+            "plain",
+            " ",
+            0
+          ],
+          [
+            "muted",
+            "-",
+            0
+          ],
+          [
+            "plain",
+            " ",
+            0
+          ],
+          [
+            "cmd",
+            "tessaro-ctl browser maintenance off",
+            0
+          ],
+          [
+            "plain",
+            " ",
+            0
+          ],
+          [
+            "muted",
+            "returns to browser.url",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "debug screen",
+        "value": [
+          [
+            "warn",
+            "on",
+            0
+          ],
+          [
+            "plain",
+            " ",
+            0
+          ],
+          [
+            "muted",
+            "-",
+            0
+          ],
+          [
+            "plain",
+            " ",
+            0
+          ],
+          [
+            "cmd",
+            "tessaro-ctl browser debug off",
+            0
+          ],
+          [
+            "plain",
+            " ",
+            0
+          ],
+          [
+            "muted",
+            "returns to the page below",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "browser url",
+        "value": [
+          [
+            "plain",
+            "https://example.test/board",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "showing",
+        "value": [
+          [
+            "warn",
+            "(cannot tell)",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "browser",
+        "value": [
+          [
+            "bad",
+            "not answering",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "devtools",
+        "value": [
+          [
+            "warn",
+            "connected",
+            0
+          ],
+          [
+            "plain",
+            " ",
+            0
+          ],
+          [
+            "muted",
+            "- the agent leaves the tab alone until it disconnects",
+            0
+          ]
+        ]
+      }
+    ],
+    "more": [
+      {
+        "label": "audio",
+        "value": [
+          [
+            "plain",
+            "hdmi",
+            0
+          ],
+          [
+            "plain",
+            " ",
+            0
+          ],
+          [
+            "plain",
+            "80%",
+            0
+          ],
+          [
+            "plain",
+            " ",
+            0
+          ],
+          [
+            "muted",
+            "(no USB speaker)",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "time",
+        "value": [
+          [
+            "plain",
+            "Europe/Bratislava, ",
+            0
+          ],
+          [
+            "warn",
+            "not in sync",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "screen",
+        "value": [
+          [
+            "warn",
+            "off",
+            0
+          ],
+          [
+            "plain",
+            " ",
+            0
+          ],
+          [
+            "muted",
+            "-",
+            0
+          ],
+          [
+            "plain",
+            " ",
+            0
+          ],
+          [
+            "cmd",
+            "tessaro-ctl screen power on",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "page bridge",
+        "value": [
+          [
+            "plain",
+            "read",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "inject",
+        "value": [
+          [
+            "plain",
+            "inject.js ",
+            0
+          ],
+          [
+            "bad",
+            "not injected: no such file",
+            0
+          ]
+        ]
+      }
+    ],
+    "pending": [
+      [
+        "warn",
+        "on probation",
+        0
+      ],
+      [
+        "plain",
+        " screen.resolution=1280x720 - ",
+        0
+      ],
+      [
+        "cmd",
+        "`tessaro-ctl screen confirm`",
+        0
+      ],
+      [
+        "plain",
+        " within 25s or it goes back to the default",
+        0
+      ]
+    ],
+    "units": [
+      {
+        "label": "nginx.service",
+        "value": [
+          [
+            "warn",
+            "activating",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "tessaro-kiosk.service",
+        "value": [
+          [
+            "bad",
+            "failed",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "tessaro-proxy.service",
+        "value": [
+          [
+            "muted",
+            "inactive",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "weston.service",
+        "value": [
+          [
+            "ok",
+            "active",
+            0
+          ]
+        ]
+      }
+    ]
+  }
+}

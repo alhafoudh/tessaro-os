@@ -1,0 +1,9 @@
+{
+  "function": "update::warning",
+  "input": {
+    "name": "tessaro.wic.zst",
+    "repartition": false,
+    "wipe_data": true
+  },
+  "output": "write tessaro.wic.zst and erase /data - every setting, the claim, the browser profile and the device's identity"
+}

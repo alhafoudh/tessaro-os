@@ -38,19 +38,21 @@ pub use bridge::BridgeSetup;
 
 use std::collections::{BTreeMap, HashMap};
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use protocol::keys::{self, Key};
 use protocol::{
     Command, Done, KeyInfo, LogPage, NodeInfo, Pending, RestartTarget, Screenshot, Setting,
-    Settings, Source, Status,
+    Settings, Source, Status, TokenInfo,
 };
 use serde::Serialize;
 use serde_json::{json, Value};
 use tokio::sync::watch;
 use tokio::time::Instant;
 
+use crate::api::sessions::{self, Sessions};
 use crate::audio::Audio;
 use crate::auth::{self, Auth};
 use crate::cdp::session::SessionHandle;
@@ -80,6 +82,10 @@ const CDP_LIMIT: Duration = Duration::from_secs(10);
 /// A screenshot of a 4K page can take a while to encode.
 const SCREENSHOT_LIMIT: Duration = Duration::from_secs(30);
 
+/// access.session_timeout when neither the image nor the device sets it: a
+/// week.
+const DEFAULT_SESSION_TIMEOUT: u64 = 7 * 24 * 3600;
+
 /// Who is asking.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Caller {
@@ -88,8 +94,9 @@ pub enum Caller {
     /// TCP, with a valid token.
     Token { id: String, peer: SocketAddr },
     /// TCP, no valid token: the public endpoints (`api::Endpoint::PUBLIC`),
-    /// and every endpoint while the device is unclaimed. The setup page on a
-    /// phone is one of these.
+    /// and every endpoint while the device is unclaimed. Webconfig on an
+    /// unclaimed device is one of these; once it is claimed a browser signs
+    /// in and comes as `Token`, through its session.
     Anonymous { peer: SocketAddr },
     /// The kiosk page itself, through the page bridge: only the commands
     /// `bridge.rs` maps its calls onto.
@@ -110,7 +117,12 @@ impl Caller {
 /// Work that must wait until the reply has been sent.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum After {
+    /// Restart a unit to apply a change. When this process goes down with
+    /// it, the browser sessions are handed over to the next one.
     Restart(String),
+    /// Restart a unit because someone asked to (`device restart`): the
+    /// browser sessions end with this process.
+    RestartAsked(String),
     Reboot,
     /// Re-render the network profiles from the saved settings: the hotspot
     /// after a claim, an unclaim or a new password.
@@ -208,7 +220,7 @@ pub struct Control {
     /// online. `None` until one has been tried. Not the cached address, which
     /// a failure leaves in place.
     online: Mutex<Option<bool>>,
-    /// When a client last asked for the welcome values (the setup page does,
+    /// When a client last asked for the welcome values (Quick Setup does,
     /// every few seconds), which keeps the online check running while
     /// someone is looking at it.
     portal_seen: Mutex<Option<Instant>>,
@@ -216,6 +228,12 @@ pub struct Control {
     bridge: std::sync::OnceLock<Arc<bridge::Bridge>>,
     /// How busy the CPU was over `watch_cpu`'s last interval, in percent.
     cpu: Mutex<Option<u8>>,
+    /// Webconfig's browser sessions (`api::sessions`). Here, not in the API
+    /// server, because a restart this process makes of itself hands them
+    /// over (`run_after`).
+    sessions: Arc<Sessions>,
+    /// access.session_timeout in seconds, as last read from `state.json`.
+    session_timeout: AtomicU64,
 }
 
 impl Control {
@@ -232,7 +250,13 @@ impl Control {
         agent_url: String,
         proxy: Option<SocketAddr>,
     ) -> Arc<Self> {
+        let session_timeout = defaults
+            .get(keys::find(keys::SESSION_TIMEOUT).map_or("", |key| key.env))
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_SESSION_TIMEOUT);
         Arc::new(Self {
+            sessions: Arc::new(Sessions::new(&identity.id)),
+            session_timeout: AtomicU64::new(session_timeout),
             agent_url,
             proxy,
             updates: Updates::new(Arc::clone(&log), paths.clone()),
@@ -381,6 +405,75 @@ impl Control {
         lock(&self.auth)
             .verify(presented)
             .map(|entry| entry.id.clone())
+    }
+
+    /// The stored hash of token `id`, while the device has it: what keeps a
+    /// browser session tied to its token.
+    pub fn token_sha(&self, id: &str) -> Option<String> {
+        lock(&self.auth)
+            .tokens
+            .iter()
+            .find(|entry| entry.id == id)
+            .map(|entry| entry.sha256.clone())
+    }
+
+    pub fn token_info(&self, id: &str) -> Option<TokenInfo> {
+        self.token_list().into_iter().find(|token| token.id == id)
+    }
+
+    pub fn sessions(&self) -> Arc<Sessions> {
+        Arc::clone(&self.sessions)
+    }
+
+    /// How long a browser session lasts unused (access.session_timeout).
+    pub fn session_timeout(&self) -> Duration {
+        Duration::from_secs(self.session_timeout.load(Ordering::Relaxed))
+    }
+
+    /// Unclaimed, and nothing set on it yet: Webconfig opens on Quick Setup.
+    pub async fn fresh(&self) -> bool {
+        if self.claimed() {
+            return false;
+        }
+        self.read_state()
+            .await
+            .is_ok_and(|state| state.settings.is_empty())
+    }
+
+    /// Take over the sessions the previous agent process handed over.
+    pub async fn load_sessions(&self) {
+        let sessions = Arc::clone(&self.sessions);
+        let file = self.paths.run_dir.join(sessions::HANDOVER);
+        match blocking("taking over the browser sessions", move || {
+            sessions.load(&file)
+        })
+        .await
+        {
+            Ok(0) => {}
+            Ok(count) => self
+                .log
+                .info(format!("api: took over {count} browser session(s)")),
+            Err(err) => self.log.info(format!("api: browser sessions: {err}")),
+        }
+    }
+
+    /// Hand the browser sessions to the next agent process, before a
+    /// restart this one makes to apply a change.
+    async fn save_sessions(&self) {
+        let sessions = Arc::clone(&self.sessions);
+        let file = self.paths.run_dir.join(sessions::HANDOVER);
+        let timeout = self.session_timeout();
+        match blocking("handing over the browser sessions", move || {
+            sessions.save(&file, timeout)
+        })
+        .await
+        {
+            Ok(0) => {}
+            Ok(count) => self
+                .log
+                .info(format!("api: handing over {count} browser session(s)")),
+            Err(err) => self.log.info(format!("api: browser sessions: {err}")),
+        }
     }
 
     pub fn node(&self) -> NodeInfo {
@@ -620,7 +713,14 @@ impl Control {
     async fn read_state(&self) -> Result<State, String> {
         let store = self.state.clone();
         let log = Arc::clone(&self.log);
-        blocking("reading state.json", move || Ok(store.read::<State>(&log))).await
+        let state = blocking("reading state.json", move || Ok(store.read::<State>(&log))).await?;
+        // The API checks every session cookie against this, and reading the
+        // file for each would be a disk read per request.
+        let seconds = state::setting(&state.settings, &self.defaults, keys::SESSION_TIMEOUT)
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(DEFAULT_SESSION_TIMEOUT);
+        self.session_timeout.store(seconds, Ordering::Relaxed);
+        Ok(state)
     }
 
     /// Change `state.json` under the store's lock, off the runtime thread.
@@ -1034,7 +1134,13 @@ impl Control {
 
     pub async fn run_after(&self, after: After) {
         let outcome = match &after {
-            After::Restart(unit) => self.bus.restart(unit).await,
+            After::Restart(unit) => {
+                if *unit == self.paths.agent_unit || *unit == self.paths.weston_unit {
+                    self.save_sessions().await;
+                }
+                self.bus.restart(unit).await
+            }
+            After::RestartAsked(unit) => self.bus.restart(unit).await,
             After::Reboot => self.bus.reboot().await,
             After::Network => {
                 // naked: refresh_network waits only through Network, whose calls are within()
@@ -1127,9 +1233,11 @@ fn log_page(output: &str, cursor: Option<String>) -> LogPage {
 pub const UNCLAIMED: &str = "this device is unclaimed; `tessaro-ctl access claim` it first";
 
 /// `restarting UNIT`, with the restart itself left until the answer is out:
-/// the agent goes down with either unit it is asked to restart.
+/// the agent goes down with either unit it is asked to restart, and with it
+/// every browser session.
 fn restart_after(unit: &str) -> Reply {
-    Reply::ok(Done::new(format!("restarting {unit}"))).then(Some(After::Restart(unit.to_string())))
+    Reply::ok(Done::new(format!("restarting {unit}")))
+        .then(Some(After::RestartAsked(unit.to_string())))
 }
 
 /// `PRETTY_NAME` and `IMAGE_VERSION` from an os-release file.

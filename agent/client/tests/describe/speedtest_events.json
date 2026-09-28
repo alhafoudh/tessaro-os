@@ -1,0 +1,231 @@
+{
+  "function": "speedtest::event_line",
+  "input": [
+    {
+      "colo": "VIE",
+      "country": "AT",
+      "ip": "203.0.113.9",
+      "phase": "server"
+    },
+    {
+      "avg_ms": 12.25,
+      "max_ms": null,
+      "min_ms": 10.05,
+      "phase": "latency",
+      "samples": 20
+    },
+    {
+      "attempts": 4,
+      "direction": "download",
+      "max_mbit": 99.95,
+      "median_mbit": 94.75,
+      "min_mbit": 90.0,
+      "phase": "transfer",
+      "samples": 3,
+      "size": 25000000
+    },
+    {
+      "attempts": 4,
+      "direction": "upload",
+      "max_mbit": null,
+      "median_mbit": null,
+      "min_mbit": null,
+      "phase": "transfer",
+      "samples": 4,
+      "size": 100000
+    },
+    {
+      "download_mbit": 94.75,
+      "latency_ms": 12.25,
+      "phase": "result",
+      "upload_mbit": null
+    }
+  ],
+  "output": [
+    [
+      [
+        "label",
+        "server",
+        9
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "plain",
+        "Cloudflare ",
+        0
+      ],
+      [
+        "heading",
+        "VIE",
+        0
+      ],
+      [
+        "plain",
+        ", seen from 203.0.113.9 (AT)",
+        0
+      ]
+    ],
+    [
+      [
+        "label",
+        "latency",
+        9
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "heading",
+        "12.2 ms",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "(min 10.1 ms, max n/a, 20 samples)",
+        0
+      ]
+    ],
+    [
+      [
+        "label",
+        "download",
+        9
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "heading",
+        "25m",
+        5
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "heading",
+        "94.8 Mbit/s",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "(min 90.0 Mbit/s, max 100.0 Mbit/s,",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "warn",
+        "3/4 samples)",
+        0
+      ]
+    ],
+    [
+      [
+        "label",
+        "upload",
+        9
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "heading",
+        "100k",
+        5
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "n/a",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "(min n/a, max n/a,",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "4/4 samples)",
+        0
+      ]
+    ],
+    [
+      [
+        "heading",
+        "result",
+        9
+      ],
+      [
+        "plain",
+        " download ",
+        0
+      ],
+      [
+        "ok",
+        "94.8 Mbit/s",
+        0
+      ],
+      [
+        "plain",
+        ", upload ",
+        0
+      ],
+      [
+        "muted",
+        "n/a",
+        0
+      ],
+      [
+        "plain",
+        ", latency ",
+        0
+      ],
+      [
+        "ok",
+        "12.2 ms",
+        0
+      ]
+    ]
+  ]
+}

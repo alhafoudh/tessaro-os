@@ -137,6 +137,22 @@ pub enum Kind {
 }
 
 impl Kind {
+    /// The control an editor offers for a value of this kind.
+    pub fn input(&self) -> crate::KeyInput {
+        match self {
+            Kind::Flag => crate::KeyInput::Flag,
+            Kind::Choice(choices) => crate::KeyInput::Choice {
+                choices: choices.iter().map(|choice| choice.to_string()).collect(),
+            },
+            Kind::Int { min, max } => crate::KeyInput::Int {
+                min: *min,
+                max: *max,
+            },
+            Kind::ReadOnly => crate::KeyInput::ReadOnly,
+            _ => crate::KeyInput::Text,
+        }
+    }
+
     /// What a value of this kind may be, for `tessaro-ctl config keys`.
     pub fn describe(&self) -> String {
         match self {
@@ -371,6 +387,10 @@ pub static KEYS: &[Key] = &[
         "Where the TLS control API listens, address:port, or off."),
     key("access.mdns", "KIOSK_MDNS", Kind::Choice(&["on", "off"]), AGENT,
         "Advertise the device as NAME.local and _tessaro._tcp."),
+    // Read by the API server on every request that brings a session cookie;
+    // nothing restarts, which would end every session.
+    key(SESSION_TIMEOUT, "KIOSK_SESSION_TIMEOUT", Kind::Int { min: 300, max: 31_536_000 }, NOBODY,
+        "How long a Webconfig browser session lasts without being used, seconds (default: a week). Open pages refreshing in the background do not count as use."),
     // The device's own network: the NetworkManager profiles the agent
     // generates (tessaro-ethernet-dhcp/-static, tessaro-wifi-hotspot/-client)
     // and switches between. A change is kept only if the device still
@@ -394,7 +414,7 @@ pub static KEYS: &[Key] = &[
     // Read by the agent's welcome watcher every few seconds, which keeps the
     // flag nginx looks at; nothing restarts.
     key(WIFI_CAPTIVE, "KIOSK_WIFI_CAPTIVE", Kind::Flag, NOBODY,
-        "While the device is unclaimed, a phone joining the hotspot gets its sign-in sheet with the setup portal. The portal turns it off with its first saved change; the portal itself stays at https://10.42.0.1:7400/ until the device is claimed."),
+        "While the device is unclaimed, a phone joining the hotspot gets its sign-in sheet with Quick Setup. Quick Setup turns it off with its first saved change; Webconfig itself stays at https://10.42.0.1:7400/."),
     key("network.wifi.ssid", "KIOSK_WIFI_SSID", Kind::Ssid, NETWORK,
         "The network network.wifi.mode=client joins. Its password is set by `tessaro-ctl network wifi join` and never shown."),
     key("network.wifi.security", "KIOSK_WIFI_SECURITY", Kind::Choice(&["psk", "sae", "open"]), NETWORK,
@@ -466,6 +486,7 @@ pub const GPU_MEM: &str = "device.gpu_mem";
 pub const PUBLIC_IP: &str = "network.public_ip";
 pub const WIFI_FALLBACK_AFTER: &str = "network.wifi.fallback_after";
 pub const WIFI_CAPTIVE: &str = "network.wifi.captive";
+pub const SESSION_TIMEOUT: &str = "access.session_timeout";
 pub const PROXY_URL: &str = "network.proxy.url";
 pub const PROXY_BYPASS: &str = "network.proxy.bypass";
 pub const AUDIO_OUTPUT: &str = "audio.output";

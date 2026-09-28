@@ -1,0 +1,125 @@
+{
+  "function": "net::change",
+  "input": {
+    "action": "set",
+    "checks": [
+      {
+        "detail": "no default route any more",
+        "name": "route",
+        "passed": false
+      },
+      {
+        "detail": "192.168.1.1 answered",
+        "name": "gateway",
+        "passed": true
+      }
+    ],
+    "note": "the hotspot comes back at the next boot",
+    "outcome": "rolled-back",
+    "profile": "Wired connection 1",
+    "reason": "the device lost its default route",
+    "uuid": "abc"
+  },
+  "output": [
+    [
+      [
+        "bad",
+        "rolled back",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "set",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "heading",
+        "Wired connection 1",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "(abc)",
+        0
+      ]
+    ],
+    [
+      [
+        "label",
+        "route",
+        12
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "bad",
+        "failed",
+        0
+      ],
+      [
+        "plain",
+        " no default route any more",
+        0
+      ]
+    ],
+    [
+      [
+        "label",
+        "gateway",
+        12
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "ok",
+        "passed",
+        0
+      ],
+      [
+        "plain",
+        " 192.168.1.1 answered",
+        0
+      ]
+    ],
+    [
+      [
+        "label",
+        "why",
+        12
+      ],
+      [
+        "plain",
+        " the device lost its default route",
+        0
+      ]
+    ],
+    [
+      [
+        "warn",
+        "the hotspot comes back at the next boot",
+        0
+      ]
+    ]
+  ]
+}

@@ -1,0 +1,374 @@
+{
+  "function": "net::profile",
+  "input": {
+    "addresses": [
+      {
+        "address": "192.168.1.50",
+        "family": "ipv4",
+        "prefix": 24,
+        "scope": "global"
+      },
+      {
+        "address": "fe80::1",
+        "family": "ipv6",
+        "prefix": 64,
+        "scope": "link"
+      }
+    ],
+    "ipv4": {
+      "addresses": [],
+      "dns": [
+        "1.1.1.1",
+        "8.8.8.8"
+      ],
+      "gateway": "192.168.1.1",
+      "ignore_auto_dns": true,
+      "method": "manual"
+    },
+    "ipv6": {
+      "addresses": [],
+      "dns": [],
+      "gateway": null,
+      "ignore_auto_dns": false,
+      "method": "auto"
+    },
+    "profile": {
+      "active": true,
+      "autoconnect": true,
+      "device": "wlan0",
+      "kind": "wifi",
+      "managed": true,
+      "name": "tessaro-wifi-client",
+      "priority": 10,
+      "saved": true,
+      "uuid": "5f1c"
+    },
+    "wifi": {
+      "hidden": true,
+      "security": "psk",
+      "ssid": "cafe"
+    }
+  },
+  "output": [
+    [
+      [
+        "heading",
+        "tessaro-wifi-client",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "(5f1c)",
+        0
+      ]
+    ],
+    [
+      [
+        "label",
+        "kind",
+        12
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "plain",
+        "wifi",
+        0
+      ]
+    ],
+    [
+      [
+        "label",
+        "device",
+        12
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "plain",
+        "wlan0  ",
+        0
+      ],
+      [
+        "ok",
+        "active",
+        0
+      ]
+    ],
+    [
+      [
+        "label",
+        "autoconnect",
+        12
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "ok",
+        "yes",
+        0
+      ],
+      [
+        "plain",
+        "  ",
+        0
+      ],
+      [
+        "muted",
+        "(priority 10)",
+        0
+      ]
+    ],
+    [
+      [
+        "label",
+        "saved",
+        12
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "ok",
+        "managed",
+        0
+      ],
+      [
+        "plain",
+        "  ",
+        0
+      ],
+      [
+        "muted",
+        "(rendered from settings every boot)",
+        0
+      ]
+    ],
+    [
+      [
+        "label",
+        "ssid",
+        12
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "heading",
+        "cafe",
+        0
+      ]
+    ],
+    [
+      [
+        "label",
+        "security",
+        12
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "plain",
+        "psk",
+        0
+      ]
+    ],
+    [
+      [
+        "label",
+        "hidden",
+        12
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "ok",
+        "yes",
+        0
+      ]
+    ],
+    [
+      [
+        "label",
+        "ipv4",
+        12
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "plain",
+        "manual",
+        0
+      ]
+    ],
+    [
+      [
+        "plain",
+        "    ",
+        0
+      ],
+      [
+        "label",
+        "addresses",
+        15
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "(none)",
+        0
+      ]
+    ],
+    [
+      [
+        "plain",
+        "    ",
+        0
+      ],
+      [
+        "label",
+        "gateway",
+        15
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "plain",
+        "192.168.1.1",
+        0
+      ]
+    ],
+    [
+      [
+        "plain",
+        "    ",
+        0
+      ],
+      [
+        "label",
+        "dns",
+        15
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "plain",
+        "1.1.1.1, 8.8.8.8",
+        0
+      ]
+    ],
+    [
+      [
+        "plain",
+        "    ",
+        0
+      ],
+      [
+        "label",
+        "ignore-auto-dns",
+        15
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "ok",
+        "yes",
+        0
+      ]
+    ],
+    [
+      [
+        "label",
+        "ipv6",
+        12
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "plain",
+        "auto",
+        0
+      ]
+    ],
+    [
+      [
+        "label",
+        "now",
+        12
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "plain",
+        "192.168.1.50/24 ",
+        0
+      ],
+      [
+        "muted",
+        "global",
+        0
+      ],
+      [
+        "plain",
+        ", ",
+        0
+      ],
+      [
+        "plain",
+        "fe80::1/64 ",
+        0
+      ],
+      [
+        "muted",
+        "link",
+        0
+      ]
+    ]
+  ]
+}

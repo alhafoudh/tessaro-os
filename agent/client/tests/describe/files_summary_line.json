@@ -1,0 +1,56 @@
+{
+  "function": "files::summary_line",
+  "input": {
+    "bytes": 1250000,
+    "made": [
+      "b"
+    ],
+    "received": [],
+    "removed": [
+      "old"
+    ],
+    "sent": [
+      "a.mp4",
+      "b/c.jpg"
+    ],
+    "skipped": [
+      "e: not UTF-8"
+    ],
+    "unchanged": [
+      "d.json"
+    ],
+    "verb": "sent"
+  },
+  "output": [
+    [
+      "ok",
+      "done:",
+      0
+    ],
+    [
+      "plain",
+      " 2 sent (1.2 MB)",
+      0
+    ],
+    [
+      "plain",
+      ", 1 removed",
+      0
+    ],
+    [
+      "plain",
+      ", 1 unchanged",
+      0
+    ],
+    [
+      "plain",
+      ", ",
+      0
+    ],
+    [
+      "warn",
+      "1 skipped",
+      0
+    ]
+  ]
+}

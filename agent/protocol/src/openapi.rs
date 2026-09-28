@@ -46,8 +46,9 @@ pub fn document(version: &str) -> Value {
             "description": "The API of one Tessaro device, over HTTPS on port 7400 with the \
                 device's own self-signed certificate: pin its SHA-256 fingerprint \
                 (`/api/v1/device/id`, the mDNS `fp` record). An unclaimed device answers \
-                everything without a token; once claimed, everything but identification \
-                and the claim needs `Authorization: Bearer <token>`.",
+                everything without a token; once claimed, everything but identification, \
+                the claim and signing in needs `Authorization: Bearer <token>`, or a \
+                Webconfig browser session's cookie.",
         },
         "tags": tags.iter().map(|tag| json!({ "name": tag })).collect::<Vec<_>>(),
         "paths": paths,
@@ -55,9 +56,17 @@ pub fn document(version: &str) -> Value {
             "schemas": schemas,
             "securitySchemes": {
                 "token": { "type": "http", "scheme": "bearer" },
+                "session": {
+                    "type": "apiKey",
+                    "in": "cookie",
+                    "name": "__Host-tessaro-{node id}",
+                    "description": "Set by signing in (`access/session`, `access/ticket/redeem`) \
+                        or claiming from a browser. Browser requests must come from the device's \
+                        own origin.",
+                },
             },
         },
-        "security": [{ "token": [] }],
+        "security": [{ "token": [] }, { "session": [] }],
     })
 }
 
@@ -111,10 +120,24 @@ fn operation(
     }
 
     let answer = match route.raw_response {
-        Some(content_type) => json!({
-            "description": "The bytes.",
-            "content": { content_type: { "schema": { "type": "string", "format": "binary" } } },
-        }),
+        Some(content_type) => {
+            let mut answer = json!({
+                "description": "The bytes.",
+                "content": { content_type: { "schema": { "type": "string", "format": "binary" } } },
+            });
+            if !route.raw_headers.is_empty() {
+                let headers: Map<String, Value> = route
+                    .raw_headers
+                    .iter()
+                    .map(|(name, doc)| {
+                        let header = json!({ "description": doc, "schema": { "type": "string" } });
+                        (name.to_string(), header)
+                    })
+                    .collect();
+                answer["headers"] = Value::Object(headers);
+            }
+            answer
+        }
         None => json!({
             "description": "Done.",
             "content": { "application/json": { "schema": schemas.response.to_value() } },
@@ -221,7 +244,19 @@ mod tests {
         assert!(document["paths"]["/api/v1/device/status"]["get"]
             .get("security")
             .is_none());
-        assert_eq!(document["security"], json!([{ "token": [] }]));
+        assert_eq!(
+            document["security"],
+            json!([{ "token": [] }, { "session": [] }])
+        );
+    }
+
+    #[test]
+    fn a_download_declares_its_headers() {
+        let document = document("test");
+        let headers =
+            &document["paths"]["/api/v1/files/content"]["get"]["responses"]["200"]["headers"];
+        assert!(headers[api::HEADER_SIZE].is_object());
+        assert!(headers[api::HEADER_MTIME].is_object());
     }
 
     #[test]
