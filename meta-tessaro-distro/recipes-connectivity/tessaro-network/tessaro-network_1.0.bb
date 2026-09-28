@@ -74,8 +74,8 @@ RDEPENDS:${PN} += " \
 
 # network.proxy.url goes through a local tinyproxy, run by tessaro-proxy.service
 # from a config the agent renders into /run. tinyproxy's own unit and its
-# /etc/tinyproxy.conf stay unused: SYSTEMD_AUTO_ENABLE:pn-tinyproxy in
-# tessaro.conf keeps that unit disabled. meta-networking builds it with
+# /etc/tinyproxy.conf stay unused: recipes-support/tinyproxy/tinyproxy_%.bbappend
+# keeps that unit disabled. meta-networking builds it with
 # --enable-upstream, which is what carries the upstream proxy.
 RDEPENDS:${PN} += " \
     tinyproxy \

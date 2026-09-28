@@ -24,7 +24,8 @@ workstation, and test the agent. How each subsystem works is in
 mise run image:build        # the image for $TESSARO_MACHINE (plus OVMF on qemu)
 mise run image:build:qemu   # qemux86-64      - development, boots under QEMU
 mise run image:build:x86    # genericx86-64   - x86_64 PCs and mini PCs, UEFI
-mise run image:build:rpi    # raspberrypi3-64 - Raspberry Pi 3 Model B and B+
+mise run image:build:rpi3   # raspberrypi3-64 - Pi 3B / 3B+, SD or USB storage
+mise run image:build:rpi5   # raspberrypi5    - Pi 5, SD / USB / NVMe storage
 
 TESSARO_MACHINE=raspberrypi3-64 mise run image:shell   # any task, any target
 mise run image:sizes                                   # every built image, side by side
@@ -37,6 +38,28 @@ Every task acts on one machine, `$TESSARO_MACHINE`, which defaults to
 and images land in `build/<machine>/tmp/deploy/images/<machine>/`. The
 download and sstate caches in `cache/` are shared, so the second target reuses
 most of the first one's work.
+
+**Pi images carry the board version in their filenames**, so Pi 3 and Pi 5
+artifacts stay distinct:
+
+| Build task | Versioned image | Stable image symlink |
+| --- | --- | --- |
+| `image:build:rpi3` | `tessaro-os-raspberrypi3-64-<version>-<sha>[-dirty].wic.zst` | `tessaro-os-raspberrypi3-64.rootfs.wic.zst` |
+| `image:build:rpi5` | `tessaro-os-raspberrypi5-<version>-<sha>[-dirty].wic.zst` | `tessaro-os-raspberrypi5.rootfs.wic.zst` |
+
+The `.wic.bmap` accompanies each image. A build wrapper selects the machine
+for that invocation only; select it again for naming, pulling or flashing:
+
+```sh
+TESSARO_MACHINE=raspberrypi5 mise run image:name
+TESSARO_MACHINE=raspberrypi5 mise run image:pull
+TESSARO_MACHINE=raspberrypi5 mise run image:flash /dev/sdX
+```
+
+Each Pi image supports its board's boot media without rebuilding for the
+storage device. Pi 3 NVMe drives need a USB enclosure. Firmware prerequisites
+and migration from U-Boot are in [Pi storage boot](docs/build.md#pi-storage-boot).
+Hardware validation is tracked in [platform status](docs/build.md#status).
 
 For work on one recipe, `mise run image:shell` opens a kas shell where `bitbake`
 sees the right environment (`bitbake -e <recipe>`, `bitbake -c devshell

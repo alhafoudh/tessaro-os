@@ -1,0 +1,14 @@
+# Raspberry Pi 5, 64-bit (Cortex-A76), on SD, USB or NVMe.
+header:
+  version: 16
+  includes:
+    - kas/common/raspberrypi.yml
+
+local_conf_header:
+  26_tessaro-pi5: |
+    # Enable the external PCIe connector for NVMe adapters without HAT+
+    # autodetection. The common configuration returns to [all] afterward.
+    RPI_EXTRA_CONFIG:prepend = "[pi5]\ndtparam=pciex1\n"
+
+distro: tessaro
+machine: raspberrypi5

@@ -1,0 +1,18 @@
+# The Raspberry Pi firmware's boot partition: config.txt, tessaro.txt and the
+# kernel an update swaps. The one labelled "boot" on the disk / is on
+# (61-tessaro-disk.rules), not any disk's; the Pi wks gives that partition
+# no mountpoint, so fstab has no line for it.
+#
+# Wanted, not required, by local-fs.target: without /boot the kiosk still
+# runs, only the firmware settings and updates cannot be written.
+[Unit]
+Description=Raspberry Pi boot partition
+Before=local-fs.target
+
+[Mount]
+What=/dev/disk/tessaro/boot
+Where=/boot
+Type=vfat
+
+[Install]
+WantedBy=local-fs.target

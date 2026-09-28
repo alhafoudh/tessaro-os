@@ -57,7 +57,7 @@ and [mise](https://mise.jdx.dev/):
 ```sh
 git clone git@github.com:alhafoudh/tessaro-os.git && cd tessaro-os
 mise trust && mise install
-mise run image:build:rpi      # Raspberry Pi 3B/3B+; image:build:x86 for a UEFI PC
+mise run image:build:rpi3     # Raspberry Pi 3B/3B+; image:build:x86 for a UEFI PC
 ```
 
 The first build fetches and compiles everything, Chromium included, and takes
@@ -69,6 +69,13 @@ bmaptool copy build/raspberrypi3-64/tmp/deploy/images/raspberrypi3-64/tessaro-os
 
 (From a separate workstation, `mise run image:pull` and `mise run
 image:flash` do the same - see [DEVELOPMENT.md](DEVELOPMENT.md).)
+
+For Raspberry Pi 5, use `mise run image:build:rpi5`. Its image is
+`build/raspberrypi5/tmp/deploy/images/raspberrypi5/tessaro-os-raspberrypi5.rootfs.wic.zst`.
+Pi images can be written to SD or USB storage, including an NVMe USB
+enclosure. Pi 5 also supports native NVMe with a compatible PCIe adapter.
+See [Pi storage boot](docs/build.md#pi-storage-boot) for firmware requirements
+and [platform status](docs/build.md#status) for validation status.
 
 Boot it with a network cable in. It comes up on its welcome page, which shows
 its name, its address and the command that claims it, and announces itself on
@@ -377,7 +384,8 @@ mise run gui:build              # build/gui-target/release/tessaro-gui, for this
 
 | Hardware | Machine | State |
 | --- | --- | --- |
-| Raspberry Pi 3 Model B and B+ | `raspberrypi3-64` | builds, boots and runs the kiosk, GPU rendering |
+| Raspberry Pi 3 Model B and B+ | `raspberrypi3-64` | kiosk validated on 3B+; direct firmware boot on SD/USB awaits hardware validation |
+| Raspberry Pi 5 | `raspberrypi5` | direct firmware boot on SD/USB/NVMe awaits hardware validation |
 | x86_64 PCs and mini PCs, UEFI | `genericx86-64` | configured, not yet built on real hardware |
 | QEMU x86_64 | `qemux86-64` | for development and the end-to-end tests |
 

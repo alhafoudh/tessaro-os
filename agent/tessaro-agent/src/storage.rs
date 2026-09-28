@@ -69,6 +69,7 @@ impl Sources {
                 cmdline: paths.cmdline.clone(),
                 sys_block: paths.sys_block.clone(),
                 by_partuuid: paths.by_partuuid.clone(),
+                by_label: paths.by_label.clone(),
             },
             by_label: paths.by_label.clone(),
             mountinfo: paths.mountinfo.clone(),

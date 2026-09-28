@@ -1,4 +1,4 @@
-# short-description: SD card image for the Raspberry Pi that can take in-place updates
+# short-description: Raspberry Pi image for SD, USB or NVMe with in-place updates
 # long-description: Moonforge's moonforge-image-base-raspberrypi.wks.in (vfat
 # boot, rootfs, /data), with the root partition at a fixed size and a larger
 # boot partition.
@@ -8,15 +8,21 @@
 # size is TESSARO_ROOTFS_SIZE, not whatever this build's rootfs needed. The
 # boot partition goes from 100M to 512M because the kernel now carries the
 # initramfs that applies updates (~51M together, uncompressed) and an update
-# writes the new one beside the old before the rename, next to the firmware,
-# u-boot and every overlay. 256M would fit that today with little to spare,
+# writes the new one beside the old before the rename, next to the firmware
+# and every overlay. 256M would fit that today with little to spare,
 # and growing it later costs every card a reflash.
 #
 # Unlike the x86 layouts there are no PARTUUIDs to pin, and none are needed.
 # An MBR PARTUUID is the disk signature, which this wic derives from
 # SOURCE_DATE_EPOCH and has no option for, but nothing on this image names
-# one: cmdline.txt says root=/dev/mmcblk0p2 and the fstab wic writes uses
-# device nodes. The updater compares the partitions' geometry instead.
+# one: cmdline.txt says root=LABEL=root and fstab uses filesystem labels.
+# The updater compares the partitions' geometry instead. mmcblk0 below is
+# wic's disk identifier only; no runtime mount depends on that device name.
+#
+# The boot partition has no mountpoint here, so wic writes no fstab line
+# for it: a LABEL=boot line would mount any disk's "boot", a stray USB stick
+# included. boot.mount (recipes-core/tessaro-disk) mounts the one on the
+# disk / is on instead.
 #
 # /data is the last partition, so `tessaro-ctl storage grow` can extend it
 # over the rest of a larger card.
@@ -24,6 +30,6 @@
 # Changing the partitions is a new disk layout: every card needs one full
 # reflash before it can take updates again, and the updater says so.
 
-part /boot --source bootimg-partition --ondisk mmcblk0 --fstype=vfat --label boot --active --align 4096 --size 512
-part / --source rootfs --ondisk mmcblk0 --fstype=ext4 --label root --align 4096 --fixed-size ${TESSARO_ROOTFS_SIZE}
-part /data --size "${IMAGE_DATA_MIN_SIZE}" --ondisk mmcblk0 --fstype=ext4 --label data --align 4096
+part --source bootimg-partition --ondisk mmcblk0 --fstype=vfat --label boot --active --align 4096 --size 512
+part / --source rootfs --ondisk mmcblk0 --fstype=ext4 --label root --use-label --align 4096 --fixed-size ${TESSARO_ROOTFS_SIZE}
+part /data --size "${IMAGE_DATA_MIN_SIZE}" --ondisk mmcblk0 --fstype=ext4 --label data --use-label --align 4096

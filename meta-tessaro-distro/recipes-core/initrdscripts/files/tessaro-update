@@ -60,6 +60,7 @@ tessaro_update_enabled() {
 	case "$bootparam_root" in
 		PARTUUID=*) TESSARO_UPDATE_ROOT=/dev/disk/by-partuuid/${bootparam_root#PARTUUID=} ;;
 		UUID=*) TESSARO_UPDATE_ROOT=/dev/disk/by-uuid/${bootparam_root#UUID=} ;;
+		LABEL=*) TESSARO_UPDATE_ROOT=/dev/disk/by-label/${bootparam_root#LABEL=} ;;
 		/dev/*) TESSARO_UPDATE_ROOT=$bootparam_root ;;
 		*) return 1 ;;
 	esac

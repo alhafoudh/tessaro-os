@@ -348,6 +348,7 @@ impl Updates {
         }
 
         let path = self.paths.update_dir().join(update::UPLOAD);
+        let this = Arc::clone(self);
         let now = blocking("writing the upload", move || {
             let mut file = OpenOptions::new()
                 .append(true)
@@ -363,14 +364,17 @@ impl Updates {
             file.write_all(&bytes)
                 .and_then(|()| file.sync_data())
                 .map_err(|err| format!("writing the upload: {err}"))?;
-            Ok(length + bytes.len() as u64)
+            let now = length + bytes.len() as u64;
+            // Here and not after the await: a client that drops the
+            // connection cancels this request, but not the write, and a
+            // count left behind the file would refuse every resume.
+            let mut job = lock(&this.job);
+            if job.phase == UpdatePhase::Receiving {
+                job.received = now;
+            }
+            Ok(now)
         })
         .await?;
-
-        {
-            let mut job = lock(&self.job);
-            job.received = now;
-        }
         let tenth = |bytes: u64| bytes * 10 / upload.size;
         if tenth(now) > tenth(received) && now < upload.size {
             self.log.info(format!(
@@ -576,6 +580,7 @@ impl Updates {
             cmdline: self.paths.cmdline.clone(),
             sys_block: self.paths.sys_block.clone(),
             by_partuuid: self.paths.by_partuuid.clone(),
+            by_label: self.paths.by_label.clone(),
         }
     }
 
@@ -1023,6 +1028,7 @@ mod tests {
             ("KIOSK_CMDLINE", probe.cmdline.display().to_string()),
             ("KIOSK_SYS_BLOCK", probe.sys_block.display().to_string()),
             ("KIOSK_BY_PARTUUID", probe.by_partuuid.display().to_string()),
+            ("KIOSK_BY_LABEL", probe.by_label.display().to_string()),
             ("KIOSK_MEMINFO", at("meminfo")),
         ]
         .into_iter()
@@ -1149,6 +1155,33 @@ mod tests {
         assert_eq!(begun.phase, UpdatePhase::Receiving);
         send(&second, &device, begun.offset).await.unwrap();
         assert_eq!(settle(&second).await.phase, UpdatePhase::Ready);
+    }
+
+    #[tokio::test]
+    async fn a_chunk_cut_off_mid_write_is_counted_on_resume() {
+        let device = device();
+        let updates = updates(&device);
+        begin(&updates, &device).await.unwrap();
+        let chunk = openssl::base64::encode_block(&device.image[..protocol::UPDATE_CHUNK]);
+        // The client goes away while the chunk is being written: the request
+        // is dropped after its first poll, the write carries on regardless.
+        let cut = crate::deadline::within("a chunk", Duration::ZERO, updates.chunk(0, chunk)).await;
+        assert!(
+            cut.is_err(),
+            "the chunk finished before it could be cut off"
+        );
+
+        let mut begun = begin(&updates, &device).await.unwrap();
+        for _ in 0..500 {
+            if begun.offset != 0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            begun = begin(&updates, &device).await.unwrap();
+        }
+        assert_eq!(begun.offset, protocol::UPDATE_CHUNK as u64);
+        send(&updates, &device, begun.offset).await.unwrap();
+        assert_eq!(settle(&updates).await.phase, UpdatePhase::Ready);
     }
 
     #[tokio::test]

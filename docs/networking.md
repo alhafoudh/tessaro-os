@@ -365,8 +365,12 @@ restarts `tessaro-proxy.service`, or stops it when the URL is emptied.
 * **Left direct on purpose:** `network ping` (ICMP), the `--verify
   HOST:PORT` check of a network change (it tests the link itself), NTP and
   mDNS.
-* **tinyproxy's own unit stays off** (`SYSTEMD_AUTO_ENABLE:pn-tinyproxy =
-  "disable"`): it would read `/etc/tinyproxy.conf`, on the `/etc` overlay.
+* **tinyproxy's own unit stays off** (`recipes-support/tinyproxy/tinyproxy_%.bbappend`):
+  it would read `/etc/tinyproxy.conf`, on the `/etc` overlay, and that stock
+  config's `Group nobody` does not exist here, so it fails at every boot. It
+  has to be a bbappend: the recipe sets `SYSTEMD_AUTO_ENABLE:${PN}`, which
+  `systemd.bbclass` reads before the plain variable, and which replaces any
+  `SYSTEMD_AUTO_ENABLE:tinyproxy` set from `tessaro.conf` at parse time.
   `tessaro-proxy.service` has `ConditionPathExists=` on the rendered config,
   so without a proxy nothing runs.
 

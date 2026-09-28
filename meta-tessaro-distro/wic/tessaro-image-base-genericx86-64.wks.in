@@ -22,8 +22,9 @@
 # Nothing here names a disk at runtime, which is the point on hardware that may
 # boot off SATA, USB or NVMe: --use-uuid on / and /boot makes wic write
 # root=PARTUUID=... into grub.cfg and UUID=... into /etc/fstab, and
-# --use-label on /data makes the generated fstab say LABEL=data, matching the
-# OVERLAYFS_ETC_DEVICE the preinit uses. Drop --use-label and the fstab entry
+# --use-label on /data makes the generated fstab say LABEL=data, the label
+# the preinit looks up on root's disk (OVERLAYFS_ETC_DEVICE). Drop
+# --use-label and the fstab entry
 # reverts to /dev/sda3, which systemd then fails to mount on an NVMe board even
 # though the preinit already mounted /data by label.
 #

@@ -17,8 +17,8 @@ rust = "1.95.0"
 #
 #   TESSARO_MACHINE=raspberrypi3-64 mise run image:build
 #
-# or use the image:build:qemu / :x86 / :rpi wrappers. Valid values are the
-# basenames in kas/machine/: qemux86-64, genericx86-64, raspberrypi3-64.
+# or use the image:build:qemu / :x86 / :rpi3 / :rpi5 wrappers. Valid values
+# are the basenames in kas/machine/.
 machine = "{{ env.TESSARO_MACHINE | default(value='qemux86-64') }}"
 
 [env]
@@ -284,10 +284,15 @@ description = "Build the genericx86-64 image (real x86_64 hardware)"
 dir = "{{config_root}}"
 run = "TESSARO_MACHINE=genericx86-64 mise run image:build"
 
-[tasks."image:build:rpi"]
-description = "Build the raspberrypi3-64 image (Raspberry Pi 3B+)"
+[tasks."image:build:rpi3"]
+description = "Build the raspberrypi3-64 image (Pi 3B / 3B+, SD or USB storage)"
 dir = "{{config_root}}"
 run = "TESSARO_MACHINE=raspberrypi3-64 mise run image:build"
+
+[tasks."image:build:rpi5"]
+description = "Build the raspberrypi5 image (Pi 5, SD / USB / NVMe storage)"
+dir = "{{config_root}}"
+run = "TESSARO_MACHINE=raspberrypi5 mise run image:build"
 
 [tasks."image:shell"]
 description = "Drop into the kas build environment for $TESSARO_MACHINE (cwd is the build dir)"

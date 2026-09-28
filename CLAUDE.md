@@ -84,7 +84,8 @@ Use the mise tasks rather than calling `kas-container` directly:
 | `mise run image:build` | Build the image for `$TESSARO_MACHINE` (plus OVMF on qemu) |
 | `mise run image:build:qemu` | Same, forced to `qemux86-64` |
 | `mise run image:build:x86` | Same, forced to `genericx86-64` |
-| `mise run image:build:rpi` | Same, forced to `raspberrypi3-64` |
+| `mise run image:build:rpi3` | Same, forced to `raspberrypi3-64` (Pi 3B / 3B+) |
+| `mise run image:build:rpi5` | Same, forced to `raspberrypi5` (Pi 5) |
 | `mise run image:shell` | Interactive kas shell (cwd is the build dir) |
 | `mise run image:clean` | Drop build artifacts, keep sstate and downloads |
 | `mise run image:sizes` | Size of every built `.wic`, all machines at once |
@@ -186,7 +187,7 @@ Builds are long. Run them in a Herdr pane, not the Bash tool.
 * **Enable features with kas `includes:`**, never by editing `bblayers.conf`
   (kas regenerates `build/<machine>/conf/`). `local_conf_header` keys merge by
   name across the chain, so never reuse one: ours are `20_tessaro-common`,
-  `25_tessaro-machine`, `30_tessaro-qemu-kiosk`.
+  `25_tessaro-machine`, `26_tessaro-pi5`, `30_tessaro-qemu-kiosk`.
 * **`distro:` lives in each `kas/machine/*.yml`**, never in
   `kas/common/tessaro.yml`, where an include silently resets it to
   `moonforge`. Check with `kas dump <chain>` after touching includes.
@@ -210,6 +211,10 @@ Builds are long. Run them in a Herdr pane, not the Bash tool.
   `--fsuuid`, `--label data`) and `TESSARO_ROOTFS_SIZE`/`TESSARO_ESP_SIZE` are
   what in-place updates rely on. Changing any of them means every device
   needs a reflash or `--repartition`.
+* **Pi images boot Linux directly through firmware**, configured in
+  `kas/common/raspberrypi.yml`. Keep `root=LABEL=root`, the wks filesystem
+  labels and the updater's kernel filename in sync; see **Pi storage boot**
+  in `docs/build.md` for media support and migration from U-Boot.
 * **`/etc` is an overlayfs upper on `/data`.** The first write to a file there
   shadows the image's copy forever, so shipped defaults and drop-ins go under
   `/usr/lib` (kiosk env, nginx `conf.d`, NetworkManager `conf.d`). The

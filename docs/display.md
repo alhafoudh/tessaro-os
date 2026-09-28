@@ -106,8 +106,9 @@ operator-stopped Weston are logged only with `agent.debug=1`.
 * **The generator's output must depend on the settings and the hardware
   only.** A timestamp or anything random in it would make every hotplug
   restart the compositor.
-* **On the Pi this only works on full KMS** (`VC4DTBO = "vc4-kms-v3d"` in its
-  kas fragment). meta-raspberrypi defaults `raspberrypi3-64` to fake KMS, where
+* **On the Pi this only works on full KMS** (`VC4DTBO = "vc4-kms-v3d"` in
+  `kas/common/raspberrypi.yml`, for every Pi target). meta-raspberrypi
+  defaults `raspberrypi3-64` to fake KMS, where
   the firmware owns HDMI: a screen missing at boot never comes up, and a
   monitor switched off and on shows Weston's old framebuffer scaled into the
   new mode (squashed text). Under full KMS the kernel owns HDMI and sends real
