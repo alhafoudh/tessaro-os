@@ -103,7 +103,9 @@ impl Debug<'_> {
 }
 
 /// The whole page. The text starts at an eighth of the screen height and
-/// shrinks until the longest line fits; only at the floor does it wrap.
+/// shrinks until the longest line fits; only at the floor does it wrap. The
+/// background is the desktop wallpaper's, redrawn as the welcome page does,
+/// but still: this screen is read, not looked at.
 pub fn page(text: &str) -> String {
     let body = text
         .split(protocol::keys::LINE_BREAK)
@@ -114,15 +116,23 @@ pub fn page(text: &str) -> String {
         r#"<!doctype html>
 <html><head><meta charset="utf-8"><title>tessaro debug</title>
 <style>
-html, body {{ margin: 0; height: 100%; background: #000; color: #e8e8e8; overflow: hidden; }}
-#t {{ box-sizing: border-box; padding: 3vh 3vw; white-space: pre;
+html, body {{ margin: 0; height: 100%; color: #eaf0f8; overflow: hidden; }}
+body {{ background:
+  radial-gradient(circle 900px at calc(50% - 400px) calc(50% - 340px),
+    rgba(18, 48, 77, 0.95), rgba(16, 36, 58, 0.35) 60%, rgba(16, 36, 58, 0)),
+  radial-gradient(circle 900px at calc(50% + 440px) calc(50% + 380px),
+    rgba(36, 27, 68, 0.95), rgba(29, 23, 51, 0.35) 60%, rgba(29, 23, 51, 0)),
+  #0a0d14; }}
+body::after {{ content: ""; position: fixed; inset: 0; pointer-events: none;
+  background: radial-gradient(circle, rgba(184, 200, 230, 0.09) 1.6px, transparent 2.1px)
+    calc(50% + 20px) calc(50% + 20px) / 40px 40px;
+  -webkit-mask-image: radial-gradient(circle 960px, #000, rgba(0, 0, 0, 0.7) 55%, transparent);
+  mask-image: radial-gradient(circle 960px, #000, rgba(0, 0, 0, 0.7) 55%, transparent); }}
+#t {{ position: relative; z-index: 1; box-sizing: border-box; padding: 3vh 3vw; white-space: pre;
       font-family: "DejaVu Sans Mono", monospace; line-height: 1.25; }}
 #t.wrap {{ white-space: pre-wrap; overflow-wrap: anywhere; }}
-#f {{ position: fixed; right: 2vw; bottom: 1.5vh; color: #666;
-      font: 14px "DejaVu Sans Mono", monospace; }}
 </style></head>
 <body><div id="t">{body}</div>
-<div id="f">debug screen - tessaro-ctl config unset browser.debug.enable</div>
 <script>
 const t = document.getElementById("t");
 const fits = () => t.scrollWidth <= innerWidth && t.scrollHeight <= innerHeight * 0.94;

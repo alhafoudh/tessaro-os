@@ -19,7 +19,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>No connection</title>
+<title>Connection lost</title>
 <style>
   /* Dark, unconditionally. prefers-color-scheme is not honoured here: it
      resolves from a desktop appearance setting, and with no settings portal on
@@ -28,11 +28,11 @@
      avoiding on a screen nobody switches off. */
   :root {
     color-scheme: dark;
-    --bg: #0b0e13;
-    --glow: #151b26;
-    --fg: #e7ebf2;
-    --dim: #8d98ab;
-    --accent: #e8b339;
+    --bg: #0a0d14;
+    --fg: #eaf0f8;
+    --dim: #8e9bb0;
+    /* The welcome page's --warn: amber says something is wrong. */
+    --accent: #ffc66b;
   }
 
   * { box-sizing: border-box; }
@@ -48,22 +48,40 @@
        Both named families are installed by moonforge-image-base.bbappend; for
        a while this file named DejaVu when no DejaVu was in the image. */
     font-family: system-ui, "DejaVu Sans", "Liberation Sans", sans-serif;
-    background: var(--bg);
-    background-image: radial-gradient(120vmax 90vmax at 50% 30%, var(--glow), var(--bg) 68%);
+    /* The desktop wallpaper, background.svg in weston-init's files, redrawn
+       as the welcome page does (index.html in tessaro-selftest), but still. */
+    background:
+      radial-gradient(circle 900px at calc(50% - 400px) calc(50% - 340px),
+        rgba(18, 48, 77, 0.95), rgba(16, 36, 58, 0.35) 60%, rgba(16, 36, 58, 0)),
+      radial-gradient(circle 900px at calc(50% + 440px) calc(50% + 380px),
+        rgba(36, 27, 68, 0.95), rgba(29, 23, 51, 0.35) 60%, rgba(29, 23, 51, 0)),
+      var(--bg);
     color: var(--fg);
     display: flex;
     align-items: center;
     justify-content: center;
     -webkit-font-smoothing: antialiased;
   }
+  body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background: radial-gradient(circle, rgba(184, 200, 230, 0.09) 1.6px, transparent 2.1px)
+      calc(50% + 20px) calc(50% + 20px) / 40px 40px;
+    -webkit-mask-image: radial-gradient(circle 960px, #000, rgba(0, 0, 0, 0.7) 55%, transparent);
+    mask-image: radial-gradient(circle 960px, #000, rgba(0, 0, 0, 0.7) 55%, transparent);
+  }
 
   main {
+    position: relative;
+    z-index: 1;
     display: flex;
     flex-direction: column;
     align-items: center;
     text-align: center;
     gap: clamp(12px, 2.4vmin, 28px);
-    max-width: 30em;
+    max-width: 92vw;
   }
 
   .mark {
@@ -87,6 +105,7 @@
     color: var(--dim);
     line-height: 1.45;
     font-size: clamp(0.95rem, 2.6vmin, 1.9rem);
+    max-width: 30em;
   }
 
   /* The only moving part, and it promises nothing: the agent owns the retry
@@ -121,21 +140,20 @@
 </head>
 <body>
 <main>
-  <svg class="mark" viewBox="0 0 64 64" aria-hidden="true">
-    <g fill="none" stroke="currentColor" stroke-width="4.5" stroke-linecap="round">
-      <path d="M6 26a37 37 0 0 1 52 0" opacity=".2"/>
-      <path d="M16.5 36a23 23 0 0 1 31 0" opacity=".45"/>
-      <path d="M26 45.6a10 10 0 0 1 12 0" opacity=".85"/>
-    </g>
-    <circle cx="32" cy="54.5" r="3.4" fill="currentColor"/>
+  <!-- The Wi-Fi icon of the welcome page's setup QR code (qr-wifi.svg in
+       tessaro-agent), its waves fading outwards. -->
+  <svg class="mark" viewBox="16 80 608 480" aria-hidden="true" fill="currentColor">
+    <!--!Font Awesome Free v7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free Copyright 2026 Fonticons, Inc.-->
+    <path opacity=".25" d="M320 160C229.1 160 146.8 196 86.3 254.6C73.6 266.9 53.3 266.6 41.1 253.9C28.9 241.2 29.1 220.9 41.8 208.7C113.7 138.9 211.9 96 320 96C428.1 96 526.3 138.9 598.3 208.7C611 221 611.3 241.3 599 253.9C586.7 266.5 566.4 266.9 553.8 254.6C493.2 196 410.9 160 320 160z"/>
+    <path d="M272 496C272 469.5 293.5 448 320 448C346.5 448 368 469.5 368 496C368 522.5 346.5 544 320 544C293.5 544 272 522.5 272 496z"/>
+    <path opacity=".55" d="M200 390.2C188.3 403.5 168.1 404.7 154.8 393C141.5 381.3 140.3 361.1 152 347.8C193 301.4 253.1 272 320 272C386.9 272 447 301.4 488 347.8C499.7 361.1 498.4 381.3 485.2 393C472 404.7 451.7 403.4 440 390.2C410.6 356.9 367.8 336 320 336C272.2 336 229.4 356.9 200 390.2z"/>
   </svg>
 
-  <h1>No connection</h1>
+  <h1>Connection lost</h1>
 
-  <p>The device is working. The page will come back on its own as soon as the
-     connection does.</p>
+  <p>This screen will be back on its own as soon as it is online again.</p>
 
-  <p class="pulse"><span class="dot"></span>Trying again</p>
+  <p class="pulse"><span class="dot"></span>Reconnecting</p>
 </main>
 </body>
 </html>

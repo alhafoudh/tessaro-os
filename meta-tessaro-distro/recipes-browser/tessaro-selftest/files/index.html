@@ -21,8 +21,6 @@
   :root {
     color-scheme: dark;
     --bg: #0a0d14;
-    --glow-a: #10243a;
-    --glow-b: #1d1733;
     --fg: #eaf0f8;
     --dim: #8e9bb0;
     --line: rgba(255, 255, 255, 0.08);
@@ -51,30 +49,41 @@
     user-select: none;
   }
 
+  /* The desktop wallpaper, redrawn as in maintenance.html: the page appears
+     over the desktop without a change, then the glows drift slowly. */
   .glow {
     position: fixed;
-    width: 90vmax;
-    height: 90vmax;
-    border-radius: 50%;
-    filter: blur(8vmax);
-    opacity: 0.7;
+    left: 50%;
+    top: 50%;
+    width: 1800px;
+    height: 1800px;
+    margin: -900px 0 0 -900px;
     pointer-events: none;
     z-index: 0;
   }
   .glow.a {
-    background: radial-gradient(circle, var(--glow-a), transparent 65%);
-    top: -35vmax;
-    left: -25vmax;
+    background: radial-gradient(closest-side, rgba(18, 48, 77, 0.95), rgba(16, 36, 58, 0.35) 60%, rgba(16, 36, 58, 0));
+    translate: -400px -340px;
     animation: drift-a 38s ease-in-out infinite alternate;
   }
   .glow.b {
-    background: radial-gradient(circle, var(--glow-b), transparent 65%);
-    bottom: -40vmax;
-    right: -30vmax;
+    background: radial-gradient(closest-side, rgba(36, 27, 68, 0.95), rgba(29, 23, 51, 0.35) 60%, rgba(29, 23, 51, 0));
+    translate: 440px 380px;
     animation: drift-b 46s ease-in-out infinite alternate;
   }
-  @keyframes drift-a { to { transform: translate(18vmax, 14vmax); } }
-  @keyframes drift-b { to { transform: translate(-16vmax, -12vmax); } }
+  @keyframes drift-a { to { transform: translate(10vmin, 8vmin); } }
+  @keyframes drift-b { to { transform: translate(-9vmin, -7vmin); } }
+  body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    background: radial-gradient(circle, rgba(184, 200, 230, 0.09) 1.6px, transparent 2.1px)
+      calc(50% + 20px) calc(50% + 20px) / 40px 40px;
+    -webkit-mask-image: radial-gradient(circle 960px, #000, rgba(0, 0, 0, 0.7) 55%, transparent);
+    mask-image: radial-gradient(circle 960px, #000, rgba(0, 0, 0, 0.7) 55%, transparent);
+  }
 
   main {
     position: relative;

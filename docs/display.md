@@ -264,3 +264,11 @@ script run and both committed.
   so there is no seam. Light noise dithers it because the dark gradients band
   at 8 bits per channel. It must never look blank: a plain wallpaper cannot
   be told apart from an uninitialised framebuffer or an empty browser window.
+* **The device's own pages redraw the wallpaper in CSS**: the welcome,
+  maintenance and offline pages and the debug screen (`debug.rs`). Its glows
+  and dot grid are placed in pixels from the centre of the screen, as
+  Weston's `centered` shows the square, so a page appears over the desktop
+  without a visible change. The pages stay inline and fetch no image, since
+  they are shown when the network is down. The welcome and maintenance pages
+  then let the glows drift; the offline page and the debug screen keep them
+  still. A change to `background.svg` goes into each of them too.
