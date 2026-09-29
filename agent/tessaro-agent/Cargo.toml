@@ -18,6 +18,13 @@ protocol = { path = "../protocol" }
 # upload the way tessaro-flash will apply it.
 update = { path = "../update" }
 
+# tessaro.db and sessions.db: SQLite with the migrations, pragmas and
+# quarantine every store shares with the clients (db.rs, api/sessions.rs).
+tessaro-db = { path = "../db" }
+# Named here only because embed_migrations! expands to `refinery::` paths;
+# the same version and features as tessaro-db's, so no second copy.
+refinery = { version = "0.9", default-features = false, features = ["rusqlite", "int8-versions"] }
+
 # Idle CPU and I/O priority for the thread that prepares an update. Already
 # in the lock through tokio.
 libc = "0.2"

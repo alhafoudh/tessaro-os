@@ -128,9 +128,8 @@ do_install:append() {
 
     # Build-time defaults under /usr/lib, outside the /etc overlay, so a later
     # image can still move them. See the comments in the file itself. There is
-    # no /etc/default/tessaro-kiosk any more: a device's settings live in
-    # /data/tessaro/state.json and are changed with tessaro-ctl, and the boot
-    # oneshot imports a leftover override file once.
+    # no /etc/default/tessaro-kiosk: a device's settings live in
+    # /data/tessaro/tessaro.db and are changed with tessaro-ctl.
     sed -e "s|@kiosk-url@|${TESSARO_KIOSK_URL}|g" \
         -e "s|@maintenance-url@|${TESSARO_MAINTENANCE_URL}|g" \
         -e "s|@selftest-origin@|${TESSARO_SELFTEST_ORIGIN}|g" \

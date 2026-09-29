@@ -1,19 +1,25 @@
-//! The devices this client knows: `~/.config/tessaro/nodes.json`.
+//! The devices this client knows: the `nodes` table of this client's
+//! `tessaro.db` (`store.rs`).
 //!
 //! Keyed by **node id**, not by address or name. DHCP moves a device, an
 //! operator renames it; neither makes it a different device, so neither may
-//! break its pin. The file holds tokens, so it is written 0600 and replaced
-//! atomically.
+//! break its pin. The store holds tokens, so it is 0600.
+//!
+//! `Nodes` is a copy read at one moment. Every change writes its one row
+//! straight to the store as well, never the whole copy back, so a copy that
+//! has gone stale (the GUI keeps one for as long as it runs) cannot undo
+//! what tessaro-ctl or another thread stored meanwhile.
 
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
+use tessaro_db::rusqlite::{params, Connection};
 
 use crate::connect::Session;
+use crate::store;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Node {
     pub id: String,
     pub name: String,
@@ -21,13 +27,11 @@ pub struct Node {
     pub address: String,
     /// SHA-256 of its TLS certificate, pinned on first use.
     pub fingerprint: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token: Option<String>,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default)]
 pub struct Nodes {
-    #[serde(default)]
     pub nodes: Vec<Node>,
 }
 
@@ -43,8 +47,9 @@ pub fn dir() -> PathBuf {
 }
 
 /// Replace `path` with `body`, readable by this user only (0600), through a
-/// synced temporary beside it: a file this client keeps a token or a pin in
-/// is never half-written. Makes the directory if it is missing.
+/// synced temporary beside it: a file this client keeps pins in for ssh
+/// (`known_hosts`) is never half-written. Makes the directory if it is
+/// missing.
 pub fn write_private(path: &Path, body: &[u8]) -> Result<(), String> {
     let dir = path
         .parent()
@@ -72,22 +77,74 @@ pub fn write_private(path: &Path, body: &[u8]) -> Result<(), String> {
     fs::rename(&temporary, path).map_err(|err| format!("{}: {err}", path.display()))
 }
 
+/// Write `node`'s row: insert it, or replace the one with its id in place.
+fn store_row(db: &Connection, node: &Node) -> Result<(), String> {
+    db.execute(
+        "INSERT INTO nodes (id, name, address, fingerprint, token) \
+         VALUES (?1, ?2, ?3, ?4, ?5) \
+         ON CONFLICT (id) DO UPDATE SET name = excluded.name, address = excluded.address, \
+         fingerprint = excluded.fingerprint, token = excluded.token",
+        params![
+            node.id,
+            node.name,
+            node.address,
+            node.fingerprint,
+            node.token
+        ],
+    )
+    .map(drop)
+    .map_err(|err| format!("{}: {err}", store::path().display()))
+}
+
+fn delete_row(db: &Connection, id: &str) -> Result<(), String> {
+    db.execute("DELETE FROM nodes WHERE id = ?1", params![id])
+        .map(drop)
+        .map_err(|err| format!("{}: {err}", store::path().display()))
+}
+
 impl Nodes {
+    /// Every known node. None, and no store made, when there is no store
+    /// yet: a command that only reads must work where the config dir cannot
+    /// be written (tessaro-ctl on the device, with no HOME, has `/`).
     pub fn load() -> Result<Self, String> {
-        let path = dir().join("nodes.json");
-        match fs::read(&path) {
-            Ok(bytes) => {
-                serde_json::from_slice(&bytes).map_err(|err| format!("{}: {err}", path.display()))
-            }
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
-            Err(err) => Err(format!("{}: {err}", path.display())),
+        match store::open_existing()? {
+            Some(db) => Self::load_from(&db),
+            None => Ok(Self::default()),
         }
     }
 
-    pub fn save(&self) -> Result<(), String> {
-        let mut body = serde_json::to_vec_pretty(self).map_err(|err| err.to_string())?;
-        body.push(b'\n');
-        write_private(&dir().join("nodes.json"), &body)
+    fn load_from(db: &Connection) -> Result<Self, String> {
+        let fail = |err: tessaro_db::rusqlite::Error| format!("{}: {err}", store::path().display());
+        let mut rows = db
+            .prepare("SELECT id, name, address, fingerprint, token FROM nodes ORDER BY rowid")
+            .map_err(fail)?;
+        let nodes = rows
+            .query_map([], |row| {
+                Ok(Node {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    address: row.get(2)?,
+                    fingerprint: row.get(3)?,
+                    token: row.get(4)?,
+                })
+            })
+            .map_err(fail)?
+            .collect::<Result<_, _>>()
+            .map_err(fail)?;
+        Ok(Self { nodes })
+    }
+
+    /// Insert or replace `node` by id, here and in the store.
+    pub fn keep(&mut self, node: Node) -> Result<(), String> {
+        store_row(&store::open()?, &node)?;
+        self.put(node);
+        Ok(())
+    }
+
+    /// Drop node `id`, here and from the store. Whether this copy knew it.
+    pub fn forget(&mut self, id: &str) -> Result<bool, String> {
+        delete_row(&store::open()?, id)?;
+        Ok(self.remove(id))
     }
 
     pub fn by_id(&self, id: &str) -> Option<&Node> {
@@ -102,7 +159,7 @@ impl Nodes {
         self.nodes.iter().find(|node| node.address == address)
     }
 
-    /// Insert or replace by id.
+    /// Insert or replace by id, in this copy only.
     pub fn put(&mut self, node: Node) {
         match self.nodes.iter_mut().find(|known| known.id == node.id) {
             Some(known) => *known = node,
@@ -110,7 +167,7 @@ impl Nodes {
         }
     }
 
-    pub fn remove(&mut self, id: &str) -> bool {
+    fn remove(&mut self, id: &str) -> bool {
         let before = self.nodes.len();
         self.nodes.retain(|node| node.id != id);
         self.nodes.len() != before
@@ -136,35 +193,33 @@ impl Nodes {
             address,
             ..known.clone()
         };
-        self.put(moved);
-        self.save()?;
+        self.keep(moved)?;
         Ok(Some(was))
     }
 
-    /// Pin the device this remote session talks to, with `token`, and save.
+    /// Pin the device this remote session talks to, with `token`, and store
+    /// it.
     pub fn remember(&mut self, session: &Session, token: Option<String>) -> Result<(), String> {
         let (address, fingerprint) = session
             .remote
             .clone()
             .ok_or_else(|| "no remote session to remember".to_string())?;
-        self.put(Node {
+        self.keep(Node {
             id: session.node.id.clone(),
             name: session.node.name.clone(),
             address: address.to_string(),
             fingerprint,
             token,
-        });
-        self.save()
+        })
     }
 
-    /// Drop the device this remote session talks to, and save. Whether it
-    /// was known.
+    /// Drop the device this remote session talks to, here and from the
+    /// store. Whether this copy knew it.
     pub fn forget_session(&mut self, session: &Session) -> Result<bool, String> {
-        if session.remote.is_some() && self.remove(&session.node.id) {
-            self.save()?;
-            return Ok(true);
+        if session.remote.is_none() || self.by_id(&session.node.id).is_none() {
+            return Ok(false);
         }
-        Ok(false)
+        self.forget(&session.node.id)
     }
 }
 
@@ -194,17 +249,22 @@ mod tests {
     }
 
     #[test]
-    fn saved_and_loaded_privately() {
+    fn stored_and_loaded_privately_and_a_stale_copy_undoes_nothing() {
         let dir = tempfile::tempdir().unwrap();
         // SAFETY: tests in this crate that touch the environment run here only.
-        unsafe { std::env::set_var("TESSARO_CONFIG_DIR", dir.path()) };
+        unsafe { std::env::set_var("TESSARO_CONFIG_DIR", dir.path().join("sub")) };
 
-        let mut nodes = Nodes::default();
-        nodes.put(Node {
-            token: Some("tsr_x".to_string()),
-            ..node("a", "10.0.0.5:7400")
-        });
-        nodes.save().unwrap();
+        // Reading makes nothing: the config dir may not be writable.
+        let mut nodes = Nodes::load().unwrap();
+        assert!(nodes.nodes.is_empty());
+        assert!(!dir.path().join("sub").exists());
+        nodes
+            .keep(Node {
+                token: Some("tsr_x".to_string()),
+                ..node("a", "10.0.0.5:7400")
+            })
+            .unwrap();
+        nodes.keep(node("b", "10.0.0.6:7400")).unwrap();
 
         let loaded = Nodes::load().unwrap();
         assert_eq!(
@@ -214,11 +274,26 @@ mod tests {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let mode = fs::metadata(dir.path().join("nodes.json"))
-                .unwrap()
-                .permissions()
-                .mode();
+            let mode = fs::metadata(store::path()).unwrap().permissions().mode();
             assert_eq!(mode & 0o777, 0o600);
         }
+
+        // The GUI's copy, from before tessaro-ctl logged in to b.
+        let mut stale = Nodes::load().unwrap();
+        let mut ctl = Nodes::load().unwrap();
+        ctl.keep(Node {
+            token: Some("tsr_b".to_string()),
+            ..node("b", "10.0.0.6:7400")
+        })
+        .unwrap();
+        stale.forget("a").unwrap();
+
+        let now = Nodes::load().unwrap();
+        assert!(now.by_id("a").is_none());
+        assert_eq!(now.by_id("b").unwrap().token.as_deref(), Some("tsr_b"));
+        assert_eq!(
+            now.nodes.iter().map(|n| n.id.as_str()).collect::<Vec<_>>(),
+            ["b"]
+        );
     }
 }

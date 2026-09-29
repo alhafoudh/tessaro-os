@@ -57,7 +57,7 @@ shows no hardware rows.
   read the same files over SSH, and the kiosk's own page gets it through
   `tessaro.device.status()` (`page_status` in `control/bridge.rs`,
   docs/bridge.md), so a site can tell which unit it runs on. It stays out
-  of `NodeInfo`, mDNS and `nodes.json`, which the node id is built to keep
+  of `NodeInfo`, mDNS and the clients' known nodes, which the node id is built to keep
   free of anything that identifies the machine itself (the top of
   `identity.rs`).
 * **The test fixtures never read this host's hardware.** `KIOSK_DMI`,

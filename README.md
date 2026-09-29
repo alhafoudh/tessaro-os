@@ -97,7 +97,7 @@ tessaro-ctl -n golden-thistle-5731 access claim
 ...
 Pin it and continue? [y/N] y
 claimed golden-thistle-5731 (d77857317a77452baadbbde45de78ba7)
-token 4cd4cf8a saved in ~/.config/tessaro/nodes.json
+token 4cd4cf8a saved in ~/.config/tessaro/tessaro.db
 
 root password - shown this once, store it now:
 
@@ -363,7 +363,7 @@ powershell). On the device it is already on.
 ### The desktop client
 
 **Everything `tessaro-ctl` does, in windows and tables.** `tessaro-gui` shares
-the command line's device list, pins and tokens (`~/.config/tessaro/nodes.json`),
+the command line's device list, pins and tokens (`~/.config/tessaro/tessaro.db`),
 so a device claimed with one is open in the other.
 
 ```sh

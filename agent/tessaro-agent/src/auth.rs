@@ -9,8 +9,8 @@
 //! * A token is valid until it is revoked, and revoking **removes** it. There
 //!   is no expiry and nothing here reads a clock: device clocks drift, and a
 //!   token that expired because the RTC battery died would lock everyone out.
-//! * `claimed` is not stored. It *is* "`auth.json` holds a token", so it can
-//!   never disagree with the tokens.
+//! * `claimed` is not stored. It *is* "the `tokens` table holds a token", so
+//!   it can never disagree with the tokens.
 //!
 //! Only a SHA-256 of each token is kept, and comparison is constant-time.
 
@@ -18,19 +18,52 @@ use openssl::memcmp;
 use openssl::rand::rand_bytes;
 use openssl::sha::sha256;
 use protocol::{hex, unhex};
-use serde::{Deserialize, Serialize};
+use tessaro_db::rusqlite::{params, Connection};
 
-pub const FILE: &str = "auth.json";
+use crate::db::Stored;
 
 const TOKEN_PREFIX: &str = "tsr_";
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Auth {
-    #[serde(default)]
     pub tokens: Vec<TokenEntry>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+impl Stored for Auth {
+    const WHAT: &'static str = "the tokens";
+
+    fn load(db: &Connection) -> tessaro_db::rusqlite::Result<Self> {
+        let mut rows =
+            db.prepare("SELECT id, name, sha256, issued_by FROM tokens ORDER BY rowid")?;
+        let tokens = rows
+            .query_map([], |row| {
+                Ok(TokenEntry {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    sha256: row.get(2)?,
+                    issued_by: row.get(3)?,
+                })
+            })?
+            .collect::<Result<_, _>>()?;
+        Ok(Self { tokens })
+    }
+
+    fn save(&self, db: &Connection) -> tessaro_db::rusqlite::Result<()> {
+        db.execute("DELETE FROM tokens", [])?;
+        let mut insert =
+            db.prepare("INSERT INTO tokens (id, name, sha256, issued_by) VALUES (?1, ?2, ?3, ?4)")?;
+        for entry in &self.tokens {
+            insert.execute(params![entry.id, entry.name, entry.sha256, entry.issued_by])?;
+        }
+        Ok(())
+    }
+
+    fn clear(db: &Connection) -> tessaro_db::rusqlite::Result<()> {
+        db.execute("DELETE FROM tokens", []).map(drop)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TokenEntry {
     pub id: String,
     pub name: String,
@@ -135,8 +168,8 @@ mod tests {
         assert!(auth.verify("").is_none());
 
         // The secret itself is never stored.
-        let file = serde_json::to_string(&auth).unwrap();
-        assert!(!file.contains(&secret));
+        let stored = format!("{auth:?}");
+        assert!(!stored.contains(&secret));
     }
 
     #[test]

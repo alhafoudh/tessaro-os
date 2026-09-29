@@ -74,7 +74,7 @@ impl Plan {
     }
 }
 
-/// Where `send` left the device, and what that means for nodes.json.
+/// Where `send` left the device, and what that means for the known nodes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Sent {
     /// Committed, applied at the next reboot, which is left for later.

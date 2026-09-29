@@ -1,0 +1,27 @@
+[package]
+name = "tessaro-db"
+description = "Opening a Tessaro SQLite store: pragmas, migrations, quarantine of a broken file"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# Linked by tessaro-agent and tessaro-client, so by tessaro-ctl and tessaro-gui
+# too. Blocking, like everything that uses it: the agent calls it from
+# spawn_blocking.
+[dependencies]
+# SQLite compiled in (`bundled`), not the image's libsqlite3: the same version
+# on the device, a Linux laptop and macOS, and no pkg-config under bitbake.
+# The C build goes through the cc crate, which bitbake already drives for
+# ring and openssl-sys. 0.39 is the newest refinery accepts.
+rusqlite = { version = "0.39", features = ["bundled"] }
+
+# Migrations as files, Rails-style: `migrations/V<timestamp>__<name>.sql`,
+# compiled into the binary and recorded in `schema_migrations`. No default
+# features: those only read a TOML config we do not have. `int8-versions`
+# because a timestamp does not fit refinery's default i32.
+refinery = { version = "0.9", default-features = false, features = ["rusqlite", "int8-versions"] }
+
+[dev-dependencies]
+tempfile = "3"

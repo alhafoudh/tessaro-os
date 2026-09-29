@@ -152,7 +152,7 @@ shared so both ends refuse the same keys.
   the agent makes it (`dropbearkey -t rsa`, the unit's own command) before
   answering, and the first `tessaro-ctl ssh connect` already gets a pin. When no host
   key can be read, the client drops the stale pin and ssh asks as usual.
-* **The address is the one the control connection used**, from `nodes.json`
-  or mDNS, so a device that moved is found the same way `device status` finds it -
+* **The address is the one the control connection used**, from the known
+  nodes or mDNS, so a device that moved is found the same way `device status` finds it -
   and a different device at the old address fails the TLS pin before any
   key is sent.

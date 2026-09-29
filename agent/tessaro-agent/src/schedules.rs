@@ -1,10 +1,11 @@
 //! Schedules: shell command lines systemd runs on `OnCalendar` times.
 //!
-//! `schedules.json` is the only truth. Each schedule is rendered into
-//! systemd units in `/run/systemd/system` (`Paths::systemd_unit_dir`), and
-//! systemd does all the timing: the calendar, the timezone, clock jumps.
-//! The agent only keeps the units matching the file (`control/schedules.rs`
-//! reconciles), so a schedule keeps firing while the agent is down.
+//! The `schedules` table of `tessaro.db` is the only truth. Each schedule is
+//! rendered into systemd units in `/run/systemd/system`
+//! (`Paths::systemd_unit_dir`), and systemd does all the timing: the
+//! calendar, the timezone, clock jumps. The agent only keeps the units
+//! matching the table (`control/schedules.rs` reconciles), so a schedule
+//! keeps firing while the agent is down.
 //!
 //! Per schedule `<id>`, with `<hash>` naming its content:
 //!
@@ -32,11 +33,10 @@ use std::path::Path;
 use protocol::{
     Moment, OnError, ScheduleSpec, SCHEDULE_CALENDAR_MAX, SCHEDULE_LINES_MAX, SCHEDULE_LINE_MAX,
 };
-use serde::{Deserialize, Serialize};
+use tessaro_db::rusqlite::{self, params, types::Type, Connection};
 
+use crate::db::{Db, Stored};
 use crate::store;
-
-pub const FILE: &str = "schedules.json";
 
 /// Every unit and journal pattern of a schedule starts with this.
 pub const PREFIX: &str = "tessaro-schedule-";
@@ -45,17 +45,80 @@ pub const PREFIX: &str = "tessaro-schedule-";
 /// double its `%`.
 const INSTANCE: &str = "@@INSTANCE@@";
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default)]
 pub struct Schedules {
-    #[serde(default)]
     pub schedules: Vec<Schedule>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Schedule {
     pub id: String,
-    #[serde(flatten)]
     pub spec: ScheduleSpec,
+}
+
+impl Stored for Schedules {
+    const WHAT: &'static str = "the schedules";
+
+    fn load(db: &Connection) -> rusqlite::Result<Self> {
+        let mut rows = db.prepare(
+            "SELECT id, name, enabled, calendar, lines, on_error, timeout_s \
+             FROM schedules ORDER BY position",
+        )?;
+        let schedules = rows
+            .query_map([], |row| {
+                let list = |at: usize| -> rusqlite::Result<Vec<String>> {
+                    let text: String = row.get(at)?;
+                    serde_json::from_str(&text).map_err(|err| {
+                        rusqlite::Error::FromSqlConversionFailure(at, Type::Text, Box::new(err))
+                    })
+                };
+                let on_error: String = row.get(5)?;
+                let timeout_s: Option<i64> = row.get(6)?;
+                Ok(Schedule {
+                    id: row.get(0)?,
+                    spec: ScheduleSpec {
+                        name: row.get(1)?,
+                        enabled: row.get(2)?,
+                        calendar: list(3)?,
+                        lines: list(4)?,
+                        on_error: on_error.parse().map_err(|err: String| {
+                            rusqlite::Error::FromSqlConversionFailure(5, Type::Text, err.into())
+                        })?,
+                        timeout_s: timeout_s.map(|seconds| seconds as u64),
+                    },
+                })
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(Self { schedules })
+    }
+
+    fn save(&self, db: &Connection) -> rusqlite::Result<()> {
+        db.execute("DELETE FROM schedules", [])?;
+        let mut insert = db.prepare(
+            "INSERT INTO schedules \
+             (id, position, name, enabled, calendar, lines, on_error, timeout_s) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        )?;
+        for (position, schedule) in self.schedules.iter().enumerate() {
+            let spec = &schedule.spec;
+            let json = |list: &Vec<String>| serde_json::to_string(list).unwrap_or_default();
+            insert.execute(params![
+                schedule.id,
+                position as i64,
+                spec.name,
+                spec.enabled,
+                json(&spec.calendar),
+                json(&spec.lines),
+                spec.on_error.name(),
+                spec.timeout_s.map(|seconds| seconds as i64),
+            ])?;
+        }
+        Ok(())
+    }
+
+    fn clear(db: &Connection) -> rusqlite::Result<()> {
+        db.execute("DELETE FROM schedules", []).map(drop)
+    }
 }
 
 /// `spec` made ready to save: trimmed, checked, `timeout_s: Some(0)` as
@@ -222,7 +285,7 @@ pub fn exec_arg(text: &str) -> String {
     quoted
 }
 
-const HEADER: &str = "# Written by tessaro-agent from schedules.json at every start and change;\n\
+const HEADER: &str = "# Written by tessaro-agent from tessaro.db at every start and change;\n\
                       # edits here do not last. See docs/scheduler.md.\n";
 
 /// The unit files schedule `schedule` is made of, by name.
@@ -409,10 +472,12 @@ pub fn forget_ended(runs_dir: &Path, id: &str) -> io::Result<()> {
 
 /// Every schedule and every last run gone: a factory reset. The units
 /// follow at the next reconcile, or with `/run` at the next boot.
-pub fn clear(store: &store::Store, runs_dir: &Path) -> io::Result<()> {
-    store.remove()?;
+pub fn clear(db: &Db, runs_dir: &Path) -> Result<(), String> {
+    db.clear::<Schedules>()?;
     match fs::remove_dir_all(runs_dir) {
-        Err(err) if err.kind() != io::ErrorKind::NotFound => Err(err),
+        Err(err) if err.kind() != io::ErrorKind::NotFound => {
+            Err(format!("{}: {err}", runs_dir.display()))
+        }
         _ => Ok(()),
     }
 }

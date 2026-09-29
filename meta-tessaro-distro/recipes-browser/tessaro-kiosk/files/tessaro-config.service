@@ -21,7 +21,7 @@ Before=weston.service tessaro-kiosk.service tessaro-agent.service
 # graphical), which is when an ordering applies.
 Before=NetworkManager.service
 
-# /data (state.json, the TLS identity) and /etc (the overlay: shadow, the
+# /data (tessaro.db, the TLS identity) and /etc (the overlay: shadow, the
 # policy) are mounted by local-fs.target; /run/tessaro-kiosk comes from
 # tmpfiles.
 After=local-fs.target systemd-tmpfiles-setup.service

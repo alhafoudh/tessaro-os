@@ -135,6 +135,13 @@ CORE_IMAGE_EXTRA_INSTALL += " \
     tessaro-time \
 "
 
+# The sqlite3 shell, to read and edit the agent's /data/tessaro/tessaro.db
+# by hand. The agent links its own SQLite (bundled), so this is the only
+# thing that uses the image's libsqlite3 for the store. See docs/storage.md.
+CORE_IMAGE_EXTRA_INSTALL += " \
+    sqlite3 \
+"
+
 # The boot disk's own partitions, by label on that disk only: /data for the
 # /etc overlay on every machine (OVERLAYFS_ETC_DEVICE), and the Pi's /boot,
 # which its wks keeps out of fstab. See docs/build.md, "Pi storage boot".

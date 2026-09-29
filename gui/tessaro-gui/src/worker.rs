@@ -58,7 +58,7 @@ pub enum Request {
     Live(bool),
     /// Claim the device over this session, answered as the `claim` call.
     /// The session keeps the new token, and the node is pinned in
-    /// nodes.json to the certificate this session was opened on.
+    /// the known nodes to the certificate this session was opened on.
     Claim {
         name: String,
     },
@@ -126,18 +126,18 @@ pub enum Event {
     Answer(&'static str, Result<serde_json::Value, String>),
     /// Worth telling the user: the device moved, a warning from the client.
     Note(String),
-    /// The node was claimed and written to nodes.json.
+    /// The node was claimed and written to the known nodes.
     Pinned(String),
 }
 
 /// A session with a known node, by name: its last address first, then
-/// mDNS, and held to its pin either way. nodes.json is read again each time,
+/// mDNS, and held to its pin either way. The known nodes are read again each time,
 /// so a login from the main window counts at the next try, and a device
 /// found elsewhere is remembered there. Also what is worth telling the user.
 ///
 /// A node nobody pinned - an unclaimed device opened from the list - is
 /// reached at the address it was seen at, and only while it stays unclaimed;
-/// once it answers it is written to nodes.json and known from then on.
+/// once it answers it is written to the known nodes and known from then on.
 pub fn connect(node: &Node) -> Result<(Session, Vec<String>), String> {
     let mut nodes = Nodes::load()?;
     let target = match nodes.by_id(&node.id).cloned() {

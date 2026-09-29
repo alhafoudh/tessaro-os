@@ -7,7 +7,7 @@
 //!
 //! A fresh device is unclaimed and answers every command without a token or
 //! a pin, credentials aside. `tessaro-ctl --node NAME access claim` takes it,
-//! stores the token in ~/.config/tessaro/nodes.json, and prints the device's
+//! stores the token in ~/.config/tessaro/tessaro.db, and prints the device's
 //! new root password - once.
 
 mod audio;
@@ -38,7 +38,7 @@ use protocol::{Applied, Done, EvalResult, KeyInfo, NodeInfo, RestartTarget, Sour
 use serde_json::Value;
 use tessaro_client::access;
 use tessaro_client::describe::device as describe;
-use tessaro_client::nodes::{self, Nodes};
+use tessaro_client::nodes::Nodes;
 use tessaro_client::webconfig;
 
 use connect::{Answer, Session, Target, Trust};
@@ -63,7 +63,7 @@ const HELP_STYLES: Styles = Styles::styled()
         On the device, as root, it talks to the agent over the local socket and needs nothing else. \
         From anywhere else, --node names the device and the conversation is TLS with a pinned \
         certificate and a token, which `access claim` or `access login` stores in \
-        ~/.config/tessaro/nodes.json.\n\n\
+        ~/.config/tessaro/tessaro.db.\n\n\
         `tessaro-ctl config keys` documents every setting: what it accepts, its default, what is \
         set, and what a change restarts.",
     after_long_help = "EXAMPLES:\n\
@@ -123,7 +123,7 @@ const HELP_STYLES: Styles = Styles::styled()
         ENVIRONMENT:\n\
         \x20 TESSARO_NODE        default for --node\n\
         \x20 TESSARO_TOKEN       use this token instead of the stored one\n\
-        \x20 TESSARO_CONFIG_DIR  where nodes.json lives (default ~/.config/tessaro)\n\
+        \x20 TESSARO_CONFIG_DIR  where tessaro.db lives (default ~/.config/tessaro)\n\
         \x20 TESSARO_SOCKET      the local socket (default /run/tessaro-agent.sock)"
 )]
 struct Cli {
@@ -978,7 +978,7 @@ fn run(cli: Cli) -> Result<(), String> {
             println!(
                 "token {} saved in {}",
                 claimed.token_id,
-                nodes::dir().join("nodes.json").display()
+                tessaro_client::store::path().display()
             );
             println!();
             for (intro, secret) in access::secrets(&claimed) {
@@ -1393,8 +1393,7 @@ fn forget(nodes: &mut Nodes, node: &str) -> Result<(), String> {
         .or_else(|| nodes.by_address(node))
         .map(|known| known.id.clone())
         .ok_or_else(|| format!("{node} is not a known node"))?;
-    nodes.remove(&id);
-    nodes.save()?;
+    nodes.forget(&id)?;
     println!("forgot {node}");
     Ok(())
 }

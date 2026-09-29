@@ -18,7 +18,7 @@
 //! * **Sync on/off**: timedated's `SetNTP`, which starts and enables
 //!   timesyncd, or stops and disables it.
 //! * **Timezone**: timedated's `SetTimezone`, which points `/etc/localtime`
-//!   at the zone. That lands on the `/etc` overlay; `state.json` stays the
+//!   at the zone. That lands on the `/etc` overlay; the settings stay the
 //!   source of truth, reapplied at every start. Chromium and glibc follow
 //!   `/etc/localtime` without a restart.
 //!

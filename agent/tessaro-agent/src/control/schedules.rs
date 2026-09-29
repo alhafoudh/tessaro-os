@@ -1,4 +1,4 @@
-//! `tessaro-ctl schedule`: the schedules in `/data/tessaro/schedules.json`
+//! `tessaro-ctl schedule`: the schedules in the `schedules` table of `tessaro.db`
 //! and the systemd units they are rendered into (`crate::schedules`).
 //!
 //! Reconciling compares the unit files on disk and the units systemd has
@@ -89,11 +89,10 @@ impl Control {
         let spec = schedules::validate(spec, &existing.iter().collect::<Vec<_>>())?;
         self.analyze(&spec.calendar, 1).await?;
 
-        let store = self.schedules.clone();
-        let log = Arc::clone(&self.log);
+        let db = self.db.clone();
         let saved = spec.clone();
-        let id = blocking("updating schedules.json", move || {
-            store.update(&log, |all: &mut Schedules| {
+        let id = blocking("updating the schedules", move || {
+            db.update(|all: &mut Schedules| {
                 let others: Vec<&Schedule> = all.schedules.iter().collect();
                 let spec = schedules::validate(saved, &others)?;
                 let id = schedules::new_id(&all.schedules)?;
@@ -150,12 +149,11 @@ impl Control {
             self.analyze(&spec.calendar, 1).await?;
         }
 
-        let store = self.schedules.clone();
-        let log = Arc::clone(&self.log);
+        let db = self.db.clone();
         let saved = spec.clone();
         let target = id.clone();
-        blocking("updating schedules.json", move || {
-            store.update(&log, |all: &mut Schedules| {
+        blocking("updating the schedules", move || {
+            db.update(|all: &mut Schedules| {
                 let at = schedules::find(&all.schedules, &target)?;
                 all.schedules[at].spec = saved;
                 Ok(())
@@ -177,11 +175,10 @@ impl Control {
         query: String,
     ) -> Result<Done, String> {
         let _writes = self.writes.lock().await;
-        let store = self.schedules.clone();
-        let log = Arc::clone(&self.log);
+        let db = self.db.clone();
         let runs_dir = self.paths.schedule_runs_dir();
-        let removed = blocking("updating schedules.json", move || {
-            let removed = store.update(&log, |all: &mut Schedules| {
+        let removed = blocking("updating the schedules", move || {
+            let removed = db.update(|all: &mut Schedules| {
                 let at = schedules::find(&all.schedules, &query)?;
                 Ok(all.schedules.remove(at))
             })?;
@@ -248,10 +245,10 @@ impl Control {
     /// A factory reset: every schedule gone, and its timer stopped now.
     /// Runs already going finish. The caller holds `writes`.
     pub(super) async fn clear_schedules(&self) -> Result<(), String> {
-        let store = self.schedules.clone();
+        let db = self.db.clone();
         let runs_dir = self.paths.schedule_runs_dir();
         blocking("removing the schedules", move || {
-            schedules::clear(&store, &runs_dir).map_err(|err| err.to_string())
+            schedules::clear(&db, &runs_dir)
         })
         .await?;
         if let Err(err) = self.apply_schedules().await {
@@ -263,7 +260,7 @@ impl Control {
         Ok(())
     }
 
-    /// Keeps the schedules' units on `schedules.json`, from the agent's
+    /// Keeps the schedules' units on the `schedules` table, from the agent's
     /// start and then once a minute.
     pub fn watch_schedules(self: &Arc<Self>) {
         const EVERY: Duration = Duration::from_secs(60);
@@ -312,12 +309,12 @@ impl Control {
             .filter_map(|(name, _)| schedules::template_of(name))
             .collect();
 
-        let store = self.schedules.clone();
+        let db = self.db.clone();
         let log = Arc::clone(&self.log);
         let unit_dir = self.paths.systemd_unit_dir.clone();
         let runs_dir = self.paths.schedule_runs_dir();
         let (plan, all) = blocking("rendering the schedules' units", move || {
-            let all: Schedules = store.read(&log);
+            let all: Schedules = db.read(&log);
             let wanted = schedules::wanted(&all.schedules, &runs_dir);
             let present = schedules::present(&unit_dir)
                 .map_err(|err| format!("{}: {err}", unit_dir.display()))?;
@@ -399,10 +396,10 @@ impl Control {
     }
 
     async fn read_schedules(&self) -> Result<Vec<Schedule>, String> {
-        let store = self.schedules.clone();
+        let db = self.db.clone();
         let log = Arc::clone(&self.log);
-        blocking("reading schedules.json", move || {
-            Ok(store.read::<Schedules>(&log).schedules)
+        blocking("reading the schedules", move || {
+            Ok(db.read::<Schedules>(&log).schedules)
         })
         .await
     }

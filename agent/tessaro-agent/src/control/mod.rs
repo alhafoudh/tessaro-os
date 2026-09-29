@@ -1,7 +1,7 @@
 //! What every `tessaro-ctl` command does, whichever transport it came in on.
 //!
 //! The state machine in `agent.rs` never sees any of this. A change to the
-//! configuration is: validate, commit to `state.json` under the store's lock,
+//! configuration is: validate, commit to `tessaro.db` in one transaction,
 //! re-render `generated.env` and the policy, then restart exactly what reads
 //! the keys that changed - the browser, Weston, or the agent itself. The
 //! agent restarting itself is how an agent setting takes effect: it costs
@@ -54,8 +54,9 @@ use tokio::time::Instant;
 
 use crate::api::sessions::{self, Sessions};
 use crate::audio::Audio;
-use crate::auth::{self, Auth};
+use crate::auth::Auth;
 use crate::cdp::session::SessionHandle;
+use crate::db::Db;
 use crate::deadline::{blocking, within};
 use crate::display;
 use crate::files::Files;
@@ -65,11 +66,9 @@ use crate::nm::profiles;
 use crate::nm::Network;
 use crate::paths::Paths;
 use crate::render;
-use crate::secrets;
 use crate::speedtest;
 use crate::state::{self, State};
 use crate::storage;
-use crate::store::Store;
 use crate::sync::lock;
 use crate::systemd::Bus;
 use crate::time::Time;
@@ -179,22 +178,21 @@ pub struct Control {
     /// The image defaults for every registry key, from the process
     /// environment systemd filled from the `/usr/lib` env file.
     defaults: HashMap<String, String>,
-    state: Store,
-    auth_store: Store,
-    /// The hotspot's and the WiFi client's passwords, never in `state.json`.
-    secrets: Store,
-    schedules: Store,
+    /// `tessaro.db`: the settings, the tokens, the network passwords (never
+    /// in the settings) and the schedules.
+    db: Db,
     /// One reconcile of the schedules' units at a time (`schedules`).
     reconciling: tokio::sync::Mutex<()>,
-    /// What `auth.json` holds, kept in memory so verifying a token is not a
-    /// disk read. Only ever replaced after a successful write.
+    /// What the `tokens` table holds, kept in memory so verifying a token is
+    /// not a disk read. Only ever replaced after a successful write.
     auth: Mutex<Auth>,
     session: SessionHandle,
     bus: Bus,
     identity: Identity,
     mdns: Mutex<Option<Mdns>>,
     /// Serialises every change, so two clients cannot interleave a commit
-    /// with a render. The store's flock does the same across processes.
+    /// with a render. The store's write transactions do the same across
+    /// processes.
     writes: tokio::sync::Mutex<()>,
     /// When the guarded change on probation reverts, if one is.
     probation: Mutex<Option<Instant>>,
@@ -232,7 +230,7 @@ pub struct Control {
     /// server, because a restart this process makes of itself hands them
     /// over (`run_after`).
     sessions: Arc<Sessions>,
-    /// access.session_timeout in seconds, as last read from `state.json`.
+    /// access.session_timeout in seconds, as last read from the settings.
     session_timeout: AtomicU64,
 }
 
@@ -241,6 +239,7 @@ impl Control {
     pub fn new(
         log: Arc<Log>,
         paths: Paths,
+        db: Db,
         defaults: HashMap<String, String>,
         auth: Auth,
         session: SessionHandle,
@@ -261,13 +260,10 @@ impl Control {
             proxy,
             updates: Updates::new(Arc::clone(&log), paths.clone()),
             files: Files::new(Arc::clone(&log), paths.clone()),
-            network: Network::new(Arc::clone(&log), paths.clone()),
+            network: Network::new(Arc::clone(&log), paths.clone(), db.clone()),
             audio: Audio::new(Arc::clone(&log), &paths),
             time: Time::new(Arc::clone(&log), &paths),
-            state: Store::new(&paths.state_dir, state::FILE),
-            auth_store: Store::new(&paths.state_dir, auth::FILE),
-            secrets: Store::new(&paths.state_dir, secrets::FILE),
-            schedules: Store::new(&paths.state_dir, crate::schedules::FILE),
+            db,
             reconciling: tokio::sync::Mutex::new(()),
             log,
             paths,
@@ -711,11 +707,11 @@ impl Control {
     // --- reading -----------------------------------------------------------
 
     async fn read_state(&self) -> Result<State, String> {
-        let store = self.state.clone();
+        let db = self.db.clone();
         let log = Arc::clone(&self.log);
-        let state = blocking("reading state.json", move || Ok(store.read::<State>(&log))).await?;
+        let state = blocking("reading the settings", move || Ok(db.read::<State>(&log))).await?;
         // The API checks every session cookie against this, and reading the
-        // file for each would be a disk read per request.
+        // store for each would be a disk read per request.
         let seconds = state::setting(&state.settings, &self.defaults, keys::SESSION_TIMEOUT)
             .and_then(|value| value.parse().ok())
             .unwrap_or(DEFAULT_SESSION_TIMEOUT);
@@ -723,28 +719,26 @@ impl Control {
         Ok(state)
     }
 
-    /// Change `state.json` under the store's lock, off the runtime thread.
+    /// Change the settings in one write transaction, off the runtime thread.
     async fn update_state<R: Send + 'static>(
         &self,
         what: &'static str,
         change: impl FnOnce(&mut State) -> Result<R, String> + Send + 'static,
     ) -> Result<R, String> {
-        let store = self.state.clone();
-        let log = Arc::clone(&self.log);
-        blocking(what, move || store.update(&log, change)).await
+        let db = self.db.clone();
+        blocking(what, move || db.update(change)).await
     }
 
-    /// Change `auth.json` the same way. The copy in memory that tokens are
+    /// Change the tokens the same way. The copy in memory that tokens are
     /// verified against follows, and only once the write has succeeded.
     async fn update_auth<R: Send + 'static>(
         &self,
         what: &'static str,
         change: impl FnOnce(&mut Auth) -> Result<R, String> + Send + 'static,
     ) -> Result<R, String> {
-        let store = self.auth_store.clone();
-        let log = Arc::clone(&self.log);
+        let db = self.db.clone();
         let (auth, out) = blocking(what, move || {
-            store.update(&log, |auth: &mut Auth| {
+            db.update(|auth: &mut Auth| {
                 let out = change(auth)?;
                 Ok((auth.clone(), out))
             })
@@ -1391,9 +1385,11 @@ mod tests {
             shutdown.clone(),
         );
 
+        let db = Db::open(&paths.state_dir, &log);
         let control = Control::new(
             log,
             paths.clone(),
+            db,
             defaults,
             Auth::default(),
             session,
@@ -1501,10 +1497,7 @@ mod tests {
     }
 
     fn secrets_of(fx: &Fixture) -> Secrets {
-        let path = fx.paths.state_dir.join(secrets::FILE);
-        fs::read_to_string(path)
-            .map(|text| serde_json::from_str(&text).unwrap())
-            .unwrap_or_default()
+        Db::at(&fx.paths.state_dir).read(&Log::buffered(true))
     }
 
     #[tokio::test]
@@ -1586,12 +1579,13 @@ mod tests {
     #[tokio::test]
     async fn network_passwords_are_never_shown() {
         let fx = fixture();
-        fs::create_dir_all(&fx.paths.state_dir).unwrap();
-        fs::write(
-            fx.paths.state_dir.join(secrets::FILE),
-            r#"{"hotspot_psk":"hotspotsecret1","wifi_psk":"clientsecret22"}"#,
-        )
-        .unwrap();
+        Db::at(&fx.paths.state_dir)
+            .update(|secrets: &mut Secrets| {
+                secrets.hotspot_psk = Some(Secret("hotspotsecret1".into()));
+                secrets.wifi_psk = Some(Secret("clientsecret22".into()));
+                Ok(())
+            })
+            .unwrap();
         let everything = serde_json::to_string(
             &ok::<Settings>(&fx.control, &Caller::Local, Command::Get { key: None }).await,
         )
@@ -1672,8 +1666,8 @@ mod tests {
         assert!(fx.control.verify(&claimed.token).is_none());
         assert!(!shadow::root_has_password(&fx.paths.shadow).unwrap());
         // Revoking removes: nothing of the token is left on disk.
-        let auth = fs::read_to_string(fx.paths.state_dir.join(auth::FILE)).unwrap();
-        assert!(!auth.contains(&claimed.token_id));
+        let auth: Auth = Db::at(&fx.paths.state_dir).read(&Log::buffered(true));
+        assert!(auth.tokens.iter().all(|entry| entry.id != claimed.token_id));
 
         // And the next claim wins.
         let _: Claimed = ok(
@@ -2244,23 +2238,15 @@ mod tests {
         assert!(bad.contains("screen.osk"), "{bad}");
         let unknown = err(&fx.control, &Caller::Local, set(&[("no.such", "1")])).await;
         assert!(unknown.contains("not a setting"), "{unknown}");
-        // An old name is refused too, saying what it is called now.
-        let old = err(
-            &fx.control,
-            &Caller::Local,
-            set(&[("display.osk", "never")]),
-        )
-        .await;
-        assert_eq!(old, "display.osk is now screen.osk");
-        let old_get = err(
+        let unknown_get = err(
             &fx.control,
             &Caller::Local,
             Command::Get {
-                key: Some("kiosk.url".into()),
+                key: Some("no.such".into()),
             },
         )
         .await;
-        assert_eq!(old_get, "kiosk.url is now browser.url");
+        assert!(unknown_get.contains("not a setting"), "{unknown_get}");
 
         let settings: Settings = ok(&fx.control, &Caller::Local, Command::Get { key: None }).await;
         assert_eq!(settings.revision, 0);

@@ -52,7 +52,7 @@ pub struct Send {
     pub yes: bool,
 }
 
-/// What `send` left for the caller to do with nodes.json.
+/// What `send` left for the caller to do with the known nodes.
 pub enum Sent {
     /// Nothing changes on this machine.
     Kept,

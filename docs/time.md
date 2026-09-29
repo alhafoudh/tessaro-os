@@ -43,7 +43,7 @@ and `time set` sets the clock by hand while NTP is off. The logic is
   first.
 * **The timezone is timedated's `SetTimezone`**, which relinks
   `/etc/localtime`. The link lands on the `/etc` overlay; that is
-  acceptable because `state.json` stays the source of truth and the agent
+  acceptable because the stored settings stay the source of truth and the agent
   reapplies it at every start, and the image's own link (to `UTC`, from
   `tzdata-core` with `DEFAULT_TIMEZONE:pn-tzdata`) only ever sits below it.
   A zone is checked against `ListTimezones` at `config set`, next to the

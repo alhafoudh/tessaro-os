@@ -691,7 +691,7 @@ impl Server {
         };
         WebSession {
             claimed: self.control.claimed(),
-            fresh: self.control.fresh().await, // naked: fresh reads state.json through blocking() under within()
+            fresh: self.control.fresh().await, // naked: fresh reads the settings through blocking() under within()
             via,
             token,
             timeout: self.control.session_timeout().as_secs(),

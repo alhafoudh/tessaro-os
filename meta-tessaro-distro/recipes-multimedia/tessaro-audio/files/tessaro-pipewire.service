@@ -27,7 +27,7 @@ SupplementaryGroups=audio
 
 # The sockets (pipewire-0, pulse/native) go into XDG_RUNTIME_DIR, which
 # tmpfiles makes (tessaro-audio.conf). State and configuration are pointed
-# into it too: nothing about sound may persist outside state.json, where
+# into it too: nothing about sound may persist outside tessaro.db, where
 # tessaro-agent keeps the audio.* settings and puts them back every boot. A
 # ~/.config/pipewire on /data could otherwise override the image for good.
 Environment=XDG_RUNTIME_DIR=/run/tessaro-audio

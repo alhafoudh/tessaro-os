@@ -1,4 +1,4 @@
-//! The main window: every device this machine knows (`nodes.json`) and
+//! The main window: every device this machine knows (`nodes.rs`) and
 //! every one answering on the network (mDNS), in one list keyed by node id.
 //!
 //! A device is opened only once it is pinned and has a token. Getting there
@@ -25,7 +25,7 @@ use crate::{blocking, discovery, theme, CLIENT};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pin {
     Known,
-    /// Not in nodes.json: login or claim pins it.
+    /// Not among the known nodes: login or claim pins it.
     New,
     /// Presents another certificate than the one pinned: reinstalled, or
     /// someone in the middle. Forget it to pin it again.
@@ -127,7 +127,7 @@ pub struct Peek {
     node: NodeInfo,
     address: SocketAddr,
     fingerprint: String,
-    /// Already in nodes.json (a login to a known device).
+    /// Already among the known nodes (a login to a known device).
     pinned: bool,
 }
 
@@ -272,7 +272,7 @@ impl NodesView {
         }
     }
 
-    /// Read nodes.json again: a device window may have moved a node.
+    /// Read the known nodes again: a device window may have moved a node.
     pub fn reload(&mut self) {
         if let Ok(known) = Nodes::load() {
             self.known = known;
@@ -322,12 +322,14 @@ impl NodesView {
             }
             Message::ForgetConfirmed => {
                 if let Some(Dialog::Forget { id, name }) = self.dialog.take() {
-                    self.known.remove(&id);
+                    // Only its row goes: what a device window stored since
+                    // this copy was read stays.
                     self.message = Some(
                         self.known
-                            .save()
-                            .map(|()| format!("forgot {name} on this machine")),
+                            .forget(&id)
+                            .map(|_| format!("forgot {name} on this machine")),
                     );
+                    self.reload();
                 }
                 none
             }
@@ -538,7 +540,7 @@ impl NodesView {
         self.added.push(found);
     }
 
-    /// A device added by address goes into nodes.json, claimed or not, so it
+    /// A device added by address goes into the known nodes, claimed or not, so it
     /// is listed again after a restart even though mDNS cannot see it. A new
     /// one is pinned to the certificate it just presented, without a token;
     /// a known one only takes the new address, and one presenting another
@@ -562,8 +564,7 @@ impl NodesView {
                 token: None,
             },
         };
-        self.known.put(node);
-        self.known.save()
+        self.known.keep(node)
     }
 
     fn access(&mut self, mode: Mode) -> (Task<Message>, Option<Node>) {

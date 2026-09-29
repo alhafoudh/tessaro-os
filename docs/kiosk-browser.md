@@ -27,10 +27,10 @@ Everything else is `meta-tessaro-distro/recipes-browser/tessaro-kiosk/`:
   the claim invariant and is the factory-reset escape hatch.
 * `/usr/lib/tessaro-kiosk/tessaro-kiosk.env` carries the build-time defaults
   (`TESSARO_KIOSK_URL` from `tessaro.conf`). What was set on the device lives
-  in `/data/tessaro/state.json` and reaches the units as
+  in `/data/tessaro/tessaro.db` and reaches the units as
   `/run/tessaro-kiosk/generated.env`, which the browser unit and
   `tessaro-weston-config` read *after* the defaults. The agent reads only the
-  defaults and lays `state.json` over them itself.
+  defaults and lays the stored settings over them itself.
 
 The agent watches the browser over **CDP** (`http://127.0.0.1:9222`), on one
 persistent session found through `/json/list`: a `Runtime.evaluate` round

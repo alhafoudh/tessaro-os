@@ -51,8 +51,9 @@ it needs no token ([settings.md](settings.md), the claim model).
   with it; logging everyone out for changing the kiosk URL would make
   Webconfig unusable. So `run_after` of `After::Restart` for either unit
   first writes the sessions and how long each has been idle to
-  `/run/tessaro-kiosk/sessions.json` (0600), and the next process takes
-  them and deletes the file at start (`Control::load_sessions`). A restart
+  `/run/tessaro-kiosk/sessions.db` (the `sessions` table, on tmpfs), and
+  the next process reads and empties it at start in one transaction
+  (`Control::load_sessions`). A restart
   someone asks for (`device restart`, `After::RestartAsked`), a crash and a
   reboot end every session.
 * **A cookie of an ended session is no credential and no offence**: the
@@ -79,7 +80,7 @@ browser cannot take its interface.
 ## Where it opens
 
 **A fresh device opens on Quick Setup, any other on Overview**
-(`WebSession.fresh`): fresh is unclaimed and nothing set in `state.json`.
+(`WebSession.fresh`): fresh is unclaimed and no setting stored.
 Quick Setup's first save sets something, so from then on the device opens
 on Overview; Quick Setup stays first in the menu. What Quick Setup does is
 in [quick-setup.md](quick-setup.md).

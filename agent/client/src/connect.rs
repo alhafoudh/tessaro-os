@@ -244,7 +244,7 @@ pub struct Session {
     token: Option<String>,
     read_timeout: Option<Duration>,
     pub node: NodeInfo,
-    /// Set when this session should be (re)stored in nodes.json.
+    /// Set when this session should be (re)stored in the known nodes.
     pub remote: Option<(SocketAddr, String)>,
     /// How long the TCP connect took, and the TLS handshake plus asking the
     /// device who it is.

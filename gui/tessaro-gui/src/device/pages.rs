@@ -979,7 +979,7 @@ impl Device {
     /// are worth nothing now.
     fn forget_here(&mut self) {
         if let Ok(mut nodes) = tessaro_client::nodes::Nodes::load() {
-            if nodes.remove(&self.node.id) && nodes.save().is_ok() {
+            if nodes.forget(&self.node.id) == Ok(true) {
                 self.log(
                     Tone::Warn,
                     format!("forgot {} on this machine", self.name()),

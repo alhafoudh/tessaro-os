@@ -611,7 +611,7 @@ impl Device {
         .into()
     }
 
-    /// The device's name as it calls itself, else as nodes.json has it.
+    /// The device's name as it calls itself, else as the known nodes have it.
     pub fn name(&self) -> &str {
         self.info
             .as_ref()

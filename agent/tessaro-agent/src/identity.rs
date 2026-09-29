@@ -5,7 +5,7 @@
 //!   `/etc/machine-id` over a fixed Tessaro application id, cut to 128 bits
 //!   and stamped as a v4 UUID. The machine id itself is confidential (systemd
 //!   says so) and never leaves the device; this is what goes on the wire,
-//!   into mDNS and into a technician's `nodes.json`.
+//!   into mDNS and into a technician's known nodes.
 //! * **Name** is an adjective-noun pair and four hex digits, all taken from
 //!   the node id, so a device always answers to the same name. The digits
 //!   make two devices on one segment colliding a 1-in-16-million event rather

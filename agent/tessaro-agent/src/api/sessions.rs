@@ -4,9 +4,10 @@
 //! A browser cannot pin the device's certificate or keep a token safe, so
 //! signing in with a token or a ticket gives it a session instead: a random
 //! id in an `HttpOnly` cookie, standing in for that token. Everything is in
-//! memory, as hashes, like `auth.json` keeps tokens. An agent that stops ends
-//! every session, except when it restarts itself to apply a change: then
-//! `save` hands them to the next process through `/run` (`load`).
+//! memory, as hashes, like the `tokens` table keeps tokens. An agent that
+//! stops ends every session, except when it restarts itself to apply a
+//! change: then `save` hands them to the next process through `sessions.db`
+//! in `/run` (`load`).
 //!
 //! A session remembers its token's id and stored hash, and is only good while
 //! the device still has that token: revoking it, unclaiming or a factory
@@ -19,7 +20,7 @@ use std::time::Duration;
 
 use openssl::sha::sha256;
 use protocol::hex;
-use serde::{Deserialize, Serialize};
+use tessaro_db::rusqlite::{self, params};
 use tokio::time::Instant;
 
 use crate::auth::random;
@@ -31,11 +32,21 @@ const MAX_SESSIONS: usize = 32;
 pub const TICKET_LIFE: Duration = Duration::from_secs(60);
 const MAX_TICKETS: usize = 16;
 
-/// The handover file, in the agent's run directory.
-pub const HANDOVER: &str = "sessions.json";
+/// The handover store, in the agent's run directory: on tmpfs, so a reboot
+/// ends every session.
+pub const HANDOVER: &str = "sessions.db";
+
+mod embedded {
+    refinery::embed_migrations!("migrations/sessions");
+}
+
+/// The handover store, opened and migrated.
+fn handover(path: &Path) -> Result<rusqlite::Connection, String> {
+    tessaro_db::open(path, embedded::migrations::runner()).map(|opened| opened.connection)
+}
 
 /// Whose a session or a ticket is: a token, by id and stored hash.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Owner {
     pub token_id: String,
     pub token_sha: String,
@@ -66,8 +77,8 @@ pub struct Sessions {
     cookie: String,
 }
 
-/// What one session looks like in the handover file.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// What one session looks like in the handover store.
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct Saved {
     id_sha: String,
     owner: Owner,
@@ -176,9 +187,6 @@ impl Sessions {
     /// Write the sessions still good for the next agent process, which
     /// `load`s them. Tickets are not handed over: they last a minute.
     pub fn save(&self, path: &Path, timeout: Duration) -> Result<usize, String> {
-        use std::io::Write;
-        use std::os::unix::fs::OpenOptionsExt;
-
         let now = Instant::now();
         let saved: Vec<Saved> = lock(&self.inner)
             .live
@@ -193,31 +201,56 @@ impl Sessions {
         if saved.is_empty() {
             return Ok(0);
         }
-        let text = serde_json::to_vec(&saved).map_err(|err| err.to_string())?;
-        let partial = path.with_extension("partial");
-        let written = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(&partial)
-            .and_then(|mut file| file.write_all(&text))
-            .and_then(|()| std::fs::rename(&partial, path));
-        written.map_err(|err| format!("{}: {err}", path.display()))?;
+        let fail = |err: rusqlite::Error| format!("{}: {err}", path.display());
+        let mut db = handover(path)?;
+        let tx = db.transaction().map_err(fail)?;
+        tx.execute("DELETE FROM sessions", []).map_err(fail)?;
+        for session in &saved {
+            tx.execute(
+                "INSERT INTO sessions (id_sha, token_id, token_sha, idle_s) \
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    session.id_sha,
+                    session.owner.token_id,
+                    session.owner.token_sha,
+                    session.idle_s as i64
+                ],
+            )
+            .map_err(fail)?;
+        }
+        tx.commit().map_err(fail)?;
         Ok(saved.len())
     }
 
-    /// Take over the sessions the previous agent process saved, and remove
-    /// the file, so a later start does not take them again.
+    /// Take over the sessions the previous agent process saved, and empty
+    /// the table in the same transaction, so a later start does not take
+    /// them again.
     pub fn load(&self, path: &Path) -> Result<usize, String> {
-        let text = match std::fs::read(path) {
-            Ok(text) => text,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(0),
-            Err(err) => return Err(format!("{}: {err}", path.display())),
-        };
-        let _ = std::fs::remove_file(path);
-        let saved: Vec<Saved> =
-            serde_json::from_slice(&text).map_err(|err| format!("{}: {err}", path.display()))?;
+        if !path.exists() {
+            return Ok(0);
+        }
+        let fail = |err: rusqlite::Error| format!("{}: {err}", path.display());
+        let mut db = handover(path)?;
+        let tx = db.transaction().map_err(fail)?;
+        let saved: Vec<Saved> = tx
+            .prepare("SELECT id_sha, token_id, token_sha, idle_s FROM sessions")
+            .map_err(fail)?
+            .query_map([], |row| {
+                let idle_s: i64 = row.get(3)?;
+                Ok(Saved {
+                    id_sha: row.get(0)?,
+                    owner: Owner {
+                        token_id: row.get(1)?,
+                        token_sha: row.get(2)?,
+                    },
+                    idle_s: idle_s.max(0) as u64,
+                })
+            })
+            .map_err(fail)?
+            .collect::<Result<_, _>>()
+            .map_err(fail)?;
+        tx.execute("DELETE FROM sessions", []).map_err(fail)?;
+        tx.commit().map_err(fail)?;
         let now = Instant::now();
         let mut inner = lock(&self.inner);
         for session in saved.iter().take(MAX_SESSIONS) {
@@ -382,11 +415,11 @@ mod tests {
             &std::fs::metadata(&file).unwrap().permissions(),
         );
         assert_eq!(mode & 0o777, 0o600);
-        assert!(!std::fs::read_to_string(&file).unwrap().contains(&id));
+        let stored = std::fs::read(&file).unwrap();
+        assert!(!String::from_utf8_lossy(&stored).contains(&id));
 
         let after = Sessions::new("abcd");
         assert_eq!(after.load(&file).unwrap(), 1);
-        assert!(!file.exists());
         let has = device_has(&["t1"]);
         assert!(after.check(&id, WEEK, false, &has).is_some());
         // Its idle time came along.

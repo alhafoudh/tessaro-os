@@ -4,9 +4,9 @@
 //! It runs as a plain systemd service on the device. The image defaults
 //! arrive as environment variables, parsed by systemd from
 //! `/usr/lib/tessaro-kiosk/tessaro-kiosk.env`; what was set on this device
-//! comes from `/data/tessaro/state.json` on top. Nothing else configures it,
-//! and the only way to change `state.json` is the API, over the local socket
-//! or HTTPS (`control/`, `api/`).
+//! comes from `/data/tessaro/tessaro.db` on top (`db.rs`). Nothing else
+//! configures it, and the way to change the settings is the API, over the
+//! local socket or HTTPS (`control/`, `api/`).
 //!
 //! `tessaro-agent boot` is the other mode: the oneshot that renders the
 //! configuration before anything reads it (`boot.rs`).
@@ -27,6 +27,7 @@ mod cdp;
 mod certs;
 mod config;
 mod control;
+mod db;
 mod deadline;
 mod debug;
 mod display;
@@ -83,6 +84,7 @@ use watchdog::Heartbeat;
 /// needed by both the state machine and the control plane.
 struct Device {
     paths: paths::Paths,
+    db: db::Db,
     defaults: HashMap<String, String>,
     auth: auth::Auth,
     identity: control::Identity,
@@ -126,7 +128,8 @@ fn main() -> ExitCode {
     let bootstrap = Log::new(false);
     let paths = paths::Paths::load(&SystemEnv);
     let defaults = state::defaults(&SystemEnv);
-    let settings: state::State = store::Store::new(&paths.state_dir, state::FILE).read(&bootstrap);
+    let db = db::Db::open(&paths.state_dir, &bootstrap);
+    let settings: state::State = db.read(&bootstrap);
     // What the device reports too - derived name, node id, addresses - so a
     // placeholder in browser.url means here exactly what the renderer made of it.
     let effective = state::Effective::new(&SystemEnv, &settings.settings, &bootstrap)
@@ -135,7 +138,7 @@ fn main() -> ExitCode {
     let config = Config::load(&effective);
     let log = Arc::new(Log::new(config.debug));
     trust_extra_cas(&paths, &log);
-    let device = device(paths, defaults, &effective, &log);
+    let device = device(paths, db, defaults, &effective, &log);
 
     if config.kiosk_url.is_empty() {
         log.info("KIOSK_URL is empty; nothing to watch");
@@ -191,11 +194,12 @@ fn trust_extra_cas(paths: &paths::Paths, log: &Log) {
 
 fn device(
     paths: paths::Paths,
+    db: db::Db,
     defaults: HashMap<String, String>,
     effective: &dyn config::Env,
     log: &Log,
 ) -> Device {
-    let auth: auth::Auth = store::Store::new(&paths.state_dir, auth::FILE).read(log);
+    let auth: auth::Auth = db.read(log);
 
     let id = match identity::read_node_id(&paths.machine_id) {
         Ok(id) => id,
@@ -257,6 +261,7 @@ fn device(
                 .unwrap_or_default(),
         },
         paths,
+        db,
         defaults,
         auth,
         tls,
@@ -283,6 +288,7 @@ async fn start_control(
     let control = control::Control::new(
         Arc::clone(log),
         device.paths.clone(),
+        device.db,
         device.defaults,
         device.auth,
         session,

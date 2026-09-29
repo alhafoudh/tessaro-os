@@ -1,38 +1,97 @@
-//! `state.json`: what has been set on this device, and nothing else.
+//! The settings: what has been set on this device, and nothing else. The
+//! `settings` and `state` tables of `tessaro.db` (`db.rs`).
 //!
-//! Sparse on purpose. A key that was never set is not in the file, so it
-//! follows the image's default in `/usr/lib/tessaro-kiosk/tessaro-kiosk.env`,
-//! and a later image can still move that default. Keys are the registry's
-//! dotted names (`browser.url`), never env names, so a rename of an env
-//! variable is a registry change and not a migration.
+//! Sparse on purpose. A key that was never set has no row, so it follows
+//! the image's default in `/usr/lib/tessaro-kiosk/tessaro-kiosk.env`, and a
+//! later image can still move that default. Keys are the registry's dotted
+//! names (`browser.url`), never env names, so a rename of an env variable is
+//! a registry change and not a migration.
 //!
 //! There is no clock anywhere in here. `revision` is a counter, which is all
 //! compare-and-set needs, and it cannot be skewed.
 
 use std::collections::{BTreeMap, HashMap};
 
-use protocol::keys;
-use serde::{Deserialize, Serialize};
+use tessaro_db::rusqlite::{params, Connection, OptionalExtension};
 
 use crate::config::Env;
+use crate::db::Stored;
 use crate::log::Log;
 
-pub const FILE: &str = "state.json";
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct State {
-    #[serde(default)]
     pub revision: u64,
-    #[serde(default)]
     pub settings: BTreeMap<String, String>,
     /// A guarded change on probation. Survives an agent restart - which the
     /// change itself causes, by restarting Weston - but not a reboot: the
     /// boot oneshot reverts it, because nobody confirmed it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending: Option<PendingChange>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+impl Stored for State {
+    const WHAT: &'static str = "the settings";
+
+    fn load(db: &Connection) -> tessaro_db::rusqlite::Result<Self> {
+        let mut settings = BTreeMap::new();
+        let mut rows = db.prepare("SELECT key, value FROM settings")?;
+        for row in rows.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))? {
+            let (key, value): (String, String) = row?;
+            settings.insert(key, value);
+        }
+        let rest = db
+            .query_row(
+                "SELECT revision, pending_key, pending_value, pending_previous \
+                 FROM state WHERE id = 1",
+                [],
+                |row| {
+                    let revision: i64 = row.get(0)?;
+                    let key: Option<String> = row.get(1)?;
+                    let value: Option<String> = row.get(2)?;
+                    let previous: Option<String> = row.get(3)?;
+                    let pending = key.zip(value).map(|(key, value)| PendingChange {
+                        key,
+                        value,
+                        previous,
+                    });
+                    Ok((revision as u64, pending))
+                },
+            )
+            .optional()?;
+        let (revision, pending) = rest.unwrap_or_default();
+        Ok(Self {
+            revision,
+            settings,
+            pending,
+        })
+    }
+
+    fn save(&self, db: &Connection) -> tessaro_db::rusqlite::Result<()> {
+        db.execute("DELETE FROM settings", [])?;
+        let mut insert = db.prepare("INSERT INTO settings (key, value) VALUES (?1, ?2)")?;
+        for (key, value) in &self.settings {
+            insert.execute(params![key, value])?;
+        }
+        let pending = self.pending.as_ref();
+        db.execute(
+            "INSERT OR REPLACE INTO state \
+             (id, revision, pending_key, pending_value, pending_previous) \
+             VALUES (1, ?1, ?2, ?3, ?4)",
+            params![
+                self.revision as i64,
+                pending.map(|change| &change.key),
+                pending.map(|change| &change.value),
+                pending.and_then(|change| change.previous.as_ref()),
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn clear(db: &Connection) -> tessaro_db::rusqlite::Result<()> {
+        db.execute_batch("DELETE FROM settings; DELETE FROM state;")
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PendingChange {
     pub key: String,
     pub value: String,
@@ -58,53 +117,11 @@ impl State {
         self.revision += 1;
         Some(pending)
     }
-
-    /// Move settings an older image saved under names that have changed
-    /// since (`keys::RENAMED`) to their new names, and rewrite the
-    /// placeholders in URL and template values that name them. No value
-    /// changes meaning, so nothing needs re-applying. Returns one line per
-    /// change for the journal; empty when there was nothing to do.
-    pub fn rename_keys(&mut self) -> Vec<String> {
-        let mut done = Vec::new();
-        for (old, new) in keys::RENAMED {
-            let Some(value) = self.settings.remove(*old) else {
-                continue;
-            };
-            if self.settings.contains_key(*new) {
-                done.push(format!("{old} dropped: {new} is set already"));
-            } else {
-                self.settings.insert(new.to_string(), value);
-                done.push(format!("{old} is now {new}"));
-            }
-        }
-        for (name, value) in self.settings.iter_mut() {
-            let template = keys::find(name)
-                .is_some_and(|key| matches!(key.kind, keys::Kind::Url | keys::Kind::Template));
-            if !template {
-                continue;
-            }
-            let renamed = keys::rename_placeholders(value);
-            if renamed != *value {
-                done.push(format!("{name}: {value} is now {renamed}"));
-                *value = renamed;
-            }
-        }
-        if let Some(pending) = &mut self.pending {
-            if let Some(new) = keys::renamed(&pending.key) {
-                done.push(format!("{} on probation is now {new}", pending.key));
-                pending.key = new.to_string();
-            }
-        }
-        if !done.is_empty() {
-            self.revision += 1;
-        }
-        done
-    }
 }
 
 /// The settings as env variables, for the keys the registry knows. A key it
-/// does not know - written by a newer agent, or renamed since - is skipped
-/// and named in the journal rather than dropped from the file.
+/// does not know - written by a newer agent, or by hand - is skipped and
+/// named in the journal rather than dropped from the store.
 pub fn overrides(settings: &BTreeMap<String, String>, log: &Log) -> Vec<(&'static str, String)> {
     let mut out = Vec::new();
     for (name, value) in settings {
@@ -113,7 +130,7 @@ pub fn overrides(settings: &BTreeMap<String, String>, log: &Log) -> Vec<(&'stati
             // inside the expanded browser.url.
             Some(key) if key.env.is_empty() => {}
             Some(key) => out.push((key.env, value.clone())),
-            None => log.info(format!("state.json: ignoring unknown key {name}")),
+            None => log.info(format!("settings: ignoring unknown key {name}")),
         }
     }
     out
@@ -630,9 +647,35 @@ mod tests {
     }
 
     #[test]
-    fn an_old_file_without_newer_fields_still_parses() {
-        let state: State = serde_json::from_str(r#"{"settings":{"browser.url":"x"}}"#).unwrap();
-        assert_eq!(state.revision, 0);
-        assert!(state.pending.is_none());
+    fn the_store_gives_back_what_was_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = Log::buffered(true);
+        let db = crate::db::Db::open(dir.path(), &log);
+        let saved = State {
+            revision: 7,
+            settings: BTreeMap::from([
+                ("browser.url".to_string(), "https://a.test/".to_string()),
+                ("data.store".to_string(), "42".to_string()),
+            ]),
+            pending: Some(PendingChange {
+                key: "screen.resolution".to_string(),
+                value: "800x600".to_string(),
+                previous: None,
+            }),
+        };
+        db.update(|state: &mut State| {
+            *state = saved.clone();
+            Ok(())
+        })
+        .unwrap();
+
+        assert_eq!(db.read::<State>(&log), saved);
+
+        db.update(|state: &mut State| {
+            state.pending = None;
+            Ok(())
+        })
+        .unwrap();
+        assert!(db.read::<State>(&log).pending.is_none());
     }
 }

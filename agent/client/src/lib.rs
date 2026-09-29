@@ -1,6 +1,6 @@
 //! The client side of the Tessaro API, for every program that manages
 //! devices: finding them, opening a pinned session that calls the endpoints
-//! of `protocol::api` by type, the `nodes.json` this machine keeps about
+//! of `protocol::api` by type, the known nodes this machine keeps about
 //! them - and everything a command does around its requests, so
 //! `tessaro-ctl` and `tessaro-gui` do it once (docs/clients.md).
 //!
@@ -29,6 +29,7 @@ pub mod schedule;
 pub mod speedtest;
 pub mod ssh;
 pub mod storage;
+pub mod store;
 pub mod text;
 pub mod transfer;
 pub mod tunnel;

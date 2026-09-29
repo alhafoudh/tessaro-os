@@ -13,7 +13,7 @@ use crate::config::Env;
 
 #[derive(Debug, Clone)]
 pub struct Paths {
-    /// `state.json`, `auth.json`, the TLS identity, the factory-reset marker.
+    /// `tessaro.db`, the TLS identity, the factory-reset marker.
     pub state_dir: PathBuf,
     /// The file store `tessaro-ctl files` fills, served by nginx at
     /// `http://127.0.0.1/files/`. On the same filesystem as `state_dir`,
@@ -37,8 +37,6 @@ pub struct Paths {
     pub api_docs: PathBuf,
     pub shadow: PathBuf,
     pub machine_id: PathBuf,
-    /// The runtime override file this replaced; imported once, then renamed.
-    pub legacy_override: PathBuf,
     pub drm: PathBuf,
     /// `/sys/class/input`: what the on-screen keyboard's `auto` looks at.
     pub input: PathBuf,
@@ -132,7 +130,7 @@ pub struct Paths {
     pub proxy_config: PathBuf,
     pub proxy_unit: String,
     /// Where the schedules' systemd units are rendered. In `/run`, so they
-    /// are rendered from `schedules.json` at every start and never land on
+    /// are rendered from the `schedules` table at every start and never land on
     /// the `/etc` overlay.
     pub systemd_unit_dir: PathBuf,
     /// Whether the agent starts and stops the schedules' timers. Off
@@ -176,7 +174,6 @@ impl Paths {
             api_docs: path("KIOSK_API_DOCS", "/usr/share/tessaro-api/docs"),
             shadow: path("KIOSK_SHADOW", "/etc/shadow"),
             machine_id: path("KIOSK_MACHINE_ID", "/etc/machine-id"),
-            legacy_override: path("KIOSK_LEGACY_OVERRIDE", "/etc/default/tessaro-kiosk"),
             drm: path("KIOSK_DRM", "/sys/class/drm"),
             input: path("KIOSK_INPUT", "/sys/class/input"),
             weston_config: path("KIOSK_WESTON_CONFIG", "/run/weston/weston.ini"),
@@ -334,11 +331,5 @@ impl Paths {
     /// Where a factory reset moves the store to delete it.
     pub fn files_trash_dir(&self) -> PathBuf {
         self.state_dir.join("files-trash")
-    }
-
-    /// Network changes: the one in progress, and what the last one did. No
-    /// secrets; those are in `secrets.json`.
-    pub fn network_dir(&self) -> PathBuf {
-        self.state_dir.join("network")
     }
 }

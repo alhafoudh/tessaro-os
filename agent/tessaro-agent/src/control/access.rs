@@ -11,10 +11,13 @@ use protocol::{
 
 use super::{After, Caller, Control, Reply, UNCLAIMED};
 use crate::auth;
+use crate::db::Stored;
 use crate::deadline::blocking;
 use crate::files;
+use crate::secrets::Secrets;
 use crate::shadow;
 use crate::ssh;
+use crate::state::State;
 use crate::sync::lock;
 
 impl Control {
@@ -36,7 +39,7 @@ impl Control {
         self.set_root(Some(password.clone())).await?;
 
         let issued = self
-            .update_auth("updating auth.json", move |auth| {
+            .update_auth("updating the tokens", move |auth| {
                 if auth.claimed() {
                     return Err("this device is already claimed".to_string());
                 }
@@ -99,7 +102,9 @@ impl Control {
         self.require_claimed("")?;
 
         let (entry, secret) = self
-            .update_auth("updating auth.json", move |auth| auth.issue(&name, &issuer))
+            .update_auth("updating the tokens", move |auth| {
+                auth.issue(&name, &issuer)
+            })
             .await?;
 
         self.log.info(format!(
@@ -130,7 +135,7 @@ impl Control {
         let _writes = self.writes.lock().await;
         let wanted = id.to_string();
         let (entry, now_unclaimed) = self
-            .update_auth("updating auth.json", move |auth| {
+            .update_auth("updating the tokens", move |auth| {
                 let entry = auth
                     .revoke(&wanted)
                     .ok_or_else(|| format!("no token {wanted}"))?;
@@ -211,7 +216,7 @@ impl Control {
     /// in between leaves healable: the boot oneshot empties them on a device
     /// with no tokens (see `claim`).
     async fn drop_claim(&self) -> Result<(), String> {
-        self.update_auth("updating auth.json", |auth| {
+        self.update_auth("updating the tokens", |auth| {
             auth.tokens.clear();
             Ok(())
         })
@@ -327,23 +332,19 @@ impl Control {
             return Reply::err(err);
         }
 
-        let store = self.state.clone();
-        if let Err(err) = blocking("removing state.json", move || {
-            store.remove().map_err(|err| err.to_string())
+        let db = self.db.clone();
+        if let Err(err) = blocking("clearing the settings", move || {
+            db.transaction(|tx| {
+                State::clear(tx)
+                    .and_then(|()| Secrets::clear(tx))
+                    .map_err(|err| err.to_string())
+            })
         })
         .await
         {
             return Reply::err(err);
         }
         *lock(&self.probation) = None;
-        let secrets = self.secrets.clone();
-        if let Err(err) = blocking("removing secrets.json", move || {
-            secrets.remove().map_err(|err| err.to_string())
-        })
-        .await
-        {
-            return Reply::err(err);
-        }
         let paths = self.paths.clone();
         if let Err(err) = blocking("emptying the file store", move || {
             files::wipe(&paths).map_err(|err| err.to_string())

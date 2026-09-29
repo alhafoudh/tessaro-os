@@ -64,7 +64,7 @@ Type=exec
 
 # Build-time defaults live under /usr/lib, outside the /etc overlay, so image
 # updates can still move them. generated.env is read second and therefore
-# wins: it is what tessaro-agent renders from /data/tessaro/state.json - only
+# wins: it is what tessaro-agent renders from /data/tessaro/tessaro.db - only
 # the keys set on this device - and it is written by tessaro-config.service,
 # which runs before this unit on every boot. Change it with tessaro-ctl, never
 # by hand. The "-" makes a missing file (a render that failed) mean "image

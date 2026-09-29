@@ -139,9 +139,10 @@ renders, `txn.rs` switches) and `ping.rs`.
 * **The profiles are generated, never saved.** The agent renders them as
   keyfiles into `/run/NetworkManager/system-connections` (0600, the in-memory
   directory NetworkManager reads with the highest precedence) from
-  `state.json`, `secrets.json` and the node name, and the boot oneshot renders
-  them again before NetworkManager starts (`tessaro-config.service` is
-  `Before=NetworkManager.service`). So `state.json` is the truth: a reboot at
+  the settings, the secrets and the node name in `tessaro.db`, and the boot
+  oneshot renders them again before NetworkManager starts
+  (`tessaro-config.service` is `Before=NetworkManager.service`). So the
+  settings are the truth: a reboot at
   any point comes back on the committed configuration, and nothing managed is
   ever written to `/etc`. Only the selected profile of each pair has
   `autoconnect=true`, at priority 100, so it wins over a hand-made profile on
@@ -149,14 +150,16 @@ renders, `txn.rs` switches) and `ping.rs`.
   NetworkManager flags everything under `/run` as unsaved, so `network profiles list`
   lists these as `(managed)` instead; `(not saved)` on any other
   profile means it really is lost at reboot.
-* **One change is one transaction** (`nm/txn.rs`): write `txn.json`, take a
+* **One change is one transaction** (`nm/txn.rs`): record it in the
+  `net_txn` table of `tessaro.db`, take a
   NetworkManager **checkpoint** on the devices involved (with a 150s rollback
   timer of NetworkManager's own, the backstop if the agent dies), write the
   new keyfiles and reload them, bring profiles down and up, set the NAT,
-  verify - and only then run the caller's commit, which writes `state.json`
-  (and a staged WiFi password to `secrets.json`), and drop the checkpoint. Any
-  failure puts the old keyfiles back, then rolls the checkpoint back; nothing
-  is saved. The outcome goes to `last.json`. `config set` answers with the checks
+  verify - and only then run the caller's commit, which writes the settings
+  and a staged WiFi password in one database transaction, and drop the
+  checkpoint. Any failure puts the old keyfiles back, then rolls the
+  checkpoint back; nothing is saved. The outcome goes to the `net_last`
+  table. `config set` answers with the checks
   (`Applied.network`); a rolled-back change is an error with the reason.
   Network keys are always applied: `config set --no-apply` refuses them.
 * **Verify means, on the device:** what was brought up reaches ACTIVATED
@@ -176,7 +179,7 @@ renders, `txn.rs` switches) and `ping.rs`.
   `network.wifi.fallback_after` seconds (0 never), it writes
   `/run/tessaro-kiosk/wifi-fallback` (the SSID) and brings up the hotspot
   (`Network::fall_back`, no checkpoint: there was no connection to lose).
-  `state.json` still says client. Everything that renders the profiles in
+  The settings still say client. Everything that renders the profiles in
   the agent renders the hotspot while the marker is there, so a claim or an
   agent restart keeps it; the boot oneshot never sees it, since `/run` is
   gone at boot, so every boot tries the client again. Boot only, on
@@ -188,7 +191,7 @@ renders, `txn.rs` switches) and `ping.rs`.
   commits. `network wifi status` shows it.
 * **An agent that dies half way is rolled back at its next start** (`recover`,
   from `start_control`, retrying for a minute while NetworkManager comes up),
-  onto what `state.json` renders. That covers SIGTERM too: the transaction is
+  onto what the settings render. That covers SIGTERM too: the transaction is
   not waited for at shutdown.
 * **The transaction runs on a task of its own**, holding the one-at-a-time
   lock the way a speed test holds its own, so a client that is cut off does
@@ -199,8 +202,8 @@ renders, `txn.rs` switches) and `ping.rs`.
 * **The hotspot is `tessaro-<node name>` (read-only
   `network.wifi.hotspot_ssid`), open while the device is unclaimed.**
   `access claim` gives it a random 16-character WPA2 password, stored in
-  `/data/tessaro/secrets.json` (0600, never in `state.json`, never shown by
-  `config get` or `config keys`) and shown once with the root password; the profiles are
+  the `secrets` table of `/data/tessaro/tessaro.db` (never in the settings,
+  never shown by `config get` or `config keys`) and shown once with the root password; the profiles are
   re-rendered only after the answer is out (`After::Network`), so a claimer on
   the hotspot gets the password before it drops them. `network wifi
   hotspot-password` makes a new one. Unclaim, revoking the last token, a
@@ -331,8 +334,8 @@ restarts `tessaro-proxy.service`, or stops it when the URL is emptied.
   checks exactly that. A password with `$ " ' \` or a backtick has to be
   percent-encoded (`%24`), because no setting value may hold them raw (the
   env-file rule); it is decoded for tinyproxy.
-* **The password is stored as typed, in `state.json`.** That is a deliberate
-  exception to the rule that secrets live in `secrets.json`: the operator
+* **The password is stored as typed, in the settings.** That is a deliberate
+  exception to the rule that secrets live in the `secrets` table: the operator
   chose one URL over a separate password command. So `config get
   network.proxy.url` shows it; `network show`, `network proxy show` and the
   GUI mask it (`keys::masked_proxy`). It never reaches `generated.env`

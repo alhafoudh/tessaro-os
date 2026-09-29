@@ -110,22 +110,25 @@ impl Zoom {
     }
 }
 
-/// What `gui.json`, next to nodes.json, keeps: the zoom, where the app
-/// window and each kind of inner window was left, and whether device
-/// windows show their messages, plus column widths and sorting per table.
-#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
+/// What the `gui_prefs` table of the client's `tessaro.db` keeps, next to
+/// the known nodes: the zoom, where the app window and each kind of inner
+/// window was left, and whether device windows show their messages, plus
+/// column widths and sorting per table. One row each, a JSON value by name:
+/// `scale`, `window`, `messages`, `window:<kind>`, `table:<table>`.
+#[derive(Debug, Default)]
 struct Prefs {
     scale: Option<f32>,
     /// The app window, in the screen's points, unzoomed: iced scales a new
     /// window's size by the zoom, and reports sizes and positions divided
     /// by it.
     window: Option<mdi::Placement>,
-    #[serde(default)]
     windows: BTreeMap<String, mdi::Placement>,
     messages: Option<bool>,
-    #[serde(default)]
     tables: BTreeMap<String, grid::Preferences>,
 }
+
+const WINDOW_PREFIX: &str = "window:";
+const TABLE_PREFIX: &str = "table:";
 
 impl Prefs {
     /// The app window's size to open with, in the zoom's points.
@@ -135,26 +138,61 @@ impl Prefs {
             .map_or(WINDOW, |at| Size::new(at.width / zoom, at.height / zoom))
     }
 
-    fn path() -> std::path::PathBuf {
-        tessaro_client::nodes::dir().join("gui.json")
+    /// A row that does not parse is left out, as if it was never saved.
+    fn from_rows(rows: &BTreeMap<String, String>) -> Self {
+        fn parse<T: serde::de::DeserializeOwned>(text: &str) -> Option<T> {
+            serde_json::from_str(text).ok()
+        }
+        let mut prefs = Self::default();
+        for (key, value) in rows {
+            if let Some(kind) = key.strip_prefix(WINDOW_PREFIX) {
+                if let Some(at) = parse(value) {
+                    prefs.windows.insert(kind.to_string(), at);
+                }
+            } else if let Some(table) = key.strip_prefix(TABLE_PREFIX) {
+                if let Some(table_prefs) = parse(value) {
+                    prefs.tables.insert(table.to_string(), table_prefs);
+                }
+            } else {
+                match key.as_str() {
+                    "scale" => prefs.scale = parse(value),
+                    "window" => prefs.window = parse(value),
+                    "messages" => prefs.messages = parse(value),
+                    _ => {}
+                }
+            }
+        }
+        prefs
+    }
+
+    fn rows(&self) -> BTreeMap<String, String> {
+        fn json<T: serde::Serialize>(value: &T) -> Option<String> {
+            serde_json::to_string(value).ok()
+        }
+        let mut rows = BTreeMap::new();
+        let mut put = |key: String, value: Option<String>| {
+            if let Some(value) = value {
+                rows.insert(key, value);
+            }
+        };
+        put("scale".into(), self.scale.as_ref().and_then(json));
+        put("window".into(), self.window.as_ref().and_then(json));
+        put("messages".into(), self.messages.as_ref().and_then(json));
+        for (kind, at) in &self.windows {
+            put(format!("{WINDOW_PREFIX}{kind}"), json(at));
+        }
+        for (table, table_prefs) in &self.tables {
+            put(format!("{TABLE_PREFIX}{table}"), json(table_prefs));
+        }
+        rows
     }
 
     fn load() -> Self {
-        std::fs::read(Self::path())
-            .ok()
-            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-            .unwrap_or_default()
+        Self::from_rows(&tessaro_client::store::gui_prefs())
     }
 
     fn save(&self) {
-        let Ok(body) = serde_json::to_string(self) else {
-            return;
-        };
-        let path = Self::path();
-        if let Some(dir) = path.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        let _ = std::fs::write(path, body + "\n");
+        let _ = tessaro_client::store::save_gui_prefs(&self.rows());
     }
 }
 
@@ -180,7 +218,7 @@ struct App {
     moving: Option<Moving>,
 }
 
-/// The app window's geometry not yet written to `gui.json`: the latest it
+/// The app window's geometry not yet written to the prefs: the latest it
 /// reported, unzoomed, and when. Written once it has been still for
 /// `SETTLE`, so a drag or a resize is one write.
 #[derive(Debug, Clone, Copy)]
@@ -295,8 +333,8 @@ impl App {
                 }
             }
             Message::Worker(id, event) => {
-                // A device that moved or was claimed was written to
-                // nodes.json by its worker.
+                // A device that moved or was claimed was written to the
+                // known nodes by its worker.
                 let moved = matches!(event, worker::Event::Note(_) | worker::Event::Pinned(_));
                 if let Some(device) = self.devices.get_mut(&id) {
                     device.event(event);
@@ -671,7 +709,7 @@ impl App {
 }
 
 /// The keys the app handles, and the window's place, size and scale, for
-/// the desk and `gui.json`. A key a widget took (Esc leaving a text field,
+/// the desk and the prefs. A key a widget took (Esc leaving a text field,
 /// Enter submitting one) is left to it, except the zoom.
 fn keys(event: iced::Event, status: event::Status, id: window::Id) -> Option<Message> {
     match event {
@@ -773,10 +811,15 @@ mod tests {
     }
 
     #[test]
-    fn gui_preferences_restore_table_widths_and_sorting_and_read_older_files() {
-        let old: Prefs =
-            serde_json::from_str(r#"{"scale":1.2,"messages":false,"windows":{}}"#).unwrap();
+    fn gui_preferences_restore_table_widths_and_sorting_and_skip_bad_rows() {
+        let old = Prefs::from_rows(&BTreeMap::from([
+            ("scale".to_string(), "1.2".to_string()),
+            ("messages".to_string(), "false".to_string()),
+            ("window:device".to_string(), "not json".to_string()),
+            ("table:nodes".to_string(), "[".to_string()),
+        ]));
         assert!(old.tables.is_empty());
+        assert!(old.windows.is_empty());
         let mut tables = grid::Tables::default();
         let _ = tables.update::<()>(
             "files",
@@ -796,8 +839,7 @@ mod tests {
             tables: BTreeMap::from([("device:node-1".into(), tables.preferences())]),
             ..old
         };
-        let json = serde_json::to_string(&prefs).unwrap();
-        let decoded: Prefs = serde_json::from_str(&json).unwrap();
+        let decoded = Prefs::from_rows(&prefs.rows());
         assert_eq!(decoded.scale, Some(1.2));
         assert_eq!(decoded.messages, Some(false));
         let restored = grid::Tables::new(decoded.tables["device:node-1"].clone());

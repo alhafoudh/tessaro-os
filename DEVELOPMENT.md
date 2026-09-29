@@ -169,7 +169,7 @@ bitbake -c update_crates tessaro-kiosk  # writes tessaro-kiosk-crates.inc
 ## The desktop client
 
 `tessaro-gui` is the desktop client for technicians: devices found on the
-network and the known ones from `nodes.json`, an inner window per device
+network and the known ones from `~/.config/tessaro/tessaro.db`, an inner window per device
 with its settings, a page for every `tessaro-ctl` command group, the live
 journal and a live VNC view. It is its own workspace in `gui/`, built on the
 workstation and never part of the image. It uses `agent/protocol` and

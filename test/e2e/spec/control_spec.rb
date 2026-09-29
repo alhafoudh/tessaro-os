@@ -28,6 +28,17 @@ module AgentE2E
       expect(guest.run("cat /run/tessaro-kiosk/generated.env")).to include("KIOSK_PROBE_INTERVAL=7")
     end
 
+    # The store is SQLite, and the image's sqlite3 shell is how a person reads it.
+    it "store: the sqlite3 shell reads a setting config set just saved, and unset removes its row" do
+      guest.run("tessaro-ctl config set data.e2e_store=kept --no-apply")
+      query = "sqlite3 /data/tessaro/tessaro.db \"SELECT value FROM settings WHERE key = 'data.e2e_store'\""
+      expect(guest.run(query).strip).to eq("kept")
+      expect(guest.run("sqlite3 /data/tessaro/tessaro.db 'PRAGMA journal_mode'").strip).to eq("wal")
+
+      guest.run("tessaro-ctl config unset data.e2e_store --no-apply")
+      expect(guest.run(query).strip).to eq("")
+    end
+
     # qemu has no Raspberry Pi firmware, so the key that feeds it is not there.
     it "settings: device.gpu_mem is only offered on a Raspberry Pi" do
       refused = guest.run("tessaro-ctl config set device.gpu_mem=128 2>&1", allow_failure: true)
@@ -269,7 +280,8 @@ module AgentE2E
         tessaro-ctl -n 127.0.0.1 config get data.e2e | grep -q 1
         tessaro-ctl -n 127.0.0.1 config unset data.e2e --no-apply >/dev/null
         ! tessaro-ctl -n 127.0.0.1 access password set --random 2>/dev/null
-        ! test -e "$TESSARO_CONFIG_DIR/nodes.json"
+        db="$TESSARO_CONFIG_DIR/tessaro.db"
+        ! test -e "$db" || test "$(sqlite3 "$db" 'SELECT count(*) FROM nodes')" = 0
         grep -q '^root::' /etc/shadow
       SH
 

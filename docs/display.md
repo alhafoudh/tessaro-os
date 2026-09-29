@@ -39,7 +39,7 @@ connector will be called, the config is generated per boot:
   generator writes it only for connectors that list it and leaves the rest on
   their preferred mode; and the change is on **probation** - it reverts on its
   own unless `tessaro-ctl screen confirm` arrives within 60s. The pending change is in
-  `state.json`, so it survives the agent restarting with Weston, and the boot
+  the `state` table of `tessaro.db`, so it survives the agent restarting with Weston, and the boot
   oneshot reverts a change still pending at boot: a reboot is not a confirm.
   The timer is monotonic, never the wall clock.
 * **Every generated `[output]` sets `max-bpc=8`, so the link stays on 8-bit

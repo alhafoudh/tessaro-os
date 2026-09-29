@@ -12,7 +12,7 @@
 //! `/run/NetworkManager/system-connections`, which NetworkManager reads with
 //! the highest precedence and which is gone at every boot - so they are
 //! never saved anywhere, and the boot oneshot renders them afresh from
-//! `state.json` and `secrets.json` before NetworkManager starts. A change
+//! the saved settings and passwords before NetworkManager starts. A change
 //! that did not commit can therefore never outlive a reboot.
 //!
 //! Everything here is pure: settings in, file names and text out.
@@ -138,7 +138,7 @@ pub struct NetConfig {
     pub wifi: Wifi,
 }
 
-/// A key's effective value when neither `state.json` nor the image's env
+/// A key's effective value when neither the settings nor the image's env
 /// file says: what an image without these keys in its defaults behaves as.
 fn fallback(name: &str) -> &'static str {
     match name {

@@ -69,7 +69,8 @@ with the keyboard has the lighter one and a purple border.
   (`event::listen_with`, only then). The title bar only reports where on it
   the press was.
 * **Where a window was is remembered per kind, not per device** (`DEVICE`,
-  `SETTINGS` in `main.rs`), in `gui.json` next to `nodes.json`, after every
+  `SETTINGS` in `main.rs`), in the `gui_prefs` table of the client's
+  `tessaro.db` next to the nodes (see **The node list**), after every
   move, resize and maximize. The next window of that kind opens there, cascaded
   off any of its kind already at that spot. A maximized window is
   remembered as maximized, next to the size it restores to, not as the
@@ -109,7 +110,7 @@ node list when no window is open or the list was clicked last:
 * Up and Down move the selection in the page's main table, or in a
   settings window's table.
 * Cmd + / Cmd - / Cmd 0 (Ctrl elsewhere) zoom every window, in tenths from
-  0.6 to 2.0, and the zoom is kept in `gui.json` next to `nodes.json`.
+  0.6 to 2.0, and the zoom is kept in `gui_prefs`.
 
 A key a widget took - Esc leaving a text field, Enter submitting one - is
 left to it; the zoom always works.
@@ -130,8 +131,11 @@ the host.
 
 ## The node list
 
-**One list: the known nodes from `nodes.json`, overlaid with what mDNS sees,
-keyed by node id** (`nodes_view::merge`).
+**One list: the known nodes from the `nodes` table of
+`~/.config/tessaro/tessaro.db`, overlaid with what mDNS sees, keyed by node
+id** (`nodes_view::merge`). Every change writes that one node's row, never
+the whole list, so the app's long-lived copy cannot overwrite what
+`tessaro-ctl` stored meanwhile.
 
 * A known device that answers takes its live address and claimed state.
 * One that presents another certificate than its pin is marked `MISMATCH`
@@ -142,7 +146,7 @@ keyed by node id** (`nodes_view::merge`).
   (`NodesView::openable`): it answers everything without a token (see **The
   claim model** in [settings.md](settings.md)). A stranger is reached at the
   address it was seen at (`worker::connect`), and only while it stays
-  unclaimed. Once it answers, the worker writes it to `nodes.json`, pinned
+  unclaimed. Once it answers, the worker writes it to the known nodes, pinned
   to that session's certificate with no token, so it stays in the list and
   later sessions are held to that pin. Actions that make a credential show the device's refusal;
   SSH and VNC go in by the empty root password instead of a key. Unclaim is
@@ -154,7 +158,7 @@ new browse. A device mDNS cannot see (another subnet, a VM) is added by
 address. Both are actions on the node list's own toolbar, since they act on
 that list; the app header only has the app's name.
 
-**A device added by address is written to `nodes.json` at once, claimed or
+**A device added by address is written to the known nodes at once, claimed or
 not** (`NodesView::keep`), so it is listed after a restart although mDNS never
 announces it. A new one is pinned to the certificate the add just saw, with no
 token; a known one only takes the new address, and one that presents another
@@ -173,7 +177,7 @@ once, with copy buttons, and closes only through Done.
 **A claim from the device window's Access page goes over the session the
 window already has** (`worker::Request::Claim`), so it pins the certificate
 that session was opened on, which the form and the Overview show. The worker
-keeps the new token for its later calls and writes the node to nodes.json,
+keeps the new token for its later calls and writes the node's row,
 and the node list reloads.
 
 ## Device windows
@@ -186,8 +190,8 @@ the subscription, and with it the thread and the connection.
   for confirmation, so the countdown moves.
 * It fetches the settings again only when `Status.revision` moved.
 * A lost connection is retried with a growing pause. The node is opened by
-  name (last address first, then mDNS), held to its pin, and `nodes.json` is
-  read again each time, so a device that moved is found and remembered.
+  name (last address first, then mDNS), held to its pin, and the known nodes
+  are read again each time, so a device that moved is found and remembered.
 * Pages ask through one generic call, `Request::Call`: any endpoint, built
   typed by `worker::call`, `fetch` or `send` and run on the worker's session,
   answered as `Event::Answer` with a tag naming the page that asked.
@@ -227,7 +231,7 @@ marks the active sort. Text sorts case-insensitively with numbers in natural
 order, and formatted sizes use their underlying byte counts. Selection,
 double-click actions and keyboard navigation follow the displayed rows.
 
-Column widths and sorting are saved in `gui.json`, separately for the node
+Column widths and sorting are saved in `gui_prefs`, separately for the node
 list and each device's tables (including settings and the journal), and
 restored when the app or window opens again. A resize is saved when the drag
 ends. The journal follows new entries in its original order; choosing a sort

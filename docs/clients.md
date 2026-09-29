@@ -18,7 +18,8 @@ there is one copy, and both clients call it.
 * `agent/client` - talking to a device and everything a command does
   around its requests:
   * the connection: discovery and the pinned session (`connect.rs`),
-    `nodes.json` (`nodes.rs`), claim and login (`access.rs`);
+    the known nodes in the client's `tessaro.db` (`nodes.rs`, `store.rs`),
+    claim and login (`access.rs`);
   * flows that take several requests: an image update (`update.rs`), whole
     trees to and from the file store and `files sync` (`files.rs`), device
     ping (`ping.rs`), growing `/data` (`storage.rs`), the DevTools forward
@@ -45,7 +46,7 @@ never writes to a terminal or opens a dialog.** Both clients link it, and a
   keyboard, the GUI's accepts the fingerprint already accepted in a dialog.
 * **A decision the caller makes is handed back.** `update::send` answers
   `Sent::Wiped` when `/data` goes, and the caller forgets the node in its
-  own `nodes.json`; `update::Plan::warning` says what is lost, and each
+  known nodes; `update::Plan::warning` says what is lost, and each
   client confirms it its own way (the ctl's `-y` or typing the name, the
   GUI's form that wants the name typed).
 * **Something worth telling the user comes back.** `Session::notes` after

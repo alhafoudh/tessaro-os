@@ -1,5 +1,5 @@
 //! The network glue: joining a WiFi network, the hotspot's password, the
-//! profiles as `state.json` and `secrets.json` say they are, and the WiFi
+//! profiles as the saved settings and passwords say they are, and the WiFi
 //! fallback's markers. The profiles and the transaction that switches them
 //! are `nm`; the fallback's watcher is in `watchers`.
 
@@ -127,10 +127,10 @@ impl Control {
     }
 
     pub(super) async fn read_secrets(&self) -> Secrets {
-        let store = self.secrets.clone();
+        let db = self.db.clone();
         let log = Arc::clone(&self.log);
-        blocking("reading secrets.json", move || {
-            Ok(store.read::<Secrets>(&log))
+        blocking("reading the network passwords", move || {
+            Ok(db.read::<Secrets>(&log))
         })
         .await
         .unwrap_or_default()
@@ -140,10 +140,9 @@ impl Control {
         &self,
         change: impl FnOnce(&mut Secrets) + Send + 'static,
     ) -> Result<(), String> {
-        let store = self.secrets.clone();
-        let log = Arc::clone(&self.log);
-        blocking("updating secrets.json", move || {
-            store.update(&log, |secrets: &mut Secrets| {
+        let db = self.db.clone();
+        blocking("updating the network passwords", move || {
+            db.update(|secrets: &mut Secrets| {
                 change(secrets);
                 Ok(())
             })
@@ -171,7 +170,7 @@ impl Control {
         )
     }
 
-    /// The network as `state.json` and `secrets.json` say it is, with the
+    /// The network as the saved settings and passwords say it is, with the
     /// hotspot in place of a client that fell back this boot.
     pub(super) async fn net_config(&self) -> Result<NetConfig, String> {
         let state = self.read_state().await?;

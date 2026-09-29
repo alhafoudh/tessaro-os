@@ -1,0 +1,4 @@
+CREATE TABLE things (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL
+);

@@ -39,6 +39,7 @@ use zbus::proxy::CacheProperties;
 use zbus::zvariant::{ObjectPath, OwnedObjectPath};
 
 // Every call to NetworkManager: bounded, with its error in words.
+use crate::db::Db;
 use crate::deadline::{blocking, within, within_result as nm_call};
 use crate::log::Log;
 use crate::paths::Paths;
@@ -90,9 +91,9 @@ pub struct Network {
 }
 
 impl Network {
-    pub fn new(log: Arc<Log>, paths: Paths) -> Arc<Self> {
+    pub fn new(log: Arc<Log>, paths: Paths, db: Db) -> Arc<Self> {
         Arc::new(Self {
-            files: Files::new(paths.network_dir()),
+            files: Files::new(db),
             log,
             paths,
             client: tokio::sync::Mutex::new(None),
@@ -674,7 +675,7 @@ impl Network {
     }
 
     /// Roll back a change the previous agent left unfinished, onto
-    /// `current` - what `state.json` renders. NetworkManager may still be
+    /// `current` - what the saved settings render. NetworkManager may still be
     /// starting, so this keeps trying for a minute.
     pub fn recover(self: &Arc<Self>, current: NetConfig) {
         let this = Arc::clone(self);
@@ -1178,7 +1179,9 @@ mod tests {
             dir.path().display().to_string(),
         )]);
         let paths = Paths::load(&env);
-        let network = Network::new(Arc::new(Log::buffered(false)), paths);
+        let log = Arc::new(Log::buffered(false));
+        let db = Db::open(&paths.state_dir, &log);
+        let network = Network::new(log, paths, db);
         let profiles = network.profiles().await.unwrap();
         assert!(!profiles.is_empty());
         let wifi = network.wifi().await;

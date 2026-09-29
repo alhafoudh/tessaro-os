@@ -1,15 +1,16 @@
 # Scheduler
 
 **A schedule is systemd `OnCalendar` expressions and shell command lines,
-kept in `/data/tessaro/schedules.json` and run by systemd timers the agent
-renders from it.** systemd does all the timing - the calendar, the
-timezone, DST, clock jumps - and the agent only keeps the units matching
-the file, so a schedule keeps firing while the agent is down or restarting.
-`tessaro-ctl schedule create|set|enable|disable|remove` change the file,
+kept in the `schedules` table of `/data/tessaro/tessaro.db` and run by
+systemd timers the agent renders from it.** systemd does all the timing -
+the calendar, the timezone, DST, clock jumps - and the agent only keeps the
+units matching the table, so a schedule keeps firing while the agent is
+down or restarting.
+`tessaro-ctl schedule create|set|enable|disable|remove` change the table,
 `list` and `show` add what systemd reports (next run, last trigger, runs
 going) and how the last run ended, `run` starts one now, `check` asks
 systemd about expressions without saving, and `logs` reads the runs'
-journal. The logic is `agent/tessaro-agent/src/schedules.rs` (the file,
+journal. The logic is `agent/tessaro-agent/src/schedules.rs` (the store,
 the units, parsing) and `control/schedules.rs` (the commands and the
 reconcile).
 
@@ -36,7 +37,7 @@ reconcile).
   the syntax uses it, and in a unit file it starts a specifier.
 * **Per schedule there are a timer, a fire service and a run template, all
   in `/run/systemd/system`.** In `/run`, never `/etc`, so they are rendered
-  from the file at every start and never land on the `/etc` overlay. The
+  from the table at every start and never land on the `/etc` overlay. The
   timer has one `OnCalendar=` per expression, `AccuracySec=1s` (systemd's
   default minute would move every run by up to that) and no `Persistent=`,
   so a time missed while the device was off is skipped. It starts
@@ -75,7 +76,8 @@ reconcile).
   `ExecStart=` quoting (`exec_arg`: `\`, `"`, `%`, `$`), which the unit tests
   in `schedules.rs` pin.
 * **Schedules stay through an unclaim and go with a factory reset,** like the
-  settings: both reset paths remove `schedules.json` and `schedule-runs/`,
+  settings: both reset paths clear the `schedules` rows and remove
+  `schedule-runs/`,
   and the control-plane reset stops the timers at once.
 * **A development host's systemd is never touched.** With
   `KIOSK_MANAGE_SCHEDULES=0` (set by `agent:integration` and the unit tests,

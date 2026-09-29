@@ -1,4 +1,4 @@
-//! Changing the settings: validate, commit to `state.json`, render, restart
+//! Changing the settings: validate, commit to `tessaro.db`, render, restart
 //! what reads the keys that changed - and the probation a guarded change
 //! (`screen.resolution`) waits out before it is kept.
 
@@ -12,6 +12,7 @@ use tokio::time::Instant;
 
 use super::{not_offered, unknown, After, Caller, Control, Reply};
 use crate::audio;
+use crate::db;
 use crate::deadline::blocking;
 use crate::display;
 use crate::nm::profiles;
@@ -117,7 +118,7 @@ impl Control {
         } else {
             let edit = edit.clone();
             let committed = self
-                .update_state("updating state.json", move |state| edit.apply(state))
+                .update_state("updating the settings", move |state| edit.apply(state))
                 .await;
             match committed {
                 Ok(outcome) => (outcome, None),
@@ -159,8 +160,8 @@ impl Control {
     }
 
     /// A change that touches the network: tried as one transaction the
-    /// device verifies, and saved - `state.json`, and a staged WiFi password
-    /// to `secrets.json` - only once it has held. A change that did not hold
+    /// device verifies, and saved - the settings, and a staged WiFi password,
+    /// in one transaction - only once it has held. A change that did not hold
     /// is an error, and nothing is saved. The saving is done by the
     /// transaction itself, so it happens even if this caller is gone.
     async fn change_network(
@@ -223,8 +224,7 @@ impl Control {
         // What the transaction runs once the change has held.
         let slot: Arc<Mutex<Option<Committed>>> = Arc::default();
         let commit: crate::nm::txn::Commit = {
-            let store = self.state.clone();
-            let secrets_store = self.secrets.clone();
+            let db = self.db.clone();
             let log = Arc::clone(&self.log);
             let edit = edit.clone();
             let slot = Arc::clone(&slot);
@@ -240,13 +240,18 @@ impl Control {
                             }
                         }
                     }
-                    if let Some(psk) = wifi_psk {
-                        secrets_store.update(&log, |secrets: &mut Secrets| {
+                    // The password and the settings together, or neither.
+                    db.transaction(|tx| {
+                        if let Some(psk) = wifi_psk {
+                            let mut secrets = db::load::<Secrets>(tx)?;
                             secrets.wifi_psk = Some(psk);
-                            Ok(())
-                        })?;
-                    }
-                    store.update(&log, |state: &mut State| edit.apply(state))
+                            db::save(tx, &secrets)?;
+                        }
+                        let mut state = db::load::<State>(tx)?;
+                        let committed = edit.apply(&mut state)?;
+                        db::save(tx, &state)?;
+                        Ok(committed)
+                    })
                 })
                 .await?;
                 *lock(&slot) = Some(committed);
@@ -550,7 +555,7 @@ fn changed_keys(
         .collect()
 }
 
-/// One `set`/`unset`, validated, as it is applied to `state.json`: once as a
+/// One `set`/`unset`, validated, as it is applied to the settings: once as a
 /// dry run to know what a network change would become, then for real - by
 /// the store, or by the network transaction once the change has held.
 #[derive(Debug, Clone)]
@@ -642,10 +647,8 @@ fn check_template(key: &str, template: &str, missing: &[String]) -> Result<(), S
         .iter()
         .partition(|name| keys::param_name(name).is_some());
     if let Some(typo) = typos.first() {
-        // The likeliest slips: {table} for {data.table}, and an old name.
-        let hint = if let Some(new) = keys::renamed(typo) {
-            format!("; {typo} is {{{new}}} now")
-        } else if keys::is_param(typo) {
+        // The likeliest slip: {table} for {data.table}.
+        let hint = if keys::is_param(typo) {
             format!(
                 "; a custom value is written in full: {{{}{typo}}}",
                 keys::DATA_PREFIX

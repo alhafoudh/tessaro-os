@@ -16,7 +16,7 @@ path = "src/main.rs"
 # one-request-at-a-time client needs.
 [dependencies]
 protocol = { path = "../protocol" }
-# Finding a device, the pinned TLS session and nodes.json, shared with
+# Finding a device, the pinned TLS session and the known nodes, shared with
 # tessaro-gui.
 tessaro-client = { path = "../client" }
 serde = { version = "1", features = ["derive"] }

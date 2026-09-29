@@ -50,7 +50,7 @@ OUT="${TESSARO_WESTON_CONFIG:-/run/weston/weston.ini}"
 
 DEFAULTS=/usr/lib/tessaro-kiosk/tessaro-kiosk.env
 # What was set on this device, rendered by tessaro-agent from
-# /data/tessaro/state.json (tessaro-config.service runs before weston.service).
+# /data/tessaro/tessaro.db (tessaro-config.service runs before weston.service).
 # Change a key with tessaro-ctl, never here.
 OVERRIDE="${TESSARO_OVERRIDE:-/run/tessaro-kiosk/generated.env}"
 

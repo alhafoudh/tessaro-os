@@ -31,7 +31,8 @@ same change as the behaviour it describes.
 | [docs/build.md](docs/build.md) | kas layout and config chains, platform gotchas (wks, fstab, QEMU, GPU, Pi), target status |
 | [docs/kiosk-browser.md](docs/kiosk-browser.md) | Chromium units and flags, CDP supervision, origin enforcement, TLS, remote DevTools, page zoom, self-test page, WebSerial/HID/USB/Bluetooth |
 | [docs/agent.md](docs/agent.md) | deadlines, the pledge-fed watchdog, the CDP session |
-| [docs/settings.md](docs/settings.md) | `state.json`, templates and placeholders, read-only keys, the claim model, names, completion, maintenance mode, debug screen |
+| [docs/settings.md](docs/settings.md) | the saved settings, templates and placeholders, read-only keys, the claim model, names, completion, maintenance mode, debug screen |
+| [docs/storage.md](docs/storage.md) | the SQLite stores: the device's `tessaro.db` and `sessions.db`, a client's `tessaro.db`, their tables, the pragmas, migrations, a broken store set aside, the `sqlite3` shell |
 | [docs/api.md](docs/api.md) | the HTTP API: endpoint types, the OpenAPI document and Swagger UI, the socket and TLS, pinning and Bearer tokens, errors, jobs and log pages, connections |
 | [docs/display.md](docs/display.md) | Weston scaling and resolution, hotplug, on-screen keyboard, screen power, boot splash and wallpaper |
 | [docs/bridge.md](docs/bridge.md) | the injected script, `window.tessaro` and its modes, who may call, `browser eval` |
@@ -249,8 +250,10 @@ Builds are long. Run them in a Herdr pane, not the Bash tool.
 `agent/` is a plain Rust workspace built by the `tessaro-kiosk` recipe:
 `protocol/` (the API's endpoint types, `api.rs`, the OpenAPI document and
 the settings registry, `keys.rs`),
-`client/` (discovery, the pinned session, `nodes.json`, SSH key setup and
-the chunked transfers, shared by both clients), `tessaro-agent/` (device side), `tessaro-ctl/` (client), `update/`
+`client/` (discovery, the pinned session, the known nodes, SSH key setup and
+the chunked transfers, shared by both clients), `db/` (opening a SQLite
+store, shared by the agent and `client/`), `tessaro-agent/` (device side),
+`tessaro-ctl/` (client), `update/`
 (the staging library and `tessaro-flash`, packaged separately for the
 initramfs).
 The host toolchain is pinned to **rust 1.95.0** because the Chromium pin
@@ -274,11 +277,17 @@ recipe.
   (`seen_alive` in `agent.rs`). Every boot has them.
 * **Settings go through the registry** (`agent/protocol/src/keys.rs`) and are
   validated once at `config set`: no control characters, quotes, backslashes
-  or `$`, because values end up in env files. Secrets live in
-  `secrets.json`, never `state.json` - with the one deliberate exception of
+  or `$`, because values end up in env files. Secrets live in the
+  `secrets` table, never `settings` - with the one deliberate exception of
   `network.proxy.url`, whose password is stored as typed (see **Proxy** in
   [docs/networking.md](docs/networking.md)); do not add a second. The VNC
   credential is an image property and must not become a setting.
+* **Every change to a store's schema is a new migration**, a
+  `V<YYYYMMDDHHMMSS>__<name>.sql` in the `migrations/` of the crate that
+  owns the store, and an applied migration is never edited: refinery
+  checksums it and refuses to open a store whose history differs (see
+  [docs/storage.md](docs/storage.md)). What the device keeps goes in
+  `tessaro.db` through `db.rs`, not in a new JSON file.
 * **Everything both clients do lives in `agent/client`, once**: flows of
   several requests, how a request is built from what was typed, and what an
   answer says in words. A binary only parses input, draws and decides; a
@@ -399,11 +408,13 @@ same thing. Keep to these rules when adding a command or a setting:
   on/off gets a third level that mirrors its command (`browser maintenance on
   --url` goes with `browser.maintenance.enable` and `.url`), as do the network
   profiles' keys (`network.ethernet.*`, `network.wifi.*`).
-* **Renaming a key means adding it to `RENAMED`** in `agent/protocol/src/keys.rs`,
-  so devices in the field migrate at boot (see **Migration** in
-  [docs/settings.md](docs/settings.md)), and a `git grep` over the whole
-  repo, placeholders in templates included. The `KIOSK_*` env names do not
-  follow the keys and never need to move.
+* **Renaming a key means a migration** in
+  `agent/tessaro-agent/migrations/device/` that moves its row in `settings`
+  (and `state.pending_key`) and rewrites its placeholders in the URL and
+  template values, so devices in the field follow at boot (see
+  **Migrations** in [docs/storage.md](docs/storage.md)), and a `git grep`
+  over the whole repo. The `KIOSK_*` env names do not follow the keys and
+  never need to move.
 * **Every command name in a user-facing string is the full path**
   (`tessaro-ctl screen confirm`): in the ctl, the agent's hints, key docs and
   pages alike.

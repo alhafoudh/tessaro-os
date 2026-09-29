@@ -61,8 +61,8 @@ WatchdogSec=60
 # the Chromium policy under /etc, and sets the root password on claim.
 User=root
 
-# The image defaults only. The agent lays /data/tessaro/state.json over them
-# itself - it is the one program that owns that file - so it does not read the
+# The image defaults only. The agent lays the settings in /data/tessaro/tessaro.db
+# over them itself - it is the one program that writes them - so it does not read the
 # generated.env it renders for the browser and the compositor.
 EnvironmentFile=/usr/lib/tessaro-kiosk/tessaro-kiosk.env
 

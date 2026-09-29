@@ -8,9 +8,11 @@
 //!
 //! In order:
 //!
-//! 0. **The last update**: what the initramfs did with a pending image, put
+//! 0. **The store**: `tessaro.db` opened and migrated (`db.rs`), a broken
+//!    one set aside. The agent starts after this, on the migrated schema.
+//! 1. **The last update**: what the initramfs did with a pending image, put
 //!    in the journal once (`updates::report`).
-//! 1. **Factory reset**, if `/data/tessaro/factory-reset` exists or the
+//! 2. **Factory reset**, if `/data/tessaro/factory-reset` exists or the
 //!    kernel command line says `tessaro.factory_reset`: settings, tokens, ssh
 //!    keys, root password, extra certificate authorities, schedules and
 //!    stored files cleared - the fresh-install state.
@@ -18,8 +20,6 @@
 //!    The marker is removed
 //!    afterwards; the command-line flag is meant to be typed at the boot
 //!    loader for one boot, not written into its config.
-//! 2. **Migration** of a leftover `/etc/default/tessaro-kiosk`, once, and of
-//!    settings saved under a key's old name (`keys::RENAMED`).
 //! 3. **Probation**: a guarded change still pending at boot was never
 //!    confirmed - the device was rebooted instead - so it reverts.
 //! 4. **The claim invariant**: unclaimed means an empty root password, no
@@ -39,32 +39,30 @@
 
 use std::fs;
 
-use crate::auth::{self, Auth};
+use crate::auth::Auth;
 use crate::config::Env;
+use crate::db::Db;
 use crate::files;
 use crate::identity;
 use crate::log::Log;
 use crate::nm::{nat, profiles};
 use crate::paths::Paths;
 use crate::render;
-use crate::secrets::{self, Secrets};
+use crate::secrets::Secrets;
 use crate::shadow;
 use crate::ssh;
 use crate::state::{self, State};
-use crate::store::Store;
 use crate::updates;
 
 pub fn run(env: &dyn Env, log: &Log) {
     let paths = Paths::load(env);
     let defaults = state::defaults(env);
-    let state_store = Store::new(&paths.state_dir, state::FILE);
-    let auth_store = Store::new(&paths.state_dir, auth::FILE);
-    let secrets_store = Store::new(&paths.state_dir, secrets::FILE);
+    let db = Db::open(&paths.state_dir, log);
 
     updates::report(&paths, log);
 
     if factory_reset_requested(&paths) {
-        factory_reset(&paths, &state_store, &auth_store, &secrets_store, log);
+        factory_reset(&paths, &db, log);
     }
     if let Err(err) = files::clean(&paths) {
         log.info(format!(
@@ -72,10 +70,7 @@ pub fn run(env: &dyn Env, log: &Log) {
         ));
     }
 
-    migrate(&paths, &state_store, log);
-    rename_keys(&state_store, log);
-
-    match state_store.update(log, |state: &mut State| Ok(state.revert_pending())) {
+    match db.update(|state: &mut State| Ok(state.revert_pending())) {
         Ok(Some(pending)) => log.info(format!(
             "{}={} was never confirmed; back to {}",
             pending.key,
@@ -86,7 +81,7 @@ pub fn run(env: &dyn Env, log: &Log) {
         Err(err) => log.info(format!("could not check for an unconfirmed change: {err}")),
     }
 
-    reconcile(&paths, &auth_store, &secrets_store, log);
+    reconcile(&paths, &db, log);
 
     match identity::tls(&paths.tls_dir()) {
         Ok((tls, made)) => log.info(format!(
@@ -97,7 +92,7 @@ pub fn run(env: &dyn Env, log: &Log) {
         Err(err) => log.info(format!("no TLS identity: {err}")),
     }
 
-    let state: State = state_store.read(log);
+    let state: State = db.read(log);
     match render::all(&paths, &defaults, &state.settings, log) {
         Ok(rendered) => {
             log.info(format!(
@@ -123,7 +118,7 @@ pub fn run(env: &dyn Env, log: &Log) {
         Err(err) => log.info(format!("render failed, the image defaults apply: {err}")),
     }
 
-    network(&paths, &defaults, &state, &secrets_store.read(log), log);
+    network(&paths, &defaults, &state, &db.read(log), log);
 }
 
 /// The managed profiles and the NAT table, from the saved settings.
@@ -178,16 +173,10 @@ fn factory_reset_requested(paths: &Paths) -> bool {
         })
 }
 
-fn factory_reset(
-    paths: &Paths,
-    state_store: &Store,
-    auth_store: &Store,
-    secrets_store: &Store,
-    log: &Log,
-) {
+fn factory_reset(paths: &Paths, db: &Db, log: &Log) {
     // Tokens before the password, as everywhere else.
-    if let Err(err) = auth_store.remove() {
-        log.info(format!("factory reset: auth.json: {err}"));
+    if let Err(err) = db.clear::<Auth>() {
+        log.info(format!("factory reset: {err}"));
     }
     if let Err(err) = ssh::clear(&paths.authorized_keys) {
         log.info(format!("factory reset: authorized_keys: {err}"));
@@ -195,11 +184,11 @@ fn factory_reset(
     if let Err(err) = shadow::set_root(&paths.shadow, None) {
         log.info(format!("factory reset: root password: {err}"));
     }
-    if let Err(err) = state_store.remove() {
-        log.info(format!("factory reset: state.json: {err}"));
+    if let Err(err) = db.clear::<State>() {
+        log.info(format!("factory reset: {err}"));
     }
-    if let Err(err) = secrets_store.remove() {
-        log.info(format!("factory reset: secrets.json: {err}"));
+    if let Err(err) = db.clear::<Secrets>() {
+        log.info(format!("factory reset: {err}"));
     }
     if let Err(err) = files::wipe(paths) {
         log.info(format!("factory reset: the file store: {err}"));
@@ -207,8 +196,7 @@ fn factory_reset(
     if let Err(err) = crate::certs::clear(&paths.ca_certs_dir()) {
         log.info(format!("factory reset: the certificate authorities: {err}"));
     }
-    let schedules = Store::new(&paths.state_dir, crate::schedules::FILE);
-    if let Err(err) = crate::schedules::clear(&schedules, &paths.schedule_runs_dir()) {
+    if let Err(err) = crate::schedules::clear(db, &paths.schedule_runs_dir()) {
         log.info(format!("factory reset: the schedules: {err}"));
     }
     match fs::remove_file(paths.factory_reset_marker()) {
@@ -222,112 +210,14 @@ fn factory_reset(
     );
 }
 
-/// Import the old runtime override file into `state.json`, once. Only the
-/// assignments that were not commented out, only keys the registry knows,
-/// and only values that validate; everything skipped is named.
-fn migrate(paths: &Paths, state_store: &Store, log: &Log) {
-    let Ok(text) = fs::read_to_string(&paths.legacy_override) else {
-        return;
-    };
-
-    let (imported, skipped) = parse_legacy(&text);
-    for line in &skipped {
-        log.info(format!(
-            "{}: not imported: {line}",
-            paths.legacy_override.display()
-        ));
-    }
-
-    if !imported.is_empty() {
-        let names: Vec<String> = imported.iter().map(|(key, _)| key.clone()).collect();
-        let outcome = state_store.update(log, |state: &mut State| {
-            for (key, value) in &imported {
-                state.settings.insert(key.clone(), value.clone());
-            }
-            state.revision += 1;
-            Ok(())
-        });
-        match outcome {
-            Ok(()) => log.info(format!(
-                "imported {} from {}",
-                names.join(", "),
-                paths.legacy_override.display()
-            )),
-            Err(err) => {
-                log.info(format!(
-                    "could not import {}: {err}",
-                    paths.legacy_override.display()
-                ));
-                return;
-            }
-        }
-    }
-
-    let migrated = paths.legacy_override.with_extension("migrated");
-    if let Err(err) = fs::rename(&paths.legacy_override, &migrated) {
-        log.info(format!(
-            "cannot rename {}: {err}",
-            paths.legacy_override.display()
-        ));
-    }
-}
-
-/// Settings saved under a key's old name, moved to the new one. Read first,
-/// so a device with nothing to rename never rewrites its state.json.
-fn rename_keys(state_store: &Store, log: &Log) {
-    let mut state: State = state_store.read(log);
-    if state.rename_keys().is_empty() {
-        return;
-    }
-    match state_store.update(log, |state: &mut State| Ok(state.rename_keys())) {
-        Ok(done) => {
-            for line in done {
-                log.info(format!("renamed setting: {line}"));
-            }
-        }
-        Err(err) => log.info(format!("could not rename old settings: {err}")),
-    }
-}
-
-fn parse_legacy(text: &str) -> (Vec<(String, String)>, Vec<String>) {
-    let mut imported = Vec::new();
-    let mut skipped = Vec::new();
-
-    for line in text.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let Some((name, value)) = line.split_once('=') else {
-            skipped.push(line.to_string());
-            continue;
-        };
-        let value = value.trim();
-        let value = value
-            .strip_prefix('"')
-            .and_then(|v| v.strip_suffix('"'))
-            .or_else(|| value.strip_prefix('\'').and_then(|v| v.strip_suffix('\'')))
-            .unwrap_or(value);
-
-        match protocol::keys::find_env(name.trim()) {
-            Some(key) => match protocol::keys::validate(key, value) {
-                Ok(value) => imported.push((key.name.to_string(), value)),
-                Err(err) => skipped.push(err),
-            },
-            None => skipped.push(format!("{} is not a setting any more", name.trim())),
-        }
-    }
-    (imported, skipped)
-}
-
-fn reconcile(paths: &Paths, auth_store: &Store, secrets_store: &Store, log: &Log) {
-    let auth: Auth = auth_store.read(log);
+fn reconcile(paths: &Paths, db: &Db, log: &Log) {
+    let auth: Auth = db.read(log);
     if auth.claimed() {
         return;
     }
-    let secrets: Secrets = secrets_store.read(log);
+    let secrets: Secrets = db.read(log);
     if secrets.hotspot_psk.is_some() {
-        match secrets_store.update(log, |secrets: &mut Secrets| {
+        match db.update(|secrets: &mut Secrets| {
             secrets.hotspot_psk = None;
             Ok(())
         }) {
@@ -381,7 +271,6 @@ mod tests {
                 ("KIOSK_POLICY_BASE", at("policy-base.json")),
                 ("KIOSK_SHADOW", at("etc/shadow")),
                 ("KIOSK_AUTHORIZED_KEYS", at("root/.ssh/authorized_keys")),
-                ("KIOSK_LEGACY_OVERRIDE", at("etc/default-tessaro-kiosk")),
                 ("KIOSK_CMDLINE", at("cmdline")),
                 ("KIOSK_PROXY_CONFIG", at("tinyproxy.conf")),
                 ("KIOSK_URL", "http://127.0.0.1/".to_string()),
@@ -405,8 +294,12 @@ mod tests {
             Paths::load(&self.env)
         }
 
+        fn db(&self) -> Db {
+            Db::open(&self.paths().state_dir, &Log::buffered(true))
+        }
+
         fn state(&self) -> State {
-            Store::new(self.paths().state_dir, state::FILE).read(&Log::buffered(true))
+            self.db().read(&Log::buffered(true))
         }
     }
 
@@ -463,10 +356,9 @@ mod tests {
         let device = Device::new();
         let paths = device.paths();
         let log = Log::buffered(true);
-        Store::new(&paths.state_dir, auth::FILE)
-            .update(&log, |auth: &mut Auth| {
-                auth.issue("laptop", "claim").map(|_| ())
-            })
+        device
+            .db()
+            .update(|auth: &mut Auth| auth.issue("laptop", "claim").map(|_| ()))
             .unwrap();
         shadow::set_root(&paths.shadow, Some(&shadow::hash("kept").unwrap())).unwrap();
         let key = protocol::sshkey::PublicKey::parse(SSH_KEY).unwrap();
@@ -483,18 +375,15 @@ mod tests {
         let device = Device::new();
         let paths = device.paths();
         let log = Log::buffered(true);
-        Store::new(&paths.state_dir, state::FILE)
-            .update(&log, |state: &mut State| {
-                state
-                    .settings
-                    .insert("browser.url".into(), "https://a.test/".into());
-                Ok(())
-            })
-            .unwrap();
-        Store::new(&paths.state_dir, auth::FILE)
-            .update(&log, |auth: &mut Auth| {
-                auth.issue("laptop", "claim").map(|_| ())
-            })
+        let db = device.db();
+        db.update(|state: &mut State| {
+            state
+                .settings
+                .insert("browser.url".into(), "https://a.test/".into());
+            Ok(())
+        })
+        .unwrap();
+        db.update(|auth: &mut Auth| auth.issue("laptop", "claim").map(|_| ()))
             .unwrap();
         shadow::set_root(&paths.shadow, Some(&shadow::hash("x").unwrap())).unwrap();
         fs::create_dir_all(paths.files_dir.join("media")).unwrap();
@@ -504,7 +393,7 @@ mod tests {
         run(&device.env, &log);
 
         assert!(device.state().settings.is_empty());
-        let auth: Auth = Store::new(&paths.state_dir, auth::FILE).read(&log);
+        let auth: Auth = db.read(&log);
         assert!(!auth.claimed());
         assert!(root_is_empty(&paths.shadow));
         assert!(!paths.factory_reset_marker().exists());
@@ -516,8 +405,9 @@ mod tests {
         let device = Device::new();
         let paths = device.paths();
         let log = Log::buffered(true);
-        Store::new(&paths.state_dir, state::FILE)
-            .update(&log, |state: &mut State| {
+        device
+            .db()
+            .update(|state: &mut State| {
                 state.settings.insert("screen.osk".into(), "never".into());
                 Ok(())
             })
@@ -532,10 +422,10 @@ mod tests {
     #[test]
     fn a_pending_change_at_boot_reverts() {
         let device = Device::new();
-        let paths = device.paths();
         let log = Log::buffered(true);
-        Store::new(&paths.state_dir, state::FILE)
-            .update(&log, |state: &mut State| {
+        device
+            .db()
+            .update(|state: &mut State| {
                 state
                     .settings
                     .insert("screen.resolution".into(), "640x480".into());
@@ -556,137 +446,17 @@ mod tests {
     }
 
     #[test]
-    fn the_old_override_file_is_imported_once() {
+    fn a_broken_store_boots_on_the_defaults() {
         let device = Device::new();
         let paths = device.paths();
-        fs::write(
-            &paths.legacy_override,
-            "# a comment\n#KIOSK_URL=https://commented.test/\nKIOSK_URL=\"https://shop.test/\"\n\
-             KIOSK_OSK=sometimes\nKIOSK_NOPE=1\nKIOSK_SCALE=2\n",
-        )
-        .unwrap();
+        fs::create_dir_all(&paths.state_dir).unwrap();
+        fs::write(paths.state_dir.join(crate::db::FILE), vec![0x5a; 8192]).unwrap();
         let log = Log::buffered(true);
 
         run(&device.env, &log);
 
-        let state = device.state();
-        assert_eq!(state.settings["browser.url"], "https://shop.test/");
-        assert_eq!(state.settings["screen.scale"], "2");
-        assert!(!state.settings.contains_key("screen.osk"));
-        assert!(!paths.legacy_override.exists());
-        assert!(paths.legacy_override.with_extension("migrated").exists());
-        assert!(log.lines().iter().any(|line| line.contains("KIOSK_NOPE")));
-        assert!(log.lines().iter().any(|line| line.contains("screen.osk")));
-    }
-
-    #[test]
-    fn settings_saved_under_old_names_move_to_the_new_ones_once() {
-        let mut device = Device::new();
-        let nm = device._dir.path().join("nm");
-        device
-            .env
-            .insert("KIOSK_NM_RUN_DIR".into(), nm.display().to_string());
-        let paths = device.paths();
-        let log = Log::buffered(true);
-        Store::new(&paths.state_dir, state::FILE)
-            .update(&log, |state: &mut State| {
-                for (key, value) in [
-                    ("kiosk.url", "https://{node.name}.shop.test/?ip={net.ip}"),
-                    ("debug.template", "{node.name}\\n{kiosk.url}"),
-                    ("display.osk", "never"),
-                    ("ethernet.mode", "static"),
-                    ("ethernet.address", "192.168.1.50/24"),
-                    ("ethernet.gateway", "192.168.1.1"),
-                    ("node.name", "lobby"),
-                    ("screen.scale", "2"),
-                    ("display.scale", "1"),
-                    ("data.table", "{node.name}"),
-                ] {
-                    state.settings.insert(key.into(), value.into());
-                }
-                Ok(())
-            })
-            .unwrap();
-
-        run(&device.env, &log);
-
-        let state = device.state();
-        let settings: Vec<(&str, &str)> = state
-            .settings
-            .iter()
-            .map(|(k, v)| (k.as_str(), v.as_str()))
-            .collect();
-        assert_eq!(
-            settings,
-            [
-                ("browser.debug.template", "{device.name}\\n{browser.url}"),
-                (
-                    "browser.url",
-                    "https://{device.name}.shop.test/?ip={network.ip}"
-                ),
-                // A custom value is not a template: its text is its own.
-                ("data.table", "{node.name}"),
-                ("device.name", "lobby"),
-                ("network.ethernet.address", "192.168.1.50/24"),
-                ("network.ethernet.gateway", "192.168.1.1"),
-                ("network.ethernet.mode", "static"),
-                ("screen.osk", "never"),
-                // Set under both names: the new one wins.
-                ("screen.scale", "2"),
-            ]
-        );
-        let lines = log.lines();
-        assert!(lines
-            .iter()
-            .any(|line| line.contains("renamed setting: kiosk.url is now browser.url")));
-        assert!(lines
-            .iter()
-            .any(|line| line.contains("display.scale dropped: screen.scale is set already")));
-        // The same static profile as before the rename.
-        assert!(lines
-            .iter()
-            .any(|line| line.contains("ethernet tessaro-ethernet-static")));
-        let keyfiles: String = fs::read_dir(&nm)
-            .unwrap()
-            .map(|entry| fs::read_to_string(entry.unwrap().path()).unwrap())
-            .collect();
-        assert!(keyfiles.contains("192.168.1.50/24"), "{keyfiles}");
-
-        // Nothing left to do: the second boot does not touch the file.
-        let revision = state.revision;
-        let again = Log::buffered(true);
-        run(&device.env, &again);
-        assert_eq!(device.state().revision, revision);
-        assert!(!again
-            .lines()
-            .iter()
-            .any(|line| line.contains("renamed setting")));
-    }
-
-    #[test]
-    fn a_pending_change_under_an_old_name_still_reverts() {
-        let device = Device::new();
-        let paths = device.paths();
-        let log = Log::buffered(true);
-        Store::new(&paths.state_dir, state::FILE)
-            .update(&log, |state: &mut State| {
-                state
-                    .settings
-                    .insert("display.resolution".into(), "640x480".into());
-                state.pending = Some(state::PendingChange {
-                    key: "display.resolution".into(),
-                    value: "640x480".into(),
-                    previous: Some("1920x1080".into()),
-                });
-                Ok(())
-            })
-            .unwrap();
-
-        run(&device.env, &log);
-
-        let state = device.state();
-        assert_eq!(state.settings["screen.resolution"], "1920x1080");
-        assert!(!state.settings.contains_key("display.resolution"));
-        assert!(state.pending.is_none());
+        assert!(paths.generated_env().exists());
+        assert!(device.state().settings.is_empty());
+        assert!(log.lines().iter().any(|line| line.contains("was broken")));
     }
 }

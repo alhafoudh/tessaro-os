@@ -1,8 +1,8 @@
 # Settings, tessaro-ctl and the claim model
 
 **One management surface.** A device's settings live in
-`/data/tessaro/state.json`, the only way to change them is `tessaro-ctl`, and
-`tessaro-agent` is the only thing that writes the file. `tessaro-ctl config keys`
+the `settings` table of `/data/tessaro/tessaro.db`, the only way to change them
+is `tessaro-ctl`, and `tessaro-agent` is the only thing that writes them. `tessaro-ctl config keys`
 lists every setting (the registry is `agent/protocol/src/keys.rs`), `config get`,
 `config set KEY=VALUE ...` and `config unset KEY ...` do what they say, and each change
 restarts exactly what reads the key: the agent restarts itself for an agent
@@ -10,17 +10,21 @@ key (invisible on screen), the browser restarts for a browser key or a new
 kiosk origin, Weston restarts - taking the browser and agent with it - for a
 `screen.*` key.
 
-* **`state.json` is sparse**: only what was set, as the registry's dotted
-  names. Everything else follows `/usr/lib/tessaro-kiosk/tessaro-kiosk.env`,
-  so a later image still moves a default.
-* **Writes are locked and survive a power cut.** `flock` on a separate
-  `.lock` file (a rename swaps the data file's inode, so the lock cannot live
-  on it), the new content to `.tmp` and `fsync`, the current file hard-linked
-  to `.prev`, `rename`, `fsync` of the directory. A read falls back from the
-  file to `.prev` to the defaults and logs it; a torn file never stops the
-  kiosk. `auth.json` and `secrets.json` use the same store. Nothing in these
-  files is a timestamp: device clocks drift, and `revision` is a counter
-  (`config set --if-revision N` is compare-and-set).
+* **The settings are sparse**: a row only for what was set, keyed by the
+  registry's dotted names. Everything else follows
+  `/usr/lib/tessaro-kiosk/tessaro-kiosk.env`, so a later image still moves a
+  default.
+* **Writes are transactions and survive a power cut.** The settings, the
+  revision and the pending change (the `state` table), the tokens and the
+  secrets all live in `tessaro.db` (`db.rs`, `state.rs`); how it is opened,
+  migrated and recovered from a broken file is in
+  [storage.md](storage.md). Nothing stored is a timestamp: device clocks
+  drift, and `revision` is a counter (`config set --if-revision N` is
+  compare-and-set).
+* **`sqlite3 /data/tessaro/tessaro.db` reads and edits the settings by
+  hand.** A hand edit skips `config set`'s validation and nothing is told
+  about it (**The sqlite3 shell** in [storage.md](storage.md)), so it is a
+  repair tool, not a way to configure a device.
 * **The CLI documents itself.** `tessaro-ctl config keys` prints every setting with
   its description, current value or default, what it accepts and what a
   change restarts; `config keys KEY` prints one. The text comes from the registry on
@@ -108,12 +112,10 @@ kiosk origin, Weston restarts - taking the browser and agent with it - for a
   typed on the kernel command line at the boot loader for one boot, is acted
   on by the boot oneshot before the agent starts. `tessaro-ctl device factory-reset`
   does the same while the agent runs.
-* **Migration**: at boot, settings saved under a key's old name move to the
-  new one (`keys::RENAMED`), placeholders in the templates included, and each
-  move is logged to `journalctl -t tessaro-config`. A leftover
-  `/etc/default/tessaro-kiosk` is imported the same way and renamed
-  `.migrated`. A `config set` or `config get` of an old name is refused with
-  the new one - there are no aliases.
+* **Renaming a key is a migration**: a new file in
+  `agent/tessaro-agent/migrations/device/` that moves the key's row and
+  rewrites its placeholders in the templates, run when the store opens (see
+  [storage.md](storage.md)). There are no aliases: an old name is unknown.
 
 **Every client goes through the API** - `tessaro-ctl`, `tessaro-gui`,
 Webconfig, anyone's own program - over HTTPS on `access.listen` or plain on
@@ -178,7 +180,7 @@ stops it). `tessaro-ctl --node NAME` goes to the address it last saw that
 device at first - instant, no scan - and scans mDNS only when nothing answers
 there, or when a different certificate or node id does (then with a warning:
 the device most likely moved and its old address went to someone else). A
-device found at a new address has it updated in `nodes.json`. With an
+device found at a new address has it updated in the client's node list. With an
 expected node, its own pin is always checked first, so another known kiosk
 answering at that address is a mismatch, never a silent switch.
 `tessaro-ctl nodes list` lists what answers.
@@ -186,7 +188,8 @@ Wiping `/data` or the `/etc` overlay re-identifies a device.
 
 `tessaro-ctl` on a laptop: `mise run ctl:build`, then
 `tessaro-ctl --node NAME access claim` (or `access login --token` with a token someone
-issued). Pins and tokens are kept in `~/.config/tessaro/nodes.json`, 0600.
+issued). Pins and tokens are kept in the `nodes` table of
+`~/.config/tessaro/tessaro.db` (under `TESSARO_CONFIG_DIR` when set), 0600.
 
 ## Shell completion
 
@@ -260,7 +263,7 @@ env name is `KIOSK_DEBUG_SCREEN` because `KIOSK_DEBUG` was taken.
   the one backslash any value may carry (`Kind::Template` in `keys.rs`). The
   generic no-backslash rule exists because values end up in env files, and
   this is how that stays true here. `render::env_file` never writes the template
-  into `generated.env`, since only the agent reads it and it reads state.json.
+  into `generated.env`, since only the agent reads it and it reads the settings from `tessaro.db`.
   And the image default in `tessaro-kiosk.env.in` is **single-quoted**,
   because systemd keeps a backslash only inside single quotes (unquoted
   `a\nb` reaches the process as `anb`).

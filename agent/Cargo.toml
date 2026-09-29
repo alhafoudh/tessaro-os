@@ -5,7 +5,9 @@
 #                   dependencies: tessaro-ctl builds for a technician's laptop.
 #   tessaro-agent/  the supervisor on the device (zbus, CDP, systemd).
 #   client/         talking to a device: discovery, the pinned session,
-#                   nodes.json. A library, shared with tessaro-gui.
+#                   the known nodes. A library, shared with tessaro-gui.
+#   db/             opening a SQLite store: pragmas, migrations, setting a
+#                   broken file aside. Shared by the agent and client/.
 #   tessaro-ctl/    the client, on the device and on a laptop.
 #   update/         in-place image updates: prepared by the agent, applied
 #                   by tessaro-flash from the initramfs.
@@ -16,7 +18,7 @@
 # own, and reaches protocol/ and client/ by path.
 [workspace]
 resolver = "2"
-members = ["protocol", "client", "tessaro-agent", "tessaro-ctl", "update"]
+members = ["protocol", "client", "db", "tessaro-agent", "tessaro-ctl", "update"]
 
 [workspace.package]
 version = "1.0.0"

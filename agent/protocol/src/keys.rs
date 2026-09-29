@@ -3,10 +3,10 @@
 //! A key is what a technician types (`browser.url`); its `env` name is what the
 //! units, `tessaro-weston-config` and the agent itself read (`KIOSK_URL`).
 //! Defaults are not in here: they stay in `/usr/lib/tessaro-kiosk/tessaro-kiosk.env`,
-//! where a later image can still move them. `state.json` only ever holds the
-//! keys someone set.
+//! where a later image can still move them. The device's `settings` table
+//! only ever holds the keys someone set.
 //!
-//! Validation happens once, at `set`, so nothing that reaches `state.json` -
+//! Validation happens once, at `set`, so nothing that reaches the settings -
 //! and from there the env file systemd parses - can be malformed. The rule
 //! every kind shares is the one that matters most: no control characters, no
 //! quotes, no backslash and no `$`. A newline would let a value write a second
@@ -16,7 +16,9 @@
 //! A key starts with the `tessaro-ctl` group that acts on the same thing
 //! (`browser.*`, `screen.*`, `network.*`, `device.*`, `access.*`, `time.*`); a key no
 //! group acts on is named after the component it tunes (`agent.*`). A key
-//! that is renamed goes into `RENAMED`, so devices in the field follow.
+//! that is renamed gets a migration in `tessaro-agent/migrations/device/`
+//! that moves its row and rewrites its placeholders, so devices in the field
+//! follow.
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
@@ -435,7 +437,7 @@ pub static KEYS: &[Key] = &[
         "Seconds network.wifi.mode=client may go without connecting after boot before the device falls back to its hotspot until the next boot; 0 never."),
     // The upstream proxy, through the device's local tinyproxy. The one
     // setting that holds a password as typed: it is stored verbatim in
-    // state.json and shown by `config get`, by the operator's choice; the
+    // the settings and shown by `config get`, by the operator's choice; the
     // human-readable views mask it. Never written to generated.env.
     key(PROXY_URL, "KIOSK_PROXY_URL", Kind::ProxyUrl, PROXY,
         "The proxy everything reaches the internet through: http://host:port or socks5://host:port, optionally with user:password@; empty for none. `tessaro-ctl network proxy set`."),
@@ -523,93 +525,9 @@ pub fn is_audio_name(name: &str) -> bool {
             .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-' | ':' | '+' | '@'))
 }
 
-/// Every key that was renamed, old name first. Only for devices that still
-/// carry the old names in state.json: the boot oneshot rewrites them once
-/// (`tessaro-agent boot`), and a `set` or `get` of an old name is refused
-/// with the new one. Nothing else accepts them - one spelling per setting.
-pub static RENAMED: &[(&str, &str)] = &[
-    ("kiosk.url", URL),
-    ("kiosk.probe_url", PROBE_URL),
-    ("kiosk.offline_url", "browser.offline_url"),
-    ("kiosk.enforce_origin", "browser.enforce_origin"),
-    ("maintenance.enable", MAINTENANCE_ENABLE),
-    ("maintenance.url", MAINTENANCE_URL),
-    ("debug.enable", DEBUG_ENABLE),
-    ("debug.template", DEBUG_TEMPLATE),
-    ("display.scale", "screen.scale"),
-    ("display.resolution", RESOLUTION),
-    ("display.osk", "screen.osk"),
-    ("display.vnc", "screen.vnc"),
-    ("node.name", NAME),
-    ("node.id", ID),
-    ("api.listen", "access.listen"),
-    ("api.mdns", "access.mdns"),
-    ("ethernet.interface", "network.ethernet.interface"),
-    ("ethernet.mode", "network.ethernet.mode"),
-    ("ethernet.address", "network.ethernet.address"),
-    ("ethernet.gateway", "network.ethernet.gateway"),
-    ("ethernet.dns", "network.ethernet.dns"),
-    ("wifi.interface", "network.wifi.interface"),
-    ("wifi.mode", "network.wifi.mode"),
-    ("wifi.nat", "network.wifi.nat"),
-    ("wifi.ssid", "network.wifi.ssid"),
-    ("wifi.security", "network.wifi.security"),
-    ("wifi.hidden", "network.wifi.hidden"),
-    ("wifi.ipv4", "network.wifi.ipv4"),
-    ("wifi.address", "network.wifi.address"),
-    ("wifi.gateway", "network.wifi.gateway"),
-    ("wifi.dns", "network.wifi.dns"),
-    ("wifi.hotspot_ssid", "network.wifi.hotspot_ssid"),
-    ("net.hostname", "network.hostname"),
-    ("net.interface", "network.interface"),
-    ("net.mac", "network.mac"),
-    ("net.ip", "network.ip"),
-    ("net.netmask", "network.netmask"),
-    ("net.cidr", "network.cidr"),
-    ("net.gateway", "network.gateway"),
-    ("net.dns", "network.dns"),
-    ("net.ipv4", "network.ipv4"),
-    ("net.ipv6", "network.ipv6"),
-    ("net.public_ip", PUBLIC_IP),
-    ("net.interfaces", "network.interfaces"),
-];
-
-/// The current name of a key that was renamed.
-pub fn renamed(old: &str) -> Option<&'static str> {
-    RENAMED
-        .iter()
-        .find(|(from, _)| *from == old)
-        .map(|(_, to)| *to)
-}
-
-/// `name is not a setting`, or - for an old name - what it is called now.
+/// `name is not a setting`, and where the settings are listed.
 pub fn unknown(name: &str) -> String {
-    match renamed(name) {
-        Some(new) => format!("{name} is now {new}"),
-        None => format!("{name} is not a setting; `tessaro-ctl config keys` lists them"),
-    }
-}
-
-/// `template` with every placeholder that names a renamed key rewritten to
-/// the new name; anything else is left exactly as it was.
-pub fn rename_placeholders(template: &str) -> String {
-    let mut out = String::with_capacity(template.len());
-    let mut rest = template;
-    while let Some(open) = rest.find('{') {
-        out.push_str(&rest[..open + 1]);
-        let after = &rest[open + 1..];
-        match after.find('}') {
-            Some(close) if is_placeholder(&after[..close]) => {
-                let name = &after[..close];
-                out.push_str(renamed(name).unwrap_or(name));
-                out.push('}');
-                rest = &after[close + 1..];
-            }
-            _ => rest = after,
-        }
-    }
-    out.push_str(rest);
-    out
+    format!("{name} is not a setting; `tessaro-ctl config keys` lists them")
 }
 
 /// Custom values: `data.<name>`, named by whoever sets them. The kiosk gives
@@ -814,7 +732,7 @@ pub fn find_env(env: &str) -> Option<&'static Key> {
 pub fn validate(key: &Key, value: &str) -> Result<String, String> {
     // The debug template's `\n` is the one backslash allowed anywhere. It
     // never reaches an env file systemd parses unquoted: only the agent reads
-    // it, from state.json.
+    // it, from the settings.
     let checked = if key.kind == Kind::Template {
         value.replace(LINE_BREAK, "")
     } else {
@@ -1677,7 +1595,6 @@ mod tests {
             placeholder("browser.maintenance.enable"),
             Placeholder::Key(find("browser.maintenance.enable").unwrap())
         );
-        // An old name is no placeholder; the boot migration rewrites it.
         assert_eq!(placeholder("node.name"), Placeholder::Unknown);
         assert_eq!(placeholder("no.such"), Placeholder::Unknown);
     }
@@ -1746,28 +1663,6 @@ mod tests {
             placeholder("browser.debug.enable"),
             Placeholder::Key(find("browser.debug.enable").unwrap())
         );
-    }
-
-    #[test]
-    fn every_old_name_leads_to_a_key_that_exists() {
-        for (old, new) in RENAMED {
-            assert!(find(old).is_none(), "{old} is still a key");
-            assert!(find(new).is_some(), "{old} -> {new}, which is no key");
-        }
-        assert_eq!(unknown("kiosk.url"), "kiosk.url is now browser.url");
-        assert!(unknown("no.such").contains("not a setting"));
-    }
-
-    #[test]
-    fn old_placeholders_are_renamed_and_nothing_else_moves() {
-        assert_eq!(
-            rename_placeholders(
-                "https://{node.name}.test/?ip={net.ip}&t={data.table}&j={\"a\":1}&x={kiosk.url"
-            ),
-            "https://{device.name}.test/?ip={network.ip}&t={data.table}&j={\"a\":1}&x={kiosk.url"
-        );
-        let current = "IP {network.ip}\\n{browser.url}";
-        assert_eq!(rename_placeholders(current), current);
     }
 
     #[test]

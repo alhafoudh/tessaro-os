@@ -2,7 +2,7 @@
 //!
 //! systemd has already parsed `/usr/lib/tessaro-kiosk/tessaro-kiosk.env` -
 //! the unit's `EnvironmentFile=` - by the time this runs, and `main` lays
-//! the device's settings from `state.json` over it (`state::Effective`), so
+//! the device's settings from `tessaro.db` over it (`state::Effective`), so
 //! this only ever reads variables. The defaults file stays data, never code.
 //! The defaults below mirror the ones in `tessaro-kiosk.env.in` and exist so
 //! the binary is runnable by hand.
@@ -208,8 +208,9 @@ fn string(env: &dyn Env, name: &str, default: &str) -> String {
 }
 
 /// Unset, empty or unparseable all fall back to the default. `tessaro-ctl`
-/// validates what it stores, but a `state.json` written by another version,
-/// or a hand-edited image default, must never stop the kiosk from coming up.
+/// validates what it stores, but a setting written by another version or
+/// by hand with `sqlite3`, or a hand-edited image default, must never stop
+/// the kiosk from coming up.
 fn int(env: &dyn Env, name: &str, default: i64) -> i64 {
     match env.get(name) {
         None => default,

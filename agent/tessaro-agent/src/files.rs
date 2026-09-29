@@ -929,16 +929,16 @@ mod tests {
         let files = device.files();
         upload(&files, "a.txt", b"a", MTIME).await;
         fs::create_dir_all(device.paths.state_dir.join("secret")).unwrap();
-        fs::write(device.paths.state_dir.join("auth.json"), "tokens").unwrap();
+        fs::write(device.paths.state_dir.join("tessaro.db"), "tokens").unwrap();
         std::os::unix::fs::symlink(&device.paths.state_dir, device.stored("out")).unwrap();
         std::os::unix::fs::symlink(
-            device.paths.state_dir.join("auth.json"),
+            device.paths.state_dir.join("tessaro.db"),
             device.stored("auth"),
         )
         .unwrap();
 
         assert!(files.read("auth", 0, 10).await.is_err());
-        assert!(files.read("out/auth.json", 0, 10).await.is_err());
+        assert!(files.read("out/tessaro.db", 0, 10).await.is_err());
         assert!(files.begin("test", "out/x", 1, MTIME).await.is_err());
         assert!(files.mkdir("test", "out/x").await.is_err());
         assert!(files.list("out", false).await.is_err());

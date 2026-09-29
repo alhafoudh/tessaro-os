@@ -5,7 +5,7 @@
 //! change can take its own connection away - so nothing here waits for it.
 //! What makes that safe is the order:
 //!
-//! 1. **Record** what is under way in `/data/tessaro/network/txn.json`.
+//! 1. **Record** what is under way in the `net_txn` table of `tessaro.db`.
 //! 2. **Checkpoint** the devices involved in NetworkManager, with a rollback
 //!    timer of its own: if this process dies, NetworkManager undoes the
 //!    runtime half by itself.
@@ -14,11 +14,11 @@
 //! 4. **Verify on the device**: what was brought up comes up and gets an
 //!    address, a default route is still there if there was one, and the
 //!    `--verify` target answers.
-//! 5. Only then **commit** - the caller's future, which writes `state.json` -
+//! 5. Only then **commit** - the caller's future, which writes the settings -
 //!    and drop the checkpoint. On any failure, **roll back**: the old
 //!    keyfiles, the old NAT, the checkpoint.
 //!
-//! The settings in `state.json` are the truth throughout: the boot oneshot
+//! The saved settings are the truth throughout: the boot oneshot
 //! renders the profiles from them before NetworkManager starts, so a reboot
 //! at any point comes back on the committed configuration, and an agent that
 //! stops half way leaves the record behind for the next one to roll back
@@ -26,13 +26,13 @@
 
 use std::future::Future;
 use std::net::IpAddr;
-use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::time::Duration;
 
 use protocol::{ChangeOutcome, NetChange, NetCheck, Verify};
-use serde::{Deserialize, Serialize};
+use tessaro_db::rusqlite::{params, OptionalExtension};
 
+use crate::db::Db;
 use crate::deadline::blocking;
 use crate::log::Log;
 use crate::nm::profiles::{Keyfile, Profile};
@@ -47,12 +47,9 @@ const REACH_TRIES: u32 = 5;
 /// dies: longer than anything above, so it never fires on a live change.
 pub const BACKSTOP: Duration = Duration::from_secs(150);
 
-const RECORD: &str = "txn.json";
-const LAST: &str = "last.json";
-
-/// What is under way. No secrets: those never leave `secrets.json` and the
-/// keyfiles under `/run`.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// What is under way. No secrets: those never leave the `secrets` table and
+/// the keyfiles under `/run`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Record {
     pub action: String,
     pub checkpoint: Option<String>,
@@ -108,7 +105,7 @@ pub struct Route {
     pub gateway: Option<IpAddr>,
 }
 
-/// Writes `state.json` once the change has held. Built by the caller, run
+/// Writes the settings once the change has held. Built by the caller, run
 /// only after every check passed.
 pub type Commit = Pin<Box<dyn Future<Output = Result<(), String>> + Send>>;
 
@@ -137,74 +134,98 @@ pub trait Ops: Send + Sync {
     async fn pause(&self, pause: Duration);
 }
 
-/// The transaction's files under `/data/tessaro/network`.
+/// The transaction's rows in `tessaro.db`: `net_txn` while a change runs,
+/// `net_last` for what the last one did.
 #[derive(Debug, Clone)]
 pub struct Files {
-    dir: PathBuf,
+    db: Db,
 }
 
 impl Files {
-    pub fn new(dir: PathBuf) -> Self {
-        Self { dir }
+    pub fn new(db: Db) -> Self {
+        Self { db }
     }
 
-    fn path(&self, name: &str) -> PathBuf {
-        self.dir.join(name)
-    }
-
-    async fn write<T: Serialize + Send + 'static>(
-        &self,
-        name: &str,
-        value: T,
-    ) -> Result<(), String> {
-        let dir = self.dir.clone();
-        let path = self.path(name);
+    async fn write_record(&self, record: Record) -> Result<(), String> {
+        let db = self.db.clone();
         blocking("writing a network change", move || {
-            create_private_dir(&dir)?;
-            update::fsutil::write_json(&path, &value)
-                .map_err(|err| format!("{}: {err}", path.display()))
+            db.transaction(|tx| {
+                tx.execute(
+                    "INSERT OR REPLACE INTO net_txn (id, action, checkpoint) VALUES (1, ?1, ?2)",
+                    params![record.action, record.checkpoint],
+                )
+                .map(drop)
+                .map_err(|err| err.to_string())
+            })
         })
         .await
     }
 
-    async fn read<T: for<'de> Deserialize<'de> + Send + 'static>(
-        &self,
-        name: &str,
-    ) -> Result<Option<T>, String> {
-        let path = self.path(name);
-        blocking("reading a network change", move || {
-            if !path.exists() {
-                return Ok(None);
-            }
-            update::fsutil::read_json(&path).map(Some)
+    async fn write_last(&self, change: NetChange) -> Result<(), String> {
+        let db = self.db.clone();
+        blocking("writing a network change", move || {
+            let json = serde_json::to_string(&change).map_err(|err| err.to_string())?;
+            db.transaction(|tx| {
+                tx.execute(
+                    "INSERT OR REPLACE INTO net_last (id, change) VALUES (1, ?1)",
+                    params![json],
+                )
+                .map(drop)
+                .map_err(|err| err.to_string())
+            })
         })
         .await
     }
 
     async fn clear(&self) -> Result<(), String> {
-        let record = self.path(RECORD);
+        let db = self.db.clone();
         blocking("clearing a network change", move || {
-            update::fsutil::remove_if_exists(&record)
-                .map_err(|err| format!("{}: {err}", record.display()))
+            db.transaction(|tx| {
+                tx.execute("DELETE FROM net_txn", [])
+                    .map(drop)
+                    .map_err(|err| err.to_string())
+            })
         })
         .await
     }
 
     pub async fn last(&self) -> Result<Option<NetChange>, String> {
-        self.read(LAST).await
+        let db = self.db.clone();
+        blocking("reading a network change", move || {
+            let json: Option<String> = db.transaction(|tx| {
+                tx.query_row("SELECT change FROM net_last WHERE id = 1", [], |row| {
+                    row.get(0)
+                })
+                .optional()
+                .map_err(|err| err.to_string())
+            })?;
+            json.map(|json| serde_json::from_str(&json).map_err(|err| err.to_string()))
+                .transpose()
+        })
+        .await
     }
 
     /// The record of a change that never finished, if one is there.
     pub async fn unfinished(&self) -> Result<Option<Record>, String> {
-        self.read(RECORD).await
+        let db = self.db.clone();
+        blocking("reading a network change", move || {
+            db.transaction(|tx| {
+                tx.query_row(
+                    "SELECT action, checkpoint FROM net_txn WHERE id = 1",
+                    [],
+                    |row| {
+                        Ok(Record {
+                            action: row.get(0)?,
+                            checkpoint: row.get(1)?,
+                        })
+                    },
+                )
+                .optional()
+                .map_err(|err| err.to_string())
+            })
+        })
+        .await
     }
-}
-
-fn create_private_dir(dir: &Path) -> Result<(), String> {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::create_dir_all(dir).map_err(|err| format!("{}: {err}", dir.display()))?;
-    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
-        .map_err(|err| format!("{}: {err}", dir.display()))
 }
 
 fn pass(name: &str, detail: impl Into<String>) -> NetCheck {
@@ -252,7 +273,7 @@ pub async fn run(
         action: plan.action.clone(),
         checkpoint: None,
     };
-    files.write(RECORD, record.clone()).await?;
+    files.write_record(record.clone()).await?;
 
     let checkpoint = match ops.checkpoint(&plan.devices, BACKSTOP).await {
         Ok(checkpoint) => checkpoint,
@@ -263,7 +284,7 @@ pub async fn run(
         }
     };
     record.checkpoint = Some(checkpoint.clone());
-    files.write(RECORD, record.clone()).await?;
+    files.write_record(record.clone()).await?;
     log.info(format!("network: {} started", plan.action));
 
     // naked: attempt() waits only through ops.
@@ -318,7 +339,7 @@ pub async fn run(
     };
 
     let _ = files.clear().await;
-    if let Err(err) = files.write(LAST, change.clone()).await {
+    if let Err(err) = files.write_last(change.clone()).await {
         log.info(format!("network: {err}"));
     }
     Ok(change)
@@ -486,7 +507,7 @@ async fn undo(
 }
 
 /// A change the previous agent never finished: undo it now, onto `current`
-/// - the keyfiles `state.json` renders, which never saw the change.
+/// - the keyfiles the saved settings render, which never saw the change.
 pub async fn recover(
     ops: &dyn Ops,
     files: &Files,
@@ -517,7 +538,7 @@ pub async fn recover(
         checks: Vec::new(),
         note: None,
     };
-    files.write(LAST, change).await?;
+    files.write_last(change).await?;
     Ok(true)
 }
 
@@ -648,7 +669,7 @@ mod tests {
 
     fn files() -> (tempfile::TempDir, Files) {
         let dir = tempfile::tempdir().unwrap();
-        let files = Files::new(dir.path().join("network"));
+        let files = Files::new(Db::open(dir.path(), &Log::buffered(false)));
         (dir, files)
     }
 
@@ -809,13 +830,10 @@ mod tests {
     async fn an_unfinished_change_is_rolled_back_onto_the_saved_settings() {
         let (_dir, files) = files();
         files
-            .write(
-                RECORD,
-                Record {
-                    action: "set network.ethernet.mode".into(),
-                    checkpoint: Some("/cp/1".into()),
-                },
-            )
+            .write_record(Record {
+                action: "set network.ethernet.mode".into(),
+                checkpoint: Some("/cp/1".into()),
+            })
             .await
             .unwrap();
 
