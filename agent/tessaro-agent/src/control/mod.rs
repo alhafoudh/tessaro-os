@@ -675,7 +675,14 @@ impl Control {
                 name,
                 text,
                 if_revision,
-            } => self.policy_set(caller, name, text, if_revision).await,
+                position,
+            } => {
+                self.policy_set(caller, name, text, if_revision, position)
+                    .await
+            }
+            Command::BrowserPolicyMove { name, position } => {
+                self.policy_move(caller, name, position).await
+            }
             Command::BrowserPolicyRemove { name } => self.policy_remove(caller, name).await,
             Command::BrowserPolicyEffective => self.policy_effective().await.into(),
             Command::ScheduleList => self.schedule_list().await.into(),
@@ -2139,6 +2146,7 @@ mod tests {
             name: "lockdown".to_string(),
             text: text.to_string(),
             if_revision: if_revision.map(str::to_string),
+            position: None,
         };
         let text = "// kiosk\n{\"SpellcheckEnabled\": false,}\n";
 
@@ -2179,6 +2187,31 @@ mod tests {
             ok(&fx.control, &holder, Command::BrowserPolicyList).await;
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].revision, doc.revision);
+        assert_eq!(listed[0].position, 1);
+
+        // A move that changes nothing is answered without a render; one to
+        // a policy that does not exist is refused.
+        let moved: protocol::policy::PolicyMoved = ok(
+            &fx.control,
+            &holder,
+            Command::BrowserPolicyMove {
+                name: "lockdown".to_string(),
+                position: 5,
+            },
+        )
+        .await;
+        assert_eq!((moved.position, moved.restarted), (1, false));
+        let missing = err(
+            &fx.control,
+            &holder,
+            Command::BrowserPolicyMove {
+                name: "nope".to_string(),
+                position: 1,
+            },
+        )
+        .await;
+        assert!(missing.contains("no browser policy"), "{missing}");
+
         let effective: Vec<protocol::policy::EffectiveEntry> =
             ok(&fx.control, &holder, Command::BrowserPolicyEffective).await;
         assert!(effective

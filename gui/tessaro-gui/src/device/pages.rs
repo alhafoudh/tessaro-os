@@ -23,13 +23,15 @@ use iced::{Element, Length, Task};
 use protocol::api::{
     self, AudioTestBody, CalendarBody, CertBody, CertQuery, DeleteBody, EvalBody, FilesQuery,
     GrowBody, KeyboardBody, MoveBody, NameBody, NavigateBody, PasswordBody, PathBody, PingBody,
-    PolicyBody, PolicyRef, PrintJobRef, PrintJobsQuery, PrinterRef, ProfileQuery, ScheduleChange,
-    ScheduleRef, ScreenPowerBody, SpeedtestBody, SshKeyQuery, TokenRef, WifiJoinBody,
-    WifiScanQuery,
+    PolicyBody, PolicyPositionBody, PolicyRef, PrintJobRef, PrintJobsQuery, PrinterRef,
+    ProfileQuery, ScheduleChange, ScheduleRef, ScreenPowerBody, SpeedtestBody, SshKeyQuery,
+    TokenRef, WifiJoinBody, WifiScanQuery,
 };
 use protocol::files::{self as store, FileEntry, FileKind, FilesListing};
 use protocol::keys;
-use protocol::policy::{self, EffectiveEntry, PolicyDoc, PolicyInfo, PolicyRemoved, PolicySaved};
+use protocol::policy::{
+    self, EffectiveEntry, PolicyDoc, PolicyInfo, PolicyMoved, PolicyRemoved, PolicySaved,
+};
 use protocol::{
     size_label, Applied, AudioDevice, AudioStatus, AudioTested, CalendarCheck, CertInfo,
     CertsAdded, Claimed, Connector, Done, HotspotCredentials, Net, NetChange, NetProfile,
@@ -214,6 +216,8 @@ pub enum Msg {
     PolicyEdit,
     PolicyEffective,
     PolicyRemove,
+    /// Move the selected policy one up (`true`, towards position 1) or down.
+    PolicyMove(bool),
     // screen
     UseMode,
     ScreenPower(bool),
@@ -725,7 +729,7 @@ impl Device {
                 revision,
             },
         )
-        .intro("One JSON object of Chromium policies (chromeenterprise.google/policies), merged over the image's; comments and trailing commas are fine. A later name wins a policy two of them set. The browser restarts when the result changes.")
+        .intro("One JSON object of Chromium policies (chromeenterprise.google/policies), merged over the image's; comments and trailing commas are fine. A new one goes to the bottom of the list; the one higher in the list wins a policy two of them set. The browser restarts when the result changes.")
         .wide();
         if name.is_none() {
             form = form.field(Field::text("Name", "", "lockdown"));
@@ -989,6 +993,14 @@ impl Device {
                     self.log_line(line);
                 }
                 self.pages.selected.insert("policies", saved.name);
+                self.call("policies", fetch::<api::browser::Policies>());
+            }
+            "policy.move" => {
+                let moved: PolicyMoved = parse(value)?;
+                for line in describe::browser::policy_moved(&moved) {
+                    self.log_line(line);
+                }
+                // Selected by name, so the moved row stays selected.
                 self.call("policies", fetch::<api::browser::Policies>());
             }
             "policy.remove" => {
@@ -1468,6 +1480,22 @@ impl Device {
                             Action::PolicyRemove(name),
                         )
                         .intro("Its Chromium policies leave the browser's policy, and the browser restarts to drop them."),
+                    );
+                }
+            }
+            Msg::PolicyMove(up) => {
+                if let Some(info) = self.selected_policy() {
+                    let position = if up {
+                        info.position.saturating_sub(1).max(1)
+                    } else {
+                        info.position + 1
+                    };
+                    self.call(
+                        "policy.move",
+                        call::<api::browser::PolicyMove>(
+                            PolicyRef { name: info.name },
+                            PolicyPositionBody { position },
+                        ),
                     );
                 }
             }
@@ -2128,6 +2156,15 @@ impl Device {
             .cloned()
     }
 
+    fn selected_policy(&self) -> Option<PolicyInfo> {
+        let name = self.selected("policies")?;
+        self.pages
+            .policies
+            .iter()
+            .find(|info| &info.name == name)
+            .cloned()
+    }
+
     fn selected_schedule(&self) -> Option<ScheduleInfo> {
         let id = self.selected("schedules")?;
         self.pages
@@ -2539,6 +2576,7 @@ impl Device {
                         PolicyBody {
                             text,
                             if_revision: Some(revision.clone()),
+                            position: None,
                         },
                     ),
                 );
@@ -3352,10 +3390,15 @@ impl Device {
     }
 
     fn policies_view(&self) -> Element<'_, Message> {
+        // In priority order, as the device lists them: position 1 wins a
+        // policy others set too.
         const POLICIES: &[Col] = &[
+            col("#", Length::Fixed(40.0)),
             col("Policy", Length::Fixed(180.0)),
             col("Sets", Length::Fill),
         ];
+        let selected = self.selected_policy();
+        let last = self.pages.policies.len() as u32;
         let policies = self
             .pages
             .policies
@@ -3372,7 +3415,11 @@ impl Device {
                 };
                 (
                     info.name.clone(),
-                    vec![cell(info.name.clone()).into(), sets],
+                    vec![
+                        cell(info.position.to_string()).style(theme::muted).into(),
+                        cell(info.name.clone()).into(),
+                        sets,
+                    ],
                 )
             })
             .collect();
@@ -3388,6 +3435,20 @@ impl Device {
                     "Edit policy ...",
                     self.selected("policies")
                         .and_then(|_| self.when(Msg::PolicyEdit)),
+                ),
+                action(
+                    "Move up",
+                    selected
+                        .as_ref()
+                        .filter(|info| info.position > 1)
+                        .and_then(|_| self.when(Msg::PolicyMove(true))),
+                ),
+                action(
+                    "Move down",
+                    selected
+                        .as_ref()
+                        .filter(|info| info.position < last)
+                        .and_then(|_| self.when(Msg::PolicyMove(false))),
                 ),
                 action(
                     "Remove policy",
@@ -4219,10 +4280,7 @@ fn stream_line(owner: &str, value: &Value) -> Option<Line> {
 fn policy_note(text: &str) -> String {
     match policy::check(text) {
         Ok(entries) if entries.is_empty() => "sets nothing".to_string(),
-        Ok(entries) => format!(
-            "sets {}",
-            entries.keys().cloned().collect::<Vec<_>>().join(", ")
-        ),
+        Ok(entries) => format!("sets {}", policy::keys(&entries).join(", ")),
         Err(err) => err.to_string(),
     }
 }

@@ -1,12 +1,14 @@
 //! The browser policies, for `tessaro-ctl browser policies` and the
 //! Policies page.
 
-use protocol::policy::{EffectiveEntry, PolicyInfo, PolicyRemoved, PolicySaved, PolicySource};
+use protocol::policy::{
+    EffectiveEntry, PolicyInfo, PolicyMoved, PolicyRemoved, PolicySaved, PolicySource,
+};
 
 use crate::text::{Line, Tone};
 
-/// The stored policies, one a line: the name and the policies it sets, or
-/// why the device leaves it out.
+/// The stored policies in priority order, one a line: the position, the
+/// name and the policies it sets, or why the device leaves it out.
 pub fn policies(policies: &[PolicyInfo]) -> Vec<Line> {
     if policies.is_empty() {
         return vec![Line::of(Tone::Muted, "no browser policies")];
@@ -14,7 +16,10 @@ pub fn policies(policies: &[PolicyInfo]) -> Vec<Line> {
     policies
         .iter()
         .map(|policy| {
-            let line = Line::new().pad(Tone::Heading, &policy.name, 20).text(" ");
+            let line = Line::new()
+                .pad(Tone::Muted, format!("{}.", policy.position), 4)
+                .pad(Tone::Heading, &policy.name, 20)
+                .text(" ");
             match &policy.problem {
                 Some(problem) => line.add(Tone::Bad, format!("left out: {problem}")),
                 None if policy.keys.is_empty() => line.add(Tone::Muted, "(sets nothing)"),
@@ -40,6 +45,7 @@ pub fn policy_saved(saved: &PolicySaved) -> Vec<Line> {
     let mut lines = vec![Line::of(Tone::Ok, "saved")
         .text(" ")
         .add(Tone::Heading, &saved.name)
+        .text(format!(" at position {}", saved.position))
         .text(if saved.keys.is_empty() {
             ", which sets nothing".to_string()
         } else {
@@ -61,12 +67,21 @@ pub fn policy_saved(saved: &PolicySaved) -> Vec<Line> {
         lines.push(Line::of(
             Tone::Warn,
             format!(
-                "{} is also set by {}, which wins: it comes later by name",
+                "{} is also set by {}, which wins: it is higher in the list",
                 overlap.key, overlap.policy
             ),
         ));
     }
     lines.extend(restarted(saved.restarted));
+    lines
+}
+
+pub fn policy_moved(moved: &PolicyMoved) -> Vec<Line> {
+    let mut lines = vec![Line::of(Tone::Ok, "moved")
+        .text(" ")
+        .add(Tone::Heading, &moved.name)
+        .text(format!(" to position {}", moved.position))];
+    lines.extend(restarted(moved.restarted));
     lines
 }
 

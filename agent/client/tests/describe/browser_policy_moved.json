@@ -1,0 +1,72 @@
+{
+  "function": "browser::policy_moved",
+  "input": [
+    {
+      "name": "lockdown",
+      "position": 1,
+      "restarted": true
+    },
+    {
+      "name": "corp",
+      "position": 3,
+      "restarted": false
+    }
+  ],
+  "output": [
+    [
+      [
+        [
+          "ok",
+          "moved",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "heading",
+          "lockdown",
+          0
+        ],
+        [
+          "plain",
+          " to position 1",
+          0
+        ]
+      ],
+      [
+        [
+          "muted",
+          "the browser restarted to apply it",
+          0
+        ]
+      ]
+    ],
+    [
+      [
+        [
+          "ok",
+          "moved",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "heading",
+          "corp",
+          0
+        ],
+        [
+          "plain",
+          " to position 3",
+          0
+        ]
+      ]
+    ]
+  ]
+}

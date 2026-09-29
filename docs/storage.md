@@ -72,9 +72,12 @@ whole, inside the transaction it is given (`State` in `state.rs`, `Auth` in
   and the row with `is_default` is the printer `window.print()` uses; a
   unique index keeps it to one (see [printing.md](printing.md)).
 * **`browser_policies` holds each document's text as typed**, comments
-  included; the check runs on save and again at every render, which leaves
-  out one edited here that no longer passes (see **Policies** in
-  [kiosk-browser.md](kiosk-browser.md)).
+  included, and its `position` in the priority order, 1 the highest; the
+  check runs on save and again at every render, which leaves out one edited
+  here that no longer passes (see **Policies** in
+  [kiosk-browser.md](kiosk-browser.md)). A hand edit that leaves gaps or
+  ties is read in `position, name` order and written back 1..N by the next
+  change.
 * **The settings are sparse**: a key that was never set has no row, so it
   follows the image's default (see [settings.md](settings.md)).
 * **`net_txn` is the network transaction's record** while a change runs, and

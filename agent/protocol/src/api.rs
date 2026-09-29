@@ -25,7 +25,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::files::{FileBegun, FilesListing};
-use crate::policy::{EffectiveEntry, PolicyDoc, PolicyInfo, PolicyRemoved, PolicySaved};
+use crate::policy::{
+    EffectiveEntry, PolicyDoc, PolicyInfo, PolicyMoved, PolicyRemoved, PolicySaved,
+};
 use crate::{
     Applied, AudioStatus, AudioTested, CalendarCheck, CertInfo, CertsAdded, Claimed, Command,
     Connector, Done, EvalResult, HotspotCredentials, ImageUpload, JobPage, JobStarted, KeyInfo,
@@ -460,6 +462,16 @@ pub struct PolicyBody {
     /// refuses unless there is none yet. Unconditional without it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub if_revision: Option<String>,
+    /// Where it goes in the priority order, from 1, the highest. A new one
+    /// goes to the bottom without it; a stored one stays where it is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PolicyPositionBody {
+    /// From 1, the highest priority; past the last, the last.
+    pub position: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -1066,6 +1078,15 @@ pub mod browser {
                 name: target.name,
                 text: body.text,
                 if_revision: body.if_revision,
+                position: body.position,
+            });
+
+        /// Move a browser policy in the priority order, the others shifting
+        /// to make room. The browser restarts when the merged policy changes.
+        PolicyMove: Put "/api/v1/browser/policies/{name}/position" (PolicyRef, PolicyPositionBody) -> PolicyMoved
+            = |target, body| Action::Run(Command::BrowserPolicyMove {
+                name: target.name,
+                position: body.position,
             });
 
         /// Remove a browser policy. The browser restarts when the merged

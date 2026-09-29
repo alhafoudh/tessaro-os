@@ -100,6 +100,15 @@ fn render(function: &str, input: &Value) -> Value {
                     .collect(),
             )
         }
+        "browser::policy_moved" => {
+            let cases: Vec<protocol::policy::PolicyMoved> = from(input);
+            Value::Array(
+                cases
+                    .iter()
+                    .map(|one| lines(&browser::policy_moved(one)))
+                    .collect(),
+            )
+        }
         "browser::effective" => {
             let entries: Vec<protocol::policy::EffectiveEntry> = from(input);
             lines(&browser::effective(&entries))

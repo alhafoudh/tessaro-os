@@ -7,6 +7,7 @@
         "DownloadRestrictions"
       ],
       "name": "lockdown",
+      "position": 2,
       "overrides_image": [
         "DownloadRestrictions"
       ],
@@ -29,6 +30,7 @@
     {
       "keys": [],
       "name": "empty",
+      "position": 3,
       "overrides_image": [],
       "restarted": false,
       "revision": "bb",
@@ -41,6 +43,7 @@
         "URLBlocklist"
       ],
       "name": "lockdown",
+      "position": 2,
       "overrides_image": [],
       "restarted": false,
       "revision": "aa",
@@ -65,6 +68,11 @@
         [
           "heading",
           "lockdown",
+          0
+        ],
+        [
+          "plain",
+          " at position 2",
           0
         ],
         [
@@ -95,7 +103,7 @@
       [
         [
           "warn",
-          "URLBlocklist is also set by zeta, which wins: it comes later by name",
+          "URLBlocklist is also set by zeta, which wins: it is higher in the list",
           0
         ]
       ],
@@ -122,6 +130,11 @@
         [
           "heading",
           "empty",
+          0
+        ],
+        [
+          "plain",
+          " at position 3",
           0
         ],
         [

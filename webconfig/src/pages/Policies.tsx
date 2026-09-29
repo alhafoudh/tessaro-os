@@ -1,6 +1,7 @@
 // The GUI's Policies page (pages.rs policies_view): the browser policies the
-// device merges into Chromium's, a new one from the template or a file, the
-// selected one edited in place, and the merged policy Chromium reads.
+// device merges into Chromium's, in priority order, a new one from the
+// template or a file, the selected one edited in place or moved up and down,
+// and the merged policy Chromium reads.
 
 import { useQuery } from "@tanstack/react-query";
 import { useRef, useState } from "react";
@@ -46,6 +47,7 @@ export function Policies({ info }: { info: PageInfo }) {
     placeholderData: (previous) => previous,
   });
   const chosen = policies.data?.find((policy) => policy.name === selected);
+  const last = policies.data?.length ?? 0;
 
   const open = async (name: string) => {
     try {
@@ -65,6 +67,22 @@ export function Policies({ info }: { info: PageInfo }) {
     );
     logLines(describe.policySaved(saved));
     setSelected(saved.name);
+    void policies.refetch();
+  };
+
+  // The moved row stays selected: it is selected by name.
+  const move = async (name: string, position: number) => {
+    try {
+      const moved = await answer(
+        client.PUT("/api/v1/browser/policies/{name}/position", {
+          params: { path: { name } },
+          body: { position },
+        }),
+      );
+      logLines(describe.policyMoved(moved));
+    } catch (problem) {
+      log(failure(problem).message, "bad");
+    }
     void policies.refetch();
   };
 
@@ -99,6 +117,7 @@ export function Policies({ info }: { info: PageInfo }) {
   const rows = (policies.data ?? []).map((policy) => ({
     key: policy.name,
     cells: [
+      <span className="text-muted">{policy.position}</span>,
       policy.name,
       policy.problem ? (
         <span className="text-danger">left out: {policy.problem}</span>
@@ -134,6 +153,18 @@ export function Policies({ info }: { info: PageInfo }) {
           <Button disabled={!online || !chosen} onClick={() => chosen && void open(chosen.name)}>
             Edit policy ...
           </Button>
+          <Button
+            disabled={!online || !chosen || chosen.position <= 1}
+            onClick={() => chosen && void move(chosen.name, chosen.position - 1)}
+          >
+            Move up
+          </Button>
+          <Button
+            disabled={!online || !chosen || chosen.position >= last}
+            onClick={() => chosen && void move(chosen.name, chosen.position + 1)}
+          >
+            Move down
+          </Button>
           <Button disabled={!online || !chosen} onClick={() => setRemoving(true)}>
             Remove policy
           </Button>
@@ -152,7 +183,7 @@ export function Policies({ info }: { info: PageInfo }) {
       />
       <ErrorLine error={policies.error ? failure(policies.error).message : null} />
       <Table
-        columns={[{ title: "Policy", width: "180px" }, { title: "Sets" }]}
+        columns={[{ title: "#", width: "40px" }, { title: "Policy", width: "180px" }, { title: "Sets" }]}
         rows={rows}
         selected={selected}
         onSelect={setSelected}
@@ -234,8 +265,8 @@ function PolicyEditor({
     >
       <Intro>
         One JSON object of Chromium policies (chromeenterprise.google/policies), merged over the image's; comments and
-        trailing commas are fine. A later name wins a policy two of them set. The browser restarts when the result
-        changes.
+        trailing commas are fine. A new one goes to the bottom of the list; the one higher in the list wins a policy two
+        of them set. The browser restarts when the result changes.
       </Intro>
       {!editing.name && (
         <Field label="Name">

@@ -225,9 +225,13 @@ does not set can be added as a named document, merged over the image's own:
 ```sh
 tessaro-ctl browser policies set lockdown lockdown.json   # or `edit lockdown` in $EDITOR
 tessaro-ctl browser policies show                          # what Chromium reads, and from where
+tessaro-ctl browser policies move lockdown 1               # the top one wins a policy others set too
 ```
 
-The GUI and Webconfig edit them in place on their Policies page. A mistake is
+They are kept in priority order: when two set the same Chromium policy, the
+one higher in the list wins, and a new one goes to the bottom. The GUI and
+Webconfig edit them in place on their Policies page, with Move up and Move
+down. A mistake is
 refused with its line before anything is saved, and so is a policy the device
 sets itself (its site's device permissions, the proxy, the extra certificate
 authorities), with the command that does. The browser restarts when the

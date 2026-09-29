@@ -259,12 +259,22 @@ pub enum Command {
     /// Store a browser policy under `name`, replacing one of that name, and
     /// merge it into the policy Chromium reads. With `if_revision`, only
     /// while the stored one is still at that revision; `""` only while
-    /// there is none.
+    /// there is none. A new one goes to the bottom, the lowest priority,
+    /// unless `position` places it; a stored one keeps its place unless
+    /// `position` moves it.
     BrowserPolicySet {
         name: String,
         text: String,
         #[serde(default)]
         if_revision: Option<String>,
+        #[serde(default)]
+        position: Option<u32>,
+    },
+    /// Move a browser policy to `position` (from 1, the highest priority),
+    /// the others shifting to make room.
+    BrowserPolicyMove {
+        name: String,
+        position: u32,
     },
     BrowserPolicyRemove {
         name: String,

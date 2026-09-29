@@ -6,7 +6,9 @@
 //! that changes nothing restarts nothing. Like the certificates, the store
 //! stays through an unclaim and goes with a factory reset.
 
-use protocol::policy::{EffectiveEntry, PolicyDoc, PolicyInfo, PolicyRemoved, PolicySaved};
+use protocol::policy::{
+    EffectiveEntry, PolicyDoc, PolicyInfo, PolicyMoved, PolicyRemoved, PolicySaved,
+};
 
 use super::{Caller, Control, Reply};
 use crate::deadline::blocking;
@@ -38,6 +40,7 @@ impl Control {
         name: String,
         text: String,
         if_revision: Option<String>,
+        position: Option<u32>,
     ) -> Reply {
         let _writes = self.writes.lock().await;
         let db = self.db.clone();
@@ -46,26 +49,28 @@ impl Control {
             let name = name.clone();
             let text = text.clone();
             blocking("storing a browser policy", move || {
-                let changed = policies::store(&db, &name, &text, if_revision.as_deref())?;
+                let saved = policies::store(&db, &name, &text, if_revision.as_deref(), position)?;
                 let docs = policies::load_checked(&db)?.checked;
                 let base = render::base_keys(&paths)?;
-                Ok((changed, docs, base))
+                Ok((saved, docs, base))
             })
             .await
         };
-        let (changed, docs, base) = match stored {
+        let (saved, docs, base) = match stored {
             Ok(stored) => stored,
             Err(err) => return Reply::err(err),
         };
+        let changed = saved.changed;
 
-        let keys: Vec<String> = protocol::policy::check(&text)
-            .map(|entries| entries.keys().cloned().collect())
+        let keys = protocol::policy::check(&text)
+            .map(|entries| protocol::policy::keys(&entries))
             .unwrap_or_default();
         let (shadows, shadowed_by) = policies::overlaps(&docs, &name);
         let restarted = if changed {
             self.log.info(format!(
-                "browser policy {name} ({}) stored by {}",
+                "browser policy {name} ({}) stored at position {} by {}",
                 keys.join(", "),
+                saved.position,
                 caller.describe()
             ));
             match self.apply_policies().await {
@@ -84,10 +89,46 @@ impl Control {
                 .cloned()
                 .collect(),
             name,
+            position: saved.position,
             keys,
             unchanged: !changed,
             shadows,
             shadowed_by,
+            restarted,
+        })
+    }
+
+    /// A move changes no text, but can change which document wins a key, so
+    /// it re-renders and restarts the browser when the merged policy moved.
+    pub(super) async fn policy_move(&self, caller: &Caller, name: String, position: u32) -> Reply {
+        let _writes = self.writes.lock().await;
+        let db = self.db.clone();
+        let moved = {
+            let name = name.clone();
+            blocking("moving a browser policy", move || {
+                policies::move_to(&db, &name, position)
+            })
+            .await
+        };
+        let (position, changed) = match moved {
+            Ok(moved) => moved,
+            Err(err) => return Reply::err(err),
+        };
+        let restarted = if changed {
+            self.log.info(format!(
+                "browser policy {name} moved to position {position} by {}",
+                caller.describe()
+            ));
+            match self.apply_policies().await {
+                Ok(restarted) => restarted,
+                Err(err) => return Reply::err(err),
+            }
+        } else {
+            false
+        };
+        Reply::ok(PolicyMoved {
+            name,
+            position,
             restarted,
         })
     }

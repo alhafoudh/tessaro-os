@@ -199,16 +199,29 @@ word.
 * **`strict_json` blanks comments and trailing commas instead of dropping
   them**, keeping newlines, so a parse error's line and column point into
   the text as typed.
-* **Merge order is the image's base, then the documents by name, then the
-  device's own keys** (`render::policy`). A later name wins a key two
-  documents set, as Chromium's own rule for one directory; a save says which
-  keys it overrides of the image's and which it shares with another
-  document. A stored document that no longer passes the check (edited by
-  hand in the store, or a key the device took over) is left out with a journal line,
-  never failing the render.
+* **The documents are in an explicit priority order, and position 1 wins**
+  a key others set too. Merge order is the image's base, then the documents
+  from the lowest priority up, then the device's own keys
+  (`render::policy`). The order is never inferred from names: nobody sees a
+  name order, and renaming would silently change which policy wins. A save
+  says which keys it overrides of the image's and which it shares with
+  another document. A stored document that no longer passes the check
+  (edited by hand in the store, or a key the device took over) is left out
+  with a journal line, never failing the render.
+* **Positions run 1 to the number of documents, with no gaps**
+  (`policies.rs`). A new document goes to the bottom, so adding one never
+  overrides what is there; `set --position` and `move` place one, the others
+  shifting, a position past the last meaning the last; removing one closes
+  the gap. The GUI and Webconfig move the selected row up or down one.
 * **A change restarts the browser only when the merged file changed**
   (`control/policies.rs`), since most policies are read at start. Saving the
-  same text writes nothing and restarts nothing.
+  same text writes nothing and restarts nothing; neither does swapping two
+  documents that share no key.
+* **Keys are listed sorted everywhere** (`protocol::policy::keys`), never in
+  the map's order: serde_json keeps the typed order where a crate in the
+  build turns on `preserve_order` (cfspeedtest does, in the agent workspace)
+  and sorts where none does (the GUI's), so relying on it made each client
+  say something else.
 * **A save can name the revision it started from** (the SHA-256 of the text,
   `if_revision`), and is refused once the device's copy has moved on; `""`
   means "only while there is none". The GUI, Webconfig and `tessaro-ctl

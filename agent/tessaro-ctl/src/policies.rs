@@ -3,6 +3,8 @@
 //! **Policies**). `set` sends a file as it is, for scripts; `edit` opens the
 //! stored text, or a commented example for a new one, in `$VISUAL` or
 //! `$EDITOR` and saves it only if nobody changed it on the device meanwhile.
+//! The policies are in priority order: position 1 wins a policy others set
+//! too, and `move` changes it.
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -10,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 use anstream::{eprintln, println};
 use clap::Subcommand;
-use protocol::api::{self, PolicyBody, PolicyRef};
+use protocol::api::{self, PolicyBody, PolicyPositionBody, PolicyRef};
 use protocol::policy;
 use tessaro_client::describe::browser as describe;
 
@@ -22,7 +24,8 @@ use crate::style::{self, paint};
 /// `tessaro-ctl browser policies ...`.
 #[derive(Subcommand)]
 pub enum PoliciesCmd {
-    /// The stored policies and the Chromium policies each one sets.
+    /// The stored policies in priority order, and the Chromium policies each
+    /// one sets. Position 1 wins a policy others set too.
     List,
     /// One policy's text as stored, or without a name the merged policy
     /// Chromium reads, each entry with where it comes from: the image, a
@@ -33,15 +36,29 @@ pub enum PoliciesCmd {
     Show { name: Option<String> },
     /// Store FILE as the policy NAME, replacing one of that name: one JSON
     /// object of Chromium policies (chromeenterprise.google/policies),
-    /// comments and trailing commas allowed. A later name wins a policy two
-    /// of them set. The browser restarts when the result changed.
+    /// comments and trailing commas allowed. A new one goes to the bottom,
+    /// the lowest priority. The browser restarts when the result changed.
     ///
     ///   tessaro-ctl browser policies set lockdown lockdown.json
     ///   cat lockdown.json | tessaro-ctl browser policies set lockdown -
+    ///   tessaro-ctl browser policies set lockdown lockdown.json --position 1
     Set {
         name: String,
         /// The file, or - to read it from stdin.
         file: PathBuf,
+        /// Put it at this position, from 1, the highest priority.
+        #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
+        position: Option<u32>,
+    },
+    /// Move the policy NAME to POSITION in the priority order, the others
+    /// shifting to make room; past the last, the last. Position 1 wins a
+    /// policy others set too. The browser restarts when the result changed.
+    ///
+    ///   tessaro-ctl browser policies move lockdown 1
+    Move {
+        name: String,
+        #[arg(value_parser = clap::value_parser!(u32).range(1..))]
+        position: u32,
     },
     /// Check FILE the way the device would, saving nothing. Needs no
     /// device.
@@ -61,8 +78,8 @@ pub enum PoliciesCmd {
 /// `check`, which needs no device.
 pub fn check(file: &Path, json: bool) -> Result<(), String> {
     let text = tessaro_client::policies::read_file(file)?;
-    let keys: Vec<String> = policy::check(&text)
-        .map(|entries| entries.keys().cloned().collect())
+    let keys = policy::check(&text)
+        .map(|entries| policy::keys(&entries))
         .unwrap_or_default();
     print(json, &serde_json::json!({ "keys": keys }), || {
         println!(
@@ -92,10 +109,21 @@ pub fn run(session: &mut Session, what: PoliciesCmd, json: bool) -> Result<(), S
             // The document itself, unstyled, so it can be saved and set again.
             print(json, &doc, || anstream::print!("{}", doc.text))
         }
-        PoliciesCmd::Set { name, file } => {
+        PoliciesCmd::Set {
+            name,
+            file,
+            position,
+        } => {
             policy::check_name(&name)?;
             let text = tessaro_client::policies::read_file(&file)?;
-            save(session, name, text, None, json)
+            save(session, name, text, None, position, json)
+        }
+        PoliciesCmd::Move { name, position } => {
+            let moved = session.call::<api::browser::PolicyMove>(
+                PolicyRef { name },
+                PolicyPositionBody { position },
+            )?;
+            print(json, &moved, || lines(describe::policy_moved(&moved)))
         }
         PoliciesCmd::Check { file } => check(&file, json),
         PoliciesCmd::Edit { name } => edit(session, name, json),
@@ -111,10 +139,17 @@ fn save(
     name: String,
     text: String,
     if_revision: Option<String>,
+    position: Option<u32>,
     json: bool,
 ) -> Result<(), String> {
-    let saved = session
-        .call::<api::browser::PolicySet>(PolicyRef { name }, PolicyBody { text, if_revision })?;
+    let saved = session.call::<api::browser::PolicySet>(
+        PolicyRef { name },
+        PolicyBody {
+            text,
+            if_revision,
+            position,
+        },
+    )?;
     print(json, &saved, || lines(describe::policy_saved(&saved)))
 }
 
@@ -152,7 +187,7 @@ fn edit(session: &mut Session, name: String, json: bool) -> Result<(), String> {
         }
     };
 
-    match save(session, name.clone(), text, Some(revision), json) {
+    match save(session, name.clone(), text, Some(revision), None, json) {
         Ok(()) => {
             let _ = fs::remove_file(&file);
             Ok(())

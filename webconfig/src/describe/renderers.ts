@@ -55,6 +55,7 @@ export const renderers: Record<string, (input: any) => unknown> = {
   "browser::policies": (input) => lines(browser.policies(input)),
   "browser::policy_saved": (input) => input.map((one: any) => lines(browser.policySaved(one))),
   "browser::policy_removed": (input) => input.map((one: any) => lines(browser.policyRemoved(one))),
+  "browser::policy_moved": (input) => input.map((one: any) => lines(browser.policyMoved(one))),
   "browser::effective": (input) => lines(browser.effective(input)),
   // --- network, wifi and certificates ---
   "net::change": (input) => lines(net.change(input)),

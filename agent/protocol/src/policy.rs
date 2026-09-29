@@ -153,7 +153,8 @@ pub fn check(text: &str) -> Result<Map<String, Value>, PolicyError> {
             "a policy is one JSON object: { \"PolicyName\": value, ... }",
         ));
     };
-    for key in entries.keys() {
+    // In sorted order, so every client names the same key first.
+    for key in &keys(&entries) {
         let named = key
             .chars()
             .next()
@@ -171,6 +172,15 @@ pub fn check(text: &str) -> Result<Map<String, Value>, PolicyError> {
         }
     }
     Ok(entries)
+}
+
+/// The policies a document sets, sorted. serde_json's map keeps the typed
+/// order where a crate in the build turns on `preserve_order` and sorts
+/// where none does, so anything shown goes through this.
+pub fn keys(entries: &Map<String, Value>) -> Vec<String> {
+    let mut keys: Vec<String> = entries.keys().cloned().collect();
+    keys.sort();
+    keys
 }
 
 /// Chromium's policy loader accepts `//` and `/* */` comments and trailing
@@ -253,6 +263,8 @@ pub fn strict_json(text: &str) -> String {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct PolicyInfo {
     pub name: String,
+    /// From 1, the highest priority: it wins a policy others set too.
+    pub position: u32,
     pub revision: String,
     /// The policies it sets, sorted.
     pub keys: Vec<String>,
@@ -281,17 +293,28 @@ pub struct PolicyOverlap {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct PolicySaved {
     pub name: String,
+    pub position: u32,
     pub revision: String,
     pub keys: Vec<String>,
-    /// The stored text was already this; nothing was written.
+    /// The stored text and position were already these; nothing was written.
     pub unchanged: bool,
     /// Keys it sets that the image sets too: its value wins.
     pub overrides_image: Vec<String>,
-    /// Keys it takes from a document earlier by name, which it wins.
+    /// Keys a document lower in priority sets too, which this one wins.
     pub shadows: Vec<PolicyOverlap>,
-    /// Keys a document later by name sets too, which win over this one.
+    /// Keys a document higher in priority sets too, which win over this one.
     pub shadowed_by: Vec<PolicyOverlap>,
     /// The browser was restarted to read the new policy.
+    pub restarted: bool,
+}
+
+/// What moving a document did.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PolicyMoved {
+    pub name: String,
+    /// Where it is now: what was asked, held to 1 and the number of
+    /// documents.
+    pub position: u32,
     pub restarted: bool,
 }
 

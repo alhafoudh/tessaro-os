@@ -47,9 +47,9 @@ module AgentE2E
       kiosk = guest.kiosk_pid
 
       out = policies("set e2e /tmp/e2e-policy.json")
-      expect(out).to include("saved e2e: URLBlocklist").and include("the browser restarted")
+      expect(out).to include("saved e2e at position 1: URLBlocklist").and include("the browser restarted")
       expect(guest.run("cat #{POLICIES_POLICY}")).to include('"URLBlocklist"').and include("blocked.invalid")
-      journal.wait_for(/^browser policy e2e \(URLBlocklist\) stored by /, timeout: 10)
+      journal.wait_for(/^browser policy e2e \(URLBlocklist\) stored at position 1 by /, timeout: 10)
       wait_for_navigation("net::ERR_BLOCKED_BY_ADMINISTRATOR", timeout: 60, what: "block the host")
       expect(guest.kiosk_pid).not_to eq(kiosk), "the browser was not restarted"
 
@@ -68,6 +68,35 @@ module AgentE2E
       wait_for_navigation("net::ERR_NAME_NOT_RESOLVED", timeout: 60, what: "unblock the host")
     ensure
       policies("remove e2e", allow_failure: true)
+    end
+
+    it "policies: the one higher in the list wins, and moving it changes which" do
+      guest.run(%(printf '{"URLBlocklist": ["low.invalid"]}' > /tmp/e2e-low.json))
+      guest.run(%(printf '{"URLBlocklist": ["high.invalid"]}' > /tmp/e2e-high.json))
+      policies("set first /tmp/e2e-high.json")
+      expect(policies("set second /tmp/e2e-low.json")).to include("saved second at position 2")
+        .and include("URLBlocklist is also set by first, which wins")
+      expect(policies("list")).to match(/^1\.\s+first\s/).and match(/^2\.\s+second\s/)
+      expect(policies("show")).to match(/^policy first\s+URLBlocklist \["high.invalid"\]$/)
+
+      expect(policies("move second 1")).to include("moved second to position 1")
+        .and include("the browser restarted")
+      expect(policies("list")).to match(/^1\.\s+second\s/).and match(/^2\.\s+first\s/)
+      expect(policies("show")).to match(/^policy second\s+URLBlocklist \["low.invalid"\]$/)
+      rendered = guest.run("cat #{POLICIES_POLICY}")
+      expect(rendered).to include("low.invalid")
+      expect(rendered).not_to include("high.invalid")
+
+      # Past the last is the last; already there, nothing moves or restarts.
+      expect(policies("move second 9")).to include("moved second to position 2")
+      kiosk = guest.kiosk_pid
+      unmoved = policies("move second 5")
+      expect(unmoved).to include("moved second to position 2")
+      expect(unmoved).not_to include("the browser restarted")
+      expect(guest.kiosk_pid).to eq(kiosk), "a move to where it was restarted the browser"
+    ensure
+      policies("remove first", allow_failure: true)
+      policies("remove second", allow_failure: true)
     end
 
     it "policies: a key the device sets, a mistake and a stale revision are refused" do

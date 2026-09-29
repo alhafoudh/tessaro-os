@@ -1548,6 +1548,58 @@
         }
       }
     },
+    "/api/v1/browser/policies/{name}/position": {
+      "put": {
+        "operationId": "browser.PolicyMove",
+        "tags": [
+          "browser"
+        ],
+        "summary": "Move a browser policy in the priority order, the others shifting to make room. The browser restarts when the merged policy changes.",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The browser policy's name."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PolicyPositionBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyMoved"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/browser/policy": {
       "get": {
         "operationId": "browser.Effective",
@@ -5656,6 +5708,12 @@
           "name": {
             "type": "string"
           },
+          "position": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "From 1, the highest priority: it wins a policy others set too."
+          },
           "revision": {
             "type": "string"
           },
@@ -5676,6 +5734,7 @@
         },
         "required": [
           "name",
+          "position",
           "revision",
           "keys"
         ],
@@ -5726,6 +5785,15 @@
               "null"
             ],
             "description": "Refuse unless the stored document is still at this revision; `\"\"`\nrefuses unless there is none yet. Unconditional without it."
+          },
+          "position": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "description": "Where it goes in the priority order, from 1, the highest. A new one\ngoes to the bottom without it; a stored one stays where it is."
           }
         },
         "required": [
@@ -5738,6 +5806,11 @@
           "name": {
             "type": "string"
           },
+          "position": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
           "revision": {
             "type": "string"
           },
@@ -5749,7 +5822,7 @@
           },
           "unchanged": {
             "type": "boolean",
-            "description": "The stored text was already this; nothing was written."
+            "description": "The stored text and position were already these; nothing was written."
           },
           "overrides_image": {
             "type": "array",
@@ -5763,14 +5836,14 @@
             "items": {
               "$ref": "#/components/schemas/PolicyOverlap"
             },
-            "description": "Keys it takes from a document earlier by name, which it wins."
+            "description": "Keys a document lower in priority sets too, which this one wins."
           },
           "shadowed_by": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/PolicyOverlap"
             },
-            "description": "Keys a document later by name sets too, which win over this one."
+            "description": "Keys a document higher in priority sets too, which win over this one."
           },
           "restarted": {
             "type": "boolean",
@@ -5779,6 +5852,7 @@
         },
         "required": [
           "name",
+          "position",
           "revision",
           "keys",
           "unchanged",
@@ -5804,6 +5878,43 @@
           "policy"
         ],
         "description": "A key set in more than one place, and the document on the other side."
+      },
+      "PolicyPositionBody": {
+        "type": "object",
+        "properties": {
+          "position": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "From 1, the highest priority; past the last, the last."
+          }
+        },
+        "required": [
+          "position"
+        ]
+      },
+      "PolicyMoved": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "position": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "Where it is now: what was asked, held to 1 and the number of\ndocuments."
+          },
+          "restarted": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "position",
+          "restarted"
+        ],
+        "description": "What moving a document did."
       },
       "PolicyRemoved": {
         "type": "object",

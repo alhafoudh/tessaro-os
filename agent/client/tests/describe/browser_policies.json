@@ -8,22 +8,30 @@
         "PrintingEnabled"
       ],
       "name": "lockdown",
+      "position": 1,
       "revision": "aa"
     },
     {
       "keys": [],
       "name": "empty",
+      "position": 2,
       "revision": "bb"
     },
     {
       "keys": [],
       "name": "old",
+      "position": 10,
       "problem": "ProxyMode is set by the device itself; use `tessaro-ctl network proxy set URL`",
       "revision": "cc"
     }
   ],
   "output": [
     [
+      [
+        "muted",
+        "1.",
+        4
+      ],
       [
         "heading",
         "lockdown",
@@ -42,6 +50,11 @@
     ],
     [
       [
+        "muted",
+        "2.",
+        4
+      ],
+      [
         "heading",
         "empty",
         20
@@ -58,6 +71,11 @@
       ]
     ],
     [
+      [
+        "muted",
+        "10.",
+        4
+      ],
       [
         "heading",
         "old",

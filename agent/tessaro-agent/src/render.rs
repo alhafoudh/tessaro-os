@@ -157,9 +157,8 @@ pub fn device_origins(effective: &state::Effective, selftest_origin: &str) -> Ve
 }
 
 /// The Chromium policy: the image's `base`, then each browser policy in
-/// `user` in name order, so a later name wins a key two of them set
-/// (Chromium's own rule for the files of one directory), then the device's
-/// own entries, which no document may carry:
+/// `user` from the lowest priority up, so position 1 wins a key two of them
+/// set, then the device's own entries, which no document may carry:
 ///
 /// * the grants that follow the kiosk origin (`ORIGIN_POLICIES`): the device
 ///   APIs and the microphone, each without a prompt nobody is there to
@@ -186,7 +185,8 @@ pub fn policy(
     let mut document: Map<String, Value> = serde_json::from_str(&strict_json(base))
         .map_err(|err| format!("the base policy: {err}"))?;
 
-    for doc in user {
+    // `user` is in priority order, position 1 first: applied last.
+    for doc in user.iter().rev() {
         for (key, value) in &doc.entries {
             document.insert(key.clone(), value.clone());
         }
@@ -233,8 +233,8 @@ pub fn policy(
 }
 
 /// The policy Chromium reads, as rendered, each entry with where it comes
-/// from: the device for its own keys, else the last document by name that
-/// sets it, else the image.
+/// from: the device for its own keys, else the highest-priority document
+/// that sets it, else the image.
 pub fn effective(paths: &Paths, db: &Db) -> Result<Vec<EffectiveEntry>, String> {
     let rendered = match std::fs::read_to_string(&paths.policy) {
         Ok(text) => text,
@@ -255,7 +255,7 @@ pub fn effective(paths: &Paths, db: &Db) -> Result<Vec<EffectiveEntry>, String> 
         .map(|(key, value)| {
             let source = if protocol::policy::managed(&key).is_some() {
                 PolicySource::Device
-            } else if let Some(doc) = docs.iter().rev().find(|doc| doc.entries.contains_key(&key)) {
+            } else if let Some(doc) = docs.iter().find(|doc| doc.entries.contains_key(&key)) {
                 PolicySource::Policy {
                     name: doc.name.clone(),
                 }
@@ -734,9 +734,10 @@ mod tests {
         assert!(parsed.get("CACertificates").is_none());
     }
 
-    fn doc(name: &str, text: &str) -> policies::Checked {
+    fn doc(name: &str, position: u32, text: &str) -> policies::Checked {
         policies::Checked {
             name: name.to_string(),
+            position,
             entries: protocol::policy::check(text).unwrap(),
         }
     }
@@ -747,9 +748,10 @@ mod tests {
         let user = [
             doc(
                 "a",
+                1,
                 r#"{"SpellcheckEnabled": false, "URLBlocklist": ["a"]}"#,
             ),
-            doc("b", r#"{"URLBlocklist": ["b"]}"#),
+            doc("b", 2, r#"{"URLBlocklist": ["b"]}"#),
         ];
         let listen: SocketAddr = "127.0.0.1:3128".parse().unwrap();
         let body = policy(
@@ -765,7 +767,8 @@ mod tests {
         assert_eq!(parsed["TranslateEnabled"], false);
         assert_eq!(parsed["SpellcheckEnabled"], false);
         assert_eq!(parsed["PrintingEnabled"], true);
-        assert_eq!(parsed["URLBlocklist"], serde_json::json!(["b"]));
+        // a is position 1: it wins over b.
+        assert_eq!(parsed["URLBlocklist"], serde_json::json!(["a"]));
         assert_eq!(parsed["ProxyMode"], "fixed_servers");
         assert_eq!(
             parsed["SerialAllowAllPortsForUrls"],
@@ -798,6 +801,7 @@ mod tests {
             "lockdown",
             "// x\n{\"SpellcheckEnabled\": false,}",
             None,
+            None,
         )
         .unwrap();
         assert!(all(&paths, &env, &none, &log).unwrap().policy_changed);
@@ -822,11 +826,40 @@ mod tests {
             Some(PolicySource::Device)
         );
 
+        // A second one setting the same key goes below it, and wins once
+        // it is moved to the top.
+        let winner = |db: &Db| {
+            let body = std::fs::read_to_string(&paths.policy).unwrap();
+            let parsed: Value = serde_json::from_str(&strict_json(&body)).unwrap();
+            let source = effective(&paths, db)
+                .unwrap()
+                .into_iter()
+                .find(|entry| entry.key == "SpellcheckEnabled")
+                .map(|entry| entry.source);
+            (parsed["SpellcheckEnabled"].clone(), source)
+        };
+        policies::store(&db, "second", "{\"SpellcheckEnabled\": true}", None, None).unwrap();
+        assert!(!all(&paths, &env, &none, &log).unwrap().policy_changed);
+        assert_eq!(winner(&db).0, Value::Bool(false));
+        policies::move_to(&db, "second", 1).unwrap();
+        assert!(all(&paths, &env, &none, &log).unwrap().policy_changed);
+        assert_eq!(
+            winner(&db),
+            (
+                Value::Bool(true),
+                Some(PolicySource::Policy {
+                    name: "second".to_string()
+                })
+            )
+        );
+        policies::remove(&db, "second").unwrap();
+        assert!(all(&paths, &env, &none, &log).unwrap().policy_changed);
+
         // One written by hand that the check refuses is left out, not fatal.
         db.update(|stored: &mut policies::Policies| {
             stored
                 .docs
-                .insert("bad".to_string(), "{\"CACertificates\": []}".to_string());
+                .push(("bad".to_string(), "{\"CACertificates\": []}".to_string()));
             Ok(())
         })
         .unwrap();

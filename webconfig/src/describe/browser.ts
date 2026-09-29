@@ -4,11 +4,11 @@
 import type { Schemas } from "../api/client";
 import { Line } from "../text/line";
 
-/** The stored policies, one a line: the name and what it sets, or why it is left out. */
+/** The stored policies in priority order, one a line: the position, the name and what it sets, or why it is left out. */
 export function policies(list: Schemas["PolicyInfo"][]): Line[] {
   if (list.length === 0) return [Line.of("muted", "no browser policies")];
   return list.map((policy) => {
-    const line = new Line().pad("heading", policy.name, 20).text(" ");
+    const line = new Line().pad("muted", `${policy.position}.`, 4).pad("heading", policy.name, 20).text(" ");
     if (policy.problem) return line.add("bad", `left out: ${policy.problem}`);
     if (policy.keys.length === 0) return line.add("muted", "(sets nothing)");
     return line.text(policy.keys.join(", "));
@@ -26,6 +26,7 @@ export function policySaved(saved: Schemas["PolicySaved"]): Line[] {
     Line.of("ok", "saved")
       .text(" ")
       .add("heading", saved.name)
+      .text(` at position ${saved.position}`)
       .text(saved.keys.length === 0 ? ", which sets nothing" : `: ${saved.keys.join(", ")}`),
   ];
   if (saved.overrides_image.length > 0) {
@@ -35,9 +36,18 @@ export function policySaved(saved: Schemas["PolicySaved"]): Line[] {
     lines.push(Line.of("muted", `${overlap.key} wins over the one in ${overlap.policy}`));
   }
   for (const overlap of saved.shadowed_by) {
-    lines.push(Line.of("warn", `${overlap.key} is also set by ${overlap.policy}, which wins: it comes later by name`));
+    lines.push(
+      Line.of("warn", `${overlap.key} is also set by ${overlap.policy}, which wins: it is higher in the list`),
+    );
   }
   return [...lines, ...restarted(saved.restarted)];
+}
+
+export function policyMoved(moved: Schemas["PolicyMoved"]): Line[] {
+  return [
+    Line.of("ok", "moved").text(" ").add("heading", moved.name).text(` to position ${moved.position}`),
+    ...restarted(moved.restarted),
+  ];
 }
 
 export function policyRemoved(removed: Schemas["PolicyRemoved"]): Line[] {
