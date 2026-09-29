@@ -51,8 +51,12 @@ FILES:${PN} += " \
 
 # The module the mirrors add their virtual cameras through, and
 # tessaro-kiosk, whose package carries /usr/bin/tessaro-camera: cargo
-# installs every binary of the agent workspace there.
+# installs every binary of the agent workspace there. The module goes by its
+# recipe's package, v4l2loopback, the meta package module.bbclass makes
+# depend on kernel-module-v4l2loopback: kernel-module-split names that one
+# only at do_package, so bitbake has no provider for it at parse time and
+# never builds the recipe.
 RDEPENDS:${PN} = " \
-    kernel-module-v4l2loopback \
+    v4l2loopback \
     tessaro-kiosk \
 "
