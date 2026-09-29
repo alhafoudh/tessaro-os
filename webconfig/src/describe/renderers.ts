@@ -6,6 +6,7 @@
 
 import type { Fact, Line } from "../text/line";
 import * as audio from "./audio";
+import * as browser from "./browser";
 import * as clock from "./clock";
 import * as schedule from "./schedule";
 import * as storage from "./storage";
@@ -50,6 +51,10 @@ export const renderers: Record<string, (input: any) => unknown> = {
   "time::summary": (input) => spans(time.summary(input)),
   "ping::event_line": (input) => input.map((event: any) => spans(ping.eventLine(event))),
   // --- screen and browser ---
+  "browser::policies": (input) => lines(browser.policies(input)),
+  "browser::policy_saved": (input) => input.map((one: any) => lines(browser.policySaved(one))),
+  "browser::policy_removed": (input) => input.map((one: any) => lines(browser.policyRemoved(one))),
+  "browser::effective": (input) => lines(browser.effective(input)),
   // --- network, wifi and certificates ---
   "net::change": (input) => lines(net.change(input)),
   "net::profile": (input) => lines(net.profile(input)),

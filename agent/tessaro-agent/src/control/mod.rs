@@ -21,14 +21,16 @@
 //! passwords, SSH keys), `network` (WiFi and the profiles' inputs),
 //! `watchers` (what is kept true with nobody asking), `page` (the page on
 //! screen: reload, eval, the keyboard), `screen` (its power), `bridge`
-//! (`window.tessaro` and the injected script) and `schedules` (the
-//! schedules and their systemd units).
+//! (`window.tessaro` and the injected script), `schedules` (the
+//! schedules and their systemd units), `certs` (the extra certificate
+//! authorities) and `policies` (the browser policies).
 
 mod access;
 mod bridge;
 mod certs;
 mod network;
 mod page;
+mod policies;
 mod schedules;
 mod screen;
 mod settings;
@@ -652,6 +654,15 @@ impl Control {
             Command::NetCertAdd { pem } => self.cert_add(caller, pem).await,
             Command::NetCertList => self.cert_list().await.into(),
             Command::NetCertRevoke { cert } => self.cert_revoke(caller, cert).await,
+            Command::BrowserPolicyList => self.policy_list().await.into(),
+            Command::BrowserPolicyGet { name } => self.policy_get(name).await.into(),
+            Command::BrowserPolicySet {
+                name,
+                text,
+                if_revision,
+            } => self.policy_set(caller, name, text, if_revision).await,
+            Command::BrowserPolicyRemove { name } => self.policy_remove(caller, name).await,
+            Command::BrowserPolicyEffective => self.policy_effective().await.into(),
             Command::ScheduleList => self.schedule_list().await.into(),
             Command::ScheduleCreate { spec } => self.schedule_create(caller, spec).await.into(),
             Command::ScheduleSet {
@@ -1949,6 +1960,79 @@ mod tests {
         assert!(reply.result.is_ok(), "{:?}", reply.result);
         assert!(!fx.paths.ca_certs_dir().exists());
         assert!(!policy().contains("\"CACertificates\""));
+    }
+
+    #[tokio::test]
+    async fn a_browser_policy_is_merged_guarded_by_revision_and_reset_away() {
+        let fx = fixture();
+        let holder = claimed(&fx).await;
+        let policy = || fs::read_to_string(&fx.paths.policy).unwrap_or_default();
+        let set = |text: &str, if_revision: Option<&str>| Command::BrowserPolicySet {
+            name: "lockdown".to_string(),
+            text: text.to_string(),
+            if_revision: if_revision.map(str::to_string),
+        };
+        let text = "// kiosk\n{\"PrintingEnabled\": false,}\n";
+
+        // Stored and rendered; the fixture has no systemd to restart the
+        // browser with, which is the only thing that fails.
+        let reply = fx.control.handle(&holder, set(text, Some(""))).await;
+        let failed = reply.result.unwrap_err();
+        assert!(failed.contains("restarting the browser failed"), "{failed}");
+        assert!(policy().contains("\"PrintingEnabled\": false"));
+
+        // The same text again changes nothing, so restarts nothing.
+        let saved: protocol::policy::PolicySaved = ok(&fx.control, &holder, set(text, None)).await;
+        assert!(saved.unchanged && !saved.restarted);
+        assert_eq!(saved.keys, ["PrintingEnabled"]);
+
+        let doc: protocol::policy::PolicyDoc = ok(
+            &fx.control,
+            &holder,
+            Command::BrowserPolicyGet {
+                name: "lockdown".to_string(),
+            },
+        )
+        .await;
+        assert_eq!(doc.text, text);
+        let stale = err(&fx.control, &holder, set("{}", Some("0000"))).await;
+        assert!(stale.contains("changed on the device"), "{stale}");
+        let again = err(&fx.control, &holder, set("{}", Some(""))).await;
+        assert!(again.contains("already exists"), "{again}");
+        let managed = err(
+            &fx.control,
+            &holder,
+            set("{\"ProxyMode\": \"direct\"}", None),
+        )
+        .await;
+        assert!(managed.contains("set by the device"), "{managed}");
+
+        let listed: Vec<protocol::policy::PolicyInfo> =
+            ok(&fx.control, &holder, Command::BrowserPolicyList).await;
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].revision, doc.revision);
+        let effective: Vec<protocol::policy::EffectiveEntry> =
+            ok(&fx.control, &holder, Command::BrowserPolicyEffective).await;
+        assert!(effective.iter().any(|entry| entry.key == "PrintingEnabled"
+            && entry.source
+                == protocol::policy::PolicySource::Policy {
+                    name: "lockdown".to_string()
+                }));
+
+        let _: Done = ok(&fx.control, &holder, Command::Unclaim).await;
+        let listed: Vec<protocol::policy::PolicyInfo> =
+            ok(&fx.control, &Caller::Local, Command::BrowserPolicyList).await;
+        assert_eq!(listed.len(), 1, "an unclaim keeps the configuration");
+
+        let reply = fx
+            .control
+            .handle(&Caller::Local, Command::FactoryReset)
+            .await;
+        assert!(reply.result.is_ok(), "{:?}", reply.result);
+        let listed: Vec<protocol::policy::PolicyInfo> =
+            ok(&fx.control, &Caller::Local, Command::BrowserPolicyList).await;
+        assert!(listed.is_empty());
+        assert!(!policy().contains("PrintingEnabled"));
     }
 
     #[tokio::test]

@@ -364,6 +364,14 @@ impl Control {
         {
             return Reply::err(err);
         }
+        let db = self.db.clone();
+        if let Err(err) = blocking("removing the browser policies", move || {
+            crate::policies::clear(&db)
+        })
+        .await
+        {
+            return Reply::err(err);
+        }
         if let Err(err) = self.clear_schedules().await {
             return Reply::err(err);
         }
@@ -377,7 +385,7 @@ impl Control {
 
         self.log.info(format!(
             "factory reset by {}: settings, tokens, ssh keys, passwords, the network, \
-             certificate authorities, schedules and stored files cleared",
+             certificate authorities, browser policies, schedules and stored files cleared",
             caller.describe()
         ));
         // Weston takes the browser and the agent with it (PartOf=), so every

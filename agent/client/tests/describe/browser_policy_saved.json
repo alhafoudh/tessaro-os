@@ -1,0 +1,144 @@
+{
+  "function": "browser::policy_saved",
+  "input": [
+    {
+      "keys": [
+        "URLBlocklist",
+        "DownloadRestrictions"
+      ],
+      "name": "lockdown",
+      "overrides_image": [
+        "DownloadRestrictions"
+      ],
+      "restarted": true,
+      "revision": "aa",
+      "shadowed_by": [
+        {
+          "key": "URLBlocklist",
+          "policy": "zeta"
+        }
+      ],
+      "shadows": [
+        {
+          "key": "URLBlocklist",
+          "policy": "base"
+        }
+      ],
+      "unchanged": false
+    },
+    {
+      "keys": [],
+      "name": "empty",
+      "overrides_image": [],
+      "restarted": false,
+      "revision": "bb",
+      "shadowed_by": [],
+      "shadows": [],
+      "unchanged": false
+    },
+    {
+      "keys": [
+        "URLBlocklist"
+      ],
+      "name": "lockdown",
+      "overrides_image": [],
+      "restarted": false,
+      "revision": "aa",
+      "shadowed_by": [],
+      "shadows": [],
+      "unchanged": true
+    }
+  ],
+  "output": [
+    [
+      [
+        [
+          "ok",
+          "saved",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "heading",
+          "lockdown",
+          0
+        ],
+        [
+          "plain",
+          ": URLBlocklist, DownloadRestrictions",
+          0
+        ]
+      ],
+      [
+        [
+          "label",
+          "overrides the image's value",
+          0
+        ],
+        [
+          "plain",
+          " DownloadRestrictions",
+          0
+        ]
+      ],
+      [
+        [
+          "muted",
+          "URLBlocklist wins over the one in base",
+          0
+        ]
+      ],
+      [
+        [
+          "warn",
+          "URLBlocklist is also set by zeta, which wins: it comes later by name",
+          0
+        ]
+      ],
+      [
+        [
+          "muted",
+          "the browser restarted to apply it",
+          0
+        ]
+      ]
+    ],
+    [
+      [
+        [
+          "ok",
+          "saved",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "heading",
+          "empty",
+          0
+        ],
+        [
+          "plain",
+          ", which sets nothing",
+          0
+        ]
+      ]
+    ],
+    [
+      [
+        [
+          "muted",
+          "lockdown is unchanged",
+          0
+        ]
+      ]
+    ]
+  ]
+}

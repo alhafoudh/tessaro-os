@@ -23,11 +23,12 @@ use iced::{Element, Length, Task};
 use protocol::api::{
     self, AudioTestBody, CalendarBody, CertBody, CertQuery, DeleteBody, EvalBody, FilesQuery,
     GrowBody, KeyboardBody, MoveBody, NameBody, NavigateBody, PasswordBody, PathBody, PingBody,
-    ProfileQuery, ScheduleChange, ScheduleRef, ScreenPowerBody, SpeedtestBody, SshKeyQuery,
-    TokenRef, WifiJoinBody, WifiScanQuery,
+    PolicyBody, PolicyRef, ProfileQuery, ScheduleChange, ScheduleRef, ScreenPowerBody,
+    SpeedtestBody, SshKeyQuery, TokenRef, WifiJoinBody, WifiScanQuery,
 };
 use protocol::files::{self as store, FileEntry, FileKind, FilesListing};
 use protocol::keys;
+use protocol::policy::{self, EffectiveEntry, PolicyDoc, PolicyInfo, PolicyRemoved, PolicySaved};
 use protocol::{
     size_label, Applied, AudioDevice, AudioStatus, AudioTested, CalendarCheck, CertInfo,
     CertsAdded, Claimed, Connector, Done, HotspotCredentials, Net, NetChange, NetProfile,
@@ -56,6 +57,8 @@ pub struct State {
     profiles: Vec<NetProfile>,
     /// The extra certificate authorities the device trusts.
     certs: Vec<CertInfo>,
+    /// The stored browser policies.
+    policies: Vec<PolicyInfo>,
     wifi: Option<WifiStatus>,
     networks: Vec<WifiNetwork>,
     storage: Option<Storage>,
@@ -108,6 +111,8 @@ pub struct Form {
     note: Option<String>,
     /// Destructive: the device's name must be typed first.
     typed: bool,
+    /// Wide enough for a document.
+    wide: bool,
 }
 
 struct Field {
@@ -118,6 +123,8 @@ struct Field {
     editor: Option<text_editor::Content>,
     /// Typed in `Font::MONOSPACE`: code, where the characters matter.
     mono: bool,
+    /// A multi-line field tall enough for a document.
+    tall: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -145,6 +152,13 @@ enum Action {
     Speedtest,
     Proxy,
     CertRevoke(String),
+    /// A new browser policy (`name` None) or a change to one, saved only
+    /// while the device's copy is still at `revision` (`""`: none yet).
+    PolicySave {
+        name: Option<String>,
+        revision: String,
+    },
+    PolicyRemove(String),
     /// A new schedule, or a change to the one with this id.
     ScheduleSave(Option<String>),
     ScheduleRemove(String),
@@ -184,6 +198,13 @@ pub enum Msg {
     Eval,
     ControlPing,
     FactoryReset,
+    // browser policies
+    PolicyNew,
+    PolicyPick,
+    PolicyPicked(Option<PathBuf>),
+    PolicyEdit,
+    PolicyEffective,
+    PolicyRemove,
     // screen
     UseMode,
     ScreenPower(bool),
@@ -276,6 +297,7 @@ impl Field {
             kind: FieldKind::Text(placeholder),
             editor: None,
             mono: false,
+            tall: false,
         }
     }
 
@@ -288,6 +310,7 @@ impl Field {
             value,
             kind: FieldKind::Multiline(placeholder),
             mono: false,
+            tall: false,
         }
     }
 
@@ -298,6 +321,7 @@ impl Field {
             kind: FieldKind::Secret,
             editor: None,
             mono: false,
+            tall: false,
         }
     }
 
@@ -308,6 +332,7 @@ impl Field {
             kind: FieldKind::Check,
             editor: None,
             mono: false,
+            tall: false,
         }
     }
 
@@ -318,12 +343,19 @@ impl Field {
             kind: FieldKind::Choice(choices),
             editor: None,
             mono: false,
+            tall: false,
         }
     }
 
     /// Typed in the monospace font.
     fn mono(mut self) -> Self {
         self.mono = true;
+        self
+    }
+
+    /// A multi-line field with room for a document.
+    fn tall(mut self) -> Self {
+        self.tall = true;
         self
     }
 
@@ -351,11 +383,17 @@ impl Form {
             error: None,
             note: None,
             typed: false,
+            wide: false,
         }
     }
 
     fn intro(mut self, intro: impl Into<String>) -> Self {
         self.intro = Some(intro.into());
+        self
+    }
+
+    fn wide(mut self) -> Self {
+        self.wide = true;
         self
     }
 
@@ -508,6 +546,7 @@ fn page_of(tag: &str) -> &'static str {
         "net" => "net",
         "wifi" => "wifi",
         "certs" | "cert" => "certs",
+        "policies" | "policy" => "policies",
         "storage" => "storage",
         "audio" => "audio",
         "time" => "time",
@@ -633,6 +672,35 @@ impl Device {
         self.dialog = Some(Dialog::Form(form));
     }
 
+    /// The browser policy editor: `name` for one the device has, at
+    /// `revision`; a name field and `""` for a new one.
+    fn policy_form(&mut self, name: Option<String>, text: &str, revision: String) {
+        let title = match &name {
+            Some(name) => format!("Policy {name}"),
+            None => "New policy".to_string(),
+        };
+        let mut form = Form::new(
+            title,
+            "Save",
+            Action::PolicySave {
+                name: name.clone(),
+                revision,
+            },
+        )
+        .intro("One JSON object of Chromium policies (chromeenterprise.google/policies), merged over the image's; comments and trailing commas are fine. A later name wins a policy two of them set. The browser restarts when the result changes.")
+        .wide();
+        if name.is_none() {
+            form = form.field(Field::text("Name", "", "lockdown"));
+        }
+        form = form.field(
+            Field::multiline("Policy", &[text.to_string()], "{ }")
+                .mono()
+                .tall(),
+        );
+        form.note = Some(policy_note(text));
+        self.form(form);
+    }
+
     /// The timezone dialog: a choice of every zone the device knows, on the
     /// one it has now.
     fn timezone_form(&mut self, zones: &'static [&'static str]) {
@@ -681,6 +749,7 @@ impl Device {
                 self.call("net.profiles", fetch::<api::network::Profiles>());
             }
             Page::Certs => self.call("certs", fetch::<api::network::Certs>()),
+            Page::Policies => self.call("policies", fetch::<api::browser::Policies>()),
             Page::Wifi => {
                 self.call("wifi", fetch::<api::network::Wifi>());
                 self.call(
@@ -724,10 +793,12 @@ impl Device {
             *count = count.saturating_sub(1);
         }
         let result = match tag {
-            "schedule.save" | "schedule.check" => match self.schedule_form_answer(tag, result) {
-                Some(result) => result,
-                None => return,
-            },
+            "schedule.save" | "schedule.check" | "policy.save" => {
+                match self.form_answer(tag, result) {
+                    Some(result) => result,
+                    None => return,
+                }
+            }
             _ => result,
         };
         let value = match result {
@@ -747,19 +818,27 @@ impl Device {
         }
     }
 
-    /// A schedule form's answers belong in the form while it is open: a
-    /// refused save keeps it open with the device's reason, a check says
-    /// when the calendar fires. What is left for the usual path, if
-    /// anything.
-    fn schedule_form_answer(
+    /// A schedule or browser policy form's answers belong in the form while
+    /// it is open: a refused save keeps it open with the device's reason, a
+    /// check says when the calendar fires. What is left for the usual path,
+    /// if anything.
+    fn form_answer(
         &mut self,
         tag: &'static str,
         result: Result<Value, String>,
     ) -> Option<Result<Value, String>> {
         let form = match &mut self.dialog {
-            Some(Dialog::Form(form)) if matches!(form.action, Action::ScheduleSave(_)) => form,
+            Some(Dialog::Form(form))
+                if match form.action {
+                    Action::ScheduleSave(_) => tag.starts_with("schedule."),
+                    Action::PolicySave { .. } => tag == "policy.save",
+                    _ => false,
+                } =>
+            {
+                form
+            }
             // The form is gone: a check means nothing now, a save is logged.
-            _ => return (tag == "schedule.save").then_some(result),
+            _ => return (tag != "schedule.check").then_some(result),
         };
         match (tag, result) {
             ("schedule.check", Ok(value)) => {
@@ -824,6 +903,34 @@ impl Device {
                 self.log(Tone::Ok, format!("revoked {}", revoked.subject));
                 self.pages.selected.remove("certs");
                 self.call("certs", fetch::<api::network::Certs>());
+            }
+            "policies" => self.pages.policies = parse(value)?,
+            "policy.open" => {
+                let doc: PolicyDoc = parse(value)?;
+                self.policy_form(Some(doc.name), &doc.text, doc.revision);
+            }
+            "policy.save" => {
+                let saved: PolicySaved = parse(value)?;
+                for line in describe::browser::policy_saved(&saved) {
+                    self.log_line(line);
+                }
+                self.pages.selected.insert("policies", saved.name);
+                self.call("policies", fetch::<api::browser::Policies>());
+            }
+            "policy.remove" => {
+                let removed: PolicyRemoved = parse(value)?;
+                for line in describe::browser::policy_removed(&removed) {
+                    self.log_line(line);
+                }
+                self.pages.selected.remove("policies");
+                self.call("policies", fetch::<api::browser::Policies>());
+            }
+            "policies.effective" => {
+                let entries: Vec<EffectiveEntry> = parse(value)?;
+                self.show_text(
+                    "Effective policy",
+                    joined(&describe::browser::effective(&entries)),
+                );
             }
             "net.profile" => {
                 let detail: NetProfileDetail = parse(value)?;
@@ -1240,6 +1347,57 @@ impl Device {
                 Err(error) => self.log(Tone::Bad, error),
             },
             Msg::CertPicked(None) => {}
+            Msg::PolicyNew => self.policy_form(None, policy::TEMPLATE, String::new()),
+            Msg::PolicyPick => {
+                return Task::perform(
+                    rfd::AsyncFileDialog::new()
+                        .set_title("Browser policy to open")
+                        .add_filter("Policy", &["json", "jsonc"])
+                        .pick_file(),
+                    |picked| {
+                        Message::P(Msg::PolicyPicked(
+                            picked.map(|handle| handle.path().to_path_buf()),
+                        ))
+                    },
+                )
+            }
+            // Opened as it is, even with a mistake in it: the form says
+            // where, and it can be fixed there before it is sent.
+            Msg::PolicyPicked(Some(file)) => match read_policy_file(&file) {
+                Ok(text) => {
+                    self.policy_form(None, &text, String::new());
+                    if let Some(Dialog::Form(form)) = &mut self.dialog {
+                        if let Some(name) = form.fields.iter_mut().find(|f| f.label == "Name") {
+                            name.value = policy_name_of(&file);
+                        }
+                    }
+                }
+                Err(error) => self.log(Tone::Bad, error),
+            },
+            Msg::PolicyPicked(None) => {}
+            Msg::PolicyEdit => {
+                if let Some(name) = self.selected("policies").cloned() {
+                    self.call(
+                        "policy.open",
+                        call::<api::browser::Policy>(PolicyRef { name }, ()),
+                    );
+                }
+            }
+            Msg::PolicyEffective => {
+                self.call("policies.effective", fetch::<api::browser::Effective>())
+            }
+            Msg::PolicyRemove => {
+                if let Some(name) = self.selected("policies").cloned() {
+                    self.form(
+                        Form::new(
+                            format!("Remove policy {name}"),
+                            "Remove",
+                            Action::PolicyRemove(name),
+                        )
+                        .intro("Its Chromium policies leave the browser's policy, and the browser restarts to drop them."),
+                    );
+                }
+            }
             Msg::CertRevoke => {
                 let chosen = self
                     .selected("certs")
@@ -1677,6 +1835,7 @@ impl Device {
             "inputs" => self.page_update(Msg::UseAudio(keys::AUDIO_INPUT)),
             "modes" => self.page_update(Msg::UseMode),
             "schedules" => self.page_update(Msg::ScheduleEdit),
+            "policies" => self.page_update(Msg::PolicyEdit),
             _ => Task::none(),
         }
     }
@@ -1714,6 +1873,14 @@ impl Device {
                     .certs
                     .iter()
                     .map(|cert| cert.fingerprint.clone())
+                    .collect(),
+            ),
+            Page::Policies => (
+                "policies",
+                self.pages
+                    .policies
+                    .iter()
+                    .map(|info| info.name.clone())
                     .collect(),
             ),
             Page::Schedules => (
@@ -1813,6 +1980,7 @@ impl Device {
             return Task::none();
         };
         let schedule = matches!(form.action, Action::ScheduleSave(_));
+        let policy = matches!(form.action, Action::PolicySave { .. });
         let Some(field) = form.fields.get_mut(at) else {
             return Task::none();
         };
@@ -1825,8 +1993,13 @@ impl Device {
             return Task::none();
         }
         field.value = editor.text();
+        let label = field.label;
+        if policy && label == "Policy" {
+            // The check is local and quick: every edit gets it.
+            form.note = Some(policy_note(&field.value));
+        }
         form.error = None;
-        if schedule && field.label == "Calendar" {
+        if schedule && label == "Calendar" {
             self.check_calendar_soon()
         } else {
             Task::none()
@@ -1894,7 +2067,12 @@ impl Device {
                 self.dialog = Some(Dialog::Form(form));
             }
             // Open until the device takes it: a refusal is shown in it.
-            Ok(()) if matches!(form.action, Action::ScheduleSave(_)) => {
+            Ok(())
+                if matches!(
+                    form.action,
+                    Action::ScheduleSave(_) | Action::PolicySave { .. }
+                ) =>
+            {
                 self.dialog = Some(Dialog::Form(form));
             }
             Ok(()) => {}
@@ -2181,6 +2359,29 @@ impl Device {
                 };
                 self.call("schedule.save", save);
             }
+            Action::PolicySave { name, revision } => {
+                let name = match name {
+                    Some(name) => name.clone(),
+                    None => form.value("Name").trim().to_string(),
+                };
+                policy::check_name(&name)?;
+                let text = form.value("Policy").to_string();
+                policy::check(&text).map_err(|err| err.to_string())?;
+                self.call(
+                    "policy.save",
+                    call::<api::browser::PolicySet>(
+                        PolicyRef { name },
+                        PolicyBody {
+                            text,
+                            if_revision: Some(revision.clone()),
+                        },
+                    ),
+                );
+            }
+            Action::PolicyRemove(name) => self.call(
+                "policy.remove",
+                call::<api::browser::PolicyRemove>(PolicyRef { name: name.clone() }, ()),
+            ),
             Action::ScheduleRemove(id) => self.call(
                 "schedule.remove",
                 call::<api::schedule::Remove>(
@@ -2250,6 +2451,7 @@ impl Device {
                                 .as_ref()
                                 .map(|_| text_editor::Content::with_text(&field.value)),
                             mono: field.mono,
+                            tall: field.tall,
                         })
                         .collect();
                     self.form(again.typed());
@@ -2291,7 +2493,7 @@ impl Device {
                     Some(editor) => text_editor(editor)
                         .placeholder(placeholder)
                         .on_action(move |action| Message::P(Msg::FormEdit(at, action)))
-                        .height(Length::Fixed(96.0))
+                        .height(Length::Fixed(if item.tall { 360.0 } else { 96.0 }))
                         .size(theme::SMALL)
                         .font(font)
                         .into(),
@@ -2322,13 +2524,14 @@ impl Device {
             body = body.push(text(note).size(theme::SMALL).style(theme::muted));
         }
         body = body.push(dialog::error(form.error.clone()));
-        dialog::frame(
+        dialog::frame_sized(
             form.title.clone(),
             body.into(),
             vec![
                 theme::default_button(form.ok, Some(Message::P(Msg::FormOk))),
                 theme::dialog_button("Cancel", Some(Message::Cancel)),
             ],
+            if form.wide { 720.0 } else { 480.0 },
         )
     }
 
@@ -2340,6 +2543,7 @@ impl Device {
             Page::Network => self.network_view(),
             Page::Wifi => self.wifi_view(),
             Page::Certs => self.certs_view(),
+            Page::Policies => self.policies_view(),
             Page::Storage => self.storage_view(),
             Page::Audio => self.audio_view(),
             Page::Time => self.time_view(),
@@ -2943,6 +3147,54 @@ impl Device {
                     .and_then(|_| self.when(Msg::CertRevoke)),
             )],
             vec![self.table("certs", CERTS, certs, Length::Fill)],
+        )
+    }
+
+    fn policies_view(&self) -> Element<'_, Message> {
+        const POLICIES: &[Col] = &[
+            col("Policy", Length::Fixed(180.0)),
+            col("Sets", Length::Fill),
+        ];
+        let policies = self
+            .pages
+            .policies
+            .iter()
+            .map(|info| {
+                let sets: Cell<'_, Message> = match &info.problem {
+                    Some(problem) => cell(format!("left out: {problem}"))
+                        .style(text::danger)
+                        .into(),
+                    None if info.keys.is_empty() => {
+                        cell("(sets nothing)").style(theme::muted).into()
+                    }
+                    None => cell(info.keys.join(", ")).into(),
+                };
+                (
+                    info.name.clone(),
+                    vec![cell(info.name.clone()).into(), sets],
+                )
+            })
+            .collect();
+        self.page(
+            "policies",
+            vec![
+                action("New policy ...", self.when(Msg::PolicyNew)),
+                action("Open a file ...", self.when(Msg::PolicyPick)),
+                action("Effective policy", self.when(Msg::PolicyEffective)),
+            ],
+            vec![
+                action(
+                    "Edit policy ...",
+                    self.selected("policies")
+                        .and_then(|_| self.when(Msg::PolicyEdit)),
+                ),
+                action(
+                    "Remove policy",
+                    self.selected("policies")
+                        .and_then(|_| self.when(Msg::PolicyRemove)),
+                ),
+            ],
+            vec![self.table("policies", POLICIES, policies, Length::Fill)],
         )
     }
 
@@ -3592,6 +3844,7 @@ pub(super) fn page_key(page: Page) -> &'static str {
         Page::Network => "net",
         Page::Wifi => "wifi",
         Page::Certs => "certs",
+        Page::Policies => "policies",
         Page::Storage => "storage",
         Page::Audio => "audio",
         Page::Time => "time",
@@ -3622,6 +3875,58 @@ fn stream_line(owner: &str, value: &Value) -> Option<Line> {
     Some(Line::plain(value.to_string()))
 }
 
+/// What the policy editor says under the text: what it sets, or the
+/// device's own check's objection, with its line.
+fn policy_note(text: &str) -> String {
+    match policy::check(text) {
+        Ok(entries) if entries.is_empty() => "sets nothing".to_string(),
+        Ok(entries) => format!(
+            "sets {}",
+            entries.keys().cloned().collect::<Vec<_>>().join(", ")
+        ),
+        Err(err) => err.to_string(),
+    }
+}
+
+/// A policy file's text as it is, checked only for size: the editor shows
+/// what is wrong with it.
+fn read_policy_file(file: &std::path::Path) -> Result<String, String> {
+    let size = std::fs::metadata(file)
+        .map_err(|err| format!("{}: {err}", file.display()))?
+        .len();
+    if size > policy::POLICY_TEXT_MAX as u64 {
+        return Err(format!(
+            "{}: {size} bytes; a policy is at most {}",
+            file.display(),
+            policy::POLICY_TEXT_MAX
+        ));
+    }
+    std::fs::read_to_string(file).map_err(|err| format!("{}: {err}", file.display()))
+}
+
+/// A name for the policy in `file`: its stem, as far as it is one.
+fn policy_name_of(file: &std::path::Path) -> String {
+    let stem = file
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    let name: String = stem
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '_' {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>()
+        .trim_start_matches(['-', '_'])
+        .chars()
+        .take(policy::POLICY_NAME_MAX)
+        .collect();
+    name
+}
+
 /// Shared lines as one text, for a dialog that shows plain text.
 fn joined(lines: &[Line]) -> String {
     lines
@@ -3635,6 +3940,21 @@ fn joined(lines: &[Line]) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn a_policy_file_suggests_a_name_the_device_takes() {
+        let name = policy_name_of(std::path::Path::new("/tmp/Corp Lockdown.v2.json"));
+        assert_eq!(name, "corp-lockdown-v2");
+        assert!(policy::check_name(&name).is_ok());
+        assert_eq!(policy_name_of(std::path::Path::new("-x.json")), "x");
+    }
+
+    #[test]
+    fn the_policy_note_says_what_it_sets_or_where_it_is_wrong() {
+        assert_eq!(policy_note("{\"B\": 1, \"A\": 2}"), "sets A, B");
+        assert_eq!(policy_note("{}"), "sets nothing");
+        assert!(policy_note("{\n\"A\": 1\n\"B\": 2}").starts_with("line 3 column 1: "));
+    }
 
     #[test]
     fn a_ping_event_reads_as_a_line() {

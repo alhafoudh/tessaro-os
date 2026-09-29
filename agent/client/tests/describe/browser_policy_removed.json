@@ -1,0 +1,60 @@
+{
+  "function": "browser::policy_removed",
+  "input": [
+    {
+      "name": "lockdown",
+      "restarted": true
+    },
+    {
+      "name": "empty",
+      "restarted": false
+    }
+  ],
+  "output": [
+    [
+      [
+        [
+          "ok",
+          "removed",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "heading",
+          "lockdown",
+          0
+        ]
+      ],
+      [
+        [
+          "muted",
+          "the browser restarted to apply it",
+          0
+        ]
+      ]
+    ],
+    [
+      [
+        [
+          "ok",
+          "removed",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "heading",
+          "empty",
+          0
+        ]
+      ]
+    ]
+  ]
+}

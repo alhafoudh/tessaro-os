@@ -25,6 +25,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::files::{FileBegun, FilesListing};
+use crate::policy::{EffectiveEntry, PolicyDoc, PolicyInfo, PolicyRemoved, PolicySaved};
 use crate::{
     Applied, AudioStatus, AudioTested, CalendarCheck, CertInfo, CertsAdded, Claimed, Command,
     Connector, Done, EvalResult, HotspotCredentials, ImageUpload, JobPage, JobStarted, KeyInfo,
@@ -441,6 +442,24 @@ pub struct RestartBody {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct NavigateBody {
     pub url: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PolicyRef {
+    /// The browser policy's name.
+    pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PolicyBody {
+    /// The document as typed: one JSON object of Chromium policies, `//`
+    /// and `/* */` comments and trailing commas allowed. At most
+    /// `POLICY_TEXT_MAX` bytes.
+    pub text: String,
+    /// Refuse unless the stored document is still at this revision; `""`
+    /// refuses unless there is none yet. Unconditional without it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub if_revision: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -994,6 +1013,33 @@ pub mod browser {
                 await_promise: body.await_promise,
                 user_gesture: body.user_gesture,
             });
+
+        /// The stored browser policies, without their text.
+        Policies: Get "/api/v1/browser/policies" (Empty, ()) -> Vec<PolicyInfo>
+            = |_, _| Action::Run(Command::BrowserPolicyList);
+
+        /// One stored browser policy, its text as typed.
+        Policy: Get "/api/v1/browser/policies/{name}" (PolicyRef, ()) -> PolicyDoc
+            = |target, _| Action::Run(Command::BrowserPolicyGet { name: target.name });
+
+        /// Store a browser policy, replacing one of that name. The browser
+        /// restarts when the merged policy changes.
+        PolicySet: Put "/api/v1/browser/policies/{name}" (PolicyRef, PolicyBody) -> PolicySaved
+            = |target, body| Action::Run(Command::BrowserPolicySet {
+                name: target.name,
+                text: body.text,
+                if_revision: body.if_revision,
+            });
+
+        /// Remove a browser policy. The browser restarts when the merged
+        /// policy changes.
+        PolicyRemove: Delete "/api/v1/browser/policies/{name}" (PolicyRef, ()) -> PolicyRemoved
+            = |target, _| Action::Run(Command::BrowserPolicyRemove { name: target.name });
+
+        /// The merged policy Chromium reads, each entry with where it
+        /// comes from.
+        Effective: Get "/api/v1/browser/policy" (Empty, ()) -> Vec<EffectiveEntry>
+            = |_, _| Action::Run(Command::BrowserPolicyEffective);
     }
 }
 

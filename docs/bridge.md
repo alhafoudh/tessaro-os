@@ -98,7 +98,9 @@ Nothing under `access`, `ssh`, `update` or `device factory-reset`, and no
 `config set` of anything but `data.*`, is reachable from a page. That
 includes Webconfig's browser sessions and tickets (`access/session`,
 `access/ticket`): they are credentials, and the kiosk page is not a
-manager of the device.
+manager of the device. Nor are the browser policies (`browser policies`),
+read or written: they are what the page may do, and a page must not read
+or loosen its own restrictions.
 
 * **`data.set` restarts nothing when no template uses the key.** A `data.*` is
   read by the templates and by this bridge only, so a value no template names

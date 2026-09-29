@@ -14,6 +14,7 @@ import { Files } from "./Files";
 import { Log } from "./Log";
 import { Network } from "./Network";
 import { Overview } from "./Overview";
+import { Policies } from "./Policies";
 import { QuickSetup } from "./QuickSetup";
 import { Schedules } from "./Schedules";
 import { Screen } from "./Screen";
@@ -35,6 +36,7 @@ export const PAGES: PageInfo[] = [
   { path: "overview", title: "Overview", scope: { prefix: "device" }, component: Overview },
   { path: "screen", title: "Screen", scope: { prefix: "screen" }, component: Screen },
   { path: "browser", title: "Browser", scope: { prefix: "browser" }, component: Browser },
+  { path: "policies", title: "Policies", component: Policies },
   { path: "network", title: "Network", scope: { prefix: "network", except: "network.wifi" }, component: Network },
   { path: "wifi", title: "WiFi", scope: { prefix: "network.wifi" }, component: Wifi },
   { path: "certificates", title: "Certificates", component: Certificates },

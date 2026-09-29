@@ -3,6 +3,7 @@
 //! functions of what the device sent; nothing here talks to it.
 
 pub mod audio;
+pub mod browser;
 pub mod device;
 pub mod net;
 pub mod time;

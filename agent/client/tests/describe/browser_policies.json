@@ -1,0 +1,78 @@
+{
+  "function": "browser::policies",
+  "input": [
+    {
+      "keys": [
+        "URLBlocklist",
+        "URLAllowlist",
+        "PrintingEnabled"
+      ],
+      "name": "lockdown",
+      "revision": "aa"
+    },
+    {
+      "keys": [],
+      "name": "empty",
+      "revision": "bb"
+    },
+    {
+      "keys": [],
+      "name": "old",
+      "problem": "ProxyMode is set by the device itself; use `tessaro-ctl network proxy set URL`",
+      "revision": "cc"
+    }
+  ],
+  "output": [
+    [
+      [
+        "heading",
+        "lockdown",
+        20
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "plain",
+        "URLBlocklist, URLAllowlist, PrintingEnabled",
+        0
+      ]
+    ],
+    [
+      [
+        "heading",
+        "empty",
+        20
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "(sets nothing)",
+        0
+      ]
+    ],
+    [
+      [
+        "heading",
+        "old",
+        20
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "bad",
+        "left out: ProxyMode is set by the device itself; use `tessaro-ctl network proxy set URL`",
+        0
+      ]
+    ]
+  ]
+}

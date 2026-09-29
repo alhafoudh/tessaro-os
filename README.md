@@ -208,6 +208,31 @@ tessaro-ctl browser zoom 125     # like Ctrl+/- in Chrome, 25 to 500; 100 is no 
 It is the same zoom Ctrl+/- sets in a desktop Chrome, for every site and on
 top of `screen.scale`. The browser restarts to take it, so the page reloads.
 
+### Chromium policies
+
+Any [Chromium policy](https://chromeenterprise.google/policies/) the image
+does not set can be added as a named document, merged over the image's own:
+
+```jsonc
+// lockdown.json: comments and trailing commas are fine
+{
+  "URLBlocklist": ["*"],
+  "URLAllowlist": ["https://menu.example.com"],
+  "PrintingEnabled": false,
+}
+```
+
+```sh
+tessaro-ctl browser policies set lockdown lockdown.json   # or `edit lockdown` in $EDITOR
+tessaro-ctl browser policies show                          # what Chromium reads, and from where
+```
+
+The GUI and Webconfig edit them in place on their Policies page. A mistake is
+refused with its line before anything is saved, and so is a policy the device
+sets itself (its site's device permissions, the proxy, the extra certificate
+authorities), with the command that does. The browser restarts when the
+result changes.
+
 ### Files for offline use
 
 ```

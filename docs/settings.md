@@ -157,8 +157,9 @@ and how a client authenticates are in [api.md](api.md).
   exactly when a token exists, so revoking the last one unclaims it.
 * **`access unclaim`** removes every token and ssh key and empties the root password;
   **`device factory-reset`** also wipes the settings, the extra certificate
-  authorities (see **Certificates** in [networking.md](networking.md)) and
-  the schedules ([scheduler.md](scheduler.md)), which an unclaim keeps. After either, the first client
+  authorities (see **Certificates** in [networking.md](networking.md)), the
+  browser policies (see **Policies** in [kiosk-browser.md](kiosk-browser.md))
+  and the schedules ([scheduler.md](scheduler.md)), which an unclaim keeps. After either, the first client
   to claim wins again. The TLS key survives both, so pins stay valid.
 * `access password set` (prompted, a `PASSWORD` argument, `--password-stdin`,
   or `--random`) changes the root password on a

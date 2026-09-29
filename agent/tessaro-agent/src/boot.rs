@@ -14,8 +14,8 @@
 //!    in the journal once (`updates::report`).
 //! 2. **Factory reset**, if `/data/tessaro/factory-reset` exists or the
 //!    kernel command line says `tessaro.factory_reset`: settings, tokens, ssh
-//!    keys, root password, extra certificate authorities, schedules and
-//!    stored files cleared - the fresh-install state.
+//!    keys, root password, extra certificate authorities, browser policies,
+//!    schedules and stored files cleared - the fresh-install state.
 //!    What a reset left of the file store to delete is finished every boot.
 //!    The marker is removed
 //!    afterwards; the command-line flag is meant to be typed at the boot
@@ -196,6 +196,9 @@ fn factory_reset(paths: &Paths, db: &Db, log: &Log) {
     if let Err(err) = crate::certs::clear(&paths.ca_certs_dir()) {
         log.info(format!("factory reset: the certificate authorities: {err}"));
     }
+    if let Err(err) = crate::policies::clear(db) {
+        log.info(format!("factory reset: {err}"));
+    }
     if let Err(err) = crate::schedules::clear(db, &paths.schedule_runs_dir()) {
         log.info(format!("factory reset: the schedules: {err}"));
     }
@@ -206,7 +209,7 @@ fn factory_reset(paths: &Paths, db: &Db, log: &Log) {
     }
     log.info(
         "factory reset: settings, tokens, ssh keys, root and network passwords, \
-         certificate authorities, schedules, stored files cleared",
+         certificate authorities, browser policies, schedules, stored files cleared",
     );
 }
 

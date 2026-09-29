@@ -1,7 +1,8 @@
 //! `/data/tessaro/tessaro.db`: everything the device keeps about itself.
 //!
-//! The settings, the tokens, the network passwords, the schedules and the
-//! network transaction's record, as tables of one SQLite store opened
+//! The settings, the tokens, the network passwords, the schedules, the
+//! browser policies and the network transaction's record, as tables of one
+//! SQLite store opened
 //! through `tessaro-db` (WAL, `synchronous=FULL`, migrations, a broken file
 //! set aside). The schema is the migrations in `migrations/device/`; the
 //! `sqlite3` CLI on the image reads and edits it by hand.

@@ -11,6 +11,7 @@ pub mod api;
 pub mod files;
 pub mod keys;
 pub mod openapi;
+pub mod policy;
 pub mod sshkey;
 
 use std::collections::BTreeMap;
@@ -249,6 +250,27 @@ pub enum Command {
         #[serde(default)]
         user_gesture: bool,
     },
+    /// The stored browser policies (`policy`), without their text.
+    BrowserPolicyList,
+    /// One stored browser policy, its text as typed.
+    BrowserPolicyGet {
+        name: String,
+    },
+    /// Store a browser policy under `name`, replacing one of that name, and
+    /// merge it into the policy Chromium reads. With `if_revision`, only
+    /// while the stored one is still at that revision; `""` only while
+    /// there is none.
+    BrowserPolicySet {
+        name: String,
+        text: String,
+        #[serde(default)]
+        if_revision: Option<String>,
+    },
+    BrowserPolicyRemove {
+        name: String,
+    },
+    /// The merged policy Chromium reads, each entry with where it comes from.
+    BrowserPolicyEffective,
     /// Show or hide the on-screen keyboard. Showing focuses `selector`, or
     /// the field that already has the focus.
     Keyboard {

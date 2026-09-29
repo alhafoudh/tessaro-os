@@ -26,6 +26,12 @@ module AgentE2E
       end)
     end
 
+    def put(path, body, headers: {})
+      request(Net::HTTP::Put.new(path, { "Content-Type" => "application/json" }.merge(headers)).tap do
+        _1.body = JSON.generate(body)
+      end)
+    end
+
     def delete(path, headers: {}) = request(Net::HTTP::Delete.new(path, headers))
 
     def origin = "https://127.0.0.1:#{@port}"

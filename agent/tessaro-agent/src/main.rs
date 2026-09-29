@@ -45,6 +45,7 @@ mod notify;
 mod offline;
 mod paths;
 mod ping;
+mod policies;
 mod ports;
 mod power;
 mod probe;

@@ -1,0 +1,14 @@
+// A browser policy: Chromium policies by name, merged over the image's.
+// Every policy is listed at https://chromeenterprise.google/policies/
+// Comments and trailing commas are fine. Check the result on chrome://policy.
+{
+  // Only these sites open; everything else is blocked.
+  "URLBlocklist": ["*"],
+  "URLAllowlist": [
+    "https://shop.example.com",
+  ],
+
+  "PrintingEnabled": false,
+  "PasswordManagerEnabled": false,
+  "DownloadRestrictions": 3, // block every download
+}

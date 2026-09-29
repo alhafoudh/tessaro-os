@@ -10,7 +10,7 @@ touch one row instead of rewriting a whole document.
 
 | Store | Opened by | Tables | Why there |
 | --- | --- | --- | --- |
-| `/data/tessaro/tessaro.db` | `tessaro-agent` and `tessaro-agent boot` (`db.rs`) | `settings`, `state`, `tokens`, `secrets`, `schedules`, `net_txn`, `net_last` | on `/data`, so it survives reboots and updates |
+| `/data/tessaro/tessaro.db` | `tessaro-agent` and `tessaro-agent boot` (`db.rs`) | `settings`, `state`, `tokens`, `secrets`, `schedules`, `browser_policies`, `net_txn`, `net_last` | on `/data`, so it survives reboots and updates |
 | `/run/tessaro-kiosk/sessions.db` | `tessaro-agent` (`api/sessions.rs`) | `sessions` | on tmpfs, so a reboot ends every browser session |
 | `<config dir>/tessaro.db` | `tessaro-ctl`, `tessaro-gui` (`agent/client/src/store.rs`) | `nodes`, `gui_prefs` | the config dir is `TESSARO_CONFIG_DIR`, else `$XDG_CONFIG_HOME/tessaro`, else `~/.config/tessaro` |
 
@@ -51,7 +51,8 @@ look at.
 **`db.rs` is the only way the agent reaches `tessaro.db`.** A type kept there
 implements `Stored`: it loads itself from its tables and saves itself back,
 whole, inside the transaction it is given (`State` in `state.rs`, `Auth` in
-`auth.rs`, `Secrets` in `secrets.rs`, `Schedules` in `schedules.rs`).
+`auth.rs`, `Secrets` in `secrets.rs`, `Schedules` in `schedules.rs`,
+`Policies` in `policies.rs`).
 
 * **`read` never fails.** Whatever goes wrong is logged and the default comes
   back, so the boot oneshot always renders something and the agent always
@@ -65,7 +66,12 @@ whole, inside the transaction it is given (`State` in `state.rs`, `Auth` in
   and the settings to `settings` together, so a power cut cannot leave a
   password for a network the settings do not name.
 * **A factory reset clears rows, not the file**: `tokens`, `settings`,
-  `state`, `secrets`, `schedules`. The store and its migration history stay.
+  `state`, `secrets`, `schedules`, `browser_policies`. The store and its
+  migration history stay.
+* **`browser_policies` holds each document's text as typed**, comments
+  included; the check runs on save and again at every render, which leaves
+  out one edited here that no longer passes (see **Policies** in
+  [kiosk-browser.md](kiosk-browser.md)).
 * **The settings are sparse**: a key that was never set has no row, so it
   follows the image's default (see [settings.md](settings.md)).
 * **`net_txn` is the network transaction's record** while a change runs, and

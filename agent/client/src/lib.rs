@@ -24,6 +24,7 @@ pub mod journal;
 pub mod network;
 pub mod nodes;
 pub mod ping;
+pub mod policies;
 pub mod report;
 pub mod schedule;
 pub mod speedtest;

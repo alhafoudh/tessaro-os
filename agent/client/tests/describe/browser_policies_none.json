@@ -1,0 +1,13 @@
+{
+  "function": "browser::policies",
+  "input": [],
+  "output": [
+    [
+      [
+        "muted",
+        "no browser policies",
+        0
+      ]
+    ]
+  ]
+}

@@ -15,6 +15,7 @@ mod connect;
 mod devtools;
 mod files;
 mod net;
+mod policies;
 mod progress;
 mod prompt;
 mod schedule;
@@ -484,6 +485,14 @@ enum BrowserCmd {
         #[arg(long)]
         gesture: bool,
     },
+    /// Extra Chromium policies, merged over the image's: named documents,
+    /// set from a file or edited in $EDITOR. The device sets the device-API
+    /// origins, the proxy and CACertificates itself.
+    ///
+    ///   tessaro-ctl browser policies set lockdown lockdown.json
+    ///   tessaro-ctl browser policies show
+    #[command(subcommand)]
+    Policies(policies::PoliciesCmd),
 }
 
 #[derive(Subcommand)]
@@ -639,6 +648,9 @@ fn run(cli: Cli) -> Result<(), String> {
     match &cli.command {
         Cmd::Nodes(NodesCmd::List { wait }) => return list_nodes(&nodes, *wait, cli.json),
         Cmd::Nodes(NodesCmd::Forget { node }) => return forget(&mut nodes, node),
+        Cmd::Browser(BrowserCmd::Policies(policies::PoliciesCmd::Check { file })) => {
+            return policies::check(file, cli.json)
+        }
         _ => {}
     }
 
@@ -688,6 +700,7 @@ fn run(cli: Cli) -> Result<(), String> {
             })
         }
         Cmd::Network(what) => net::run(&mut session, what, json),
+        Cmd::Browser(BrowserCmd::Policies(what)) => policies::run(&mut session, what, json),
         Cmd::Storage(what) => storage::run(&mut session, what, json),
         Cmd::Device(DeviceCmd::Ping { count, interval }) => {
             net::ping(&mut session, json, count, interval)

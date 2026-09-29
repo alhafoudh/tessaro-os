@@ -103,8 +103,9 @@ Things to know:
   The loader accepts `//` comments and trailing commas, so the file documents
   itself. A syntax error drops the **whole file** with one `SYSLOG(WARNING)`,
   so confirm on `chrome://policy` after editing. The agent renders it
-  (`render.rs`), and `CACertificates` in it is `tessaro-ctl network certs`
-  (see **Certificates** in [networking.md](networking.md)).
+  (`render.rs`), `CACertificates` in it is `tessaro-ctl network certs`
+  (see **Certificates** in [networking.md](networking.md)), and anything
+  else is added with `tessaro-ctl browser policies` (see **Policies** below).
 * **`/data/kiosk` is root owned and only `/data/kiosk/chromium` is `weston`.**
   Both come from tmpfiles `d` lines, which re-apply owner and mode every boot.
   `/data/kiosk/offline.html` is a page the agent puts on screen, so a
@@ -163,6 +164,53 @@ Things to know:
   `meta-networking` in `kas/common/tessaro.yml`, which needs it to parse. Do
   not add `seccomp` to `DISTRO_FEATURES`: oe-core's default already has it and
   removes it per architecture, which an unconditional append would override.
+
+## Policies
+
+**Extra Chromium policies are named documents the agent merges into the one
+file it renders**, never files of their own in `managed/`. Chromium merges
+the files of that directory key by key, the file that sorts last winning the
+whole key (`config_dir_policy_loader.cc`), so a dropped-in file could
+override the device-API origins, the proxy or `CACertificates`, or lose
+every key to the image's, and a syntax error in it would drop it without a
+word.
+
+* **A document is stored as typed**, comments and trailing commas included,
+  in `browser_policies` of `tessaro.db` (`policies.rs`, see
+  [storage.md](storage.md)), so editing one gives back its own comments. It
+  is not a setting: the registry refuses quotes. The names, the size limit and the most documents the device holds
+  are in `agent/protocol/src/policy.rs`.
+* **Every save is checked the way Chromium would read it, and more**
+  (`protocol::policy::check`): one JSON object, keys that are policy names,
+  and none of the keys the device sets itself (`managed`), each refused with
+  the command that sets it. The clients run the same check before they send,
+  and Webconfig a port of it (`webconfig/src/flows/policies.ts`); the
+  device's answer is the one that counts. The check does not know which
+  names Chromium has, so a misspelt policy is stored and ignored: confirm on
+  `chrome://policy`.
+* **`strict_json` blanks comments and trailing commas instead of dropping
+  them**, keeping newlines, so a parse error's line and column point into
+  the text as typed.
+* **Merge order is the image's base, then the documents by name, then the
+  device's own keys** (`render::policy`). A later name wins a key two
+  documents set, as Chromium's own rule for one directory; a save says which
+  keys it overrides of the image's and which it shares with another
+  document. A stored document that no longer passes the check (edited by
+  hand in the store, or a key the device took over) is left out with a journal line,
+  never failing the render.
+* **A change restarts the browser only when the merged file changed**
+  (`control/policies.rs`), since most policies are read at start. Saving the
+  same text writes nothing and restarts nothing.
+* **A save can name the revision it started from** (the SHA-256 of the text,
+  `if_revision`), and is refused once the device's copy has moved on; `""`
+  means "only while there is none". The GUI, Webconfig and `tessaro-ctl
+  browser policies edit` always send it, so two editors cannot overwrite each
+  other; `set FILE` does not, for scripts.
+* **`tessaro-ctl browser policies show` without a name is the merged file**,
+  each entry with where it comes from: the image, a document, or the device
+  (`render::effective`, read back from the rendered file).
+* **Stored through an unclaim, gone with a factory reset**, like the
+  certificates.
 
 ## Remote DevTools
 

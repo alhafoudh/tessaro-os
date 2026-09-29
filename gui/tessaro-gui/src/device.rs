@@ -327,6 +327,7 @@ pub enum Page {
     Overview,
     Screen,
     Browser,
+    Policies,
     Network,
     Wifi,
     Certs,
@@ -346,6 +347,7 @@ impl Page {
     const TOOLS: &'static [(Page, &'static str)] = &[
         (Page::Screen, "Screen"),
         (Page::Browser, "Browser"),
+        (Page::Policies, "Policies"),
         (Page::Network, "Network"),
         (Page::Wifi, "WiFi"),
         (Page::Certs, "Certificates"),
@@ -373,9 +375,13 @@ impl Page {
             Page::Audio => ("audio", None),
             Page::Time => ("time", None),
             Page::Access => ("access", None),
-            Page::Certs | Page::Schedules | Page::Ssh | Page::Files | Page::Update | Page::Log => {
-                return None
-            }
+            Page::Policies
+            | Page::Certs
+            | Page::Schedules
+            | Page::Ssh
+            | Page::Files
+            | Page::Update
+            | Page::Log => return None,
         };
         Some(Scope {
             prefix: prefix.to_string(),

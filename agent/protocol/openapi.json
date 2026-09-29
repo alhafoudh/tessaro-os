@@ -1379,6 +1379,206 @@
         }
       }
     },
+    "/api/v1/browser/policies": {
+      "get": {
+        "operationId": "browser.Policies",
+        "tags": [
+          "browser"
+        ],
+        "summary": "The stored browser policies, without their text.",
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PolicyInfo"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/browser/policies/{name}": {
+      "get": {
+        "operationId": "browser.Policy",
+        "tags": [
+          "browser"
+        ],
+        "summary": "One stored browser policy, its text as typed.",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The browser policy's name."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyDoc"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "browser.PolicySet",
+        "tags": [
+          "browser"
+        ],
+        "summary": "Store a browser policy, replacing one of that name. The browser restarts when the merged policy changes.",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The browser policy's name."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PolicyBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicySaved"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "browser.PolicyRemove",
+        "tags": [
+          "browser"
+        ],
+        "summary": "Remove a browser policy. The browser restarts when the merged policy changes.",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "The browser policy's name."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyRemoved"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/browser/policy": {
+      "get": {
+        "operationId": "browser.Effective",
+        "tags": [
+          "browser"
+        ],
+        "summary": "The merged policy Chromium reads, each entry with where it comes from.",
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/EffectiveEntry"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/network": {
       "get": {
         "operationId": "network.Show",
@@ -4988,6 +5188,243 @@
           "line",
           "column"
         ]
+      },
+      "PolicyInfo": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "string"
+          },
+          "keys": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The policies it sets, sorted."
+          },
+          "problem": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the stored text no longer passes the check, when it does not: the\ndevice leaves such a document out of the policy."
+          }
+        },
+        "required": [
+          "name",
+          "revision",
+          "keys"
+        ],
+        "description": "One stored document."
+      },
+      "PolicyRef": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The browser policy's name."
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "PolicyDoc": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "text",
+          "revision"
+        ],
+        "description": "One stored document with its text, as typed."
+      },
+      "PolicyBody": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "The document as typed: one JSON object of Chromium policies, `//`\nand `/* */` comments and trailing commas allowed. At most\n`POLICY_TEXT_MAX` bytes."
+          },
+          "if_revision": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Refuse unless the stored document is still at this revision; `\"\"`\nrefuses unless there is none yet. Unconditional without it."
+          }
+        },
+        "required": [
+          "text"
+        ]
+      },
+      "PolicySaved": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "string"
+          },
+          "keys": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "unchanged": {
+            "type": "boolean",
+            "description": "The stored text was already this; nothing was written."
+          },
+          "overrides_image": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Keys it sets that the image sets too: its value wins."
+          },
+          "shadows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PolicyOverlap"
+            },
+            "description": "Keys it takes from a document earlier by name, which it wins."
+          },
+          "shadowed_by": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PolicyOverlap"
+            },
+            "description": "Keys a document later by name sets too, which win over this one."
+          },
+          "restarted": {
+            "type": "boolean",
+            "description": "The browser was restarted to read the new policy."
+          }
+        },
+        "required": [
+          "name",
+          "revision",
+          "keys",
+          "unchanged",
+          "overrides_image",
+          "shadows",
+          "shadowed_by",
+          "restarted"
+        ],
+        "description": "What saving a document did."
+      },
+      "PolicyOverlap": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "policy": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "policy"
+        ],
+        "description": "A key set in more than one place, and the document on the other side."
+      },
+      "PolicyRemoved": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "restarted": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "restarted"
+        ],
+        "description": "What removing a document did."
+      },
+      "EffectiveEntry": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "value": true,
+          "source": {
+            "$ref": "#/components/schemas/PolicySource"
+          }
+        },
+        "required": [
+          "key",
+          "value",
+          "source"
+        ],
+        "description": "One entry of the policy Chromium reads."
+      },
+      "PolicySource": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "image"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "description": "The image's own policy."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "const": "policy"
+              }
+            },
+            "required": [
+              "kind",
+              "name"
+            ],
+            "description": "A stored document."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "device"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "description": "The device, from its settings (`managed`)."
+          }
+        ],
+        "description": "Where one entry of the merged policy comes from."
       },
       "Net": {
         "type": "object",

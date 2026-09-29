@@ -10,7 +10,7 @@
 use std::path::Path;
 
 use serde_json::{json, Value};
-use tessaro_client::describe::{audio, device, net, time};
+use tessaro_client::describe::{audio, browser, device, net, time};
 use tessaro_client::ping;
 use tessaro_client::text::{Fact, Line};
 
@@ -78,6 +78,32 @@ fn render(function: &str, input: &Value) -> Value {
             )
         }
         // --- screen and browser ---
+        "browser::policies" => {
+            let policies: Vec<protocol::policy::PolicyInfo> = from(input);
+            lines(&browser::policies(&policies))
+        }
+        "browser::policy_saved" => {
+            let cases: Vec<protocol::policy::PolicySaved> = from(input);
+            Value::Array(
+                cases
+                    .iter()
+                    .map(|one| lines(&browser::policy_saved(one)))
+                    .collect(),
+            )
+        }
+        "browser::policy_removed" => {
+            let cases: Vec<protocol::policy::PolicyRemoved> = from(input);
+            Value::Array(
+                cases
+                    .iter()
+                    .map(|one| lines(&browser::policy_removed(one)))
+                    .collect(),
+            )
+        }
+        "browser::effective" => {
+            let entries: Vec<protocol::policy::EffectiveEntry> = from(input);
+            lines(&browser::effective(&entries))
+        }
         // --- network, wifi and certificates ---
         "net::change" => lines(&net::change(&from(input))),
         "net::profile" => lines(&net::profile(&from(input))),

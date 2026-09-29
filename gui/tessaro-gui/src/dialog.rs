@@ -18,6 +18,16 @@ pub fn frame<'a, M: Clone + 'a>(
     body: Element<'a, M>,
     buttons: Vec<Element<'a, M>>,
 ) -> Element<'a, M> {
+    frame_sized(title, body, buttons, 480.0)
+}
+
+/// `frame`, `width` wide: room for a document.
+pub fn frame_sized<'a, M: Clone + 'a>(
+    title: String,
+    body: Element<'a, M>,
+    buttons: Vec<Element<'a, M>>,
+    width: f32,
+) -> Element<'a, M> {
     container(column![
         container(text(title).size(theme::TEXT).font(bold()))
             .width(Length::Fill)
@@ -29,7 +39,7 @@ pub fn frame<'a, M: Clone + 'a>(
             .padding([8, 12])
             .align_right(Length::Fill),
     ])
-    .width(480)
+    .width(width)
     .style(theme::panel)
     .into()
 }

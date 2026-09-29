@@ -374,7 +374,7 @@ same thing. Keep to these rules when adding a command or a setting:
     power, the on-screen keyboard.
   * `browser`: what the browser shows. Navigate, reload, maintenance, debug
     screen, zoom, remote DevTools, the injected script, the page bridge,
-    `eval`.
+    `eval`, the extra Chromium policies.
   * `audio`: sound. Which output plays and which input records, volume,
     mute, a test tone and a recording level.
   * `time`: the clock. Timezone, NTP servers and sync, its status, setting

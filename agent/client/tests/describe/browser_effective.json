@@ -1,0 +1,166 @@
+{
+  "function": "browser::effective",
+  "input": [
+    {
+      "key": "CACertificates",
+      "source": {
+        "kind": "device"
+      },
+      "value": [
+        "MIIB"
+      ]
+    },
+    {
+      "key": "DownloadRestrictions",
+      "source": {
+        "kind": "policy",
+        "name": "lockdown"
+      },
+      "value": 3
+    },
+    {
+      "key": "TranslateEnabled",
+      "source": {
+        "kind": "image"
+      },
+      "value": false
+    },
+    {
+      "key": "URLAllowlist",
+      "source": {
+        "kind": "policy",
+        "name": "lockdown"
+      },
+      "value": [
+        "https://shop.example.com",
+        "https://a.test/\"x\""
+      ]
+    },
+    {
+      "key": "ManagedBookmarks",
+      "source": {
+        "kind": "policy",
+        "name": "lockdown"
+      },
+      "value": [
+        {
+          "name": "Shop",
+          "url": "https://shop.example.com"
+        },
+        1.5
+      ]
+    }
+  ],
+  "output": [
+    [
+      [
+        "source",
+        "device",
+        20
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "label",
+        "CACertificates",
+        0
+      ],
+      [
+        "plain",
+        " [\"MIIB\"]",
+        0
+      ]
+    ],
+    [
+      [
+        "source",
+        "policy lockdown",
+        20
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "label",
+        "DownloadRestrictions",
+        0
+      ],
+      [
+        "plain",
+        " 3",
+        0
+      ]
+    ],
+    [
+      [
+        "source",
+        "image",
+        20
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "label",
+        "TranslateEnabled",
+        0
+      ],
+      [
+        "plain",
+        " false",
+        0
+      ]
+    ],
+    [
+      [
+        "source",
+        "policy lockdown",
+        20
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "label",
+        "URLAllowlist",
+        0
+      ],
+      [
+        "plain",
+        " [\"https://shop.example.com\",\"https://a.test/\\\"x\\\"\"]",
+        0
+      ]
+    ],
+    [
+      [
+        "source",
+        "policy lockdown",
+        20
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "label",
+        "ManagedBookmarks",
+        0
+      ],
+      [
+        "plain",
+        " [{\"name\":\"Shop\",\"url\":\"https://shop.example.com\"},1.5]",
+        0
+      ]
+    ]
+  ]
+}
