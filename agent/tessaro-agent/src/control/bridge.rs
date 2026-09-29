@@ -103,6 +103,9 @@ pub(super) struct Bridge {
     last_speedtest: Mutex<Option<Instant>>,
     /// When the page printed, within the last `PRINT_WINDOW`.
     prints: Mutex<Vec<Instant>>,
+    /// printer.enable as this agent started with it: window.print() is
+    /// taken over and `page.print` answered, whatever the mode.
+    printing: bool,
     /// Held across a lookup, so calls at the same time share one request.
     public_ip: tokio::sync::Mutex<Option<(Instant, String)>>,
 }
@@ -126,11 +129,17 @@ impl Control {
         } = setup;
 
         let mut origins = Vec::new();
+        let mut printing = false;
         if let Ok(state) = self.read_state().await {
             let url = self.template(&state.settings, keys::URL);
             let live = self.live().await;
             let (expanded, _) = state::expand_url(&url, &state.settings, &self.defaults, &live);
             origins.extend(origin_of(&expanded));
+            // printer.enable restarts the agent (`Consumer::Agent`), so
+            // this holds for this process's life.
+            printing = state::setting(&state.settings, &self.defaults, keys::PRINTER_ENABLE)
+                .as_deref()
+                == Some("1");
         }
         origins.extend(origin_of(&self.agent_url));
         origins.dedup();
@@ -147,9 +156,10 @@ impl Control {
             last_speedtest: Mutex::new(None),
             prints: Mutex::new(Vec::new()),
             public_ip: tokio::sync::Mutex::new(None),
+            printing,
         });
         let _ = self.bridge.set(Arc::clone(&bridge));
-        if mode == BridgeMode::Off && bridge.script.is_empty() {
+        if mode == BridgeMode::Off && bridge.script.is_empty() && !printing {
             return;
         }
 
@@ -157,8 +167,13 @@ impl Control {
         // naked: blocking() reads and the session's own within()
         self.refresh_bridge(&bridge, &mut shown).await;
         self.log.info(format!(
-            "page bridge: {}{}",
+            "page bridge: {}{}{}",
             mode.name(),
+            if printing {
+                ", window.print() to the default printer"
+            } else {
+                ""
+            },
             if bridge.script.is_empty() {
                 String::new()
             } else {
@@ -267,12 +282,14 @@ impl Control {
             )
             .collect();
 
+        // The preamble also takes window.print() over while printer.enable
+        // is on, which needs the binding even with the bridge off.
+        let binding = bridge.mode >= BridgeMode::Config || bridge.printing;
         let mut sources = Vec::new();
-        if bridge.mode >= BridgeMode::Config {
+        if binding {
             sources.push(preamble(bridge, &snapshot));
         }
         sources.extend(source.clone());
-        let binding = bridge.mode >= BridgeMode::Config;
         let rebind =
             binding.then(|| format!("window[{0}] && window[{0}].rebind()", json!(bridge.settle)));
         bridge.scripts.send_if_modified(|scripts| {
@@ -383,7 +400,13 @@ impl Control {
         let name = request["name"].as_str().unwrap_or("");
         let args = request["args"].as_array().cloned().unwrap_or_default();
 
-        let (answer, after) = if bridge.mode < BridgeMode::Actions && !READS.contains(&name) {
+        // window.print() is the one call printer.enable answers on its own;
+        // with the bridge off it is the only one.
+        let printing = name == "page.print" && bridge.printing;
+        let refused = !printing
+            && (bridge.mode == BridgeMode::Off
+                || (bridge.mode < BridgeMode::Actions && !READS.contains(&name)));
+        let (answer, after) = if refused {
             (
                 Err(fail(format!("{name} needs browser.bridge.mode actions"))),
                 None,
@@ -596,6 +619,16 @@ impl Control {
                 plain(self.files.list(&path, false).await.and_then(to_value))
             }
             "printer.list" => plain(self.printer_list().await.map(|list| page_printers(&list))),
+            // window.print(), taken over: the page as the browser prints it,
+            // to the default printer. Chromium's own printing needs GTK,
+            // which this build has none of (docs/printing.md).
+            "page.print" => {
+                if let Err(refused) = print_allowed(bridge) {
+                    return (Err(refused), None);
+                }
+                let title = arg(0).as_str().map(str::to_string);
+                plain(self.print_page(&caller, title).await.and_then(to_value))
+            }
             "printer.print" => {
                 let job = arg(0);
                 if !job.is_object() {
@@ -794,6 +827,7 @@ fn preamble(bridge: &Bridge, snapshot: &BTreeMap<String, String>) -> String {
         .replace("__ORIGINS__", &json!(bridge.origins).to_string())
         .replace("__BINDING__", &json!(BINDING).to_string())
         .replace("__CONFIG__", &json!(snapshot).to_string())
+        .replace("__PRINTING__", &json!(bridge.printing).to_string())
 }
 
 /// Refuse what starts the page over within `DISRUPT_GAP` of the agent's
@@ -934,6 +968,7 @@ mod tests {
             last_speedtest: Mutex::new(None),
             prints: Mutex::new(Vec::new()),
             public_ip: tokio::sync::Mutex::new(None),
+            printing: false,
         }
     }
 

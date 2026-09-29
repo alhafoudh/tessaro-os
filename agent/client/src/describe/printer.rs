@@ -16,11 +16,11 @@ pub fn state_tone(state: &str) -> Tone {
 /// Whether the page may print, in a line.
 pub fn enabled(list: &PrinterList) -> Line {
     if list.enabled {
-        Line::of(Tone::Ok, "the page prints")
+        Line::of(Tone::Ok, "page printing is on")
             .text(" ")
-            .add(Tone::Muted, "(printer.enable is on)")
+            .add(Tone::Muted, "(window.print() and the page bridge)")
     } else {
-        Line::of(Tone::Warn, "the page does not print;")
+        Line::of(Tone::Warn, "page printing is off; turn it on with")
             .text(" ")
             .add(Tone::Cmd, "tessaro-ctl config set printer.enable=1")
     }
@@ -67,9 +67,12 @@ pub fn list(list: &PrinterList) -> Vec<Line> {
     lines.push(enabled(list));
     if !list.printers.is_empty() {
         lines.push(
-            Line::of(Tone::Muted, "* window.print() prints here; another with")
-                .text(" ")
-                .add(Tone::Cmd, "tessaro-ctl printer default NAME"),
+            Line::of(
+                Tone::Muted,
+                "* the default printer, used by window.print(); change it with",
+            )
+            .text(" ")
+            .add(Tone::Cmd, "tessaro-ctl printer default NAME"),
         );
     }
     lines

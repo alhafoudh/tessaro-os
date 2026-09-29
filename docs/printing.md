@@ -37,7 +37,8 @@ take the same socket.
   `/data/cups`, created root:lp by `tmpfiles-tessaro-printing.conf`, so a
   printer set up once survives a boot with it switched off. `StateDir` and
   `CacheDir` are in `/run`, logs go to the journal through syslog, and
-  `Printcap` is empty: no `/etc/printcap`. A factory reset wipes `/data`, and
+  `Printcap` is `/run/cups/printcap`, off the overlay; an empty `Printcap`
+  makes cupsd refuse `cups-files.conf` and never start. A factory reset wipes `/data`, and
   every printer with it.
 * **Root administers, anyone on the device prints.** The browser runs as
   `weston` and submits jobs; adding, removing and defaulting printers, and
@@ -56,7 +57,10 @@ printer that does not answer is refused, not kept as a queue that never
 prints (`Control::printer_create`). After that the table is the truth:
 `Cups::reconcile` compares it with what `lpstat` lists and sets up what is
 missing or has another URI, removes queues nobody asked for, and sets the
-default. It runs when the agent starts, once a minute (`watch_printers`) and
+default. A `dnssd://` printer is its queue by name alone: CUPS resolves that
+URI when it sets the queue up and `lpstat` reports the address it found, so
+comparing URIs would set it up again at every reconcile
+(`printer::is_set_up`). It runs when the agent starts, once a minute (`watch_printers`) and
 after every change. A printer that did not answer at boot is `missing` in
 `printer list`, with the reason, until a reconcile gets it set up.
 
@@ -92,14 +96,27 @@ announced is added by its URI from its own settings page.
 
 ## Pages
 
-**`printer.enable` is the one switch that lets the page print.** It is a
-browser key: the agent renders `PrintingEnabled` and
+**`printer.enable` is the one switch that lets the page print.** It restarts
+the browser and the agent: the agent renders `PrintingEnabled` and
 `PrintPreviewUseSystemDefaultPrinter` into the Chromium policy and
 `KIOSK_PRINT_ARGS=--kiosk-printing` into `generated.env` (`render.rs`), and
-the browser restarts. `--kiosk-printing` prints to the printer print preview
-starts on without showing it, and the policy makes that the CUPS default
-rather than the last one used. Chromium reaches CUPS only through libcups,
-which is why its `PACKAGECONFIG` has `cups` (`tessaro.conf`).
+its script takes `window.print()` over.
+
+* **`window.print()` is the agent's, not Chromium's.** Chromium on Linux
+  hands a finished print job to GTK, and this build has `use_gtk=false`
+  (meta-browser's `chromium-ozone-wayland`), so its own printing fails at
+  that step, in or out of process (`print_job_worker.cc: Failure to render
+  printed document`). The preamble (`control/bridge.js`) replaces
+  `window.print` while `printer.enable` is on, whatever
+  `browser.bridge.mode` says: the page's `beforeprint` handlers run, the
+  agent has the browser render the page with `Page.printToPDF` (print
+  styles, backgrounds, CSS page size) and sends it to the default printer
+  (`Control::print_page`), then `afterprint` runs. It returns at once rather
+  than blocking like a dialog would, and it counts against the page's
+  printing limit like `printer.print()`.
+* **Chromium keeps `cups` and `--kiosk-printing` for later.** Neither prints
+  on this build; they are what Chromium's own printing needs once it has
+  GTK, and taking them out is a full Chromium rebuild.
 
 * **The page bridge prints to any printer by name.** `tessaro.printer.print()`
   in `actions` mode, refused while `printer.enable` is off, and

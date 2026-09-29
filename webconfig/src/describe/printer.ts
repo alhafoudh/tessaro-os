@@ -20,9 +20,11 @@ export function stateTone(state: string): Tone {
 /** Whether the page may print, in a line. */
 export function enabled(list: Schemas["PrinterList"]): Line {
   if (list.enabled) {
-    return Line.of("ok", "the page prints").text(" ").add("muted", "(printer.enable is on)");
+    return Line.of("ok", "page printing is on").text(" ").add("muted", "(window.print() and the page bridge)");
   }
-  return Line.of("warn", "the page does not print;").text(" ").add("cmd", "tessaro-ctl config set printer.enable=1");
+  return Line.of("warn", "page printing is off; turn it on with")
+    .text(" ")
+    .add("cmd", "tessaro-ctl config set printer.enable=1");
 }
 
 /** `printer list`: a line per printer, the default marked, its URI under it, and whether the page may print. */
@@ -60,7 +62,7 @@ export function list(list: Schemas["PrinterList"]): Line[] {
   lines.push(enabled(list));
   if (list.printers.length > 0) {
     lines.push(
-      Line.of("muted", "* window.print() prints here; another with")
+      Line.of("muted", "* the default printer, used by window.print(); change it with")
         .text(" ")
         .add("cmd", "tessaro-ctl printer default NAME"),
     );

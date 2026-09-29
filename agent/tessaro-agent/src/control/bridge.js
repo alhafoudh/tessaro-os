@@ -5,6 +5,7 @@
 (() => {
   "use strict";
   const MODE = __MODE__;
+  const PRINTING = __PRINTING__;
   const SETTLE = __SETTLE__;
   const ORIGINS = __ORIGINS__;
   const BINDING = __BINDING__;
@@ -64,6 +65,23 @@
       },
     }),
   });
+
+  // printer.enable: window.print() is the agent's. It renders the page with
+  // its print styles and sends it to the default printer, without a dialog:
+  // Chromium's own printing needs GTK, which this build has none of. The
+  // page's beforeprint and afterprint handlers run around it, as they would.
+  if (PRINTING) {
+    const print = () => {
+      window.dispatchEvent(new Event("beforeprint"));
+      call("page.print", document.title)
+        .catch((err) => console.warn(`tessaro: window.print(): ${err.message}`))
+        .finally(() => window.dispatchEvent(new Event("afterprint")));
+    };
+    Object.defineProperty(window, "print", { value: print, writable: false, configurable: false });
+  }
+  if (MODE === "off") {
+    return;
+  }
 
   const api = {
     mode: MODE,

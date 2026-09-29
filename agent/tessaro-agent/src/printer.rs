@@ -511,11 +511,18 @@ impl Plan {
     }
 }
 
+/// Whether `queue` is `printer` set up. CUPS resolves a `dnssd://` URI when
+/// the queue is set up and reports what it found (`ipp://host.local:631/...`),
+/// so such a printer is its queue by name alone; any other by its URI too.
+pub fn is_set_up(printer: &PrinterSpec, queue: &Queue) -> bool {
+    printer.uri.starts_with("dnssd://") || queue.uri == printer.uri
+}
+
 pub fn plan(wanted: &Printers, present: &Present) -> Plan {
     let mut plan = Plan::default();
     for printer in &wanted.printers {
         match present.queues.get(&printer.name) {
-            Some(queue) if queue.uri == printer.uri => {}
+            Some(queue) if is_set_up(printer, queue) => {}
             _ => plan.setup.push(printer.clone()),
         }
     }
@@ -700,6 +707,14 @@ impl Cups {
             return Err(
                 "this host's printers are not managed (KIOSK_MANAGE_PRINTERS=0)".to_string(),
             );
+        }
+        // Without the socket every client fails with a bare "Bad file
+        // descriptor", which says nothing about why.
+        if !self.server.exists() {
+            return Err(format!(
+                "the device's CUPS is not running ({} is missing); `tessaro-ctl device logs -u tessaro-cups.service` says why",
+                self.server.display()
+            ));
         }
         let mut command = self.command(program);
         command.args(args);
@@ -908,7 +923,7 @@ pub fn info(
 ) -> PrinterInfo {
     let queue = present.queues.get(&spec.name);
     let (state, message) = match queue {
-        Some(queue) if queue.uri == spec.uri => (
+        Some(queue) if is_set_up(spec, queue) => (
             if queue.state.is_empty() {
                 "idle".to_string()
             } else {
@@ -1138,6 +1153,30 @@ mod tests {
         assert_eq!(plan.setup, [office.clone(), front]);
         assert_eq!(plan.remove, ["old"]);
         assert_eq!(plan.default.as_deref(), Some("office"));
+    }
+
+    #[test]
+    fn a_dnssd_printer_is_its_queue_whatever_cups_resolved_it_to() {
+        let mac = spec(
+            "mac",
+            "dnssd://Test%20Printer._ipp._tcp.local/?uuid=192deb0e",
+            PrinterKind::Ipp,
+        );
+        let wanted = Printers {
+            printers: vec![mac.clone()],
+            default: Some("mac".to_string()),
+        };
+        let resolved = Queue {
+            uri: "ipp://gray.local:8631/ipp/print".to_string(),
+            state: "idle".to_string(),
+            message: None,
+        };
+        let present = Present {
+            queues: [("mac".to_string(), resolved)].into(),
+            default: Some("mac".to_string()),
+        };
+        assert!(plan(&wanted, &present).is_empty());
+        assert_eq!(info(&mac, &wanted, &present, None).state, "idle");
     }
 
     #[test]

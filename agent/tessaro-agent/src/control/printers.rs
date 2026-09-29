@@ -17,14 +17,21 @@ use protocol::{
     PRINT_DATA_MAX,
 };
 
+use serde_json::json;
+
 use super::{Caller, Control};
 use crate::deadline::blocking;
 use crate::printer::{self, Printers};
 use crate::state;
+use crate::watchdog::Heartbeat;
 
 /// The largest stored file `printer-print` prints by its path. Read whole
 /// into memory, then handed to CUPS.
 const PRINT_FILE_MAX: u64 = 64 * 1024 * 1024;
+
+/// The browser rendering a page to a PDF for window.print(): a long page
+/// with images takes a while on a Pi.
+const RENDER_LIMIT: Duration = Duration::from_secs(60);
 
 impl Control {
     pub(super) async fn printer_list(&self) -> Result<PrinterList, String> {
@@ -214,9 +221,11 @@ impl Control {
         let note = if self.printing_enabled().await {
             ""
         } else {
-            "; the page prints once printer.enable is on"
+            "; page printing is off until `tessaro-ctl config set printer.enable=1`"
         };
-        Ok(Done::new(format!("window.print() prints on {name}{note}")))
+        Ok(Done::new(format!(
+            "{name} is the default printer, used by window.print(){note}"
+        )))
     }
 
     pub(super) async fn printer_test(
@@ -286,6 +295,34 @@ impl Control {
         }
         let title = printer::title(title.as_deref());
         self.print_to(caller, &spec, &document, copies, media.as_deref(), &title)
+            .await
+    }
+
+    /// window.print(), as the agent does it: the page rendered to a PDF by
+    /// the browser, with its print styles, and sent to the default printer.
+    pub(super) async fn print_page(
+        &self,
+        caller: &Caller,
+        title: Option<String>,
+    ) -> Result<PrintQueued, String> {
+        let wanted = self.read_printers().await?;
+        let spec = wanted.pick(None)?.clone();
+        let rendered = self
+            .session
+            .call(
+                &Heartbeat::detached(),
+                "Page.printToPDF",
+                json!({ "printBackground": true, "preferCSSPageSize": true }),
+                RENDER_LIMIT,
+            )
+            .await?; // naked: SessionHandle::call bounds itself with within()
+        let data = rendered["data"]
+            .as_str()
+            .ok_or_else(|| "the browser rendered no PDF".to_string())?;
+        let document = openssl::base64::decode_block(data)
+            .map_err(|_| "the browser's PDF is not base64".to_string())?;
+        let title = printer::title(title.as_deref());
+        self.print_to(caller, &spec, &document, 1, None, &title)
             .await
     }
 

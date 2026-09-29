@@ -109,10 +109,11 @@ Things to know:
   else is added with `tessaro-ctl browser policies` (see **Policies** below).
 * **Printing is off in the policy until `printer.enable`**, which sets
   `PrintingEnabled` and `PrintPreviewUseSystemDefaultPrinter`, and adds
-  `--kiosk-printing` so `window.print()` prints without a dialog. Chromium
-  reaches printers only through libcups, which is why its `PACKAGECONFIG`
-  has `cups`; see [printing.md](printing.md). A browser policy cannot set
-  these entries: they are the device's own.
+  `--kiosk-printing`. Chromium's own printing still does not print: it
+  needs GTK, which this build lacks, so the agent takes `window.print()`
+  over (see **Pages** in [printing.md](printing.md)); `cups` in its
+  `PACKAGECONFIG` and the flag wait for a build with GTK. A browser policy
+  cannot set these entries: they are the device's own.
 * **`/data/kiosk` is root owned and only `/data/kiosk/chromium` is `weston`.**
   Both come from tmpfiles `d` lines, which re-apply owner and mode every boot.
   `/data/kiosk/offline.html` is a page the agent puts on screen, so a

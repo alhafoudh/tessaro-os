@@ -243,6 +243,9 @@ const TIME: &[Consumer] = &[Consumer::Time];
 const PROXY: &[Consumer] = &[Consumer::Proxy, Consumer::Agent];
 /// The node name: the agent's mDNS name, and the hotspot's SSID.
 const AGENT_AND_NETWORK: &[Consumer] = &[Consumer::Agent, Consumer::Network];
+/// printer.enable: the browser's policy, and the agent's script, which
+/// takes window.print() over.
+const BROWSER_AND_AGENT: &[Consumer] = &[Consumer::Browser, Consumer::Agent];
 
 const fn key(
     name: &'static str,
@@ -347,7 +350,7 @@ pub static KEYS: &[Key] = &[
         "NTP servers, comma separated. Empty uses the servers the network's DHCP offers, else the image's fallback servers."),
     // The printers themselves are in their own table, `tessaro-ctl printer`;
     // this only decides whether the page may use them.
-    key(PRINTER_ENABLE, "KIOSK_PRINTING", Kind::Flag, BROWSER,
+    key(PRINTER_ENABLE, "KIOSK_PRINTING", Kind::Flag, BROWSER_AND_AGENT,
         "Let the page print: window.print() goes to the default printer without a dialog, and the page bridge's printer.print() to any printer. `tessaro-ctl printer` sets the printers up; it prints either way."),
     key("agent.enable", "KIOSK_AGENT_ENABLE", Kind::Flag, AGENT,
         "Supervise the browser at all; 0 parks the agent."),

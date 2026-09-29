@@ -147,7 +147,7 @@
     [
       [
         "warn",
-        "the page does not print;",
+        "page printing is off; turn it on with",
         0
       ],
       [
@@ -164,7 +164,7 @@
     [
       [
         "muted",
-        "* window.print() prints here; another with",
+        "* the default printer, used by window.print(); change it with",
         0
       ],
       [

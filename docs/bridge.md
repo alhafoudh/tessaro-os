@@ -124,6 +124,11 @@ prints on the ones the operator set up, and `printer create`, `remove` and
   device. The preamble sends `data` as base64; the whole document goes in the
   one call, at most `PRINT_DATA_MAX` (see **Sizes** in
   [printing.md](printing.md)).
+* **`window.print()` is the preamble's while `printer.enable` is on**, in
+  every mode, `off` included: it calls `page.print`, the one call answered
+  with the bridge off, and nothing else of `window.tessaro` is there then.
+  It counts against the same `PRINT_BURST` (see **Pages** in
+  [printing.md](printing.md)).
 * **`printer.list()` leaves out where each printer is**: a URI can carry a
   print server's user and password, and the page needs only the names.
 * **`network.publicIp()` is shared and cached for 30s.** Calls at the same time
