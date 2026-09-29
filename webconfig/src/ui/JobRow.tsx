@@ -22,7 +22,7 @@ export function JobRow({
   const share = total ? Math.min(100, Math.round((done * 100) / Math.max(1, total))) : null;
   return (
     <div className="flex flex-wrap items-center gap-2 text-sm">
-      <span className="w-[180px] shrink-0 truncate font-bold">{label}</span>
+      <span className="w-[11.25rem] shrink-0 truncate font-bold">{label}</span>
       <span className="relative h-2.5 min-w-24 flex-1 overflow-hidden rounded-[2px] bg-background">
         <span
           className={`absolute inset-y-0 left-0 bg-primary ${share === null ? "w-1/3 animate-pulse" : ""}`}

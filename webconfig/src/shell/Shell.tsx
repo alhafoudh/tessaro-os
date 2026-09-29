@@ -89,17 +89,17 @@ export function Shell({ children }: { children: ReactNode }) {
 
   return (
     <div className="flex h-full flex-col bg-background">
-      <header className="flex min-h-[34px] flex-wrap items-center gap-x-3 gap-y-1 border-b border-border bg-chrome px-2 py-1">
+      <header className="flex min-h-[2.125rem] flex-wrap items-center gap-x-3 gap-y-1 border-b border-border bg-chrome px-2 py-1">
         <button
           type="button"
-          className="px-1 text-base md:hidden"
+          className="px-1.5 text-xl leading-none md:hidden"
           aria-label="Menu"
           aria-expanded={menu}
           onClick={() => setMenu((open) => !open)}
         >
           ☰
         </button>
-        <span className="text-[15px] font-bold">Tessaro</span>
+        <span className="text-[0.9375rem] font-bold">Tessaro</span>
         <span className="text-muted">Webconfig</span>
         <span className="truncate font-bold">{status?.node.name}</span>
         <div className="ms-auto flex flex-wrap items-center gap-1.5">
@@ -147,7 +147,7 @@ export function Shell({ children }: { children: ReactNode }) {
               Clear
             </Button>
           </div>
-          <div className="mt-0.5 h-[110px] overflow-auto font-mono text-sm whitespace-pre-wrap" ref={scrollToEnd}>
+          <div className="mt-0.5 h-[6.875rem] overflow-auto font-mono text-sm whitespace-pre-wrap" ref={scrollToEnd}>
             {messages.map((line, at) => (
               <div key={at}>
                 <LineView line={line} />

@@ -18,6 +18,12 @@ export interface Row {
   muted?: boolean;
 }
 
+/** The GUI's sizes are written in px; as rem they grow with a phone's text. */
+function scaled(size: string): string {
+  const px = /^(\d+(?:\.\d+)?)px$/.exec(size);
+  return px ? `${Number(px[1]) / 16}rem` : size;
+}
+
 export function Table({
   columns,
   rows,
@@ -58,7 +64,7 @@ export function Table({
   return (
     <div
       className="overflow-auto border border-border bg-panel focus:outline-1 focus:outline-primary"
-      style={maxHeight ? { maxHeight } : undefined}
+      style={maxHeight ? { maxHeight: scaled(maxHeight) } : undefined}
       tabIndex={onSelect ? 0 : undefined}
       onKeyDown={onKey}
     >
@@ -68,8 +74,8 @@ export function Table({
             {columns.map((column, index) => (
               <th
                 key={index}
-                className="border-b border-border px-1.5 py-[3px] text-left font-bold whitespace-nowrap"
-                style={column.width ? { width: column.width } : undefined}
+                className="border-b border-border px-1.5 py-[0.1875rem] text-left font-bold whitespace-nowrap"
+                style={column.width ? { width: scaled(column.width) } : undefined}
               >
                 {column.title}
               </th>

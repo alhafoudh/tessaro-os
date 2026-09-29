@@ -142,6 +142,13 @@ vendored (`webconfig/src/fonts/`, OFL) and bundled, so nothing is fetched
 from the internet - a device on a hotspot has none. The menu becomes a
 drawer and toolbars wrap on a phone; a wide table scrolls sideways.
 
+**A phone gets everything 1.5x**, since the GUI's small text and tight
+controls are too small to read and tap there: below Tailwind's `md`
+breakpoint the root font size is 150% (`styles.css`). That scales only
+what is in rem, so sizes are written in rem, never px (13px is
+`0.8125rem`). The table's column widths and heights are the exception:
+pages write the GUI's px and `Table.tsx` turns them into rem.
+
 ## Serving
 
 **The agent serves the built files from `/usr/share/tessaro-webconfig`**

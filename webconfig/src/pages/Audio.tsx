@@ -156,7 +156,7 @@ function SideRow({
   };
   return (
     <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
-      <span className="w-[60px] font-bold">{label}</span>
+      <span className="w-[3.75rem] font-bold">{label}</span>
       <span>
         {side.setting} -&gt; {side.using?.description ?? "nothing"}
       </span>
@@ -167,7 +167,7 @@ function SideRow({
         max={100}
         value={volume}
         aria-label={`${label} volume`}
-        className="w-[180px]"
+        className="w-[11.25rem]"
         onChange={(event) => setVolume(Number(event.target.value))}
         onPointerUp={release}
         onKeyUp={release}

@@ -26,7 +26,7 @@ export function StatusBar() {
   const left = useSecondsLeft();
   const tone = link === "online" ? "text-success" : link === "connecting" ? "text-warning" : "text-danger";
   return (
-    <footer className="flex flex-wrap items-center gap-x-3 border-t border-border bg-chrome px-2 py-[3px] text-sm">
+    <footer className="flex flex-wrap items-center gap-x-3 border-t border-border bg-chrome px-2 py-[0.1875rem] text-sm">
       <span className={tone}>{link}</span>
       {status && (
         <>

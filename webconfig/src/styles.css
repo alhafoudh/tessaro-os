@@ -22,9 +22,11 @@
   --font-sans: "Manrope", system-ui, sans-serif;
   --font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
 
-  --text-base: 13px;
+  /* 13px and 12px at the browser's 16px rem; in rem so a phone's larger
+     root (below) scales them. */
+  --text-base: 0.8125rem;
   --text-base--line-height: 1.35;
-  --text-sm: 12px;
+  --text-sm: 0.75rem;
   --text-sm--line-height: 1.35;
 
   --color-desk: #0a0d14;
@@ -53,6 +55,20 @@
 }
 
 @layer base {
+  /* A phone gets everything 1.5x: the desktop's small text and tight
+     controls are too small to read and tap there. Text and spacing are rem,
+     so the root size scales them all; the breakpoint is Tailwind's md, where
+     the menu becomes a drawer. */
+  html {
+    font-size: 150%;
+  }
+
+  @media (width >= 48rem) {
+    html {
+      font-size: 100%;
+    }
+  }
+
   html,
   body,
   #root {

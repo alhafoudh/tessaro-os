@@ -26,7 +26,7 @@ export function Button({
     <button
       type="button"
       {...props}
-      className={`inline-flex items-center justify-center whitespace-nowrap rounded-[2px] border px-2 py-0.5 text-sm leading-[18px] disabled:pointer-events-none disabled:opacity-50 ${kinds[kind]} ${className}`}
+      className={`inline-flex items-center justify-center whitespace-nowrap rounded-[2px] border px-2 py-0.5 text-sm leading-[1.125rem] disabled:pointer-events-none disabled:opacity-50 ${kinds[kind]} ${className}`}
     />
   );
 }

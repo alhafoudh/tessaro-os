@@ -37,7 +37,7 @@ export function SignIn() {
 
   return (
     <div className="flex min-h-full items-center justify-center p-3">
-      <form onSubmit={submit} className="w-full max-w-[420px] border border-border bg-panel">
+      <form onSubmit={submit} className="w-full max-w-[26.25rem] border border-border bg-panel">
         <div className="bg-chrome px-2.5 py-1 text-sm font-bold">Sign in to {name}</div>
         <div className="flex flex-col gap-2 p-3">
           <p className="text-sm">
@@ -60,7 +60,7 @@ export function SignIn() {
               type="submit"
               kind="primary"
               disabled={busy || token.trim().length === 0}
-              className="px-3.5 py-[3px]"
+              className="px-3.5 py-[0.1875rem]"
             >
               {busy ? "Signing in ..." : "Sign in"}
             </Button>

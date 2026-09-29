@@ -181,7 +181,7 @@ function Check({
   onChange: (on: boolean) => void;
 }) {
   return (
-    <label className="flex items-center gap-1.5 text-sm sm:ms-[118px]">
+    <label className="flex items-center gap-1.5 text-sm sm:ms-[7.375rem]">
       <input
         type="checkbox"
         checked={checked}

@@ -94,18 +94,18 @@ export function Dialog({
         aria-modal="true"
         aria-label={title}
         onSubmit={submitted}
-        className={`flex max-h-[calc(100vh-1rem)] w-full flex-col border border-border bg-panel shadow-[0_4px_14px_rgba(0,0,0,0.5)] ${wide ? "max-w-5xl" : "max-w-[480px]"}`}
+        className={`flex max-h-[calc(100vh-1rem)] w-full flex-col border border-border bg-panel shadow-[0_4px_14px_rgba(0,0,0,0.5)] ${wide ? "max-w-5xl" : "max-w-[30rem]"}`}
       >
         <div className="bg-chrome px-2.5 py-1 text-sm font-bold">{title}</div>
         <div className="flex flex-col gap-2 overflow-auto p-3">{children}</div>
         <div className="flex flex-wrap justify-end gap-1.5 px-3 pb-3">
           {extra}
           {onSubmit && (
-            <Button type="submit" kind={submitKind} disabled={busy || disabled} className="px-3.5 py-[3px]">
+            <Button type="submit" kind={submitKind} disabled={busy || disabled} className="px-3.5 py-[0.1875rem]">
               {busy ? `${submit ?? "OK"} ...` : (submit ?? "OK")}
             </Button>
           )}
-          <Button onClick={onClose} className="px-3.5 py-[3px]">
+          <Button onClick={onClose} className="px-3.5 py-[0.1875rem]">
             {onSubmit ? closeLabel : "Close"}
           </Button>
         </div>
@@ -118,7 +118,7 @@ export function Dialog({
 /** A form field with its label in a column of its own, 110px as the GUI's. */
 export function Field({ label, children, hint }: { label: string; children: ReactNode; hint?: ReactNode }) {
   return (
-    <label className="grid grid-cols-1 items-center gap-1 sm:grid-cols-[110px_1fr] sm:gap-2">
+    <label className="grid grid-cols-1 items-center gap-1 sm:grid-cols-[6.875rem_1fr] sm:gap-2">
       <span className="text-sm text-muted">{label}</span>
       <span className="flex min-w-0 flex-col gap-0.5">
         {children}
