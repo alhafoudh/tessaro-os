@@ -15,6 +15,15 @@ the same Dock icon while keeping terminal output. Both use
 signature for local use; distribution signing and notarization are separate.
 `cargo run` alone runs the bare executable, without the bundle's icon.
 
+**`gui:run` launches the bundle with `open`, not by running its executable**,
+so the window comes to the front. A process started from the terminal is
+the terminal's child, and macOS does not let it take the front: winit asks
+with `activateIgnoringOtherApps`, which the system no longer honours, so
+the window stays behind the terminal until the Dock icon is clicked.
+`open -n -W` starts that build even when another is running and waits for
+it, `--stdout`/`--stderr` send its output to the terminal, and Ctrl-C quits
+it. The environment of the shell does not reach the app through `open`.
+
 The app icon's editable source, transparent 1024px PNG and multi-resolution
 ICNS are in `gui/tessaro-gui/icons/`. After editing `tessaro.svg`, export it
 as a transparent 1024 × 1024 `tessaro.png`, then run
@@ -43,8 +52,9 @@ into both. So `gui/` has its own `Cargo.lock` and builds into
 
 **A page shows the client's words, not its own.** A page draws what
 `tessaro_client::describe` and the flows hand back: `Fact`s in a facts
-table (`shared_facts`), `Line`s in the output pane and the log, colored by
-their tones (`theme::text_line`, `theme::toned`).
+table (`shared_facts`), `Line`s in the device window's Messages, colored by
+their tones (`theme::text_line`, `theme::toned`, and the highlighter in
+`messages.rs`).
 
 ## One window, inner windows
 
@@ -244,6 +254,19 @@ passes it in, and the clipboard is written by the widget itself. A masked or
 shortened value is copied as displayed; the full one keeps its own Copy
 button.
 
+**Messages is the one text pane of a device window, and its text can be
+selected** (`messages.rs`): what changes did, and what commands print -
+ping, speed test, grow, printer discovery, `eval` with its `> code` echo,
+job results. Drag or Cmd A to select and Cmd C to copy, or its Copy button
+for the whole log. Right-click offers Copy of the selection, or Copy all
+when nothing is selected (`copy_menu_with` in `copy_menu.rs`, which takes
+the text from the log since no widget reports a selection). iced's text widgets only paint, so Messages is a
+`text_editor` that drops every edit, and a highlighter paints each span in
+its tone. A new line rebuilds the text and moves to the end, so a selection
+does not survive a line arriving: select once a streaming job is done, or
+use Copy. Starting a job or an `eval` shows Messages if it is hidden,
+without changing what new windows start with, which only the toggle sets.
+
 **Settings are edited in a dialog, WinBox style: OK applies and closes, Apply
 applies and stays, Default unsets.**
 
@@ -262,7 +285,7 @@ applies and stays, Default unsets.**
 | --- | --- |
 | Overview | `device status` and `id`, systemd units, `device ping`, `device factory-reset` |
 | Screen | `screen modes` with "use this mode", `screen screenshot` with a 3s live refresh and Save, `screen power`, `screen keyboard` |
-| Browser | what the browser shows, `browser navigate`, `reload`, `clear-cache`, `maintenance`, `debug`, `zoom`, `devtools` (a job holding the tunnel until Cancel), `inject`, `bridge`, `eval` (results in the page's output) |
+| Browser | what the browser shows, `browser navigate`, `reload`, `clear-cache`, `maintenance`, `debug`, `zoom`, `devtools` (a job holding the tunnel until Cancel), `inject`, `bridge`, `eval` (results in Messages) |
 | Policies | `browser policies list`, `set` and `edit` in one wide editor (from the template, a file, or the stored text, checked as you type, saved against the revision it opened), `show` (the effective policy), `remove` |
 | Network | `network show` and interfaces, `network last`, `network ping`, `network speedtest` (with "Bypass the proxy"), `network proxy set`, `off` and `test`, `network profiles list` and `show` |
 | WiFi | `network wifi status`, `scan`, `join`, `hotspot-password` |

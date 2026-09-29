@@ -15,6 +15,7 @@ mod icon;
 mod jobs;
 mod logs;
 mod mdi;
+mod messages;
 mod nodes_view;
 mod section;
 mod theme;

@@ -6,7 +6,7 @@
 //! system's. Every style the views use comes from here, so the windows cannot
 //! drift apart.
 
-use iced::widget::{button, container, text};
+use iced::widget::{button, container, text, text_editor};
 use iced::{border, Border, Color, Element, Font, Theme};
 use tessaro_client::text::{Line, Tone};
 
@@ -99,18 +99,11 @@ pub fn toned(tone: Tone) -> impl Fn(&Theme) -> text::Style {
 /// A line of the shared text: each span in its tone's color, headings,
 /// commands and secrets bold, the padding kept for monospace columns.
 pub fn text_line<'a, M: 'a>(line: &Line, font: Font) -> Element<'a, M> {
-    let bold = Font {
-        weight: iced::font::Weight::Bold,
-        ..font
-    };
     let spans: Vec<iced::widget::text::Span<'a, (), Font>> = line
         .0
         .iter()
         .map(|part| {
-            let span = iced::widget::span(part.padded()).font(match part.tone {
-                Tone::Heading | Tone::Cmd | Tone::Secret | Tone::Bad => bold,
-                _ => font,
-            });
+            let span = iced::widget::span(part.padded()).font(tone_font(part.tone, font));
             match tone_color(part.tone) {
                 Some(color) => span.color(color),
                 None => span,
@@ -118,6 +111,28 @@ pub fn text_line<'a, M: 'a>(line: &Line, font: Font) -> Element<'a, M> {
         })
         .collect();
     iced::widget::rich_text(spans).size(SMALL).font(font).into()
+}
+
+/// `font` in a tone's weight: headings, commands, secrets and failures bold.
+pub fn tone_font(tone: Tone, font: Font) -> Font {
+    match tone {
+        Tone::Heading | Tone::Cmd | Tone::Secret | Tone::Bad => Font {
+            weight: iced::font::Weight::Bold,
+            ..font
+        },
+        _ => font,
+    }
+}
+
+/// Selectable text inside a panel: no box of its own, the panel's selection.
+pub fn log_text(_: &Theme, _: text_editor::Status) -> text_editor::Style {
+    text_editor::Style {
+        background: iced::Background::Color(Color::TRANSPARENT),
+        border: Border::default(),
+        placeholder: MUTED,
+        value: TEXT_COLOR,
+        selection: SELECTION,
+    }
 }
 
 fn line(color: Color) -> Border {

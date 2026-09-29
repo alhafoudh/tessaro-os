@@ -2,6 +2,8 @@
 //! widgets it is drawn with (`Text` reports its string to `operate`), so no
 //! view has to hand it over, and the clipboard is written from here, so no
 //! page needs a message for it. iced has no context menu of its own.
+//! Messages hands its text over instead (`copy_menu_with`): a selection is
+//! not something its widget reports.
 
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::renderer::{self, Quad};
@@ -23,18 +25,35 @@ const HEIGHT: f32 = 22.0;
 pub fn copy_menu<'a, M: 'a>(content: impl Into<Element<'a, M>>) -> Element<'a, M> {
     Element::new(CopyMenu {
         content: content.into(),
+        source: None,
     })
 }
 
-struct CopyMenu<'a, M> {
-    content: Element<'a, M>,
+/// `content`, with a menu on right-click whose entry and text `source`
+/// gives, asked only then: for text the widgets do not report, like a
+/// selection.
+pub fn copy_menu_with<'a, M: 'a>(
+    content: impl Into<Element<'a, M>>,
+    source: impl Fn() -> (&'static str, String) + 'a,
+) -> Element<'a, M> {
+    Element::new(CopyMenu {
+        content: content.into(),
+        source: Some(Box::new(source)),
+    })
 }
 
-/// Where the menu is open, in the cell's layout coordinates, and the text
-/// it copies.
+type Source<'a> = Box<dyn Fn() -> (&'static str, String) + 'a>;
+
+struct CopyMenu<'a, M> {
+    content: Element<'a, M>,
+    source: Option<Source<'a>>,
+}
+
+/// Where the menu is open, in the cell's layout coordinates, its entry and
+/// the text it copies.
 #[derive(Default)]
 struct State {
-    open: Option<(Point, String)>,
+    open: Option<(Point, &'static str, String)>,
 }
 
 impl<M> Widget<M, Theme, Renderer> for CopyMenu<'_, M> {
@@ -86,21 +105,28 @@ impl<M> Widget<M, Theme, Renderer> for CopyMenu<'_, M> {
     ) {
         if let Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) = event {
             if let Some(at) = cursor.position_over(layout.bounds()) {
-                let mut collect = Collect::default();
-                self.content.as_widget_mut().operate(
-                    &mut tree.children[0],
-                    layout,
-                    renderer,
-                    &mut collect,
-                );
-                if !collect.text.is_empty() {
-                    tree.state.downcast_mut::<State>().open = Some((at, collect.text));
+                let (label, text) = match &self.source {
+                    Some(source) => source(),
+                    None => {
+                        let mut collect = Collect::default();
+                        self.content.as_widget_mut().operate(
+                            &mut tree.children[0],
+                            layout,
+                            renderer,
+                            &mut collect,
+                        );
+                        ("Copy", collect.text)
+                    }
+                };
+                if !text.is_empty() {
+                    tree.state.downcast_mut::<State>().open = Some((at, label, text));
                     shell.invalidate_layout();
                     shell.request_redraw();
                 }
             }
         }
-        // Not captured: the row under it selects on the same right-click.
+        // Not captured: the row under it selects on the same right-click. A
+        // text editor answers only the left button, so its selection stays.
         self.content.as_widget_mut().update(
             &mut tree.children[0],
             event,
@@ -181,7 +207,7 @@ impl<M> Widget<M, Theme, Renderer> for CopyMenu<'_, M> {
         );
         let state = state.downcast_mut::<State>();
         let menu = match &state.open {
-            Some((at, _)) => {
+            Some((at, _, _)) => {
                 let at = *at + translation;
                 Some(overlay::Element::new(Box::new(Menu { state, at })))
             }
@@ -270,7 +296,12 @@ impl<M> overlay::Overlay<M, Theme, Renderer> for Menu<'_> {
         );
         renderer.fill_text(
             Text {
-                content: "Copy".to_string(),
+                content: self
+                    .state
+                    .open
+                    .as_ref()
+                    .map_or("Copy", |(_, label, _)| label)
+                    .to_string(),
                 bounds: bounds.size(),
                 size: Pixels(theme::SMALL),
                 line_height: text::LineHeight::default(),
@@ -304,7 +335,7 @@ impl<M> overlay::Overlay<M, Theme, Renderer> for Menu<'_> {
             Event::Mouse(mouse::Event::ButtonPressed(button)) => {
                 if cursor.is_over(layout.bounds()) {
                     if *button == mouse::Button::Left {
-                        if let Some((_, text)) = self.state.open.take() {
+                        if let Some((_, _, text)) = self.state.open.take() {
                             clipboard.write(clipboard::Kind::Standard, text);
                         }
                     }

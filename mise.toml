@@ -229,7 +229,12 @@ set -e
 if [ "$(uname -s)" = Darwin ]; then
     cargo build -p tessaro-gui
     app=$(sh package-macos.sh "$CARGO_TARGET_DIR/debug/tessaro-gui")
-    exec "$app/Contents/MacOS/tessaro-gui"
+    # Through Launch Services, so the window comes to the front: a child of
+    # the terminal is never activated (docs/gui.md). -n starts this build
+    # even when an older one is running; Ctrl-C quits it.
+    if tty -s; then out=$(tty); else out=/dev/null; fi
+    trap 'pkill -f "$app/Contents/MacOS/tessaro-gui" || true' INT TERM
+    open -n -W --stdout "$out" --stderr "$out" "$app"
 else
     exec cargo run -p tessaro-gui
 fi

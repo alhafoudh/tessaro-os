@@ -29,15 +29,13 @@ use tessaro_client::text::{Line, Tone};
 
 use crate::dialog::{self, field};
 use crate::grid::{bold, cell, col, grid, Col};
+use crate::messages::Messages;
 use crate::{logs, vnc};
 
 mod pages;
 use crate::section::{self, action};
 use crate::theme;
 use crate::worker::{Event, Request};
-
-/// The log keeps this many lines.
-const LOG_LINES: usize = 200;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Link {
@@ -279,6 +277,9 @@ pub enum Message {
     Cancel,
     ToggleLog,
     ClearLog,
+    CopyLog,
+    /// A click, selection or scroll in Messages.
+    LogAction(iced::widget::text_editor::Action),
     Page(Page),
     /// Up (-1) or Down (1) in the table.
     Step(i32),
@@ -437,7 +438,7 @@ pub struct Device {
     settings: Option<Settings>,
     /// The open settings windows, by their prefix.
     configs: BTreeMap<String, Config>,
-    log: Vec<Line>,
+    log: Messages,
     log_open: bool,
     dialog: Option<Dialog>,
     page: Page,
@@ -495,7 +496,7 @@ impl Device {
             keys: BTreeMap::new(),
             settings: None,
             configs: BTreeMap::new(),
-            log: Vec::new(),
+            log: Messages::default(),
             log_open,
             dialog: None,
             page: Page::Overview,
@@ -735,9 +736,12 @@ impl Device {
     /// A line of the shared text, in its own tones.
     fn log_line(&mut self, line: Line) {
         self.log.push(line);
-        if self.log.len() > LOG_LINES {
-            self.log.remove(0);
-        }
+    }
+
+    /// Show Messages, for a command whose output goes there. Only the
+    /// Messages toggle changes what new windows start with (`main.rs`).
+    fn open_log(&mut self) {
+        self.log_open = true;
     }
 
     /// Hand `request` to the worker; whether it took it.
@@ -1034,6 +1038,8 @@ impl Device {
             }
             Message::ToggleLog => self.log_open = !self.log_open,
             Message::ClearLog => self.log.clear(),
+            Message::CopyLog => return iced::clipboard::write(self.log.text()),
+            Message::LogAction(action) => self.log.perform(action),
         }
         Task::none()
     }
@@ -1567,23 +1573,17 @@ impl Device {
     }
 
     fn log_view(&self) -> Element<'_, Message> {
-        let lines = Column::with_children(
-            self.log
-                .iter()
-                .map(|line| theme::text_line(line, iced::Font::MONOSPACE)),
-        );
         container(
             column![
                 row![
                     text("Messages").size(theme::SMALL).font(bold()),
                     space::horizontal(),
+                    theme::tool("Copy", Some(Message::CopyLog)),
                     theme::tool("Clear", Some(Message::ClearLog)),
                 ]
+                .spacing(4)
                 .align_y(iced::alignment::Vertical::Center),
-                scrollable(lines)
-                    .anchor_bottom()
-                    .width(Length::Fill)
-                    .height(110),
+                self.log.view(Message::LogAction),
             ]
             .spacing(2),
         )

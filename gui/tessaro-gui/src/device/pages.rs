@@ -16,8 +16,8 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use iced::widget::{
-    checkbox, column, container, pick_list, progress_bar, row, rule, scrollable, slider, space,
-    text, text_editor, text_input, Column,
+    checkbox, column, container, pick_list, progress_bar, row, rule, slider, space, text,
+    text_editor, text_input, Column,
 };
 use iced::{Element, Length, Task};
 use protocol::api::{
@@ -86,8 +86,6 @@ pub struct State {
     modes: Vec<Connector>,
     /// The selected row of each table, by table.
     selected: BTreeMap<&'static str, String>,
-    /// Output of the page's streams (ping, speed test, grow), by page.
-    output: BTreeMap<&'static str, Vec<Line>>,
     /// The last error a page's refresh got, by page.
     errors: BTreeMap<&'static str, String>,
     /// Calls sent and not answered yet, by tag, so a page can say what it
@@ -302,7 +300,6 @@ pub enum Msg {
     UpdateCancel,
     // jobs and forms
     CancelJob(u64),
-    ClearOutput,
     FormText(usize, String),
     FormEdit(usize, text_editor::Action),
     FormCheck(usize, bool),
@@ -693,6 +690,7 @@ impl Device {
     fn start_job(&mut self, owner: &'static str, label: impl Into<String>, kind: jobs::Kind) {
         self.next_job += 1;
         let label = label.into();
+        self.open_log();
         self.log(Tone::Plain, format!("started: {label}"));
         self.jobs.push(Job {
             id: self.next_job,
@@ -706,14 +704,6 @@ impl Device {
 
     fn selected(&self, table: &'static str) -> Option<&String> {
         self.pages.selected.get(table)
-    }
-
-    fn output(&mut self, page: &'static str, line: impl Into<Line>) {
-        let lines = self.pages.output.entry(page).or_default();
-        lines.push(line.into());
-        if lines.len() > 300 {
-            lines.remove(0);
-        }
     }
 
     fn form(&mut self, form: Form) {
@@ -1130,16 +1120,9 @@ impl Device {
             "update" => self.pages.update = Some(parse(value)?),
             "browser.eval" => {
                 let result: protocol::EvalResult = parse(value)?;
-                let line = describe::device::eval(&result).unwrap_or_else(|thrown| thrown);
-                // A pretty-printed value is one span over several lines.
-                if line.0.len() == 1 && line.0[0].text.contains('\n') {
-                    let tone = line.0[0].tone;
-                    for part in line.0[0].text.lines() {
-                        self.output("browser", Line::of(tone, part));
-                    }
-                } else {
-                    self.output("browser", line);
-                }
+                // A pretty-printed value is one span over several lines,
+                // which Messages splits.
+                self.log_line(describe::device::eval(&result).unwrap_or_else(|thrown| thrown));
             }
             "screen.power" => {
                 let power: protocol::ScreenPower = parse(value)?;
@@ -1195,21 +1178,21 @@ impl Device {
             jobs::Event::Progress { label, done, total } => {
                 self.jobs[at].progress = Some((label, done, total));
             }
-            jobs::Event::Line(line) => self.output(owner, line),
+            jobs::Event::Line(line) => self.log_line(line),
             jobs::Event::Value(value) if owner == "printer" => {
                 match serde_json::from_value::<PrinterFound>(value.clone()) {
                     Ok(found) => {
                         for line in describe::printer::found(&found) {
-                            self.output(owner, line);
+                            self.log_line(line);
                         }
                         self.pages.found.push(found);
                     }
-                    Err(_) => self.output(owner, Line::plain(value.to_string())),
+                    Err(_) => self.log_line(Line::plain(value.to_string())),
                 }
             }
             jobs::Event::Value(value) => {
                 if let Some(line) = stream_line(owner, &value) {
-                    self.output(owner, line);
+                    self.log_line(line);
                 }
             }
             jobs::Event::Wiped => {
@@ -1223,14 +1206,8 @@ impl Device {
                 let label = self.jobs[at].label.clone();
                 self.jobs.remove(at);
                 match result {
-                    Ok(message) => {
-                        self.output(owner, format!("{label}: {message}"));
-                        self.log(Tone::Ok, format!("{label}: {message}"));
-                    }
-                    Err(error) => {
-                        self.output(owner, format!("{label}: {error}"));
-                        self.log(Tone::Bad, format!("{label}: {error}"));
-                    }
+                    Ok(message) => self.log(Tone::Ok, format!("{label}: {message}")),
+                    Err(error) => self.log(Tone::Bad, format!("{label}: {error}")),
                 }
                 let page = match owner {
                     "files" => Some(Page::Files),
@@ -1974,10 +1951,6 @@ impl Device {
                 }
                 self.jobs.retain(|job| job.running);
             }
-            Msg::ClearOutput => {
-                let page = page_key(self.page);
-                self.pages.output.remove(page);
-            }
             Msg::FormText(at, value) => self.form_field(at, value),
             Msg::FormEdit(at, action) => return self.form_edit(at, action),
             Msg::FormCheck(at, on) => self.form_field(at, flag(on).to_string()),
@@ -2329,7 +2302,8 @@ impl Device {
                 if code.is_empty() {
                     return Err("some code, please".to_string());
                 }
-                self.output("browser", format!("> {code}"));
+                self.open_log();
+                self.log(Tone::Plain, format!("> {code}"));
                 self.call(
                     "browser.eval",
                     send::<api::browser::Eval>(EvalBody {
@@ -2850,38 +2824,7 @@ impl Device {
         (!jobs.is_empty()).then(|| Column::with_children(jobs).spacing(4).into())
     }
 
-    /// The page's stream output, when there is some.
-    fn output_view(&self, owner: &'static str) -> Option<Element<'_, Message>> {
-        let lines = self
-            .pages
-            .output
-            .get(owner)
-            .filter(|lines| !lines.is_empty())?;
-        let body = Column::with_children(
-            lines
-                .iter()
-                .map(|line| theme::text_line(line, iced::Font::MONOSPACE)),
-        );
-        Some(
-            container(column![
-                row![
-                    text("Output").size(theme::SMALL).font(bold()),
-                    space::horizontal(),
-                    theme::tool("Clear", Some(Message::P(Msg::ClearOutput))),
-                ]
-                .align_y(iced::alignment::Vertical::Center),
-                scrollable(body)
-                    .anchor_bottom()
-                    .height(140)
-                    .width(Length::Fill),
-            ])
-            .padding([4, 6])
-            .style(theme::panel)
-            .into(),
-        )
-    }
-
-    /// A page: its toolbar, its tables, its jobs and its output.
+    /// A page: its toolbar, its tables and its jobs.
     fn page<'a>(
         &'a self,
         owner: &'static str,
@@ -2916,9 +2859,6 @@ impl Device {
         }
         if let Some(jobs) = self.jobs_view(owner) {
             page = page.push(jobs);
-        }
-        if let Some(output) = self.output_view(owner) {
-            page = page.push(output);
         }
         page.into()
     }
