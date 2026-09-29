@@ -1,0 +1,52 @@
+{
+  "function": "device::restarts",
+  "input": [
+    "agent",
+    "agent-restart",
+    "browser",
+    "weston",
+    "network",
+    "audio",
+    "firmware",
+    "time",
+    "proxy"
+  ],
+  "output": [
+    {
+      "long": "nothing: the agent applies it at once",
+      "short": "agent (live)"
+    },
+    {
+      "long": "the agent (it loads the page again)",
+      "short": "agent"
+    },
+    {
+      "long": "the browser",
+      "short": "browser"
+    },
+    {
+      "long": "the display (Weston and the browser)",
+      "short": "weston"
+    },
+    {
+      "long": "nothing: the network profiles are switched, and checked before it is saved",
+      "short": "network"
+    },
+    {
+      "long": "nothing: applied to the sound server at once",
+      "short": "audio"
+    },
+    {
+      "long": "nothing: the Pi firmware reads it at the next reboot",
+      "short": "firmware (next reboot)"
+    },
+    {
+      "long": "nothing on screen: applied to the clock at once; systemd-timesyncd when its servers change",
+      "short": "clock"
+    },
+    {
+      "long": "the local proxy (tessaro-proxy.service); the browser and the agent when the proxy is switched on or off",
+      "short": "local proxy (browser, agent on switching)"
+    }
+  ]
+}

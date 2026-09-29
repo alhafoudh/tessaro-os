@@ -7,6 +7,7 @@
 //! makes `journalctl` output twice as wide. The message is the whole line.
 
 use std::fmt::Display;
+use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(test)]
 use std::sync::Mutex;
 
@@ -20,14 +21,15 @@ enum Sink {
 }
 
 pub struct Log {
-    debug: bool,
+    /// `agent.debug`, which the control plane switches on a running agent.
+    debug: AtomicBool,
     sink: Sink,
 }
 
 impl Log {
     pub fn new(debug: bool) -> Self {
         Self {
-            debug,
+            debug: AtomicBool::new(debug),
             sink: Sink::Stderr,
         }
     }
@@ -35,9 +37,13 @@ impl Log {
     #[cfg(test)]
     pub fn buffered(debug: bool) -> Self {
         Self {
-            debug,
+            debug: AtomicBool::new(debug),
             sink: Sink::Buffer(Mutex::new(Vec::new())),
         }
+    }
+
+    pub fn set_debug(&self, debug: bool) {
+        self.debug.store(debug, Ordering::Relaxed);
     }
 
     pub fn info(&self, message: impl Display) {
@@ -45,7 +51,7 @@ impl Log {
     }
 
     pub fn debug(&self, message: impl Display) {
-        if self.debug {
+        if self.debug.load(Ordering::Relaxed) {
             self.write(message);
         }
     }

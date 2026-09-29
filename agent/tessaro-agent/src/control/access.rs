@@ -391,14 +391,17 @@ impl Control {
              certificate authorities, browser policies, schedules, printers and stored files cleared",
             caller.describe()
         ));
-        // Weston takes the browser and the agent with it (PartOf=), so every
-        // consumer comes back up on the defaults.
+        // Weston takes the browser with it (PartOf=), and the agent restarts
+        // last, so every consumer comes back up on the defaults.
         Reply::ok(Done::new(
             "factory reset: defaults restored, unclaimed, stored files removed, \
              restarting the display; \
              the network is DHCP and an open hotspot from the next boot",
         ))
-        .then(Some(After::Restart(self.paths.weston_unit.clone())))
+        .then(Some(After::Restarts(vec![
+            self.paths.weston_unit.clone(),
+            self.paths.agent_unit.clone(),
+        ])))
     }
 
     async fn set_root(&self, password: Option<String>) -> Result<(), String> {

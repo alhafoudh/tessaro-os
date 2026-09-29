@@ -1395,7 +1395,7 @@ impl Device {
                 };
                 self.form(
                     Form::new("Proxy", "Use it", Action::Proxy)
-                        .intro("Everything the device fetches from the internet goes through it: the browser, the reachability probe, the public address and the speed test. http://host:port or socks5://host:port. The browser restarts when the proxy is switched on.")
+                        .intro("Everything the device fetches from the internet goes through it: the browser, the reachability probe, the public address and the speed test. http://host:port or socks5://host:port. The browser and the agent restart when the proxy is switched on.")
                         .field(Field::text("URL", url, "http://10.0.0.5:3128"))
                         .field(Field::text("User", "", "only if the proxy wants a login"))
                         .field(Field::secret("Password"))

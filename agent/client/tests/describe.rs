@@ -66,6 +66,20 @@ fn render(function: &str, input: &Value) -> Value {
             Ok(shown) => json!({ "line": line(&shown), "thrown": false }),
             Err(thrown) => json!({ "line": line(&thrown), "thrown": true }),
         },
+        "device::restarts" => {
+            let consumers: Vec<protocol::keys::Consumer> = from(input);
+            Value::Array(
+                consumers
+                    .iter()
+                    .map(|consumer| {
+                        json!({
+                            "long": device::restarts(*consumer),
+                            "short": device::restarts_short(*consumer),
+                        })
+                    })
+                    .collect(),
+            )
+        }
         "audio::summary" => line(&audio::summary(&from(input))),
         "time::summary" => line(&time::summary(&from(input))),
         "ping::event_line" => {

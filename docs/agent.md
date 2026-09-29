@@ -56,3 +56,35 @@ kiosk goes unsupervised.
   `Inspector.targetCrashed`. A detached target does end the session. The agent
   waits for the session's first attempt before its first cycle, so an agent
   restart does not report a healthy browser as silent.
+
+## Settings on a running agent
+
+**A setting the agent reads applies to the running process, with nothing
+restarted** (`Consumer::Agent`), so a change never drops the API, a
+Webconfig session or the loop's bookkeeping. `converge` in
+`control/settings.rs` builds a new `Config` from the defaults
+(`state::defaults`, which also captures the image-only variables in
+`config::IMAGE_ONLY`) and the saved settings, and `publish` hands it, with
+the settings, to a tokio watch channel as a `config::Current` - only when
+it differs.
+
+* **The state machine takes it at the top of each cycle** (`follow_config`
+  in `agent.rs`), and its nap between cycles wakes on a change. A different
+  kiosk URL (maintenance mode moves it too) or offline page makes the screen
+  unknown, so the cycle navigates with `Page.navigate`, and the accepted
+  origin is reset. Everything else applies from that cycle on, with the
+  failures and the backoff kept. `agent.enable` parks and resumes the loop,
+  and the `watching ...` line is logged again.
+* **The other readers follow the same channel.** The debug screen
+  (`debug.rs`) takes its template and the settings from it, `agent.debug`
+  switches the log's verbosity (`Log::set_debug`), the watchdog reads
+  `agent.watchdog` on every tick, and the page bridge recomputes its offer on
+  every refresh (**Reconnects, crashes and restarts** in
+  [bridge.md](bridge.md)).
+* **What the agent sets up once per process restarts it**
+  (`Consumer::AgentRestart`): the listener and mDNS (`access.listen`,
+  `access.mdns`, `device.name`), and the HTTP and DevTools clients with their
+  budgets (the `agent.probe_*` timeouts, the `agent.cdp_*` keys,
+  `agent.device_access`). Its first cycle loads the page again. The proxy
+  switched on or off and the extra certificate authorities restart it for
+  the same reason (**Proxy** in [networking.md](networking.md)).

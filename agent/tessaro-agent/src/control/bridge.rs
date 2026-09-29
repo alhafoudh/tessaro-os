@@ -79,22 +79,38 @@ const READS: &[&str] = &[
     "printer.list",
 ];
 
-/// What `main` hands over: the mode and script this agent started with, the
-/// session's end of the page scripts, and the page's calls.
+/// What `main` hands over: the session's end of the page scripts, and the
+/// page's calls.
 pub struct BridgeSetup {
-    pub mode: BridgeMode,
-    pub script: String,
     pub scripts: watch::Sender<PageScripts>,
     pub calls: mpsc::Receiver<BindingCall>,
 }
 
-pub(super) struct Bridge {
+/// What the page gets, from the settings as the agent applies them now.
+#[derive(Debug, Clone, PartialEq)]
+struct Offer {
     mode: BridgeMode,
     script: String,
-    /// The page's hidden handle, new with every agent start.
-    settle: String,
     /// The origins answered: the page the agent drives, and browser.url's.
     origins: Vec<String>,
+    /// printer.enable: window.print() is taken over and `page.print`
+    /// answered, whatever the mode.
+    printing: bool,
+}
+
+impl Offer {
+    /// A page that loaded under `before` has the wrong `window.tessaro`
+    /// under this one. New origins alone need no reload: the agent checks
+    /// them, and the page only lists them.
+    fn reloads(&self, before: &Offer) -> bool {
+        self.mode != before.mode || self.script != before.script || self.printing != before.printing
+    }
+}
+
+pub(super) struct Bridge {
+    offer: Mutex<Offer>,
+    /// The page's hidden handle, new with every agent start.
+    settle: String,
     scripts: watch::Sender<PageScripts>,
     /// A setting changed: look at the snapshot now.
     poke: Notify,
@@ -103,9 +119,6 @@ pub(super) struct Bridge {
     last_speedtest: Mutex<Option<Instant>>,
     /// When the page printed, within the last `PRINT_WINDOW`.
     prints: Mutex<Vec<Instant>>,
-    /// printer.enable as this agent started with it: window.print() is
-    /// taken over and `page.print` answered, whatever the mode.
-    printing: bool,
     /// Held across a lookup, so calls at the same time share one request.
     public_ip: tokio::sync::Mutex<Option<(Instant, String)>>,
 }
@@ -121,34 +134,13 @@ impl Control {
     /// Start the bridge, with the scripts in place before this returns so
     /// the agent's first navigation already runs them.
     pub async fn start_bridge(self: &Arc<Self>, setup: BridgeSetup) {
-        let BridgeSetup {
-            mode,
-            script,
-            scripts,
-            mut calls,
-        } = setup;
+        let BridgeSetup { scripts, mut calls } = setup;
 
-        let mut origins = Vec::new();
-        let mut printing = false;
-        if let Ok(state) = self.read_state().await {
-            let url = self.template(&state.settings, keys::URL);
-            let live = self.live().await;
-            let (expanded, _) = state::expand_url(&url, &state.settings, &self.defaults, &live);
-            origins.extend(origin_of(&expanded));
-            // printer.enable restarts the agent (`Consumer::Agent`), so
-            // this holds for this process's life.
-            printing = state::setting(&state.settings, &self.defaults, keys::PRINTER_ENABLE)
-                .as_deref()
-                == Some("1");
-        }
-        origins.extend(origin_of(&self.agent_url));
-        origins.dedup();
-
+        // naked: live() reads under blocking()'s within()
+        let offer = self.offer().await;
         let bridge = Arc::new(Bridge {
-            mode,
-            script,
+            offer: Mutex::new(offer.clone()),
             settle: settle_name(),
-            origins,
             scripts,
             poke: Notify::new(),
             problem: Mutex::new(None),
@@ -156,31 +148,18 @@ impl Control {
             last_speedtest: Mutex::new(None),
             prints: Mutex::new(Vec::new()),
             public_ip: tokio::sync::Mutex::new(None),
-            printing,
         });
         let _ = self.bridge.set(Arc::clone(&bridge));
-        if mode == BridgeMode::Off && bridge.script.is_empty() && !printing {
-            return;
-        }
 
         let mut shown = Shown::default();
         // naked: blocking() reads and the session's own within()
         self.refresh_bridge(&bridge, &mut shown).await;
-        self.log.info(format!(
-            "page bridge: {}{}{}",
-            mode.name(),
-            if printing {
-                ", window.print() to the default printer"
-            } else {
-                ""
-            },
-            if bridge.script.is_empty() {
-                String::new()
-            } else {
-                format!(", injecting {}", bridge.script)
-            }
-        ));
+        if offer.mode != BridgeMode::Off || !offer.script.is_empty() || offer.printing {
+            self.log.info(format!("page bridge: {}", describe(&offer)));
+        }
 
+        // Always running, with the bridge off too: a change turns it on
+        // without a restart.
         let control = Arc::clone(self);
         let mut shutdown = self.shutdown.clone();
         let mut files = self.files.changes();
@@ -199,7 +178,7 @@ impl Control {
                     }
                     _ = bridge.poke.notified() => {}
                     changed = files.changed() => {
-                        if changed.is_err() || bridge.script.is_empty() {
+                        if changed.is_err() || lock(&bridge.offer).script.is_empty() {
                             continue;
                         }
                     }
@@ -221,31 +200,67 @@ impl Control {
 
     pub(super) fn bridge_status(&self) -> Option<BridgeStatus> {
         let bridge = self.bridge.get()?;
+        let offer = lock(&bridge.offer).clone();
         Some(BridgeStatus {
-            mode: bridge.mode.name().to_string(),
-            script: bridge.script.clone(),
+            mode: offer.mode.name().to_string(),
+            script: offer.script,
             script_problem: lock(&bridge.problem).clone(),
         })
     }
 
-    /// Build the snapshot and the script again and hand the session what
-    /// changed. A changed script reloads the page so it runs now; changed
-    /// settings are pushed into the page as they are, with no reload.
+    /// What the page gets under the configuration the agent runs on now.
+    async fn offer(&self) -> Offer {
+        let current = self.current.borrow().clone();
+        let config = &current.config;
+        // browser.url's origin, and the page the agent drives, which is
+        // another one in maintenance mode.
+        let url = self.template(&current.settings, keys::URL);
+        // naked: live() reads under blocking()'s within()
+        let live = self.live().await;
+        let (expanded, _) = state::expand_url(&url, &current.settings, &self.defaults, &live);
+        let mut origins: Vec<String> = origin_of(&expanded).into_iter().collect();
+        origins.extend(origin_of(&config.kiosk_url));
+        origins.dedup();
+        Offer {
+            mode: config.bridge,
+            script: config.inject_script.clone(),
+            origins,
+            printing: config.printing,
+        }
+    }
+
+    /// Build the offer, the snapshot and the script again and hand the
+    /// session what changed. A changed script, mode or printer.enable
+    /// reloads the page so it runs now; changed settings are pushed into the
+    /// page as they are, with no reload.
     async fn refresh_bridge(&self, bridge: &Bridge, shown: &mut Shown) {
-        let snapshot = if bridge.mode >= BridgeMode::Config {
+        // naked: live() reads under blocking()'s within()
+        let offer = self.offer().await;
+        let offer_changed = {
+            let mut held = lock(&bridge.offer);
+            let reloads = offer.reloads(&held);
+            *held = offer.clone();
+            reloads
+        };
+        if offer_changed && shown.started {
+            self.log
+                .info(format!("page bridge: now {}", describe(&offer)));
+        }
+
+        let snapshot = if offer.mode >= BridgeMode::Config {
             // naked: blocking() reads
             self.bridge_snapshot().await
         } else {
             BTreeMap::new()
         };
 
-        let source = if bridge.script.is_empty() {
+        let source = if offer.script.is_empty() {
             None
         } else {
             // naked: Files waits only through blocking()
             match self
                 .files
-                .read_whole(&bridge.script, protocol::EVAL_MAX as u64)
+                .read_whole(&offer.script, protocol::EVAL_MAX as u64)
                 .await
             {
                 Ok(bytes) => match String::from_utf8(bytes) {
@@ -253,7 +268,7 @@ impl Control {
                     Err(_) => {
                         self.bridge_problem(
                             bridge,
-                            Some(format!("{} is not UTF-8 text", bridge.script)),
+                            Some(format!("{} is not UTF-8 text", offer.script)),
                         );
                         None
                     }
@@ -270,6 +285,7 @@ impl Control {
 
         let first = !shown.started;
         let script_changed = !first && source != shown.source;
+        let reload = script_changed || (!first && offer_changed);
         let changed_keys: Vec<&String> = snapshot
             .iter()
             .filter(|(name, value)| shown.snapshot.get(*name) != Some(*value))
@@ -284,10 +300,10 @@ impl Control {
 
         // The preamble also takes window.print() over while printer.enable
         // is on, which needs the binding even with the bridge off.
-        let binding = bridge.mode >= BridgeMode::Config || bridge.printing;
+        let binding = offer.mode >= BridgeMode::Config || offer.printing;
         let mut sources = Vec::new();
         if binding {
-            sources.push(preamble(bridge, &snapshot));
+            sources.push(preamble(&offer, &bridge.settle, &snapshot));
         }
         sources.extend(source.clone());
         let rebind =
@@ -297,7 +313,7 @@ impl Control {
             scripts.binding = binding;
             scripts.sources = sources;
             scripts.rebind = rebind;
-            if script_changed {
+            if reload {
                 scripts.reload += 1;
             }
             *scripts != before
@@ -305,11 +321,13 @@ impl Control {
         if script_changed {
             self.log.info(format!(
                 "page bridge: {} changed; reloading the page",
-                bridge.script
+                offer.script
             ));
+        } else if reload {
+            self.log.info("page bridge: reloading the page for it");
         }
 
-        if !first && !script_changed && !changed_keys.is_empty() && binding {
+        if !first && !reload && !changed_keys.is_empty() && binding {
             let expression = format!(
                 "window[{0}] && window[{0}].config({1}, {2})",
                 json!(bridge.settle),
@@ -384,7 +402,8 @@ impl Control {
 
     /// One call from the page, answered in the context it came from.
     async fn page_call(self: &Arc<Self>, bridge: &Bridge, call: BindingCall) {
-        if !call.top || !bridge.origins.contains(&call.origin) {
+        let offer = lock(&bridge.offer).clone();
+        if !call.top || !offer.origins.contains(&call.origin) {
             self.log.debug(format!(
                 "page bridge: ignored a call from {:?} (top frame: {})",
                 call.origin, call.top
@@ -402,10 +421,10 @@ impl Control {
 
         // window.print() is the one call printer.enable answers on its own;
         // with the bridge off it is the only one.
-        let printing = name == "page.print" && bridge.printing;
+        let printing = name == "page.print" && offer.printing;
         let refused = !printing
-            && (bridge.mode == BridgeMode::Off
-                || (bridge.mode < BridgeMode::Actions && !READS.contains(&name)));
+            && (offer.mode == BridgeMode::Off
+                || (offer.mode < BridgeMode::Actions && !READS.contains(&name)));
         let (answer, after) = if refused {
             (
                 Err(fail(format!("{name} needs browser.bridge.mode actions"))),
@@ -517,7 +536,7 @@ impl Control {
             },
             "browser.home" => match disrupt(bridge) {
                 Err(refused) => (Err(refused), None),
-                Ok(()) => plain(self.navigate(&self.agent_url).await.and_then(to_value)),
+                Ok(()) => plain(self.navigate(&self.agent_url()).await.and_then(to_value)),
             },
             "browser.clearCache" => plain(self.clear_cache().await.and_then(to_value)),
             "browser.maintenance" => {
@@ -695,8 +714,8 @@ impl Control {
                     }
                 };
                 // Nothing reads a data.* but the templates and this bridge:
-                // one no template uses is saved without restarting anything,
-                // so a page can keep its own values without reloading itself.
+                // one no template uses is saved without applying, so a page
+                // can keep its own values without the page moving under it.
                 let used = self.template_uses(&key).await;
                 if used {
                     if let Err(refused) = disrupt(bridge) {
@@ -820,14 +839,32 @@ struct Shown {
 }
 
 /// The preamble with this agent's values filled in.
-fn preamble(bridge: &Bridge, snapshot: &BTreeMap<String, String>) -> String {
+fn preamble(offer: &Offer, settle: &str, snapshot: &BTreeMap<String, String>) -> String {
     PREAMBLE
-        .replace("__MODE__", &json!(bridge.mode.name()).to_string())
-        .replace("__SETTLE__", &json!(bridge.settle).to_string())
-        .replace("__ORIGINS__", &json!(bridge.origins).to_string())
+        .replace("__MODE__", &json!(offer.mode.name()).to_string())
+        .replace("__SETTLE__", &json!(settle).to_string())
+        .replace("__ORIGINS__", &json!(offer.origins).to_string())
         .replace("__BINDING__", &json!(BINDING).to_string())
         .replace("__CONFIG__", &json!(snapshot).to_string())
-        .replace("__PRINTING__", &json!(bridge.printing).to_string())
+        .replace("__PRINTING__", &json!(offer.printing).to_string())
+}
+
+/// The offer in the journal's words.
+fn describe(offer: &Offer) -> String {
+    format!(
+        "{}{}{}",
+        offer.mode.name(),
+        if offer.printing {
+            ", window.print() to the default printer"
+        } else {
+            ""
+        },
+        if offer.script.is_empty() {
+            String::new()
+        } else {
+            format!(", injecting {}", offer.script)
+        }
+    )
 }
 
 /// Refuse what starts the page over within `DISRUPT_GAP` of the agent's
@@ -955,12 +992,19 @@ mod tests {
         }
     }
 
-    fn bridge(mode: BridgeMode) -> Bridge {
-        Bridge {
+    fn offer(mode: BridgeMode) -> Offer {
+        Offer {
             mode,
             script: String::new(),
-            settle: "__tessaro_test".to_string(),
             origins: vec!["http://kiosk.test".to_string()],
+            printing: false,
+        }
+    }
+
+    fn bridge(mode: BridgeMode) -> Bridge {
+        Bridge {
+            offer: Mutex::new(offer(mode)),
+            settle: "__tessaro_test".to_string(),
             scripts: watch::channel(PageScripts::default()).0,
             poke: Notify::new(),
             problem: Mutex::new(None),
@@ -968,8 +1012,23 @@ mod tests {
             last_speedtest: Mutex::new(None),
             prints: Mutex::new(Vec::new()),
             public_ip: tokio::sync::Mutex::new(None),
-            printing: false,
         }
+    }
+
+    #[test]
+    fn only_what_the_page_was_loaded_with_reloads_it() {
+        let before = offer(BridgeMode::Config);
+        let mut after = before.clone();
+        after.origins.push("http://127.0.0.1".to_string());
+        assert!(!after.reloads(&before), "an origin is checked here");
+        after.mode = BridgeMode::Actions;
+        assert!(after.reloads(&before));
+        let mut printing = before.clone();
+        printing.printing = true;
+        assert!(printing.reloads(&before));
+        let mut script = before.clone();
+        script.script = "inject.js".to_string();
+        assert!(script.reloads(&before));
     }
 
     #[test]
@@ -994,7 +1053,7 @@ mod tests {
     fn the_preamble_gets_every_token_filled() {
         let mut snapshot = BTreeMap::new();
         snapshot.insert("data.table".to_string(), "12".to_string());
-        let source = preamble(&bridge(BridgeMode::Actions), &snapshot);
+        let source = preamble(&offer(BridgeMode::Actions), "__tessaro_test", &snapshot);
         assert!(!source.contains("__MODE__") && !source.contains("__CONFIG__"));
         assert!(!source.contains("__SETTLE__") && !source.contains("__ORIGINS__"));
         assert!(!source.contains("__BINDING__"));

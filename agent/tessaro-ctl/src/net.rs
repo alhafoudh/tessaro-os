@@ -107,7 +107,7 @@ pub enum ProxyCmd {
     /// with user:password@ in it if the proxy wants a login. A password
     /// with $ " ' \ ` or @ in it is written percent-encoded (%24 for $).
     /// The same as `tessaro-ctl config set network.proxy.url=URL`; the
-    /// browser restarts when the proxy is switched on.
+    /// browser and the agent restart when the proxy is switched on.
     ///
     ///   tessaro-ctl network proxy set http://10.0.0.5:3128
     ///   tessaro-ctl network proxy set 'http://jan:s3cret@proxy.corp.test:8080' --bypass .corp.test,10.0.0.0/8
@@ -121,7 +121,7 @@ pub enum ProxyCmd {
         bypass: Option<String>,
     },
     /// Stop using a proxy: everything goes straight out again. The browser
-    /// restarts.
+    /// and the agent restart.
     Off,
     /// Fetch Cloudflare's trace through the proxy, from the device: the
     /// address the internet sees it at, or why the proxy did not get there.

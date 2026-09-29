@@ -15,8 +15,9 @@ an operator's behalf, is in `control/page.rs`.
 | `browser.inject.script` | `tessaro-ctl browser inject on --script FILE` / `off` | Runs FILE from `/data/files` in every page |
 | `browser.bridge.mode` | `tessaro-ctl browser bridge off\|config\|actions` | What the page gets as `window.tessaro` |
 
-Both are agent keys: a change restarts the agent, whose first navigation
-loads the page with the new scripts. The browser keeps running.
+Both are agent keys: a change restarts nothing. The bridge's next refresh
+takes the new config and reloads the page, which comes up with the new
+scripts. The browser keeps running.
 
 ## The injected script
 
@@ -106,14 +107,15 @@ or loosen its own restrictions. The same goes for the printers: a page
 prints on the ones the operator set up, and `printer create`, `remove` and
 `default` are not reachable from it.
 
-* **`data.set` restarts nothing when no template uses the key.** A `data.*` is
+* **`data.set` leaves the page alone when no template uses the key.** A `data.*` is
   read by the templates and by this bridge only, so a value no template names
   is saved with `apply` off, and the page keeps its own state across reboots
   without reloading itself. One that `browser.url`, the maintenance URL or the
-  debug template uses restarts the agent like `config set`.
+  debug template uses moves the page like `config set`: the agent loads the
+  new URL, or shows the debug screen with the new value.
 * **Starting the page over is refused within 60s** (`DISRUPT_GAP`) of the
   agent's start and of the last time: `browser.reload`, `restart`, `home`,
-  `maintenance`, `device.reboot`, and a `data.set` that restarts the agent. A
+  `maintenance`, `device.reboot`, and a `data.set` a template uses. A
   page that calls one on load would otherwise loop.
 * **`network.speedTest()` runs at most once in 10 minutes**: it moves real
   data over a link that may be metered.
@@ -175,8 +177,13 @@ port left out as the browser writes it.
 that registered them**, so the session registers `PageScripts` again on every
 connection (`prime`). What happens to the page on screen depends on why:
 
-* **The agent restarted** (any agent setting, `browser.bridge.mode` included):
-  its first cycle navigates, so the page loads with the new scripts.
+* **The mode, the injected script or `printer.enable` changed**: the bridge
+  keeps them as an `Offer` computed from the current config on every
+  refresh, and a change bumps the session's reload counter, so the page
+  reloads with the new `window.tessaro`. New answered origins alone reload
+  nothing.
+* **The agent restarted**: its first cycle navigates, so the page loads with
+  the scripts.
 * **The session reconnected to the same page**: the page keeps running and is
   not reloaded. The session evaluates `PageScripts::rebind`, which gives the
   preamble the new binding in place of the dead one.

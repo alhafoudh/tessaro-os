@@ -9,10 +9,12 @@ Description=Tessaro agent (CDP probe, refresh, offline page, tessaro-ctl API)
 Wants=tessaro-kiosk.service
 After=tessaro-kiosk.service
 
-# It does follow the compositor, so stopping Weston stops the whole kiosk stack
-# instead of leaving a loop poking at a unit that cannot start.
+# Ordered after the compositor, and deliberately not PartOf= it: nothing here
+# talks Wayland, and this is the management API, so a display change must not
+# take it and every Webconfig session down. Weston stopping takes the browser
+# with it (its PartOf=), and the agent leaves a unit that is not running
+# alone rather than poking at it (`restart` in agent.rs).
 After=weston.service
-PartOf=weston.service
 
 # It stages the offline page into /run/tessaro-kiosk (tmpfiles) and restarts
 # the browser over the system bus.

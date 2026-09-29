@@ -30,7 +30,7 @@ same change as the behaviour it describes.
 | --- | --- |
 | [docs/build.md](docs/build.md) | kas layout and config chains, platform gotchas (wks, fstab, QEMU, GPU, Pi), target status |
 | [docs/kiosk-browser.md](docs/kiosk-browser.md) | Chromium units and flags, CDP supervision, origin enforcement, TLS, remote DevTools, page zoom, self-test page, WebSerial/HID/USB/Bluetooth |
-| [docs/agent.md](docs/agent.md) | deadlines, the pledge-fed watchdog, the CDP session |
+| [docs/agent.md](docs/agent.md) | deadlines, the pledge-fed watchdog, the CDP session, settings on a running agent and which keys still restart it |
 | [docs/settings.md](docs/settings.md) | the saved settings, templates and placeholders, read-only keys, the claim model, names, completion, maintenance mode, debug screen |
 | [docs/storage.md](docs/storage.md) | the SQLite stores: the device's `tessaro.db` and `sessions.db`, a client's `tessaro.db`, their tables, the pragmas, migrations, a broken store set aside, the `sqlite3` shell |
 | [docs/api.md](docs/api.md) | the HTTP API: endpoint types, the OpenAPI document and Swagger UI, the socket and TLS, pinning and Bearer tokens, errors, jobs and log pages, connections |

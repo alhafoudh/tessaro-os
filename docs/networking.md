@@ -355,8 +355,11 @@ restarts `tessaro-proxy.service`, or stops it when the URL is emptied.
   which on a network that allows only the proxy is the only thing that can.
   A 407, or the 401 tinyproxy itself answers wrong credentials with
   (`reqs.c`), reaches the journal as "check the user and password", a dead local
-  proxy as "see `tessaro-ctl network proxy show`". The proxy keys also carry
-  `Consumer::Agent`, so the agent restarts and picks the proxy up.
+  proxy as "see `tessaro-ctl network proxy show`". Those clients are built
+  with the proxy once per process, so the agent restarts only when the proxy
+  is switched on or off against how the process started (`restarts_agent`
+  in `control/settings.rs`); a new upstream, password or bypass is
+  tinyproxy's alone and restarts nothing else.
 * **Bypass is tinyproxy's, not Chromium's**: `network.proxy.bypass` becomes
   `Upstream none` lines - a host name matched exactly, a `.domain` as a
   suffix, an address or network under its mask (`hostspec.c`) - next to the
@@ -364,7 +367,8 @@ restarts `tessaro-proxy.service`, or stops it when the URL is emptied.
   the bypass rules are the same for every client.
 * **`network proxy test`** fetches Cloudflare's trace through the local
   proxy from the device and says the address the internet sees it at, or
-  why not. It uses the proxy even before the agent restarted onto it.
+  why not. It uses the proxy even while the running agent was started
+  without one.
 * **Left direct on purpose:** `network ping` (ICMP), the `--verify
   HOST:PORT` check of a network change (it tests the link itself), NTP and
   mDNS.

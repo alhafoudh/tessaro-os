@@ -112,7 +112,7 @@ tessaro-ctl -n golden-thistle-5731 config set browser.url=https://menu.example.c
 
 ```
 revision 3: browser.url
-restarting tessaro-kiosk.service, tessaro-agent.service
+restarting tessaro-kiosk.service
 ```
 
 Set `TESSARO_NODE=golden-thistle-5731` and the `-n` can go. The examples
@@ -169,7 +169,7 @@ browser.url
     The page the kiosk shows (default: the welcome page, http://127.0.0.1/; the self-test is http://127.0.0.1/selftest.html). A new origin also re-grants the device APIs to it.
     value     http://127.0.0.1/  (default)
     accepts   an http, https, file or data URL; may contain {key} placeholders - any setting's key, e.g. {data.table} or {device.name}
-    restarts  the agent (invisible on screen)
+    restarts  nothing: the agent applies it at once
     env       KIOSK_URL
 ```
 

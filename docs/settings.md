@@ -5,10 +5,12 @@ the `settings` table of `/data/tessaro/tessaro.db`, the only way to change them
 is `tessaro-ctl`, and `tessaro-agent` is the only thing that writes them. `tessaro-ctl config keys`
 lists every setting (the registry is `agent/protocol/src/keys.rs`), `config get`,
 `config set KEY=VALUE ...` and `config unset KEY ...` do what they say, and each change
-restarts exactly what reads the key: the agent restarts itself for an agent
-key (invisible on screen), the browser restarts for a browser key or a new
-kiosk origin, Weston restarts - taking the browser and agent with it - for a
-`screen.*` key.
+restarts exactly what reads the key: an agent key restarts nothing, the
+running agent applies it at once (**Settings on a running agent** in
+[agent.md](agent.md)), a key the agent sets up once per process
+(`Consumer::AgentRestart`) restarts the agent, the browser restarts for a
+browser key or a new kiosk origin, Weston restarts - taking the browser with
+it - for a `screen.*` key.
 
 * **The settings are sparse**: a row only for what was set, keyed by the
   registry's dotted names. Everything else follows
@@ -66,8 +68,8 @@ kiosk origin, Weston restarts - taking the browser and agent with it - for a
   contain a template (the debug template alone takes `{browser.url}`).
   `browser.maintenance.url` and `browser.debug.template` are templates by the same rules, and
   `config set` checks every template whichever one is on screen. Because any setting can move the URL, whether
-  the agent restarts is decided by comparing the expanded URL with the one the
-  running agent started with, not by which key changed. `config set` refuses a
+  the page moves is decided by comparing the expanded URL with the one the
+  running agent drives, not by which key changed. `config set` refuses a
   template with an unset `data.*` or a name that is no setting, and a `config unset`
   of a `data.*` still in use; custom values and template can go in one command.
   Nothing is added implicitly - only what the template names.
@@ -96,7 +98,8 @@ kiosk origin, Weston restarts - taking the browser and agent with it - for a
   **A URL using one moves on its own**: the boot render runs before DHCP, and
   leases change, so while the template on screen uses a read-only key the agent checks
   every 15s and, when the expanded URL is no longer the one it drives,
-  re-renders and restarts itself onto it (and the browser, if the origin moved).
+  re-renders and navigates to it without a restart (`check_url` in
+  `watchers.rs`); only a new origin restarts the browser.
 * **Values are validated once, at `config set`**: enums, ranges, URLs, modes - and no
   control characters, quotes, backslashes or `$` anywhere, because the value
   ends up in an env file systemd parses. A newline would write a second
@@ -142,8 +145,11 @@ and how a client authenticates are in [api.md](api.md).
   (**Sessions** in [webconfig.md](webconfig.md)): it ends when its token is
   revoked, the device unclaimed or reset, after `access.session_timeout`
   unused (a week by default), and when the agent stops - except for a
-  restart the agent makes itself to apply a change, which hands the
-  sessions to the next process. A session never changes whether the device
+  restart the agent makes itself to apply a change (a
+  `Consumer::AgentRestart` key, the proxy switched on or off, the extra
+  certificate authorities), which hands the sessions to the next process.
+  Every other setting restarts no agent, so sessions carry on. A session
+  never changes whether the device
   is claimed.
 * **The first `claim` wins.** It gets a token and the root password becomes a
   random 20-character one, which `tessaro-ctl` shows exactly once. Order
@@ -221,8 +227,7 @@ plus `data.msg=...`.
   `KIOSK_URL` *is* the expanded maintenance URL, so every consumer follows it
   without knowing the mode exists: `generated.env` (a reboot in maintenance
   never flashes the site), the agent's navigation and origin enforcement, the
-  periodic refresh, `device status`, the `url_moved` restart check and the read-only
-  key watcher.
+  periodic refresh, `device status` and the read-only key watcher.
 * **`KIOSK_PROBE_URL` reads as empty meanwhile**, so the agent probes the
   maintenance page. Probing the site's health endpoint instead would put the
   offline page over the maintenance page the moment the site went down - and
@@ -231,7 +236,8 @@ plus `data.msg=...`.
   `Effective::kiosk_url()`, browser.url's origin whatever the mode. Following the
   maintenance page would rewrite the policy on every toggle, restart the
   browser on a public screen and take the site's grants away. So a toggle
-  restarts the agent only, which re-navigates; the browser keeps running.
+  restarts nothing: the running agent navigates to the other page, and the
+  browser keeps running.
 
 ## Debug screen
 
@@ -240,8 +246,9 @@ page for a full-screen text screen: `browser.debug.template` filled in, in large
 DejaVu Sans Mono, white on black, shrunk until the longest line fits.
 `browser debug on --template '...'` sets the template in the same change, and
 `device status` shows a `debug screen` row while it is up. Both keys are agent keys,
-so a toggle restarts only the agent, like maintenance mode; the browser keeps
-running. `browser.debug.enable` is not `agent.debug`, which is journal verbosity; its
+so a toggle restarts nothing, like maintenance mode: the running agent swaps
+the page, and a new template or a `data.*` value it names shows at the next
+stage. The browser keeps running. `browser.debug.enable` is not `agent.debug`, which is journal verbosity; its
 env name is `KIOSK_DEBUG_SCREEN` because `KIOSK_DEBUG` was taken.
 
 * **It wins over maintenance mode, and it is the agent's, not

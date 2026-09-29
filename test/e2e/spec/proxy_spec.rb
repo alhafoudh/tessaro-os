@@ -8,7 +8,7 @@ module AgentE2E
   # which wants a login (BasicAuth) and logs every request it gets. No
   # internet is needed: a request the upstream logged went through the chain,
   # whether or not the target answered. A lane of its own, since switching
-  # the proxy on and off restarts the browser.
+  # the proxy on and off restarts the browser and the agent.
   RSpec.describe "the proxy" do
     include_context "a booted VM"
 
@@ -59,10 +59,11 @@ module AgentE2E
 
     def stop_upstream = guest.run("systemctl stop e2e-upstream-proxy", allow_failure: true)
 
-    # `tessaro-ctl network proxy ARGS`, and when it restarted the agent - the
-    # proxy keys are the agent's too - wait until the new one listens, so the
-    # next command, the next case and the harness's own configure reach it
-    # rather than the gap. With many VMs at once that gap is seconds long.
+    # `tessaro-ctl network proxy ARGS`, and when it restarted the agent - it
+    # does when the proxy is switched on or off - wait until the new one
+    # listens, so the next command, the next case and the harness's own
+    # configure reach it rather than the gap. With many VMs at once that gap
+    # is seconds long.
     def proxy(args, allow_failure: false)
       cursor = guest.cursor
       out = guest.run("tessaro-ctl network proxy #{args}", allow_failure: allow_failure)
@@ -120,6 +121,16 @@ module AgentE2E
     it "proxy: network proxy off stops the local proxy and takes it out of the browser's policy", :reconfigure do
       proxy("set http://127.0.0.1:#{UPSTREAM_PORT}")
       expect(guest.property("tessaro-proxy", "ActiveState")).to eq("active")
+
+      # Another upstream keeps the same local proxy: only tinyproxy restarts.
+      agent = guest.agent_pid
+      browser = guest.kiosk_pid
+      out = proxy("set http://127.0.0.1:#{UPSTREAM_PORT + 1}")
+      expect(out).to include("tessaro-proxy.service")
+      expect(out).not_to include("tessaro-agent.service")
+      expect(out).not_to include("tessaro-kiosk.service")
+      expect(guest.agent_pid).to eq(agent), "the agent was restarted"
+      expect(guest.kiosk_pid).to eq(browser), "the browser was restarted"
 
       out = proxy("off")
       expect(out).to include("restarting tessaro-kiosk.service")

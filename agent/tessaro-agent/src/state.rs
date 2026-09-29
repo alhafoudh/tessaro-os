@@ -371,13 +371,16 @@ impl Env for Effective<'_> {
     }
 }
 
-/// The image defaults for every registry key, captured once from the
-/// process environment, which systemd filled from the `/usr/lib` env file.
-/// Captured rather than read live so a test, or a host run, is deterministic.
+/// The image defaults for every registry key, and the image-only variables
+/// `Config` reads (`config::IMAGE_ONLY`), captured once from the process
+/// environment, which systemd filled from the `/usr/lib` env file. Captured
+/// rather than read live so a test, or a host run, is deterministic.
 pub fn defaults(env: &dyn Env) -> HashMap<String, String> {
     protocol::keys::KEYS
         .iter()
-        .filter_map(|key| env.get(key.env).map(|value| (key.env.to_string(), value)))
+        .map(|key| key.env)
+        .chain(crate::config::IMAGE_ONLY.iter().copied())
+        .filter_map(|name| env.get(name).map(|value| (name.to_string(), value)))
         .collect()
 }
 

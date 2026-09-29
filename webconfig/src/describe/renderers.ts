@@ -48,6 +48,8 @@ export const renderers: Record<string, (input: any) => unknown> = {
     const shown = device.evalResult(input);
     return { line: spans(shown.line), thrown: shown.thrown };
   },
+  "device::restarts": (input) =>
+    input.map((consumer: any) => ({ long: device.restarts(consumer), short: device.restartsShort(consumer) })),
   "audio::summary": (input) => spans(audio.summary(input)),
   "time::summary": (input) => spans(time.summary(input)),
   "ping::event_line": (input) => input.map((event: any) => spans(ping.eventLine(event))),

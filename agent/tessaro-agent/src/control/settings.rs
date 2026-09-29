@@ -12,6 +12,7 @@ use tokio::time::Instant;
 
 use super::{not_offered, unknown, After, Caller, Control, Reply};
 use crate::audio;
+use crate::config::{Config, Current};
 use crate::db;
 use crate::deadline::blocking;
 use crate::display;
@@ -276,15 +277,41 @@ impl Control {
         Ok((committed, Some(change)))
     }
 
-    /// browser.url as these settings, and the device as it is now, expand it.
-    pub(super) async fn expanded_url(&self, settings: &BTreeMap<String, String>) -> String {
+    /// The agent's configuration as these settings, and the device as it is
+    /// now, make it: what `main` builds at start, from the same defaults.
+    async fn config_from(&self, settings: &BTreeMap<String, String>) -> Config {
         let live = self.live().await;
         let effective = state::Effective::new(&self.defaults, settings, &self.log).with_live(live);
-        crate::config::Env::get(&effective, "KIOSK_URL").unwrap_or_default()
+        Config::load(&effective)
     }
 
-    /// Render, then restart what reads the changed keys. The reply is built
-    /// here so every path that changes settings reports it the same way.
+    /// browser.url as these settings, and the device as it is now, expand it.
+    pub(super) async fn expanded_url(&self, settings: &BTreeMap<String, String>) -> String {
+        self.config_from(settings).await.kiosk_url
+    }
+
+    /// Hand the running agent the configuration these settings make: the
+    /// state machine, the debug screen, the watchdog and the page bridge
+    /// follow it at once, and the log's verbosity is switched here. Nothing
+    /// is published when nothing the agent reads moved.
+    fn publish(&self, config: Config, settings: &BTreeMap<String, String>) {
+        self.log.set_debug(config.debug);
+        let next = Current {
+            config,
+            settings: settings.clone(),
+        };
+        self.current.send_if_modified(|current| {
+            if **current == next {
+                return false;
+            }
+            *current = Arc::new(next);
+            true
+        });
+    }
+
+    /// Render, apply what the agent reads, then restart what reads the
+    /// other changed keys. The reply is built here so every path that
+    /// changes settings reports it the same way.
     pub(super) async fn converge(
         &self,
         changed: &[Changed],
@@ -292,8 +319,6 @@ impl Control {
         apply: bool,
         network: Option<protocol::NetChange>,
     ) -> Reply {
-        // The page's copy of the settings follows, if it has one.
-        self.poke_bridge();
         let rendered = match self.render(&state.settings).await {
             Ok(rendered) => rendered,
             Err(err) => {
@@ -309,14 +334,22 @@ impl Control {
                 .iter()
                 .any(|(_, key)| key.consumers.contains(&consumer))
         };
-        // browser.url can be built from any setting, so a change to one of
-        // them can move the URL without touching a key the agent reads. The
-        // test is whether the URL this agent started with is still the one.
-        let url_moved = self.expanded_url(&state.settings).await != self.agent_url;
-
         let weston = reads(Consumer::Weston);
         let browser = !weston && (reads(Consumer::Browser) || rendered.policy_changed);
-        let agent = !weston && (reads(Consumer::Agent) || url_moved);
+
+        // What the agent reads applies at once, whichever key moved it:
+        // browser.url can be built from any setting. Only what it sets up
+        // once per process restarts it, and the proxy being switched on or
+        // off, which its clients are built for.
+        let config = self.config_from(&state.settings).await;
+        let agent = restarts_agent(changed, &config, self.proxy);
+        if apply {
+            // Before any browser restart below, so the browser comes back to
+            // the new page with the new scripts.
+            self.publish(config, &state.settings);
+        }
+        // The bridge, and the page's copy of the settings, follow.
+        self.poke_bridge();
 
         // Sound restarts nothing: the running server is switched at once. A
         // server that is not up yet gets the settings from the watcher when
@@ -377,13 +410,20 @@ impl Control {
                 }
                 restarted.push(self.paths.kiosk_unit.clone());
             }
+            // The agent last: it is this process.
+            let mut units = Vec::new();
             if weston {
-                restarted.push(self.paths.weston_unit.clone());
-                after = Some(After::Restart(self.paths.weston_unit.clone()));
-            } else if agent {
-                restarted.push(self.paths.agent_unit.clone());
-                after = Some(After::Restart(self.paths.agent_unit.clone()));
+                units.push(self.paths.weston_unit.clone());
             }
+            if agent {
+                units.push(self.paths.agent_unit.clone());
+            }
+            restarted.extend(units.iter().cloned());
+            after = match units.len() {
+                0 => None,
+                1 => units.pop().map(After::Restart),
+                _ => Some(After::Restarts(units)),
+            };
         }
 
         Reply::ok(Applied {
@@ -442,8 +482,7 @@ impl Control {
     // --- probation ---------------------------------------------------------
 
     /// Start the confirm window. Called when a guarded change is made, and at
-    /// startup when one is pending - which is the usual case, because the
-    /// change restarted Weston and this agent with it.
+    /// startup when one is pending, after a crash or a reboot.
     pub fn arm_probation(self: &Arc<Self>) {
         let deadline = Instant::now() + Duration::from_secs(protocol::CONFIRM_SECONDS);
         *lock(&self.probation) = Some(deadline);
@@ -451,12 +490,29 @@ impl Control {
         let control = Arc::clone(self);
         let mut shutdown = self.shutdown.clone();
         tokio::spawn(async move {
-            tokio::select! {
-                _ = tokio::time::sleep_until(deadline) => {}
-                _ = shutdown.changed() => return,
+            let mut deadline = deadline;
+            loop {
+                tokio::select! {
+                    _ = tokio::time::sleep_until(deadline) => {}
+                    _ = shutdown.changed() => return,
+                }
+                // Held open for longer since (`extend_probation`): wait on.
+                match *lock(&control.probation) {
+                    Some(later) if later > deadline => deadline = later,
+                    _ => break,
+                }
             }
             control.expire_probation(deadline).await;
         });
+    }
+
+    /// Give the change on probation, if there is one, its whole confirm
+    /// window from now: Weston was just restarted for it, and the screen it
+    /// is judged on is only coming back.
+    pub(super) fn extend_probation(&self) {
+        if let Some(deadline) = lock(&self.probation).as_mut() {
+            *deadline = Instant::now() + Duration::from_secs(protocol::CONFIRM_SECONDS);
+        }
     }
 
     pub async fn arm_if_pending(self: &Arc<Self>) {
@@ -538,6 +594,21 @@ impl Control {
 /// A setting that changed: its name as stored, and the registry entry that
 /// says what reads it.
 pub(super) type Changed = (String, &'static Key);
+
+/// Whether these changes need the agent to restart: a key it sets up once
+/// per process (`Consumer::AgentRestart`), or the proxy switched on or off
+/// against how the process started (`running`), which its clients are built
+/// for. A new upstream or bypass keeps the same local proxy address.
+pub(super) fn restarts_agent(
+    changed: &[Changed],
+    config: &Config,
+    running: Option<std::net::SocketAddr>,
+) -> bool {
+    changed
+        .iter()
+        .any(|(_, key)| key.consumers.contains(&Consumer::AgentRestart))
+        || config.proxy != running
+}
 
 /// What a committed edit leaves: the settings before, and the state after.
 type Committed = (BTreeMap<String, String>, State);

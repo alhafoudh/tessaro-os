@@ -176,11 +176,13 @@ export function applied(applied: Schemas["Applied"], noApply: boolean): Line[] {
 export function restarts(consumer: Schemas["Consumer"]): string {
   switch (consumer) {
     case "agent":
-      return "the agent (invisible on screen)";
+      return "nothing: the agent applies it at once";
+    case "agent-restart":
+      return "the agent (it loads the page again)";
     case "browser":
       return "the browser";
     case "weston":
-      return "the display (Weston, browser and agent)";
+      return "the display (Weston and the browser)";
     case "network":
       return "nothing: the network profiles are switched, and checked before it is saved";
     case "audio":
@@ -190,13 +192,15 @@ export function restarts(consumer: Schemas["Consumer"]): string {
     case "time":
       return "nothing on screen: applied to the clock at once; systemd-timesyncd when its servers change";
     case "proxy":
-      return "the local proxy (tessaro-proxy.service); the browser when the proxy is switched on or off";
+      return "the local proxy (tessaro-proxy.service); the browser and the agent when the proxy is switched on or off";
   }
 }
 
 export function restartsShort(consumer: Schemas["Consumer"]): string {
   switch (consumer) {
     case "agent":
+      return "agent (live)";
+    case "agent-restart":
       return "agent";
     case "browser":
       return "browser";
@@ -211,7 +215,7 @@ export function restartsShort(consumer: Schemas["Consumer"]): string {
     case "time":
       return "clock";
     case "proxy":
-      return "local proxy (browser on switching)";
+      return "local proxy (browser, agent on switching)";
   }
 }
 

@@ -16,7 +16,7 @@ use std::path::Path;
 use async_trait::async_trait;
 use protocol::keys;
 
-use crate::config::Config;
+use crate::config::Follow;
 use crate::log::Log;
 use crate::paths::Paths;
 use crate::ports::{DebugScreen, Staged};
@@ -26,10 +26,11 @@ pub const FILE: &str = "debug.html";
 
 pub struct Debug<'a> {
     log: &'a Log,
-    config: &'a Config,
+    /// The settings as the agent applies them now, so a new template or a
+    /// value it names shows at the next stage.
+    current: Follow,
     paths: &'a Paths,
     defaults: &'a HashMap<String, String>,
-    settings: &'a BTreeMap<String, String>,
     /// The page staged last, to tell whether the screen is out of date.
     last: RefCell<Option<String>>,
 }
@@ -37,26 +38,24 @@ pub struct Debug<'a> {
 impl<'a> Debug<'a> {
     pub fn new(
         log: &'a Log,
-        config: &'a Config,
+        current: Follow,
         paths: &'a Paths,
         defaults: &'a HashMap<String, String>,
-        settings: &'a BTreeMap<String, String>,
     ) -> Self {
         Self {
             log,
-            config,
+            current,
             paths,
             defaults,
-            settings,
             last: RefCell::new(None),
         }
     }
 
     /// The template as set, else the image default, filled in.
-    fn text(&self, live: &state::Live) -> String {
+    fn text(&self, settings: &BTreeMap<String, String>, live: &state::Live) -> String {
         let template =
-            state::setting(self.settings, self.defaults, keys::DEBUG_TEMPLATE).unwrap_or_default();
-        state::expand_text(&template, self.settings, self.defaults, live).0
+            state::setting(settings, self.defaults, keys::DEBUG_TEMPLATE).unwrap_or_default();
+        state::expand_text(&template, settings, self.defaults, live).0
     }
 }
 
@@ -73,8 +72,10 @@ impl DebugScreen for Debug<'_> {
 
 impl Debug<'_> {
     fn stage(&self) -> Option<Staged> {
-        let html = page(&self.text(&crate::render::live(self.paths)));
-        let uri = format!("file://{}/{FILE}", self.config.offline_dir);
+        let current = self.current.borrow().clone();
+        let html = page(&self.text(&current.settings, &crate::render::live(self.paths)));
+        let offline_dir = &current.config.offline_dir;
+        let uri = format!("file://{offline_dir}/{FILE}");
         if self.last.borrow().as_deref() == Some(html.as_str()) {
             return Some(Staged {
                 uri,
@@ -82,7 +83,7 @@ impl Debug<'_> {
             });
         }
 
-        let dir = Path::new(&self.config.offline_dir);
+        let dir = Path::new(offline_dir);
         // Single level, as in offline.rs: the directory is a tmpfiles entry.
         if !dir.is_dir() {
             if let Err(err) = fs::create_dir(dir) {
@@ -164,6 +165,7 @@ fn escape(line: &str) -> String {
 mod tests {
     use super::*;
     use crate::config::test_support::config_with;
+    use crate::config::Current;
 
     #[test]
     fn lines_break_at_backslash_n_and_text_is_escaped() {
@@ -192,7 +194,12 @@ ip 10.0.0.2 &lt;x&gt; &amp; y</div>"#
         let log = Log::buffered(true);
 
         let mut settings = BTreeMap::new();
-        let first = Debug::new(&log, &config, &paths, &defaults, &settings).stage();
+        let (publish, current) = tokio::sync::watch::channel(std::sync::Arc::new(Current {
+            config: config.clone(),
+            settings: settings.clone(),
+        }));
+        let screen = Debug::new(&log, current, &paths, &defaults);
+        let first = screen.stage();
         assert_eq!(
             first,
             Some(Staged {
@@ -203,8 +210,11 @@ ip 10.0.0.2 &lt;x&gt; &amp; y</div>"#
         let written = fs::read_to_string(dir.join(FILE)).unwrap();
         assert!(written.contains("hello\nworld"), "{written}");
 
+        assert!(!screen.stage().unwrap().changed);
+
+        // A template set on the running agent shows at the next stage.
         settings.insert("browser.debug.template".to_string(), "set here".to_string());
-        let screen = Debug::new(&log, &config, &paths, &defaults, &settings);
+        publish.send_replace(std::sync::Arc::new(Current { config, settings }));
         assert!(screen.stage().unwrap().changed);
         assert!(!screen.stage().unwrap().changed);
         assert!(fs::read_to_string(dir.join(FILE))

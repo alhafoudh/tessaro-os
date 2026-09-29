@@ -39,9 +39,13 @@ connector will be called, the config is generated per boot:
   generator writes it only for connectors that list it and leaves the rest on
   their preferred mode; and the change is on **probation** - it reverts on its
   own unless `tessaro-ctl screen confirm` arrives within 60s. The pending change is in
-  the `state` table of `tessaro.db`, so it survives the agent restarting with Weston, and the boot
-  oneshot reverts a change still pending at boot: a reboot is not a confirm.
-  The timer is monotonic, never the wall clock.
+  the `state` table of `tessaro.db`, so an agent that crashes re-arms it at
+  start (`arm_if_pending`), and the boot oneshot reverts a change still
+  pending at boot: a reboot is not a confirm. The agent keeps running through
+  the Weston restart the change makes, so the 60s start again from that
+  restart (`extend_probation` in `control/settings.rs`): the screen has to be
+  up before the time to confirm runs. The timer is monotonic, never the wall
+  clock.
 * **Every generated `[output]` sets `max-bpc=8`, so the link stays on 8-bit
   RGB.** Weston's default is 16 (`weston-drm.man`), which lets the driver pick
   deep colour. Where the link cannot carry deep RGB, vc4 falls back to 12-bit
@@ -62,8 +66,11 @@ connector will be called, the config is generated per boot:
   before replacing it, and `--modules=systemd-notify.so` has to be carried over
   verbatim - `weston.service` is `Type=notify` and hangs without it.
 * The `screen.*` keys are the ones read by the compositor, so
-  `tessaro-ctl config set` restarts Weston for them, and with it the browser and the
-  agent.
+  `tessaro-ctl config set` restarts Weston for them, and with it the browser.
+  The agent is only `After=weston.service`, not `PartOf=` it, so the agent,
+  its API on 7400 and every Webconfig session keep running through a Weston
+  restart. A change that also has a `Consumer::AgentRestart` key restarts
+  Weston, then the agent (`After::Restarts`).
 
 ## Display hotplug
 
@@ -74,8 +81,7 @@ Weston starts. So `watch_display` in `control/watchers.rs` reads `/sys/class/drm
 held still for 5s, it runs the generator again, as root, into
 `/run/tessaro-kiosk/weston-candidate.ini`, and compares that with
 `/run/weston/weston.ini` (`agent/tessaro-agent/src/hotplug.rs`). Weston is
-restarted, taking the browser and the agent with it, only if one of these
-holds:
+restarted, taking the browser with it, only if one of these holds:
 
 * a connector is connected now that was not when Weston started. The
   generator records that set in a `# tessaro-weston-config: connected ...`

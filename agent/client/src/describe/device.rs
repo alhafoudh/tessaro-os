@@ -271,9 +271,10 @@ pub fn applied(applied: &Applied, no_apply: bool) -> Vec<Line> {
 /// What a change of a key read by `consumer` restarts, in words.
 pub fn restarts(consumer: Consumer) -> &'static str {
     match consumer {
-        Consumer::Agent => "the agent (invisible on screen)",
+        Consumer::Agent => "nothing: the agent applies it at once",
+        Consumer::AgentRestart => "the agent (it loads the page again)",
         Consumer::Browser => "the browser",
-        Consumer::Weston => "the display (Weston, browser and agent)",
+        Consumer::Weston => "the display (Weston and the browser)",
         Consumer::Network => {
             "nothing: the network profiles are switched, and checked before it is saved"
         }
@@ -283,7 +284,7 @@ pub fn restarts(consumer: Consumer) -> &'static str {
             "nothing on screen: applied to the clock at once; systemd-timesyncd when its servers change"
         }
         Consumer::Proxy => {
-            "the local proxy (tessaro-proxy.service); the browser when the proxy is switched on or off"
+            "the local proxy (tessaro-proxy.service); the browser and the agent when the proxy is switched on or off"
         }
     }
 }
@@ -291,14 +292,15 @@ pub fn restarts(consumer: Consumer) -> &'static str {
 /// The same in a word or two, for a table column.
 pub fn restarts_short(consumer: Consumer) -> &'static str {
     match consumer {
-        Consumer::Agent => "agent",
+        Consumer::Agent => "agent (live)",
+        Consumer::AgentRestart => "agent",
         Consumer::Browser => "browser",
         Consumer::Weston => "weston",
         Consumer::Network => "network",
         Consumer::Audio => "audio",
         Consumer::Firmware => "firmware (next reboot)",
         Consumer::Time => "clock",
-        Consumer::Proxy => "local proxy (browser on switching)",
+        Consumer::Proxy => "local proxy (browser, agent on switching)",
     }
 }
 

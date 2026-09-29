@@ -138,12 +138,17 @@ module AgentE2E
       signed_in = browser
       expect(signed_in.post("/api/v1/access/ticket/redeem", { ticket: }).status).to eq(200)
 
-      # A data.* key is read by the agent, which restarts to apply it.
-      set = signed_in.post("/api/v1/config/set", { values: { "data.e2e" => "1" } })
+      # A key the agent sets up once, which it restarts itself to apply.
+      set = signed_in.post("/api/v1/config/set", { values: { "agent.cdp_ping" => "11" } })
       expect(set.status).to eq(200), set.body
-      expect(set.json["restarted"]).not_to be_empty
+      expect(set.json["restarted"]).to include("tessaro-agent.service")
       wait_for_restart
       expect(signed_in.get("/api/v1/device/status").status).to eq(200), "the session did not survive the change"
+
+      # A data.* key is applied by the running agent: nothing restarts.
+      set = signed_in.post("/api/v1/config/set", { values: { "data.e2e" => "1" } })
+      expect(set.status).to eq(200), set.body
+      expect(set.json["restarted"]).to be_empty
 
       restart = signed_in.post("/api/v1/device/restart", { what: "agent" })
       expect(restart.status).to eq(200), restart.body
@@ -151,7 +156,7 @@ module AgentE2E
       expect(signed_in.get("/api/v1/device/status").status).to eq(401), "the session survived an asked-for restart"
     ensure
       unclaim(token)
-      guest.run("tessaro-ctl config unset --no-apply data.e2e", allow_failure: true)
+      guest.run("tessaro-ctl config unset --no-apply data.e2e agent.cdp_ping", allow_failure: true)
     end
   end
 end

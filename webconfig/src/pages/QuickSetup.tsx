@@ -159,7 +159,7 @@ function Toggles({
   const toggle = (key: string, on: boolean, name: string) => async () => {
     setBusy(key);
     await save({ [key]: on ? "1" : "0" }, `${name} ${on ? "on" : "off"}.`, say);
-    // Maintenance and the debug screen restart the agent to apply.
+    // The agent puts the new page up within a moment of the answer.
     setTimeout(() => setBusy(null), 3000);
   };
   const row = (key: string, on: boolean, name: string, what: string) => (

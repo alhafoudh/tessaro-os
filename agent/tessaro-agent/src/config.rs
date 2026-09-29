@@ -6,8 +6,18 @@
 //! this only ever reads variables. The defaults file stays data, never code.
 //! The defaults below mirror the ones in `tessaro-kiosk.env.in` and exist so
 //! the binary is runnable by hand.
+//!
+//! A change to the settings builds a new `Config` in the control plane,
+//! which publishes it as a `Current` on a watch channel: the state machine,
+//! the watchdog and the log follow it without the process restarting. What
+//! is set up once per process (the clients and their budgets, the listener)
+//! is taken from the first one only; its keys restart the agent
+//! (`Consumer::AgentRestart`).
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
+
+use tokio::sync::watch;
 
 /// Where the variables come from. Production reads the process environment;
 /// tests hand in a map.
@@ -58,13 +68,40 @@ impl BridgeMode {
     }
 }
 
-#[derive(Debug, Clone)]
+/// The variables `Config` reads that are no setting: the image's own, from
+/// the env file. `state::defaults` captures them with the registry's, so a
+/// `Config` built again from the defaults and the settings matches the one
+/// the process started with.
+pub const IMAGE_ONLY: &[&str] = &[
+    "KIOSK_CDP_URL",
+    "KIOSK_UNIT",
+    "KIOSK_OFFLINE_PAGE",
+    "KIOSK_OFFLINE_PAGE_DEFAULT",
+    "KIOSK_OFFLINE_DIR",
+    "KIOSK_OFFLINE_MAX_BYTES",
+    "KIOSK_PROXY_LISTEN",
+];
+
+/// The configuration as the running agent applies it, and the settings it
+/// was built from: the debug screen fills its template in from those.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Current {
+    pub config: Config,
+    pub settings: BTreeMap<String, String>,
+}
+
+/// Where a `Current` is read: every cycle takes the latest.
+pub type Follow = watch::Receiver<Arc<Current>>;
+/// The control plane's end, which publishes a changed one.
+pub type Publish = watch::Sender<Arc<Current>>;
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct Config {
     pub kiosk_url: String,
     pub probe_url: String,
     /// The device's local proxy, while network.proxy.url is set: what the
-    /// probe and the public address go through. A change to the setting
-    /// restarts the agent, so this holds for the life of the process.
+    /// probe and the public address go through. Their clients are built
+    /// with it once, so switching the proxy on or off restarts the agent.
     pub proxy: Option<std::net::SocketAddr>,
 
     pub probe_interval: i64,
@@ -97,6 +134,8 @@ pub struct Config {
     pub inject_script: String,
     /// What the page gets as `window.tessaro` (`browser.bridge.mode`).
     pub bridge: BridgeMode,
+    /// `printer.enable`: the bridge takes window.print() over.
+    pub printing: bool,
 
     pub cdp_url: String,
     /// The whole budget for one DevTools command. Used to be
@@ -157,6 +196,7 @@ impl Config {
                 .trim_matches('/')
                 .to_string(),
             bridge: BridgeMode::parse(&string(env, "KIOSK_BRIDGE_MODE", "off")),
+            printing: flag(env, "KIOSK_PRINTING", false),
 
             cdp_url: string(env, "KIOSK_CDP_URL", "http://127.0.0.1:9222"),
             cdp_timeout: int(env, "KIOSK_CDP_TIMEOUT", 5),
@@ -361,6 +401,35 @@ mod tests {
         let config = config_with(&[("KIOSK_PROBE_URL", "")]);
 
         assert_eq!(config.probe_target(), "http://kiosk.test/");
+    }
+
+    #[test]
+    fn built_again_from_the_defaults_it_is_the_config_the_process_started_with() {
+        use crate::config::Config;
+        use crate::log::Log;
+        use crate::state::{defaults, Effective};
+
+        let mut env = super::test_support::default_env();
+        env.insert("KIOSK_CDP_URL".into(), "http://127.0.0.1:9333".into());
+        env.insert("KIOSK_UNIT".into(), "kiosk-test.service".into());
+        env.insert("KIOSK_PROXY_LISTEN".into(), "127.0.0.1:3129".into());
+        env.insert("KIOSK_OFFLINE_MAX_BYTES".into(), "1000".into());
+        env.insert("UNRELATED".into(), "x".into());
+        let settings: std::collections::BTreeMap<String, String> = [
+            ("agent.probe_interval", "7"),
+            ("network.proxy.url", "http://proxy.test:8080"),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+        let log = Log::buffered(false);
+
+        let started = Config::load(&Effective::new(&env, &settings, &log));
+        let rebuilt = Config::load(&Effective::new(&defaults(&env), &settings, &log));
+
+        assert_eq!(rebuilt, started);
+        assert_eq!(rebuilt.cdp_url, "http://127.0.0.1:9333");
+        assert_eq!(rebuilt.proxy, Some("127.0.0.1:3129".parse().unwrap()));
     }
 
     #[test]

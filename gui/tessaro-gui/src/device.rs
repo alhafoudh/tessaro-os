@@ -1664,17 +1664,21 @@ impl Device {
                 let (title, body, label) = match what {
                     Confirmable::Restart(RestartTarget::Browser) => (
                         "Restart the browser",
-                        format!("Restart the browser on {name}? The screen goes blank for a moment."),
+                        format!(
+                            "Restart the browser on {name}? The screen goes blank for a moment."
+                        ),
                         "Restart",
                     ),
                     Confirmable::Restart(RestartTarget::Weston) => (
                         "Restart weston",
-                        format!("Restart the compositor on {name}? The browser and the agent restart with it."),
+                        format!("Restart the compositor on {name}? The browser restarts with it."),
                         "Restart",
                     ),
                     Confirmable::Restart(RestartTarget::Agent) => (
                         "Restart the agent",
-                        format!("Restart tessaro-agent on {name}? This window reconnects by itself."),
+                        format!(
+                            "Restart tessaro-agent on {name}? This window reconnects by itself."
+                        ),
                         "Restart",
                     ),
                     Confirmable::Reboot => (
@@ -1934,7 +1938,7 @@ mod tests {
         };
         let keys = BTreeMap::from([(template.name.clone(), template)]);
         let rows = rows(&settings(), &keys, &Scope::of("data"));
-        assert_eq!(rows[0].applies, "agent");
+        assert_eq!(rows[0].applies, "agent (live)");
     }
 
     #[test]

@@ -30,13 +30,19 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum Consumer {
-    /// Read by tessaro-agent at start: the agent restarts itself. Invisible
-    /// on screen - the browser is left alone.
+    /// Read by the running tessaro-agent, which applies the change at once:
+    /// nothing restarts. A new page to show is navigated to, a new injected
+    /// script or bridge mode reloads the page.
     Agent,
+    /// Read by tessaro-agent at start, for what it sets up once per process:
+    /// the listener, mDNS, the HTTP and DevTools clients. The agent restarts
+    /// itself, and its first cycle loads the page again.
+    AgentRestart,
     /// Read by tessaro-kiosk.service: the browser restarts.
     Browser,
     /// Read by tessaro-weston-config before the compositor starts: Weston
-    /// restarts, and with it (`PartOf=`) the browser and the agent.
+    /// restarts, and with it (`PartOf=`) the browser. The agent keeps
+    /// running.
     Weston,
     /// The device's own NetworkManager profiles: applied as one network
     /// change the device verifies and rolls back by itself, before the
@@ -57,8 +63,9 @@ pub enum Consumer {
     Time,
     /// The device's local forwarding proxy, `tessaro-proxy.service`: its
     /// config in `/run` is rendered again, and the unit restarts, or stops
-    /// when network.proxy.url is empty. The browser restarts only when the
-    /// proxy is switched on or off, which changes its policy.
+    /// when network.proxy.url is empty. The browser and the agent restart
+    /// only when the proxy is switched on or off: the browser's policy
+    /// changes, and the agent's clients are built for one or the other.
     Proxy,
 }
 
@@ -231,6 +238,7 @@ pub struct Key {
 }
 
 const AGENT: &[Consumer] = &[Consumer::Agent];
+const AGENT_RESTART: &[Consumer] = &[Consumer::AgentRestart];
 const NOBODY: &[Consumer] = &[];
 const BROWSER: &[Consumer] = &[Consumer::Browser];
 const WESTON: &[Consumer] = &[Consumer::Weston];
@@ -238,11 +246,11 @@ const NETWORK: &[Consumer] = &[Consumer::Network];
 const AUDIO: &[Consumer] = &[Consumer::Audio];
 const FIRMWARE: &[Consumer] = &[Consumer::Firmware];
 const TIME: &[Consumer] = &[Consumer::Time];
-/// The proxy keys: the local proxy, and the agent, whose probe and public
-/// address lookup go through it.
-const PROXY: &[Consumer] = &[Consumer::Proxy, Consumer::Agent];
+/// The proxy keys: the local proxy. The agent, whose probe and public
+/// address lookup go through it, follows only it being switched on or off.
+const PROXY: &[Consumer] = &[Consumer::Proxy];
 /// The node name: the agent's mDNS name, and the hotspot's SSID.
-const AGENT_AND_NETWORK: &[Consumer] = &[Consumer::Agent, Consumer::Network];
+const AGENT_AND_NETWORK: &[Consumer] = &[Consumer::AgentRestart, Consumer::Network];
 /// printer.enable: the browser's policy, and the agent's script, which
 /// takes window.print() over.
 const BROWSER_AND_AGENT: &[Consumer] = &[Consumer::Browser, Consumer::Agent];
@@ -278,6 +286,17 @@ const fn seconds(
     doc: &'static str,
 ) -> Key {
     key(name, env, Kind::Int { min, max }, AGENT, doc)
+}
+
+/// `seconds`, for a budget one of the agent's clients is built with.
+const fn seconds_at_start(
+    name: &'static str,
+    env: &'static str,
+    min: i64,
+    max: i64,
+    doc: &'static str,
+) -> Key {
+    key(name, env, Kind::Int { min, max }, AGENT_RESTART, doc)
 }
 
 /// The registry. The VNC credential (`KIOSK_VNC_USER`/`KIOSK_VNC_PASSWORD`) is
@@ -358,15 +377,15 @@ pub static KEYS: &[Key] = &[
         "Debug lines in the agent's journal."),
     key("agent.watchdog", "KIOSK_WATCHDOG", Kind::Flag, AGENT,
         "Judge the agent's pledges before pinging the systemd watchdog."),
-    key("agent.device_access", "KIOSK_DEVICE_ACCESS", Kind::Flag, AGENT,
+    key("agent.device_access", "KIOSK_DEVICE_ACCESS", Kind::Flag, AGENT_RESTART,
         "Enable CDP DeviceAccess on the page session."),
     seconds("agent.probe_interval", "KIOSK_PROBE_INTERVAL", 1, 3600,
         "Seconds between probes while the site is up."),
     seconds("agent.probe_interval_fail", "KIOSK_PROBE_INTERVAL_FAIL", 1, 3600,
         "Seconds between probes while the site is down."),
-    seconds("agent.probe_connect_timeout", "KIOSK_PROBE_CONNECT_TIMEOUT", 1, 120,
+    seconds_at_start("agent.probe_connect_timeout", "KIOSK_PROBE_CONNECT_TIMEOUT", 1, 120,
         "Probe connect timeout, seconds."),
-    seconds("agent.probe_timeout", "KIOSK_PROBE_TIMEOUT", 1, 120,
+    seconds_at_start("agent.probe_timeout", "KIOSK_PROBE_TIMEOUT", 1, 120,
         "Probe response timeout, seconds."),
     seconds("agent.fail_threshold", "KIOSK_FAIL_THRESHOLD", 1, 1000,
         "Failed probes before the offline page."),
@@ -380,11 +399,11 @@ pub static KEYS: &[Key] = &[
         "Failed probes while down before the browser is restarted; 0 never."),
     seconds("agent.restart_backoff", "KIOSK_RESTART_BACKOFF", 0, 86400,
         "Minimum seconds between browser restarts."),
-    seconds("agent.cdp_timeout", "KIOSK_CDP_TIMEOUT", 1, 120,
+    seconds_at_start("agent.cdp_timeout", "KIOSK_CDP_TIMEOUT", 1, 120,
         "Budget for one DevTools command, seconds."),
-    seconds("agent.cdp_ping", "KIOSK_CDP_PING", 1, 3600,
+    seconds_at_start("agent.cdp_ping", "KIOSK_CDP_PING", 1, 3600,
         "DevTools websocket keepalive, seconds."),
-    seconds("agent.cdp_reconnect_max", "KIOSK_CDP_RECONNECT_MAX", 1, 3600,
+    seconds_at_start("agent.cdp_reconnect_max", "KIOSK_CDP_RECONNECT_MAX", 1, 3600,
         "Ceiling on the DevTools reconnect backoff, seconds."),
     key(NAME, "KIOSK_NODE_NAME", Kind::Name, AGENT_AND_NETWORK,
         "The device's name on the network (NAME.local, and the hotspot tessaro-NAME); empty derives one from the node id."),
@@ -393,9 +412,9 @@ pub static KEYS: &[Key] = &[
         ..key(GPU_MEM, "KIOSK_GPU_MEM", Kind::Int { min: 16, max: 512 }, FIRMWARE,
             "Raspberry Pi only: megabytes of RAM the firmware keeps for the GPU, which its hardware video decoder draws from; unset keeps the firmware's default. Taken from the browser's RAM. Takes effect at the next reboot, `tessaro-ctl device reboot`.")
     },
-    key("access.listen", "KIOSK_API_LISTEN", Kind::Listen, AGENT,
+    key("access.listen", "KIOSK_API_LISTEN", Kind::Listen, AGENT_RESTART,
         "Where the TLS control API listens, address:port, or off."),
-    key("access.mdns", "KIOSK_MDNS", Kind::Choice(&["on", "off"]), AGENT,
+    key("access.mdns", "KIOSK_MDNS", Kind::Choice(&["on", "off"]), AGENT_RESTART,
         "Advertise the device as NAME.local and _tessaro._tcp."),
     // Read by the API server on every request that brings a session cookie;
     // nothing restarts, which would end every session.
@@ -1923,11 +1942,7 @@ mod tests {
             assert!(check(PROXY_BYPASS, bad).is_err(), "{bad}");
         }
         for name in [PROXY_URL, PROXY_BYPASS] {
-            assert_eq!(
-                find(name).unwrap().consumers,
-                [Consumer::Proxy, Consumer::Agent],
-                "{name}"
-            );
+            assert_eq!(find(name).unwrap().consumers, [Consumer::Proxy], "{name}");
         }
     }
 
@@ -1969,6 +1984,39 @@ mod tests {
         assert_eq!(check(BRIDGE_MODE, "Actions").unwrap(), "actions");
         assert!(check(BRIDGE_MODE, "on").is_err());
         assert_eq!(find(BRIDGE_MODE).unwrap().consumers, [Consumer::Agent]);
+    }
+
+    #[test]
+    fn only_what_the_agent_sets_up_once_restarts_it() {
+        for name in [
+            "access.listen",
+            "access.mdns",
+            "agent.device_access",
+            "agent.probe_connect_timeout",
+            "agent.probe_timeout",
+            "agent.cdp_timeout",
+            "agent.cdp_ping",
+            "agent.cdp_reconnect_max",
+        ] {
+            assert_eq!(
+                find(name).unwrap().consumers,
+                [Consumer::AgentRestart],
+                "{name}"
+            );
+        }
+        assert_eq!(
+            find(NAME).unwrap().consumers,
+            [Consumer::AgentRestart, Consumer::Network]
+        );
+        for name in [
+            URL,
+            MAINTENANCE_ENABLE,
+            DEBUG_TEMPLATE,
+            "agent.debug",
+            "data.table",
+        ] {
+            assert_eq!(find(name).unwrap().consumers, [Consumer::Agent], "{name}");
+        }
     }
 
     #[test]

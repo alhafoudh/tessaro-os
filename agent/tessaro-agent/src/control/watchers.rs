@@ -31,8 +31,9 @@ impl Control {
     /// `set` at all: DHCP renews, the link changes, and at boot the render
     /// ran before there was any address. So while the template uses one,
     /// this checks every 15s and, when the URL no longer matches the one the
-    /// agent is driving, re-renders and restarts the agent onto it (and the
-    /// browser, if the origin - and with it the policy - moved).
+    /// agent is driving, re-renders and hands the agent the new one, which
+    /// navigates to it (and restarts the browser, if the origin - and with it
+    /// the policy - moved).
     pub fn watch_url(self: &Arc<Self>) {
         const EVERY: Duration = Duration::from_secs(15);
 
@@ -344,14 +345,14 @@ impl Control {
         }
 
         let url = self.expanded_url(&state.settings).await;
-        if url == self.agent_url {
+        let shown = self.agent_url();
+        if url == shown {
             return;
         }
 
         let _writes = self.writes.lock().await;
         self.log.info(format!(
-            "{name} now expands to {url} (the agent is on {}); applying",
-            self.agent_url
+            "{name} now expands to {url} (the agent is on {shown}); applying"
         ));
         let reply = self.converge(&[], &state, true, None).await;
         if let Err(err) = &reply.result {

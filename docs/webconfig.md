@@ -47,10 +47,13 @@ it needs no token ([settings.md](settings.md), the claim model).
   site without a CORS preflight, which the agent never answers.
 * **Sessions are in memory, as hashes, and end with the agent** - except
   across a restart the agent makes itself to apply a change. Most settings
-  restart the agent (`Consumer::Agent`) or Weston, which takes the agent
-  with it; logging everyone out for changing the kiosk URL would make
-  Webconfig unusable. So `run_after` of `After::Restart` for either unit
-  first writes the sessions and how long each has been idle to
+  restart no agent at all (the running agent applies them, and a Weston
+  restart leaves the agent running), so sessions simply carry on. The rest -
+  a `Consumer::AgentRestart` key such as `access.listen`, the proxy switched
+  on or off, the extra certificate authorities, a factory reset - restart
+  the agent, and logging everyone out for them would make Webconfig
+  unusable. So `restart_to_apply` of the agent unit (`After::Restart` or
+  `After::Restarts`) first writes the sessions and how long each has been idle to
   `/run/tessaro-kiosk/sessions.db` (the `sessions` table, on tmpfs), and
   the next process reads and empties it at start in one transaction
   (`Control::load_sessions`). A restart

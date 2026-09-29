@@ -20,12 +20,31 @@ module AgentE2E
     # it otherwise.
     SSH_KEY_GUARD = 90
 
-    it "settings: tessaro-ctl config set restarts the agent, which comes back on the new value", :reconfigure do
+    it "settings: tessaro-ctl config set hands an agent setting to the running agent, which follows at once",
+       :reconfigure do
+      agent = guest.agent_pid
+      browser = guest.kiosk_pid
       out = guest.run("tessaro-ctl config set agent.probe_interval=7")
-      expect(out).to include("restarting tessaro-agent.service")
+      expect(out).to include("nothing to restart")
 
       journal.wait_for(/^watching #{Regexp.escape(KIOSK_URL)} \(probe every 7s/, timeout: 30)
       expect(guest.run("cat /run/tessaro-kiosk/generated.env")).to include("KIOSK_PROBE_INTERVAL=7")
+
+      # A new page on the same site is navigated to: the grants stay, so
+      # the browser keeps running too.
+      page = "#{KIOSK_URL}?e2e=live"
+      expect(guest.run("tessaro-ctl config set browser.url=#{page}")).to include("nothing to restart")
+      journal.wait_for(/^navigated to #{Regexp.escape(page)}$/, timeout: 30)
+      expect(guest.agent_pid).to eq(agent), "the agent was restarted"
+      expect(guest.kiosk_pid).to eq(browser), "the browser was restarted"
+    end
+
+    it "settings: a key the agent sets up once still restarts it", :reconfigure do
+      cursor = guest.cursor
+      agent = guest.agent_pid
+      expect(guest.run("tessaro-ctl config set agent.cdp_ping=11")).to include("restarting tessaro-agent.service")
+      guest.wait_for_agent_restart(cursor)
+      expect(guest.agent_pid).not_to eq(agent), "the agent pid did not change"
     end
 
     # The store is SQLite, and the image's sqlite3 shell is how a person reads it.
@@ -133,8 +152,9 @@ module AgentE2E
        "off returns", :reconfigure do
       hostname = guest.run("cat /proc/sys/kernel/hostname").strip
       browser = guest.kiosk_pid
+      agent = guest.agent_pid
       out = guest.run("tessaro-ctl browser debug on --template 'e2e {network.hostname}\\nurl {browser.url}'")
-      expect(out).to include("restarting tessaro-agent.service")
+      expect(out).to include("nothing to restart")
 
       journal.wait_for(/^debug screen on: showing browser\.debug\.template instead of /, timeout: 15)
       journal.wait_for(%r{^navigated to the debug screen \(file:///run/tessaro-kiosk/debug\.html\)$}, timeout: 30)
@@ -153,6 +173,7 @@ module AgentE2E
       guest.run("tessaro-ctl browser debug off")
       journal.wait_for(/^navigated to #{Regexp.escape(KIOSK_URL)}$/, timeout: 30)
       expect(guest.kiosk_pid).to eq(browser), "the browser was restarted"
+      expect(guest.agent_pid).to eq(agent), "the agent was restarted"
     end
 
     # Chrome's Ctrl+/- zoom: the page sees a larger devicePixelRatio and a
@@ -199,7 +220,8 @@ module AgentE2E
       browser = guest.kiosk_pid
       guest.run("tessaro-ctl config set browser.probe_url=http://127.0.0.1:1/ --no-apply")
 
-      expect(guest.run("tessaro-ctl browser maintenance on")).to include("restarting tessaro-agent.service")
+      agent = guest.agent_pid
+      expect(guest.run("tessaro-ctl browser maintenance on")).to include("nothing to restart")
 
       journal.wait_for(/^navigated to #{Regexp.escape(maintenance)}$/, timeout: 30)
       expect(cdp.current_url).to eq(maintenance)
@@ -214,6 +236,7 @@ module AgentE2E
       guest.run("tessaro-ctl browser maintenance off")
       journal.wait_for(/^navigated to #{Regexp.escape(KIOSK_URL)}$/, timeout: 30)
       expect(guest.kiosk_pid).to eq(browser), "the browser was restarted"
+      expect(guest.agent_pid).to eq(agent), "the agent was restarted"
     end
 
     # qemu has no WiFi, so there is no hotspot: the hotspot's address goes on
@@ -266,9 +289,8 @@ module AgentE2E
     end
 
     # A client with no pin and no token, over TLS: everything answers but
-    # what makes a credential. The setting is saved without applying: a
-    # data.* key restarts the agent, and the next command would land in the
-    # gap before it listens again.
+    # what makes a credential. The setting is saved without applying, so
+    # nothing on screen follows it.
     it "unclaimed: tessaro-ctl manages an unclaimed device without claiming or pinning it" do
       guest.run(<<~SH)
         set -e
@@ -392,7 +414,8 @@ module AgentE2E
 
       target = modes[1] || modes[0]
       guest.run("tessaro-ctl config set screen.resolution=#{target}")
-      # Weston - and with it the agent - restarts; the new agent arms the timer.
+      # Weston - and with it the browser - restarts; the agent keeps running
+      # and gives the change its whole confirm window from that restart.
       step "wait up to 60s for tessaro-ctl device status to say on probation"
       deadline = Time.now + 60
       sleep 2 until quietly { guest.run("tessaro-ctl device status 2>/dev/null", allow_failure: true) }

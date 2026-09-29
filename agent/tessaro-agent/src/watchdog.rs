@@ -120,13 +120,14 @@ impl Heartbeat {
 /// `judge` off (`KIOSK_WATCHDOG=0`) keeps pinging regardless of the pledge.
 /// Not pinging is not an option: systemd has already armed the watchdog, so
 /// a keepalive that goes quiet guarantees the very kill it meant to avoid.
-/// This way the runtime-wedge half of the protection survives.
+/// This way the runtime-wedge half of the protection survives. It is asked
+/// on every tick, since `agent.watchdog` changes on a running agent.
 pub fn spawn(
     notifier: Option<Notifier>,
     heartbeat: Heartbeat,
     log: Arc<Log>,
     mut shutdown: watch::Receiver<bool>,
-    judge: bool,
+    judge: impl Fn() -> bool + Send + 'static,
 ) {
     let Some(notifier) = notifier else {
         log.debug("no NOTIFY_SOCKET; not started by systemd");
@@ -138,18 +139,22 @@ pub fn spawn(
     };
 
     let tick = (window / 4).max(Duration::from_millis(250));
-    if judge {
-        log.info(format!(
-            "watchdog armed: systemd expects a ping every {}s; pinging every {}s while the loop keeps its promises",
-            window.as_secs(),
-            tick.as_secs()
-        ));
-    } else {
-        log.info(format!(
-            "watchdog armed but KIOSK_WATCHDOG=0: pinging every {}s without judging the loop",
-            tick.as_secs()
-        ));
-    }
+    let announce = move |log: &Log, judging: bool| {
+        if judging {
+            log.info(format!(
+                "watchdog armed: systemd expects a ping every {}s; pinging every {}s while the loop keeps its promises",
+                window.as_secs(),
+                tick.as_secs()
+            ));
+        } else {
+            log.info(format!(
+                "watchdog armed but KIOSK_WATCHDOG=0: pinging every {}s without judging the loop",
+                tick.as_secs()
+            ));
+        }
+    };
+    let mut judging = judge();
+    announce(&log, judging);
 
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(tick);
@@ -162,8 +167,12 @@ pub fn spawn(
                 _ = ticker.tick() => {}
             }
 
+            if judge() != judging {
+                judging = !judging;
+                announce(&log, judging);
+            }
             match heartbeat.overdue() {
-                Some((what, by)) if judge => {
+                Some((what, by)) if judging => {
                     if !withheld {
                         log.info(format!(
                             "watchdog: {what} is {}s overdue; letting systemd restart the agent",
@@ -233,7 +242,7 @@ mod tests {
             heartbeat.clone(),
             log,
             shutdown,
-            true,
+            || true,
         );
 
         // The first tick is immediate: systemd armed the watchdog at exec.
@@ -260,7 +269,7 @@ mod tests {
             heartbeat.clone(),
             log.clone(),
             shutdown,
-            true,
+            || true,
         );
         advance(0).await;
 
@@ -326,7 +335,7 @@ mod tests {
             heartbeat,
             Arc::new(Log::buffered(false)),
             shutdown,
-            false,
+            || false,
         );
         advance(0).await;
         advance(15).await;

@@ -19,7 +19,7 @@ module AgentE2E
   CASE_SETTINGS = %w[browser.probe_url agent.enable browser.maintenance.enable browser.debug.enable
                      browser.debug.template audio.output audio.volume audio.mute audio.input
                      audio.input_volume network.proxy.url network.proxy.bypass printer.enable
-                     browser.bridge.mode].freeze
+                     browser.bridge.mode browser.url agent.cdp_ping].freeze
 
   class Failure < StandardError; end
 
@@ -104,8 +104,8 @@ module AgentE2E
     end
 
     # Until the agent restarted by a change made after `cursor` - a setting
-    # the agent reads, which it restarts itself for once the answer is out -
-    # listens on its socket again. The socket alone is not enough: the old
+    # the agent sets up once, which it restarts itself for once the answer
+    # is out - listens on its socket again. The socket alone is not enough: the old
     # agent answers on it for a moment before systemd stops it.
     def wait_for_agent_restart(cursor, timeout: 90)
       AgentE2E.step("wait up to #{timeout}s for the restarted agent to listen again")

@@ -5045,7 +5045,12 @@
           {
             "type": "string",
             "const": "agent",
-            "description": "Read by tessaro-agent at start: the agent restarts itself. Invisible\non screen - the browser is left alone."
+            "description": "Read by the running tessaro-agent, which applies the change at once:\nnothing restarts. A new page to show is navigated to, a new injected\nscript or bridge mode reloads the page."
+          },
+          {
+            "type": "string",
+            "const": "agent-restart",
+            "description": "Read by tessaro-agent at start, for what it sets up once per process:\nthe listener, mDNS, the HTTP and DevTools clients. The agent restarts\nitself, and its first cycle loads the page again."
           },
           {
             "type": "string",
@@ -5055,7 +5060,7 @@
           {
             "type": "string",
             "const": "weston",
-            "description": "Read by tessaro-weston-config before the compositor starts: Weston\nrestarts, and with it (`PartOf=`) the browser and the agent."
+            "description": "Read by tessaro-weston-config before the compositor starts: Weston\nrestarts, and with it (`PartOf=`) the browser. The agent keeps\nrunning."
           },
           {
             "type": "string",
@@ -5080,7 +5085,7 @@
           {
             "type": "string",
             "const": "proxy",
-            "description": "The device's local forwarding proxy, `tessaro-proxy.service`: its\nconfig in `/run` is rendered again, and the unit restarts, or stops\nwhen network.proxy.url is empty. The browser restarts only when the\nproxy is switched on or off, which changes its policy."
+            "description": "The device's local forwarding proxy, `tessaro-proxy.service`: its\nconfig in `/run` is rendered again, and the unit restarts, or stops\nwhen network.proxy.url is empty. The browser and the agent restart\nonly when the proxy is switched on or off: the browser's policy\nchanges, and the agent's clients are built for one or the other."
           }
         ],
         "description": "What has to happen for a changed value to take effect."

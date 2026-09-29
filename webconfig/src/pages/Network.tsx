@@ -372,8 +372,8 @@ function ProxyDialog({
     <Dialog title="Proxy" submit="Use it" busy={busy} onClose={onClose} onSubmit={() => void submit()}>
       <Intro>
         Everything the device fetches from the internet goes through it: the browser, the reachability probe, the public
-        address and the speed test. http://host:port or socks5://host:port. The browser restarts when the proxy is
-        switched on.
+        address and the speed test. http://host:port or socks5://host:port. The browser and the agent restart when the
+        proxy is switched on.
       </Intro>
       <Field label="URL">
         <input

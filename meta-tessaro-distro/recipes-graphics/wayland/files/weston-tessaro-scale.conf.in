@@ -9,8 +9,8 @@
 # screen.vnc, set with tessaro-ctl and rendered by tessaro-agent into
 # /run/tessaro-kiosk/generated.env, which the generator reads over the image
 # defaults. tessaro-agent restarts this unit when one of them changes, which
-# takes the whole kiosk stack down and back up with it, since both kiosk units
-# are PartOf=weston.service.
+# takes the browser down and back up with it, since tessaro-kiosk.service is
+# PartOf=weston.service. The agent itself keeps running.
 
 [Unit]
 # generated.env has to exist before the generator reads it. Wants=, not

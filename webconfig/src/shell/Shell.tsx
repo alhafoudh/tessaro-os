@@ -27,8 +27,7 @@ const RESTARTS: Record<Restart, { title: string; body: (name: string) => string;
   },
   weston: {
     title: "Restart weston",
-    body: (name) =>
-      `Restart the compositor on ${name}? The browser and the agent restart with it, and this browser is signed out.`,
+    body: (name) => `Restart the compositor on ${name}? The browser restarts with it; this browser stays signed in.`,
     label: "Restart",
   },
   agent: {

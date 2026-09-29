@@ -2,15 +2,15 @@
 //!
 //! The state machine in `agent.rs` never sees any of this. A change to the
 //! configuration is: validate, commit to `tessaro.db` in one transaction,
-//! re-render `generated.env` and the policy, then restart exactly what reads
-//! the keys that changed - the browser, Weston, or the agent itself. The
-//! agent restarting itself is how an agent setting takes effect: it costs
-//! nothing on screen, and it keeps the state machine a single sequential task
-//! with one `Config` for its whole life.
+//! re-render `generated.env` and the policy, hand the running agent its new
+//! `Config` (`publish`, which the state machine takes at the top of a cycle,
+//! so it stays one sequential task), then restart exactly what reads the
+//! other keys that changed - the browser, Weston, or, for what it sets up
+//! once per process, the agent itself.
 //!
-//! Anything that would take this process down with it - restarting the agent
-//! or Weston (the agent is `PartOf=` it), a reboot - is returned as an
-//! `After` and run by the API server once the reply is on the wire.
+//! Anything that would take this process down with it or cut the reply off -
+//! restarting the agent or Weston, a reboot - is returned as an `After` and
+//! run by the API server once the reply is on the wire.
 //!
 //! All file I/O is blocking and goes through `blocking()`: `spawn_blocking`
 //! under a deadline, so the one runtime thread never waits on a disk.
@@ -120,9 +120,12 @@ impl Caller {
 /// Work that must wait until the reply has been sent.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum After {
-    /// Restart a unit to apply a change. When this process goes down with
-    /// it, the browser sessions are handed over to the next one.
+    /// Restart a unit to apply a change. When it is this process, the
+    /// browser sessions are handed over to the next one.
     Restart(String),
+    /// `Restart` for each unit, in order: Weston, then the agent, when one
+    /// change is read by both.
+    Restarts(Vec<String>),
     /// Restart a unit because someone asked to (`device restart`): the
     /// browser sessions end with this process.
     RestartAsked(String),
@@ -208,11 +211,12 @@ pub struct Control {
     /// When the guarded change on probation reverts, if one is.
     probation: Mutex<Option<Instant>>,
     shutdown: watch::Receiver<bool>,
-    /// The kiosk URL, expanded, that this agent process started with and is
-    /// driving the browser to. It never changes: a new one needs a restart.
-    agent_url: String,
+    /// The configuration the agent runs on, published again by `converge`
+    /// when a change moves it; the state machine follows at once. Its
+    /// `kiosk_url`, expanded, is the page the browser is being driven to.
+    current: crate::config::Publish,
     /// The local proxy while network.proxy.url is set, as this agent process
-    /// started with it; a change restarts the agent (`Consumer::Agent`).
+    /// started with it: switching it on or off restarts the agent.
     proxy: Option<SocketAddr>,
     updates: Arc<Updates>,
     files: Arc<Files>,
@@ -257,7 +261,7 @@ impl Control {
         bus: Bus,
         identity: Identity,
         shutdown: watch::Receiver<bool>,
-        agent_url: String,
+        current: crate::config::Publish,
         proxy: Option<SocketAddr>,
     ) -> Arc<Self> {
         let session_timeout = defaults
@@ -267,7 +271,7 @@ impl Control {
         Arc::new(Self {
             sessions: Arc::new(Sessions::new(&identity.id)),
             session_timeout: AtomicU64::new(session_timeout),
-            agent_url,
+            current,
             proxy,
             updates: Updates::new(Arc::clone(&log), paths.clone()),
             files: Files::new(Arc::clone(&log), paths.clone()),
@@ -299,6 +303,11 @@ impl Control {
             bridge: std::sync::OnceLock::new(),
             cpu: Mutex::new(None),
         })
+    }
+
+    /// The kiosk URL, expanded, that the agent is driving the browser to.
+    fn agent_url(&self) -> String {
+        self.current.borrow().config.kiosk_url.clone()
     }
 
     /// A command run in steps (`Command::is_job`), validated and started:
@@ -1182,11 +1191,16 @@ impl Control {
 
     pub async fn run_after(&self, after: After) {
         let outcome = match &after {
-            After::Restart(unit) => {
-                if *unit == self.paths.agent_unit || *unit == self.paths.weston_unit {
-                    self.save_sessions().await;
+            After::Restart(unit) => self.restart_to_apply(unit).await,
+            After::Restarts(units) => {
+                let mut outcome = Ok(());
+                for unit in units {
+                    outcome = self.restart_to_apply(unit).await;
+                    if outcome.is_err() {
+                        break;
+                    }
                 }
-                self.bus.restart(unit).await
+                outcome
             }
             After::RestartAsked(unit) => self.bus.restart(unit).await,
             After::Reboot => self.bus.reboot().await,
@@ -1199,6 +1213,21 @@ impl Control {
         if let Err(err) = outcome {
             self.log.info(format!("{after:?}: {err}"));
         }
+    }
+
+    /// One unit of an `After::Restart`. This process hands its browser
+    /// sessions over before it goes. Weston takes only the browser with it;
+    /// a change on probation gets its whole confirm window from here, since
+    /// the screen it is judged on only comes back now.
+    async fn restart_to_apply(&self, unit: &str) -> crate::error::Result<()> {
+        if unit == self.paths.agent_unit {
+            self.save_sessions().await;
+        }
+        let outcome = self.bus.restart(unit).await;
+        if unit == self.paths.weston_unit {
+            self.extend_probation();
+        }
+        outcome
     }
 }
 
@@ -1338,6 +1367,8 @@ mod tests {
         _dir: tempfile::TempDir,
         pub(crate) control: Arc<Control>,
         pub(crate) paths: Paths,
+        /// What the agent's state machine would follow.
+        pub(crate) follow: crate::config::Follow,
         _stop: watch::Sender<bool>,
     }
 
@@ -1443,6 +1474,15 @@ mod tests {
         );
 
         let db = Db::open(&paths.state_dir, &log);
+        // What main starts the agent on: the defaults, nothing set yet.
+        let (current, follow) = watch::channel(Arc::new(crate::config::Current {
+            config: crate::config::Config::load(&crate::state::Effective::new(
+                &defaults,
+                &BTreeMap::new(),
+                &log,
+            )),
+            settings: BTreeMap::new(),
+        }));
         let control = Control::new(
             log,
             paths.clone(),
@@ -1458,7 +1498,7 @@ mod tests {
                 fingerprint: "f".repeat(64),
             },
             shutdown,
-            "http://127.0.0.1/".to_string(),
+            current,
             None,
         );
 
@@ -1466,6 +1506,7 @@ mod tests {
             _dir: dir,
             control,
             paths,
+            follow,
             _stop: stop,
         }
     }
@@ -2402,9 +2443,13 @@ mod tests {
             .handle(&Caller::Local, Command::FactoryReset)
             .await;
         assert!(reply.result.is_ok());
+        // Weston takes the browser with it; the agent comes back last.
         assert_eq!(
             reply.after,
-            Some(After::Restart("weston.service".to_string()))
+            Some(After::Restarts(vec![
+                "weston.service".to_string(),
+                "tessaro-agent.service".to_string()
+            ]))
         );
 
         assert!(!fx.control.claimed());
@@ -2422,7 +2467,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn maintenance_mode_restarts_only_the_agent_onto_the_maintenance_page() {
+    async fn maintenance_mode_restarts_nothing_and_hands_the_agent_the_maintenance_page() {
         let fx = fixture();
         // A deployed device: the site's origin in the policy.
         let _: Applied = ok(
@@ -2443,8 +2488,14 @@ mod tests {
             .await;
         let applied: Applied = serde_json::from_value(reply.result.unwrap()).unwrap();
 
-        // The agent, not the browser: the grants did not move.
-        assert_eq!(applied.restarted, ["tessaro-agent.service"]);
+        // Not the browser: the grants did not move. Not the agent: it
+        // navigates to the page it is handed.
+        assert!(applied.restarted.is_empty(), "{:?}", applied.restarted);
+        assert_eq!(reply.after, None);
+        assert_eq!(
+            fx.follow.borrow().config.kiosk_url,
+            "http://127.0.0.1/maintenance.html"
+        );
         let env = fs::read_to_string(fx.paths.generated_env()).unwrap();
         assert!(
             env.contains("KIOSK_URL=http://127.0.0.1/maintenance.html\n"),
@@ -2473,24 +2524,35 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_agent_setting_restarts_the_agent_after_the_reply() {
+    async fn an_agent_setting_is_handed_to_the_running_agent() {
         let fx = fixture();
         let reply = fx
             .control
-            .handle(&Caller::Local, set(&[("agent.probe_interval", "7")]))
+            .handle(
+                &Caller::Local,
+                // The same origin, so the policy's grants stay and the
+                // browser keeps running too.
+                set(&[
+                    ("agent.probe_interval", "7"),
+                    ("browser.url", "http://127.0.0.1/menu.html"),
+                ]),
+            )
             .await;
         let applied: Applied = serde_json::from_value(reply.result.unwrap()).unwrap();
 
-        assert_eq!(applied.changed, ["agent.probe_interval"]);
-        assert_eq!(applied.restarted, ["tessaro-agent.service"]);
-        assert_eq!(
-            reply.after,
-            Some(After::Restart("tessaro-agent.service".to_string()))
-        );
+        assert_eq!(applied.changed, ["agent.probe_interval", "browser.url"]);
+        assert!(applied.restarted.is_empty(), "{:?}", applied.restarted);
+        assert_eq!(reply.after, None);
+        let current = fx.follow.borrow().clone();
+        assert_eq!(current.config.probe_interval, 7);
+        assert_eq!(current.config.kiosk_url, "http://127.0.0.1/menu.html");
         let env = fs::read_to_string(fx.paths.generated_env()).unwrap();
         assert!(env.contains("KIOSK_PROBE_INTERVAL=7\n"));
 
-        // The same value again changes nothing and restarts nothing.
+        // The same value again changes nothing, restarts nothing and
+        // publishes nothing.
+        let mut follow = fx.follow.clone();
+        follow.mark_unchanged();
         let reply = fx
             .control
             .handle(&Caller::Local, set(&[("agent.probe_interval", "7")]))
@@ -2498,10 +2560,73 @@ mod tests {
         let applied: Applied = serde_json::from_value(reply.result.unwrap()).unwrap();
         assert!(applied.changed.is_empty());
         assert_eq!(reply.after, None);
+        assert!(!follow.has_changed().unwrap());
     }
 
     #[tokio::test]
-    async fn a_display_setting_restarts_weston() {
+    async fn a_custom_value_restarts_nothing_and_reaches_the_debug_screen() {
+        let fx = fixture();
+        let reply = fx
+            .control
+            .handle(&Caller::Local, set(&[("data.table", "12")]))
+            .await;
+        let applied: Applied = serde_json::from_value(reply.result.unwrap()).unwrap();
+        assert!(applied.restarted.is_empty(), "{:?}", applied.restarted);
+        assert_eq!(reply.after, None);
+        assert_eq!(
+            fx.follow
+                .borrow()
+                .settings
+                .get("data.table")
+                .map(String::as_str),
+            Some("12")
+        );
+    }
+
+    #[tokio::test]
+    async fn only_what_the_agent_sets_up_once_restarts_it() {
+        let fx = fixture();
+        let reply = fx
+            .control
+            .handle(&Caller::Local, set(&[("agent.cdp_ping", "20")]))
+            .await;
+        let applied: Applied = serde_json::from_value(reply.result.unwrap()).unwrap();
+        assert_eq!(applied.restarted, ["tessaro-agent.service"]);
+        assert_eq!(
+            reply.after,
+            Some(After::Restart("tessaro-agent.service".to_string()))
+        );
+    }
+
+    #[test]
+    fn the_agent_restarts_for_the_proxy_only_when_it_is_switched_on_or_off() {
+        use super::settings::{restarts_agent, Changed};
+        use crate::config::test_support::config_with;
+
+        let proxy =
+            |name: &str| -> Vec<Changed> { vec![(name.to_string(), keys::find(name).unwrap())] };
+        let local: SocketAddr = "127.0.0.1:3128".parse().unwrap();
+        let on = config_with(&[("KIOSK_PROXY_URL", "http://proxy.test:8080")]);
+        let off = config_with(&[]);
+
+        // Switched on, and off, against how the process started.
+        assert!(restarts_agent(&proxy(keys::PROXY_URL), &on, None));
+        assert!(restarts_agent(&proxy(keys::PROXY_URL), &off, Some(local)));
+        // A new upstream, or a new bypass, keeps the local address.
+        assert!(!restarts_agent(&proxy(keys::PROXY_URL), &on, Some(local)));
+        assert!(!restarts_agent(
+            &proxy(keys::PROXY_BYPASS),
+            &on,
+            Some(local)
+        ));
+        assert!(!restarts_agent(&proxy(keys::PROXY_BYPASS), &off, None));
+        // What the agent sets up once restarts it whatever the proxy does.
+        assert!(restarts_agent(&proxy("access.listen"), &off, None));
+        assert!(!restarts_agent(&proxy(keys::URL), &off, None));
+    }
+
+    #[tokio::test]
+    async fn a_display_setting_restarts_weston_and_leaves_the_agent_running() {
         let fx = fixture();
         let reply = fx
             .control
@@ -2510,6 +2635,22 @@ mod tests {
         assert_eq!(
             reply.after,
             Some(After::Restart("weston.service".to_string()))
+        );
+
+        // With a key the agent sets up once, both: Weston first.
+        let reply = fx
+            .control
+            .handle(
+                &Caller::Local,
+                set(&[("screen.osk", "always"), ("access.mdns", "off")]),
+            )
+            .await;
+        assert_eq!(
+            reply.after,
+            Some(After::Restarts(vec![
+                "weston.service".to_string(),
+                "tessaro-agent.service".to_string()
+            ]))
         );
     }
 

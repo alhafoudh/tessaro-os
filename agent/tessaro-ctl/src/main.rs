@@ -238,8 +238,8 @@ enum DeviceCmd {
         #[arg(long, default_value_t = 100)]
         lines: u32,
     },
-    /// Restart the browser, the display (Weston, with the browser and agent)
-    /// or the agent.
+    /// Restart the browser, the display (Weston, with the browser) or the
+    /// agent.
     Restart {
         #[arg(value_parser = PossibleValuesParser::new(RestartTarget::NAMES)
             .map(|name| name.parse::<RestartTarget>().expect("one of the names")))]

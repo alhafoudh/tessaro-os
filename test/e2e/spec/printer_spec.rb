@@ -129,9 +129,9 @@ module AgentE2E
       refused = guest.run("tessaro-ctl browser eval 'typeof tessaro'")
       expect(refused).to include("undefined")
 
-      cursor = guest.cursor
+      # The browser restarts for printer.enable's policy; the agent hands the
+      # page its bridge without restarting.
       guest.run("tessaro-ctl config set browser.bridge.mode=actions printer.enable=1")
-      guest.wait_for_agent_restart(cursor)
       wait_until("the page has the print call", timeout: 60) do
         page_value("typeof (window.tessaro && tessaro.printer.print)") == "function"
       end

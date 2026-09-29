@@ -278,7 +278,7 @@ fn device(
 /// a journal line and a missing feature.
 async fn start_control(
     device: Device,
-    kiosk_url: &str,
+    current: config::Publish,
     proxy: Option<std::net::SocketAddr>,
     session: cdp::session::SessionHandle,
     bridge: control::BridgeSetup,
@@ -297,7 +297,7 @@ async fn start_control(
         bus,
         device.identity,
         stop.subscribe(),
-        kiosk_url.to_string(),
+        current,
         proxy,
     );
     // Before the first request, which may bring one of their cookies.
@@ -363,13 +363,21 @@ async fn run(
     let stop = Arc::new(watch::channel(false).0);
     tokio::spawn(signals(Arc::clone(&stop), Arc::clone(&log)));
 
+    // What the control plane publishes when a setting changes, and what the
+    // state machine, the debug screen and the watchdog follow.
+    let (current, follow) = watch::channel(Arc::new(config::Current {
+        config: config.clone(),
+        settings,
+    }));
+
     let notifier = notify::Notifier::from_env(&SystemEnv, &log);
+    let judge = follow.clone();
     watchdog::spawn(
         notifier,
         heartbeat.clone(),
         Arc::clone(&log),
         stop.subscribe(),
-        config.watchdog,
+        move || judge.borrow().config.watchdog,
     );
 
     for (key, seconds) in config.oversized_budgets() {
@@ -412,23 +420,18 @@ async fn run(
         Arc::clone(&log),
         stop.subscribe(),
     );
-    let bridge = control::BridgeSetup {
-        mode: config.bridge,
-        script: config.inject_script.clone(),
-        scripts,
-        calls,
-    };
+    let bridge = control::BridgeSetup { scripts, calls };
     let first_attempt = session.clone();
     let control_session = session.clone();
     let cdp = cdp::CdpClient::new(&log, session, heartbeat.clone(), config.cdp_timeout);
 
     // The debug screen fills its template in afresh every time, from the
-    // settings this agent started with and the device as it is then.
+    // settings as they are now and the device as it is then.
     let paths = device.paths.clone();
     let defaults = device.defaults.clone();
     start_control(
         device,
-        &config.kiosk_url,
+        current,
         config.proxy,
         control_session,
         bridge,
@@ -439,7 +442,7 @@ async fn run(
 
     let units = systemd::Systemd::connect(&config.unit, &log, heartbeat.clone()).await;
     let offline = offline::Offline::new(&log, &config);
-    let debug_screen = debug::Debug::new(&log, &config, &paths, &defaults, &settings);
+    let debug_screen = debug::Debug::new(&log, follow.clone(), &paths, &defaults);
 
     // Let the session try once before the first cycle asks it anything. At
     // boot Chromium's port is usually still closed and this returns at once;
@@ -453,7 +456,7 @@ async fn run(
         .await;
 
     agent::Agent::new(
-        &config,
+        follow,
         &log,
         &probe,
         &cdp,

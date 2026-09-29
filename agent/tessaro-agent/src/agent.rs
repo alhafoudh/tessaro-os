@@ -10,12 +10,13 @@
 //! after a browser restart, because a fresh Chromium may be showing anything.
 
 use std::panic::AssertUnwindSafe;
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use futures_util::FutureExt;
 use tokio::sync::watch;
 
-use crate::config::Config;
+use crate::config::{Config, Current, Follow};
 use crate::log::Log;
 use crate::ports::{Cdp, DebugScreen, OfflinePage, ProbeResult, Prober, Units};
 use crate::watchdog::{Heartbeat, GRACE, MAX_PLEDGE};
@@ -37,7 +38,11 @@ pub enum NavState {
 const DEBUG_REFRESH: i64 = 5;
 
 pub struct Agent<'a> {
-    config: &'a Config,
+    /// Where the control plane publishes a changed configuration.
+    follow: Follow,
+    /// The configuration this cycle runs on: the latest from `follow`, taken
+    /// at the top of every cycle, so one cycle never mixes two.
+    current: Arc<Current>,
     log: &'a Log,
     probe: &'a dyn Prober,
     cdp: &'a dyn Cdp,
@@ -71,6 +76,8 @@ pub struct Agent<'a> {
     awaiting_landing: bool,
     /// Someone else is in DevTools, and the tab is theirs until they leave.
     held: bool,
+    /// `agent.enable` is off and the loop is idling.
+    parked: bool,
 }
 
 impl<'a> Agent<'a> {
@@ -78,7 +85,7 @@ impl<'a> Agent<'a> {
     // struct would only move the list somewhere else.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        config: &'a Config,
+        mut follow: Follow,
         log: &'a Log,
         probe: &'a dyn Prober,
         cdp: &'a dyn Cdp,
@@ -88,8 +95,10 @@ impl<'a> Agent<'a> {
         shutdown: watch::Receiver<bool>,
         heartbeat: Heartbeat,
     ) -> Self {
+        let current = follow.borrow_and_update().clone();
         Self {
-            config,
+            follow,
+            current,
             log,
             probe,
             cdp,
@@ -110,48 +119,46 @@ impl<'a> Agent<'a> {
             accepted_origin: None,
             awaiting_landing: false,
             held: false,
+            parked: false,
         }
     }
 
-    pub async fn run(&mut self) {
-        if !self.config.agent_enable {
-            // Parked rather than exiting: the unit still shows as running and
-            // the reason is in the journal. Useful while debugging a page.
-            // The nap pledges, so a parked agent is not a stalled one.
-            self.log.info("KIOSK_AGENT_ENABLE is off; idling");
-            while self.running() {
-                self.nap(60).await;
-            }
-            return;
-        }
+    fn config(&self) -> &Config {
+        &self.current.config
+    }
 
-        if self.config.debug_screen {
-            self.log.info(format!(
-                "debug screen on: showing browser.debug.template instead of {}",
-                self.config.kiosk_url
-            ));
-        } else if self.config.probe_enabled() {
-            self.offline.stage().await;
-            self.log.info(format!(
-                "watching {} (probe every {}s, refresh every {}s)",
-                self.config.kiosk_url, self.config.probe_interval, self.config.refresh_interval
-            ));
-        } else {
-            self.log.info(format!(
-                "watching {} (probe disabled, refresh-only)",
-                self.config.kiosk_url
-            ));
+    pub async fn run(&mut self) {
+        if self.config().agent_enable {
+            if !self.config().debug_screen && self.config().probe_enabled() {
+                self.offline.stage().await;
+            }
+            self.announce();
         }
 
         while self.running() {
+            self.follow_config();
+            if !self.config().agent_enable {
+                // Parked rather than exiting: the unit still shows as running
+                // and the reason is in the journal. Useful while debugging a
+                // page. The nap pledges, so a parked agent is not a stalled
+                // one, and a change wakes it.
+                if !self.parked {
+                    self.parked = true;
+                    self.log.info("KIOSK_AGENT_ENABLE is off; idling");
+                }
+                self.nap(60).await;
+                continue;
+            }
+
             self.cycle(now()).await;
 
-            let interval = if self.config.debug_screen {
-                self.config.probe_interval.min(DEBUG_REFRESH)
+            let config = self.config();
+            let interval = if config.debug_screen {
+                config.probe_interval.min(DEBUG_REFRESH)
             } else if self.fails > 0 {
-                self.config.probe_interval_fail
+                config.probe_interval_fail
             } else {
-                self.config.probe_interval
+                config.probe_interval
             };
             self.nap(interval).await;
         }
@@ -159,9 +166,63 @@ impl<'a> Agent<'a> {
         self.log.info("stopping");
     }
 
+    /// The line that says what the loop is doing, at start and whenever a
+    /// change moves it.
+    fn announce(&self) {
+        let config = self.config();
+        if config.debug_screen {
+            self.log.info(format!(
+                "debug screen on: showing browser.debug.template instead of {}",
+                config.kiosk_url
+            ));
+        } else if config.probe_enabled() {
+            self.log.info(format!(
+                "watching {} (probe every {}s, refresh every {}s)",
+                config.kiosk_url, config.probe_interval, config.refresh_interval
+            ));
+        } else {
+            self.log.info(format!(
+                "watching {} (probe disabled, refresh-only)",
+                config.kiosk_url
+            ));
+        }
+    }
+
+    /// Take the configuration the control plane published last, if it is a
+    /// new one. A different page to show - the kiosk URL, which maintenance
+    /// mode moves too, or the offline page - makes what is on screen unknown,
+    /// so the cycle navigates; everything else just applies from this cycle
+    /// on, with the loop's own bookkeeping (failures, backoff) kept.
+    fn follow_config(&mut self) {
+        let latest = self.follow.borrow_and_update().clone();
+        if Arc::ptr_eq(&latest, &self.current) {
+            return;
+        }
+        let before = std::mem::replace(&mut self.current, latest);
+        let (was, now) = (&before.config, &self.current.config);
+
+        if was.kiosk_url != now.kiosk_url || was.offline_url != now.offline_url {
+            // The debug screen does not show either; it stays up.
+            if self.nav_state != NavState::Debug {
+                self.nav_state = NavState::Unknown;
+            }
+            self.accepted_origin = None;
+            self.awaiting_landing = false;
+        }
+        if now.agent_enable && self.parked {
+            self.parked = false;
+            self.nav_state = NavState::Unknown;
+            self.log.info("KIOSK_AGENT_ENABLE is on again");
+        }
+        if was != now && now.agent_enable {
+            self.announce();
+        }
+    }
+
     /// One pass of the loop. Public, and taking an explicit clock, so tests
     /// can drive the whole state machine without sleeping.
     pub async fn cycle(&mut self, now: i64) {
+        self.follow_config();
         // A bug in one pass must not take the service down with it: systemd
         // would restart us, but the backoff and "one restart per outage"
         // bookkeeping lives in memory and would be lost, which is how a
@@ -175,7 +236,8 @@ impl<'a> Agent<'a> {
     }
 
     async fn cycle_inner(&mut self, now: i64) {
-        let config = self.config;
+        let current = Arc::clone(&self.current);
+        let config = &current.config;
 
         // A technician in DevTools owns the tab. A breakpoint stops the
         // renderer answering `Runtime.evaluate`, which would get the browser
@@ -278,7 +340,8 @@ impl<'a> Agent<'a> {
 
     /// Probe the site and put it, or the offline page, on screen.
     async fn follow_site(&mut self, now: i64) {
-        let config = self.config;
+        let current = Arc::clone(&self.current);
+        let config = &current.config;
         let result = if config.probe_enabled() {
             self.probe.call(config.probe_target()).await
         } else {
@@ -410,13 +473,15 @@ impl<'a> Agent<'a> {
     /// say, or a page we are not currently claiming to own. "Cannot tell" must
     /// never become a navigation.
     async fn drifted_origin(&mut self) -> Option<String> {
-        if !self.config.enforce_origin || self.nav_state != NavState::Live {
+        let current = Arc::clone(&self.current);
+        let config = &current.config;
+        if !config.enforce_origin || self.nav_state != NavState::Live {
             return None;
         }
 
         let want = match &self.accepted_origin {
             Some(origin) => origin.clone(),
-            None => crate::url::origin(&self.config.kiosk_url)?.to_string(),
+            None => crate::url::origin(&config.kiosk_url)?.to_string(),
         };
 
         let current = self.cdp.current_url().await?;
@@ -432,7 +497,7 @@ impl<'a> Agent<'a> {
                 if origin != want {
                     self.log.info(format!(
                         "{} redirected to {origin}; treating that as the kiosk origin",
-                        self.config.kiosk_url
+                        config.kiosk_url
                     ));
                 }
                 self.accepted_origin = Some(origin);
@@ -469,7 +534,9 @@ impl<'a> Agent<'a> {
     }
 
     async fn go_live(&mut self, now: i64) {
-        match self.cdp.navigate(&self.config.kiosk_url).await {
+        let current = Arc::clone(&self.current);
+        let url = &current.config.kiosk_url;
+        match self.cdp.navigate(url).await {
             Ok(()) => {
                 self.nav_state = NavState::Live;
                 self.last_nav = now;
@@ -479,8 +546,7 @@ impl<'a> Agent<'a> {
                 // Info, not debug: this is the one line that says what is on
                 // screen, and at the default refresh it costs one entry per
                 // ten minutes.
-                self.log
-                    .info(format!("navigated to {}", self.config.kiosk_url));
+                self.log.info(format!("navigated to {url}"));
             }
             Err(err) => {
                 // Counts towards the CDP escalation: a browser that will not
@@ -494,19 +560,20 @@ impl<'a> Agent<'a> {
     }
 
     async fn go_offline(&mut self, now: i64) {
-        if self.config.offline_url == "none" {
+        let offline_url = self.config().offline_url.clone();
+        if offline_url == "none" {
             return;
         }
 
         // Staged on every use, so dropping a new file into /data/kiosk takes
         // effect without restarting anything.
-        let uri = if self.config.offline_url.is_empty() {
+        let uri = if offline_url.is_empty() {
             match self.offline.stage().await {
                 Some(uri) => uri,
                 None => return,
             }
         } else {
-            self.config.offline_url.clone()
+            offline_url
         };
 
         match self.cdp.navigate(&uri).await {
@@ -526,9 +593,10 @@ impl<'a> Agent<'a> {
     }
 
     async fn restart(&mut self, reason: &str, now: i64) -> bool {
-        let unit = &self.config.unit;
+        let current = Arc::clone(&self.current);
+        let unit = &current.config.unit;
 
-        if now - self.last_restart < self.config.restart_backoff {
+        if now - self.last_restart < current.config.restart_backoff {
             self.log
                 .debug(format!("not restarting {unit} ({reason}): within backoff"));
             return false;
@@ -567,9 +635,10 @@ impl<'a> Agent<'a> {
         !*self.shutdown.borrow()
     }
 
-    /// Sleep until the interval is up or a signal arrives, whichever is first.
-    /// The wake-up is exact, so a SIGTERM during a ten-minute refresh wait is
-    /// honoured immediately rather than after a nap slice.
+    /// Sleep until the interval is up, a signal arrives or the configuration
+    /// changes, whichever is first. The wake-up is exact, so a SIGTERM during
+    /// a ten-minute refresh wait is honoured immediately rather than after a
+    /// nap slice, and a new kiosk URL is on screen at once.
     ///
     /// The wait is pledged to the watchdog in chunks no longer than the pledge
     /// ceiling, which is what makes idle count as alive: neither
@@ -592,6 +661,13 @@ impl<'a> Agent<'a> {
                         tokio::time::sleep(slice).await;
                         left -= slice;
                     }
+                }
+                changed = self.follow.changed() => {
+                    if changed.is_ok() {
+                        return;
+                    }
+                    tokio::time::sleep(slice).await;
+                    left -= slice;
                 }
             }
         }
@@ -798,7 +874,9 @@ mod tests {
     /// Everything a test needs, owned in one place so the borrows the Agent
     /// takes all outlive it.
     struct World {
-        config: Config,
+        /// The control plane's end: `set` publishes a changed configuration
+        /// the way `converge` does.
+        current: crate::config::Publish,
         log: Log,
         cdp: FakeCdp,
         units: FakeUnits,
@@ -814,7 +892,11 @@ mod tests {
     impl World {
         fn new(overrides: &[(&str, &str)]) -> Self {
             Self {
-                config: config_with(overrides),
+                current: watch::channel(Arc::new(Current {
+                    config: config_with(overrides),
+                    settings: Default::default(),
+                }))
+                .0,
                 // Not a debug log: these cases assert on what actually
                 // reaches the journal on a device, where KIOSK_DEBUG is 0.
                 log: Log::buffered(false),
@@ -829,7 +911,7 @@ mod tests {
 
         fn agent(&self) -> Agent<'_> {
             Agent::new(
-                &self.config,
+                self.current.subscribe(),
                 &self.log,
                 &self.probe,
                 &self.cdp,
@@ -844,6 +926,119 @@ mod tests {
         fn navigations(&self) -> Vec<String> {
             self.cdp.navigations.borrow().clone()
         }
+
+        /// A change made on the running agent: publish the configuration
+        /// these overrides give, as `converge` would.
+        fn set(&self, overrides: &[(&str, &str)]) {
+            self.current.send_if_modified(|current| {
+                let next = Current {
+                    config: config_with(overrides),
+                    settings: Default::default(),
+                };
+                let changed = **current != next;
+                if changed {
+                    *current = Arc::new(next);
+                }
+                changed
+            });
+        }
+    }
+
+    #[tokio::test]
+    async fn a_new_kiosk_url_is_navigated_to_without_a_restart() {
+        let world = World::new(&[]);
+        let mut agent = world.agent();
+        agent.cycle(1000).await;
+        agent.cycle(1030).await;
+
+        world.set(&[("KIOSK_URL", "http://other.test/")]);
+        agent.cycle(1060).await;
+        agent.cycle(1090).await;
+
+        assert_eq!(
+            world.navigations(),
+            vec!["http://kiosk.test/", "http://other.test/"]
+        );
+        assert_eq!(world.units.restarts.get(), 0);
+        // The new origin is the one enforced: staying there is not drift.
+        agent.cycle(1120).await;
+        assert_eq!(world.navigations().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_change_that_moves_no_page_navigates_nowhere() {
+        let world = World::new(&[]);
+        let mut agent = world.agent();
+        agent.cycle(1000).await;
+
+        world.set(&[("KIOSK_PROBE_INTERVAL", "7"), ("KIOSK_DEBUG", "1")]);
+        agent.cycle(1010).await;
+
+        assert_eq!(world.navigations(), vec!["http://kiosk.test/"]);
+        assert!(world
+            .log
+            .lines()
+            .iter()
+            .any(|line| line.contains("probe every 7s")));
+    }
+
+    #[tokio::test]
+    async fn the_debug_screen_goes_up_and_down_on_a_running_agent() {
+        let world = World::new(&[]);
+        let mut agent = world.agent();
+        agent.cycle(1000).await;
+
+        world.set(&[("KIOSK_DEBUG_SCREEN", "1")]);
+        agent.cycle(1005).await;
+        agent.cycle(1010).await;
+        world.set(&[]);
+        agent.cycle(1015).await;
+
+        assert_eq!(
+            world.navigations(),
+            vec!["http://kiosk.test/", DEBUG_URI, "http://kiosk.test/"]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_new_offline_page_replaces_the_one_on_screen() {
+        let world = World::new(&[]);
+        world.probe.fail();
+        let mut agent = world.agent();
+        agent.cycle(1000).await;
+        agent.cycle(1010).await;
+
+        world.set(&[("KIOSK_OFFLINE_URL", "http://fallback.test/")]);
+        agent.cycle(1020).await;
+
+        assert_eq!(
+            world.navigations(),
+            vec![OFFLINE_URI, "http://fallback.test/"]
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_change_wakes_the_nap_and_agent_enable_parks_and_resumes() {
+        let world = World::new(&[("KIOSK_AGENT_ENABLE", "0")]);
+        let mut agent = world.agent();
+
+        let run = async {
+            agent.run().await;
+        };
+        let drive = async {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            assert!(world.navigations().is_empty(), "parked");
+            world.set(&[]);
+            // Well within the 60s park: the change woke it.
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            assert_eq!(world.navigations(), vec!["http://kiosk.test/"]);
+            world.stop.send_replace(true);
+        };
+        tokio::join!(run, drive);
+
+        let lines = world.log.lines();
+        assert!(lines.iter().any(|line| line.contains("is off; idling")));
+        assert!(lines.iter().any(|line| line.contains("is on again")));
     }
 
     #[tokio::test]
