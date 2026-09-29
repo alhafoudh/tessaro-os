@@ -55,12 +55,16 @@
 }
 
 @layer base {
-  /* A phone gets everything 1.5x: the desktop's small text and tight
-     controls are too small to read and tap there. Text and spacing are rem,
-     so the root size scales them all; the breakpoint is Tailwind's md, where
-     the menu becomes a drawer. */
+  /* A phone gets everything 1.25x: the desktop's 13px text and tight
+     controls are too small to read and tap there, and 16px is a phone's
+     body text. More leaves a 390px-wide phone too few columns for a label
+     and its value. Text and spacing are rem, so the root size scales them
+     all; the breakpoint is Tailwind's md, where the menu becomes a drawer. */
   html {
-    font-size: 150%;
+    font-size: 125%;
+    /* A phone turned sideways must not inflate the text on its own. */
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
   }
 
   @media (width >= 48rem) {
@@ -88,6 +92,17 @@
   select,
   textarea {
     @apply bg-background text-text border border-border rounded-[2px] px-1.5 py-0.5 text-sm outline-none;
+  }
+
+  /* Below 16px iOS zooms the page in on focus and leaves it zoomed; the
+     padding makes a field as tall as a button to tap. */
+  @media (width < 48rem) {
+    input,
+    select,
+    textarea {
+      @apply py-1.5;
+      font-size: 16px;
+    }
   }
 
   input:focus,

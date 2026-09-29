@@ -52,7 +52,7 @@ function Section({
       onToggle={(event) => onToggle?.((event.target as HTMLDetailsElement).open)}
       className="border border-border bg-panel"
     >
-      <summary className="cursor-pointer bg-chrome px-2.5 py-1 text-sm font-bold select-none">
+      <summary className="cursor-pointer bg-chrome px-2.5 py-1 text-sm font-bold select-none max-md:py-2.5">
         {title} {hint && <span className="font-normal text-muted">{hint}</span>}
       </summary>
       <div className="flex flex-col gap-2 p-2.5">{children}</div>
@@ -272,7 +272,7 @@ function WifiSection({ hotspot }: { hotspot: Schemas["WelcomeHotspot"] | null | 
               setSsid(network.ssid);
               setSecurity("");
             }}
-            className={`flex justify-between px-2 py-1 text-left text-sm hover:bg-button-hover ${network.ssid === ssid ? "bg-selection" : ""}`}
+            className={`flex justify-between gap-2 px-2 py-1 text-left text-sm hover:bg-button-hover max-md:py-2.5 ${network.ssid === ssid ? "bg-selection" : ""}`}
           >
             <span>{network.ssid}</span>
             <span className="text-muted">

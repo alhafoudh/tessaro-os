@@ -74,7 +74,7 @@ export function Table({
             {columns.map((column, index) => (
               <th
                 key={index}
-                className="border-b border-border px-1.5 py-[0.1875rem] text-left font-bold whitespace-nowrap"
+                className="border-b border-border px-1.5 py-[0.1875rem] text-left font-bold whitespace-nowrap max-md:py-1.5"
                 style={column.width ? { width: scaled(column.width) } : undefined}
               >
                 {column.title}
@@ -101,7 +101,7 @@ export function Table({
                 aria-selected={chosen}
               >
                 {row.cells.map((cell, column) => (
-                  <td key={column} className="px-1.5 py-0.5 align-middle whitespace-nowrap">
+                  <td key={column} className="px-1.5 py-0.5 align-middle whitespace-nowrap max-md:py-2">
                     {cell}
                   </td>
                 ))}

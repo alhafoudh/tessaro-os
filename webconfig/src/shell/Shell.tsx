@@ -1,6 +1,6 @@
 // Webconfig's window, laid out as a GUI device window (device.rs): the
 // title bar with the device tools, the menu on the left (a drawer on a
-// phone), the page with the live Screen panel beside it where the GUI has
+// phone, which holds the tools there too), the page with the live Screen panel beside it where the GUI has
 // its VNC panel, the Messages pane and the status bar.
 
 import { useEffect, useState, type ReactNode } from "react";
@@ -80,29 +80,56 @@ export function Shell({ children }: { children: ReactNode }) {
       key={to}
       to={to}
       className={({ isActive }) =>
-        `block px-2.5 py-1 whitespace-nowrap ${isActive ? "bg-selection text-white" : "hover:bg-button-hover"}`
+        `block px-2.5 py-1 whitespace-nowrap max-md:py-2 ${isActive ? "bg-selection text-white" : "hover:bg-button-hover"}`
       }
     >
       {title}
     </NavLink>
   );
 
+  // A phone has no room for the title bar's tools: they are the drawer's
+  // last entries there, and close it as a page link does.
+  const drawerTool = (title: string, run: () => void, on?: boolean) => (
+    <button
+      type="button"
+      className={`block w-full px-2.5 py-2 text-left whitespace-nowrap hover:bg-button-hover ${on ? "text-primary" : ""}`}
+      aria-pressed={on}
+      onClick={() => {
+        setMenu(false);
+        run();
+      }}
+    >
+      {title}
+      {on !== undefined && <span className="text-muted">{on ? ": shown" : ""}</span>}
+    </button>
+  );
+
   return (
     <div className="flex h-full flex-col bg-background">
-      <header className="flex min-h-[2.125rem] flex-wrap items-center gap-x-3 gap-y-1 border-b border-border bg-chrome px-2 py-1">
+      <header className="flex min-h-[2.125rem] flex-wrap items-center gap-x-3 gap-y-1 border-b border-border bg-chrome px-2 py-1 max-md:flex-nowrap max-md:gap-x-2">
         <button
           type="button"
-          className="px-1.5 text-xl leading-none md:hidden"
+          className="p-1 md:hidden"
           aria-label="Menu"
           aria-expanded={menu}
           onClick={() => setMenu((open) => !open)}
         >
-          ☰
+          {/* Drawn, not the ☰ character: Manrope has no such glyph, and each
+              phone's fallback font puts it at its own height. */}
+          <svg viewBox="0 0 20 20" className="block size-5" aria-hidden>
+            <path d="M3 5h14M3 10h14M3 15h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+          </svg>
         </button>
-        <span className="text-[0.9375rem] font-bold">Tessaro</span>
-        <span className="text-muted">Webconfig</span>
-        <span className="truncate font-bold">{status?.node.name}</span>
-        <div className="ms-auto flex flex-wrap items-center gap-1.5">
+        {/* One baseline for the differently sized names. */}
+        <span className="flex min-w-0 items-baseline gap-x-3 max-md:flex-1 max-md:gap-x-2">
+          <span className="text-[0.9375rem] font-bold">Tessaro</span>
+          <span className="text-muted max-md:hidden">Webconfig</span>
+          <span className="min-w-0 truncate font-bold">{status?.node.name}</span>
+        </span>
+        <Button className="md:hidden" onClick={refresh}>
+          Refresh
+        </Button>
+        <div className="ms-auto flex flex-wrap items-center gap-1.5 max-md:hidden">
           <Button onClick={refresh}>Refresh</Button>
           <span className="mx-0.5 h-4 w-px bg-border" />
           <Button onClick={() => setAsking("browser")}>Restart browser</Button>
@@ -125,12 +152,23 @@ export function Shell({ children }: { children: ReactNode }) {
       </header>
       <div className="relative flex min-h-0 flex-1">
         <nav
-          className={`${menu ? "flex" : "hidden"} absolute inset-y-0 left-0 z-40 w-48 flex-col overflow-auto border-r border-border bg-panel md:static md:flex md:w-[140px] md:shrink-0`}
+          className={`${menu ? "flex" : "hidden"} absolute inset-y-0 left-0 z-40 w-60 max-w-[85vw] flex-col overflow-auto border-r border-border bg-panel md:static md:flex md:w-[140px] md:shrink-0`}
           aria-label="Pages"
         >
           {PAGES.map((page) => link(`/${page.path}`, page.title))}
           {sections.length > 0 && <div className="mx-2 my-1 h-px bg-border" />}
           {sections.map((section) => link(`/settings/${section}`, sectionTitle(section)))}
+          <div className="md:hidden">
+            <div className="mx-2 my-1 h-px bg-border" />
+            {drawerTool("Screen", () => setShowScreen(!showScreen), showScreen)}
+            {drawerTool("Messages", () => setShowMessages((open) => !open), showMessages)}
+            <div className="mx-2 my-1 h-px bg-border" />
+            {drawerTool("Restart browser", () => setAsking("browser"))}
+            {drawerTool("Restart weston", () => setAsking("weston"))}
+            {drawerTool("Restart agent", () => setAsking("agent"))}
+            {drawerTool("Reboot", () => setAsking("reboot"))}
+            {session.via === "session" && drawerTool("Sign out", () => void signOut())}
+          </div>
         </nav>
         {menu && <div className="absolute inset-0 z-30 bg-black/45 md:hidden" onClick={() => setMenu(false)} />}
         {/* The screen beside the page, as the GUI's VNC panel; under it on a phone. */}

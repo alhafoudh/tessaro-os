@@ -94,9 +94,9 @@ export function Dialog({
         aria-modal="true"
         aria-label={title}
         onSubmit={submitted}
-        className={`flex max-h-[calc(100vh-1rem)] w-full flex-col border border-border bg-panel shadow-[0_4px_14px_rgba(0,0,0,0.5)] ${wide ? "max-w-5xl" : "max-w-[30rem]"}`}
+        className={`flex max-h-[calc(100dvh-1rem)] w-full flex-col border border-border bg-panel shadow-[0_4px_14px_rgba(0,0,0,0.5)] ${wide ? "max-w-5xl" : "max-w-[30rem]"}`}
       >
-        <div className="bg-chrome px-2.5 py-1 text-sm font-bold">{title}</div>
+        <div className="bg-chrome px-2.5 py-1 text-sm font-bold max-md:py-2">{title}</div>
         <div className="flex flex-col gap-2 overflow-auto p-3">{children}</div>
         <div className="flex flex-wrap justify-end gap-1.5 px-3 pb-3">
           {extra}

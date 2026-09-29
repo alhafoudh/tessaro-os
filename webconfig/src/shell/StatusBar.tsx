@@ -1,6 +1,7 @@
 // The GUI's status bar (device.rs status_bar): the link, the device, the
 // image, the revision, whether the browser answers, the modes that are on,
-// load, and a change on probation counting down on the right.
+// load, and a change on probation counting down on the right. A phone keeps
+// it to one line: the link, the name, and what is wrong or on.
 
 import { useEffect, useState } from "react";
 
@@ -26,32 +27,39 @@ export function StatusBar() {
   const left = useSecondsLeft();
   const tone = link === "online" ? "text-success" : link === "connecting" ? "text-warning" : "text-danger";
   return (
-    <footer className="flex flex-wrap items-center gap-x-3 border-t border-border bg-chrome px-2 py-[0.1875rem] text-sm">
+    <footer className="flex flex-wrap items-center gap-x-3 border-t border-border bg-chrome px-2 py-[0.1875rem] text-sm max-md:flex-nowrap max-md:gap-x-2 max-md:overflow-hidden max-md:py-1 max-md:whitespace-nowrap">
       <span className={tone}>{link}</span>
       {status && (
         <>
-          <span>
-            {status.node.name} ({status.node.id})
+          <span className="max-md:min-w-0 max-md:truncate">
+            {status.node.name}
+            <span className="max-md:hidden"> ({status.node.id})</span>
           </span>
           {(status.image_version ?? status.os) && (
-            <span className="text-muted">{status.image_version ?? status.os}</span>
+            <span className="text-muted max-md:hidden">{status.image_version ?? status.os}</span>
           )}
-          <span className="text-muted">revision {status.revision}</span>
+          <span className="text-muted max-md:hidden">revision {status.revision}</span>
           {status.browser_answering ? (
-            <span>browser answering</span>
+            <span className="max-md:hidden">browser answering</span>
           ) : (
             <span className="text-danger">browser not answering</span>
           )}
           {status.maintenance && <span className="text-warning">maintenance</span>}
           {status.debug_screen && <span className="text-warning">debug screen</span>}
-          {status.cpu_percent != null && <span className="text-muted">CPU {status.cpu_percent}%</span>}
-          {status.memory && <span className="text-muted">RAM {memUsedPercent(status.memory)}%</span>}
+          {status.cpu_percent != null && <span className="text-muted max-md:hidden">CPU {status.cpu_percent}%</span>}
+          {status.memory && <span className="text-muted max-md:hidden">RAM {memUsedPercent(status.memory)}%</span>}
           {status.data && status.data.size > 0 && (
-            <span className="text-muted">/data {Math.floor((status.data.used * 100) / status.data.size)}% used</span>
+            <span className="text-muted max-md:hidden">
+              /data {Math.floor((status.data.used * 100) / status.data.size)}% used
+            </span>
           )}
           {status.pending && left !== null && (
             <span className="ms-auto text-warning">
-              {status.pending.key}={status.pending.value} reverts to {previousOrDefault(status.pending.previous)} in{" "}
+              <span className="max-md:hidden">
+                {status.pending.key}={status.pending.value} reverts to {previousOrDefault(status.pending.previous)}{" "}
+                in{" "}
+              </span>
+              <span className="md:hidden">reverts in </span>
               {left}s
             </span>
           )}

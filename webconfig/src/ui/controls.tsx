@@ -26,7 +26,7 @@ export function Button({
     <button
       type="button"
       {...props}
-      className={`inline-flex items-center justify-center whitespace-nowrap rounded-[2px] border px-2 py-0.5 text-sm leading-[1.125rem] disabled:pointer-events-none disabled:opacity-50 ${kinds[kind]} ${className}`}
+      className={`inline-flex items-center justify-center whitespace-nowrap rounded-[2px] border px-2 py-0.5 text-sm leading-[1.125rem] max-md:px-2.5 max-md:py-1.5 disabled:pointer-events-none disabled:opacity-50 ${kinds[kind]} ${className}`}
     />
   );
 }
@@ -41,8 +41,10 @@ export function Toolbar({ children, end }: { children: ReactNode; end?: ReactNod
   );
 }
 
+/** A phone's toolbar wraps at nearly every button, where a separator ends
+ *  up dangling at a line's end: there it is left out. */
 export function Separator() {
-  return <span className="mx-1 h-4 w-px bg-border" aria-hidden />;
+  return <span className="mx-1 h-4 w-px bg-border max-md:hidden" aria-hidden />;
 }
 
 /** A line of the shared text, each span in its tone. */
@@ -58,19 +60,23 @@ export function LineView({ line, className = "" }: { line: Line; className?: str
   );
 }
 
-/** Label and value rows, as the GUI's fact tables. */
+/** Label and value rows, as the GUI's fact tables. On a phone the label
+ *  sits over its value, which then has the whole width; a value breaks only
+ *  where it must, not after every letter. */
 export function Facts({ facts }: { facts: Fact[] }) {
   if (facts.length === 0) {
     return null;
   }
   return (
     <div className="border border-border bg-panel">
-      <table className="w-full border-collapse text-sm">
-        <tbody>
+      <table className="w-full border-collapse text-sm max-md:block">
+        <tbody className="max-md:block">
           {facts.map((item, at) => (
-            <tr key={`${item.label}-${at}`} className={at % 2 ? "bg-stripe" : ""}>
-              <td className="w-44 whitespace-nowrap px-1.5 py-0.5 align-middle text-muted">{item.label}</td>
-              <td className="px-1.5 py-0.5 align-middle break-all">
+            <tr key={`${item.label}-${at}`} className={`${at % 2 ? "bg-stripe" : ""} max-md:block max-md:py-1`}>
+              <td className="w-44 whitespace-nowrap px-1.5 py-0.5 align-middle text-muted max-md:block max-md:w-auto max-md:py-0">
+                {item.label}
+              </td>
+              <td className="px-1.5 py-0.5 align-middle wrap-anywhere max-md:block max-md:py-0">
                 <LineView line={item.value} />
               </td>
             </tr>

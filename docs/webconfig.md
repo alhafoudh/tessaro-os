@@ -139,15 +139,29 @@ as `toFixed` does: floats go through `fixed()` in `describe/common.ts`.
 `gui/tessaro-gui/src/theme.rs` are Tailwind `@theme` tokens in
 `webconfig/src/styles.css`; change them in both together. Manrope is
 vendored (`webconfig/src/fonts/`, OFL) and bundled, so nothing is fetched
-from the internet - a device on a hotspot has none. The menu becomes a
-drawer and toolbars wrap on a phone; a wide table scrolls sideways.
+from the internet - a device on a hotspot has none.
 
-**A phone gets everything 1.5x**, since the GUI's small text and tight
-controls are too small to read and tap there: below Tailwind's `md`
-breakpoint the root font size is 150% (`styles.css`). That scales only
-what is in rem, so sizes are written in rem, never px (13px is
-`0.8125rem`). The table's column widths and heights are the exception:
-pages write the GUI's px and `Table.tsx` turns them into rem.
+**A phone gets everything 1.25x and a layout of its own**, since the GUI's
+13px text and tight controls are too small to read and tap there. Below
+Tailwind's `md` breakpoint (`max-md:` in the classes):
+
+* The root font size is 125% (`styles.css`), which makes the body text
+  16px. More leaves a 390px-wide phone too few columns for a label and its
+  value. That scales only what is in rem, so sizes are written in rem,
+  never px (13px is `0.8125rem`). The table's column widths and heights
+  are the exception: pages write the GUI's px and `Table.tsx` turns them
+  into rem.
+* Inputs are 16px whatever the scale: below that iOS zooms the page in on
+  focus and leaves it zoomed.
+* Buttons, menu entries, table rows and Quick Setup's sections are taller,
+  to be tapped.
+* The title bar is one row: the menu button, the name and Refresh. Its
+  other tools are the drawer's last entries (`Shell.tsx`).
+* The status bar is one line: the link, the name, and what is wrong or on
+  (`StatusBar.tsx`).
+* A fact table puts each label over its value (`Facts` in `controls.tsx`),
+  toolbars wrap without their separators, and a wide table scrolls
+  sideways.
 
 ## Serving
 
