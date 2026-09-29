@@ -9,7 +9,8 @@
     "audio",
     "firmware",
     "time",
-    "proxy"
+    "proxy",
+    "camera"
   ],
   "output": [
     {
@@ -47,6 +48,10 @@
     {
       "long": "the local proxy (tessaro-proxy.service); the browser and the agent when the proxy is switched on or off",
       "short": "local proxy (browser, agent on switching)"
+    },
+    {
+      "long": "the camera mirrors (tessaro-camera@*.service); a page showing a camera asks for it again",
+      "short": "camera mirrors"
     }
   ]
 }

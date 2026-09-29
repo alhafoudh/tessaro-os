@@ -129,6 +129,13 @@ pub struct Paths {
     /// at every boot.
     pub proxy_config: PathBuf,
     pub proxy_unit: String,
+    /// Where each camera mirror reports what it captures, `<device>.json`.
+    pub camera_dir: PathBuf,
+    /// The mirrors' settings, rendered from camera.format and .size. In
+    /// `/run`, so it is rendered from the settings at every start.
+    pub camera_env: PathBuf,
+    /// The mirrors, one per camera, as a unit pattern.
+    pub camera_units: String,
     /// Where the schedules' systemd units are rendered. In `/run`, so they
     /// are rendered from the `schedules` table at every start and never land on
     /// the `/etc` overlay.
@@ -235,6 +242,9 @@ impl Paths {
             ),
             proxy_config: path("KIOSK_PROXY_CONFIG", "/run/tessaro-proxy/tinyproxy.conf"),
             proxy_unit: text("KIOSK_PROXY_UNIT", "tessaro-proxy.service"),
+            camera_dir: path("KIOSK_CAMERA_DIR", "/run/tessaro-camera"),
+            camera_env: path("KIOSK_CAMERA_ENV", "/run/tessaro-camera/camera.env"),
+            camera_units: text("KIOSK_CAMERA_UNITS", "tessaro-camera@*.service"),
             systemd_unit_dir: path("KIOSK_SYSTEMD_UNIT_DIR", "/run/systemd/system"),
             manage_schedules: text("KIOSK_MANAGE_SCHEDULES", "1") != "0",
             systemd_analyze: path("KIOSK_SYSTEMD_ANALYZE", "systemd-analyze"),

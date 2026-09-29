@@ -10,7 +10,9 @@ running agent applies it at once (**Settings on a running agent** in
 [agent.md](agent.md)), a key the agent sets up once per process
 (`Consumer::AgentRestart`) restarts the agent, the browser restarts for a
 browser key or a new kiosk origin, Weston restarts - taking the browser with
-it - for a `screen.*` key.
+it - for a `screen.*` key, and the camera mirrors restart for a `camera.*`
+key, which the agent renders into `/run/tessaro-camera/camera.env` for them
+([camera.md](camera.md)).
 
 * **The settings are sparse**: a row only for what was set, keyed by the
   registry's dotted names. Everything else follows

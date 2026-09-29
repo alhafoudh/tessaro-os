@@ -23,6 +23,7 @@ mod api;
 mod audio;
 mod auth;
 mod boot;
+mod camera;
 mod cdp;
 mod certs;
 mod config;

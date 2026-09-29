@@ -29,9 +29,9 @@ use crate::policy::{
     EffectiveEntry, PolicyDoc, PolicyInfo, PolicyMoved, PolicyRemoved, PolicySaved,
 };
 use crate::{
-    Applied, AudioStatus, AudioTested, CalendarCheck, CertInfo, CertsAdded, Claimed, Command,
-    Connector, Done, EvalResult, HotspotCredentials, ImageUpload, JobPage, JobStarted, KeyInfo,
-    LogPage, Net, NetChange, NetProfile, NetProfileDetail, NodeInfo, OnError, PrintJob,
+    Applied, AudioStatus, AudioTested, CalendarCheck, CameraList, CertInfo, CertsAdded, Claimed,
+    Command, Connector, Done, EvalResult, HotspotCredentials, ImageUpload, JobPage, JobStarted,
+    KeyInfo, LogPage, Net, NetChange, NetProfile, NetProfileDetail, NodeInfo, OnError, PrintJob,
     PrintQueued, PrinterInfo, PrinterList, PrinterSpec, ProxyStatus, ProxyTested, Received,
     RestartTarget, ScheduleInfo, ScheduleSpec, ScreenPower, Secret, Settings, SshAccess,
     SshKeyInfo, SshKeyRevoked, Storage, Ticket, TimeStatus, TokenCreated, TokenInfo, UpdateBegun,
@@ -1208,6 +1208,17 @@ pub mod storage {
     }
 }
 
+pub mod camera {
+    use super::*;
+
+    endpoints! {
+        /// Every USB camera, what its mirror captures, and the virtual
+        /// camera everything else reads it through.
+        List: Get "/api/v1/camera" (Empty, ()) -> CameraList
+            = |_, _| Action::Run(Command::CameraList);
+    }
+}
+
 pub mod audio {
     use super::*;
 
@@ -1498,6 +1509,7 @@ pub fn all() -> Vec<Route> {
         network::routes(),
         storage::routes(),
         audio::routes(),
+        camera::routes(),
         time::routes(),
         schedule::routes(),
         printer::routes(),

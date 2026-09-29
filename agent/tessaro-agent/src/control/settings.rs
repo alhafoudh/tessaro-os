@@ -401,6 +401,33 @@ impl Control {
                     ));
                 }
             }
+            // Every running camera mirror, to capture in the new format. One
+            // stopped stays stopped (TryRestart): udev starts it when its
+            // camera is plugged in, and it reads camera.env then.
+            if reads(Consumer::Camera) && rendered.camera_changed {
+                let outcome = match self.bus.list_units(&[&self.paths.camera_units]).await {
+                    Ok(units) => {
+                        let mut outcome = Ok(());
+                        let running = units
+                            .into_iter()
+                            .filter(|(_, active)| active == "active" || active == "activating");
+                        for (unit, _) in running {
+                            match self.bus.try_restart(&unit).await {
+                                Ok(()) => restarted.push(unit),
+                                Err(err) => outcome = Err(err),
+                            }
+                        }
+                        outcome
+                    }
+                    Err(err) => Err(err),
+                };
+                if let Err(err) = outcome {
+                    return Reply::err(format!(
+                        "saved as revision {}, but a camera did not follow: {err}",
+                        state.revision
+                    ));
+                }
+            }
             if browser {
                 if let Err(err) = self.bus.restart(&self.paths.kiosk_unit).await {
                     return Reply::err(format!(

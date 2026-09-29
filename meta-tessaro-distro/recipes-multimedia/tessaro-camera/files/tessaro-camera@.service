@@ -1,0 +1,63 @@
+[Unit]
+Description=Camera mirror for /dev/%i
+
+# Started by 71-tessaro-camera.rules for each USB camera node (%i is its
+# kernel name, video0), never enabled by hand. The mirror is the camera's
+# only reader: it copies every frame into a v4l2loopback device of the same
+# name, which the browser and anything else open instead.
+#
+# BindsTo=, so unplugging the camera stops the mirror, which removes its
+# virtual camera and state file.
+BindsTo=dev-%i.device
+After=dev-%i.device
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/tessaro-camera /dev/%i
+
+# camera.format and camera.size, as KIOSK_CAMERA_FORMAT and
+# KIOSK_CAMERA_SIZE. tessaro-agent renders the file and restarts every
+# mirror when it changes. Missing is auto.
+EnvironmentFile=-/run/tessaro-camera/camera.env
+
+# A camera that stalls or errors exits non-zero and is started afresh. Clean
+# exits (unplugged, stopped) are left alone, and so is a camera with no
+# format the mirror can pass through: it says so in its state file and waits.
+Restart=on-failure
+RestartSec=5
+
+# Root, with no capabilities at all. Every node it opens is root's: the real
+# camera (0600, 71-tessaro-camera.rules), /dev/v4l2loopback (0600, whose
+# add and remove calls check no capability) and the loopback node it makes,
+# and /run/tessaro-camera, where it writes its state.
+User=root
+CapabilityBoundingSet=
+AmbientCapabilities=
+NoNewPrivileges=yes
+
+# Only the nodes it needs: its camera, the loopback control node, and the
+# video4linux major, since the loopback node's number is only known once it
+# is made.
+DevicePolicy=closed
+DeviceAllow=/dev/%i rw
+DeviceAllow=/dev/v4l2loopback rw
+DeviceAllow=char-video4linux rw
+
+ProtectSystem=strict
+ReadWritePaths=/run/tessaro-camera
+ProtectHome=yes
+PrivateTmp=yes
+PrivateNetwork=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service

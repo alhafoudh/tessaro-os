@@ -11,6 +11,8 @@
 #   tessaro-ctl/    the client, on the device and on a laptop.
 #   update/         in-place image updates: prepared by the agent, applied
 #                   by tessaro-flash from the initramfs.
+#   camera/         tessaro-camera, which mirrors a USB camera into a
+#                   v4l2loopback device, one process per camera.
 #
 # The recipe builds the whole workspace from this directory (S is agent/), and
 # cargo.bbclass installs every binary it finds, so all of them land in /usr/bin.
@@ -18,7 +20,7 @@
 # own, and reaches protocol/ and client/ by path.
 [workspace]
 resolver = "2"
-members = ["protocol", "client", "db", "tessaro-agent", "tessaro-ctl", "update"]
+members = ["protocol", "client", "db", "tessaro-agent", "tessaro-ctl", "update", "camera"]
 
 [workspace.package]
 version = "1.0.0"

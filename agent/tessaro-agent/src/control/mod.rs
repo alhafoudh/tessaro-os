@@ -59,6 +59,7 @@ use tokio::time::Instant;
 use crate::api::sessions::{self, Sessions};
 use crate::audio::Audio;
 use crate::auth::Auth;
+use crate::camera;
 use crate::cdp::session::SessionHandle;
 use crate::db::Db;
 use crate::deadline::{blocking, within};
@@ -619,6 +620,7 @@ impl Control {
             Command::UpdateCancel => self.updates.cancel(&caller.describe()).await.into(),
             Command::Ping => Reply::ok(Done::new("pong")),
             Command::Storage => self.storage().await.into(),
+            Command::CameraList => self.camera_list().await.into(),
             Command::NetProfiles => self.network.profiles().await.into(),
             Command::NetShow { profile } => self.network.show(&profile).await.into(),
             Command::NetLast => self.network.last().await.into(),
@@ -901,6 +903,20 @@ impl Control {
     async fn storage(&self) -> Result<protocol::Storage, String> {
         let paths = self.paths.clone();
         blocking("reading the storage", move || storage::snapshot(&paths)).await
+    }
+
+    async fn camera_list(&self) -> Result<protocol::CameraList, String> {
+        let dir = self.paths.camera_dir.clone();
+        let cameras = blocking("reading the cameras", move || camera::snapshot(&dir)).await?;
+        let state = self.read_state().await?;
+        let setting = |key| {
+            state::setting(&state.settings, &self.defaults, key).unwrap_or_else(|| "auto".into())
+        };
+        Ok(protocol::CameraList {
+            format: setting(keys::CAMERA_FORMAT),
+            size: setting(keys::CAMERA_SIZE),
+            cameras,
+        })
     }
 
     async fn status(&self) -> Result<Status, String> {
@@ -1404,6 +1420,8 @@ mod tests {
             // Never this host's clock.
             ("KIOSK_MANAGE_CLOCK", "0".to_string()),
             ("KIOSK_PROXY_CONFIG", at("tinyproxy.conf")),
+            ("KIOSK_CAMERA_DIR", at("camera")),
+            ("KIOSK_CAMERA_ENV", at("camera/camera.env")),
             ("KIOSK_TIMESYNCD_DROPIN", at("timesyncd.conf")),
             // Never this host's systemd: units are only rendered, and the
             // calendar is checked by a stand-in (`fake_analyze`).
@@ -1526,6 +1544,45 @@ mod tests {
             .await
             .result
             .expect_err("the command should fail")
+    }
+
+    #[tokio::test]
+    async fn camera_list_has_what_the_mirrors_wrote_and_the_saved_settings() {
+        let fx = fixture();
+        let empty: protocol::CameraList =
+            ok(&fx.control, &Caller::Local, Command::CameraList).await;
+        assert_eq!(
+            (empty.format.as_str(), empty.size.as_str()),
+            ("auto", "auto")
+        );
+        assert!(empty.cameras.is_empty());
+
+        let camera = protocol::CameraInfo {
+            name: "HD Webcam".into(),
+            device: "video0".into(),
+            bus: "usb-0000:00:14.0-2".into(),
+            virtual_device: Some("/dev/video50".into()),
+            mode: None,
+            fallback: None,
+            error: None,
+            modes: Vec::new(),
+        };
+        std::fs::create_dir_all(&fx.paths.camera_dir).unwrap();
+        std::fs::write(
+            fx.paths.camera_dir.join("video0.json"),
+            serde_json::to_vec(&camera).unwrap(),
+        )
+        .unwrap();
+        // Saved without applying: there is no systemd to restart mirrors in.
+        let mut saved = set(&[("camera.format", "yuyv")]);
+        if let Command::Set { apply, .. } = &mut saved {
+            *apply = false;
+        }
+        let _: protocol::Applied = ok(&fx.control, &Caller::Local, saved).await;
+
+        let list: protocol::CameraList = ok(&fx.control, &Caller::Local, Command::CameraList).await;
+        assert_eq!(list.format, "yuyv");
+        assert_eq!(list.cameras, [camera]);
     }
 
     fn set(pairs: &[(&str, &str)]) -> Command {

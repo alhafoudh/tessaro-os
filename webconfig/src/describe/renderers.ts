@@ -7,6 +7,7 @@
 import type { Fact, Line } from "../text/line";
 import * as audio from "./audio";
 import * as browser from "./browser";
+import * as camera from "./camera";
 import * as clock from "./clock";
 import * as schedule from "./schedule";
 import * as storage from "./storage";
@@ -88,6 +89,7 @@ export const renderers: Record<string, (input: any) => unknown> = {
       grows: storage.grows(input),
     };
   },
+  "camera::list": (input) => lines(camera.list(input)),
   "printer::list": (input) => lines(printer.list(input)),
   "printer::show": (input) => facts(printer.show(input)),
   "printer::jobs": (input) => lines(printer.jobs(input)),

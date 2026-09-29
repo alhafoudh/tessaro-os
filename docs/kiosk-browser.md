@@ -435,6 +435,10 @@ does something. To open it on a device,
 
 ## Device APIs: WebSerial, WebHID, WebUSB, Web Bluetooth
 
+The camera is not one of them: `getUserMedia({video})` reads the virtual
+cameras of the camera mirrors, granted by `VideoCaptureAllowedUrls`; see
+[camera.md](camera.md).
+
 **Every one of them is compiled in.** `use_dbus`, `use_udev` and `use_bluez`
 default to true on Linux and the recipe overrides none of them. `bluez5` and
 `bluetoothd` come from oe-core's default `bluetooth` `DISTRO_FEATURE`. What

@@ -1,0 +1,25 @@
+[package]
+name = "tessaro-camera"
+description = "Mirrors a USB camera into a v4l2loopback device that any number of readers can open"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# One process per camera, started by udev through tessaro-camera@.service. A
+# frame loop is blocking by nature, so this is a plain blocking program like
+# tessaro-flash, not part of the agent and not under its no-blocking rules.
+[[bin]]
+name = "tessaro-camera"
+path = "src/main.rs"
+
+[dependencies]
+# CameraInfo and CameraMode, the state file the agent reads back.
+protocol = { path = "../protocol" }
+serde_json = "1"
+
+# ioctl, mmap, poll and sigaction. The V4L2 and v4l2loopback structs are
+# written out by hand in v4l2.rs and loopback.rs: the v4l crate's sys crate
+# runs bindgen at build time, which the offline bitbake build cannot.
+libc = "0.2"

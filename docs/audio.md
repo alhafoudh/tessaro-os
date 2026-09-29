@@ -74,7 +74,8 @@ logic is `agent/tessaro-agent/src/audio.rs`; the image side is
   (`render::ORIGIN_POLICIES`), so `getUserMedia({audio: true})` is answered
   with no prompt. `audio.input=off` mutes the input at PipeWire and leaves
   the grant alone, so it never restarts the browser. The Pi has no audio
-  input of its own; a microphone there is a USB one.
+  input of its own; a microphone there is a USB one. The camera is granted
+  the same way (see [camera.md](camera.md)).
 * **On the Pi, HDMI sound comes from vc4, not bcm2835.** Under full KMS the
   `vc4-kms-v3d` overlay boots `snd_bcm2835.enable_hdmi=0`, so bcm2835 is the
   headphone jack only, and HDMI is vc4-hdmi's own card, which takes IEC958

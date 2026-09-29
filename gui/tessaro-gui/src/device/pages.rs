@@ -33,8 +33,8 @@ use protocol::policy::{
     self, EffectiveEntry, PolicyDoc, PolicyInfo, PolicyMoved, PolicyRemoved, PolicySaved,
 };
 use protocol::{
-    size_label, Applied, AudioDevice, AudioStatus, AudioTested, CalendarCheck, CertInfo,
-    CertsAdded, Claimed, Connector, Done, HotspotCredentials, Net, NetChange, NetProfile,
+    size_label, Applied, AudioDevice, AudioStatus, AudioTested, CalendarCheck, CameraList,
+    CertInfo, CertsAdded, Claimed, Connector, Done, HotspotCredentials, Net, NetChange, NetProfile,
     NetProfileDetail, OnError, Password, PingEvent, PrintJob, PrintQueued, PrinterFound,
     PrinterInfo, PrinterKind, PrinterList, PrinterSpec, ProxyTested, ScheduleInfo, ScheduleSpec,
     SpeedtestEvent, SshKeyInfo, SshKeyRevoked, Storage, StorageGrowEvent, TimeStatus, TokenCreated,
@@ -70,6 +70,7 @@ pub struct State {
     /// A volume slider being dragged: shown, not yet sent.
     volume: Option<u8>,
     input_volume: Option<u8>,
+    cameras: Option<CameraList>,
     time: Option<TimeStatus>,
     schedules: Vec<ScheduleInfo>,
     /// Counts edits of a schedule form's calendar, so only the check of the
@@ -190,6 +191,8 @@ enum Action {
     Timezone,
     Ntp,
     SetClock,
+    CameraFormat,
+    CameraSize,
 }
 
 #[derive(Debug, Clone)]
@@ -249,6 +252,9 @@ pub enum Msg {
     Mute(bool),
     InputMute(bool),
     Test(bool),
+    // camera
+    CameraFormat,
+    CameraSize,
     // time
     Timezone,
     Ntp,
@@ -597,6 +603,7 @@ fn page_of(tag: &str) -> &'static str {
         "policies" | "policy" => "policies",
         "storage" => "storage",
         "audio" => "audio",
+        "camera" => "camera",
         "time" => "time",
         "schedules" | "schedule" => "schedules",
         "printers" | "printer" => "printer",
@@ -807,6 +814,7 @@ impl Device {
             }
             Page::Storage => self.call("storage", fetch::<api::storage::Show>()),
             Page::Audio => self.call("audio", fetch::<api::audio::Show>()),
+            Page::Camera => self.call("camera", fetch::<api::camera::List>()),
             Page::Time => self.call("time", fetch::<api::time::Show>()),
             Page::Schedules => self.call("schedules", fetch::<api::schedule::List>()),
             Page::Printer => {
@@ -1062,6 +1070,7 @@ impl Device {
                     self.log_line(line);
                 }
             }
+            "camera" => self.pages.cameras = Some(parse(value)?),
             "time" => self.pages.time = Some(parse(value)?),
             "time.zones" => {
                 let zones = zones(parse(value)?);
@@ -1747,6 +1756,33 @@ impl Device {
                     send::<api::audio::Test>(AudioTestBody { input }),
                 );
             }
+            Msg::CameraFormat => {
+                let saved = self.pages.cameras.as_ref().map(|list| list.format.as_str());
+                let current = keys::CAMERA_FORMATS
+                    .iter()
+                    .find(|format| Some(**format) == saved)
+                    .copied()
+                    .unwrap_or("auto");
+                self.form(
+                    Form::new("Camera format", "Set", Action::CameraFormat)
+                        .intro("How every camera captures: auto takes MJPEG where the camera has it, else YUYV. Frames reach the page as captured. A camera without the format uses auto. Every camera mirror restarts, and a page showing a camera asks for it again.")
+                        .field(Field::choice("Format", current, keys::CAMERA_FORMATS)),
+                );
+            }
+            Msg::CameraSize => {
+                // The size of the mode picked in the table, else the saved one.
+                let size = self
+                    .selected("camera.modes")
+                    .and_then(|key| key.split_whitespace().nth(1))
+                    .map(str::to_string)
+                    .or_else(|| self.pages.cameras.as_ref().map(|list| list.size.clone()))
+                    .unwrap_or_else(|| "auto".to_string());
+                self.form(
+                    Form::new("Camera size", "Set", Action::CameraSize)
+                        .intro("The frame size every camera captures at: auto (the largest up to 1920x1080 that keeps 25 fps), or WIDTHxHEIGHT from a camera's modes. A camera without the size uses auto. Every camera mirror restarts.")
+                        .field(Field::text("Size", &size, "auto")),
+                );
+            }
             Msg::Timezone => match ZONES.get() {
                 Some(zones) => self.timezone_form(zones),
                 None => self.call("time.zones", fetch::<api::time::Zones>()),
@@ -2016,6 +2052,7 @@ impl Device {
             "outputs" => self.page_update(Msg::UseAudio(keys::AUDIO_OUTPUT)),
             "inputs" => self.page_update(Msg::UseAudio(keys::AUDIO_INPUT)),
             "modes" => self.page_update(Msg::UseMode),
+            "camera.modes" => self.page_update(Msg::CameraSize),
             "schedules" => self.page_update(Msg::ScheduleEdit),
             "policies" => self.page_update(Msg::PolicyEdit),
             "printers" => self.page_update(Msg::PrinterShow),
@@ -2111,6 +2148,14 @@ impl Device {
                             .iter()
                             .map(|device| device.name.clone())
                     })
+                    .collect(),
+            ),
+            Page::Camera => (
+                "cameras",
+                self.pages
+                    .cameras
+                    .iter()
+                    .flat_map(|list| list.cameras.iter().map(|camera| camera.device.clone()))
                     .collect(),
             ),
             Page::Screen => (
@@ -2350,6 +2395,15 @@ impl Device {
                         user_gesture: false,
                     }),
                 );
+            }
+            Action::CameraFormat => {
+                self.set(&[(keys::CAMERA_FORMAT, form.value("Format"))]);
+                self.call("camera", fetch::<api::camera::List>());
+            }
+            Action::CameraSize => {
+                let size = super::check(keys::CAMERA_SIZE, form.value("Size").trim())?;
+                self.set(&[(keys::CAMERA_SIZE, &size)]);
+                self.call("camera", fetch::<api::camera::List>());
             }
             Action::Timezone => {
                 let zone = form.value("Timezone").trim();
@@ -2818,6 +2872,7 @@ impl Device {
             Page::Policies => self.policies_view(),
             Page::Storage => self.storage_view(),
             Page::Audio => self.audio_view(),
+            Page::Camera => self.camera_view(),
             Page::Time => self.time_view(),
             Page::Schedules => self.schedules_view(),
             Page::Printer => self.printer_view(),
@@ -4035,6 +4090,95 @@ impl Device {
         )
     }
 
+    fn camera_view(&self) -> Element<'_, Message> {
+        let actions = vec![
+            action("Format ...", self.when(Msg::CameraFormat)),
+            action("Size ...", self.when(Msg::CameraSize)),
+        ];
+        let Some(list) = &self.pages.cameras else {
+            return self.page("camera", actions, Vec::new(), Vec::new());
+        };
+        const CAMERAS: &[Col] = &[
+            col("Camera", Length::Fixed(200.0)),
+            col("Device", Length::Fixed(80.0)),
+            col("Virtual", Length::Fixed(100.0)),
+            col("Captures", Length::Fixed(180.0)),
+            col("", Length::Fill),
+        ];
+        const MODES: &[Col] = &[
+            col("Format", Length::Fixed(80.0)),
+            col("Size", Length::Fixed(100.0)),
+            col("Frames a second", Length::Fill),
+        ];
+        let cameras = list
+            .cameras
+            .iter()
+            .map(|camera| {
+                let note = match (&camera.error, &camera.fallback) {
+                    (Some(error), _) => cell(error.clone()).style(text::danger),
+                    (None, Some(fallback)) => cell(fallback.clone()).style(text::warning),
+                    (None, None) => cell(camera.bus.clone()).style(theme::muted),
+                };
+                (
+                    camera.device.clone(),
+                    vec![
+                        cell(camera.name.clone()).into(),
+                        cell(format!("/dev/{}", camera.device)).into(),
+                        cell(camera.virtual_device.clone().unwrap_or_default()).into(),
+                        cell(
+                            camera
+                                .mode
+                                .as_ref()
+                                .map(describe::camera::mode)
+                                .unwrap_or_default(),
+                        )
+                        .into(),
+                        note.into(),
+                    ],
+                )
+            })
+            .collect();
+        // The modes of the camera picked, else of the first.
+        let picked = self.selected("cameras");
+        let modes = list
+            .cameras
+            .iter()
+            .find(|camera| Some(&camera.device) == picked)
+            .or(list.cameras.first())
+            .map(|camera| {
+                camera
+                    .modes
+                    .iter()
+                    .map(|mode| {
+                        let size = format!("{}x{}", mode.width, mode.height);
+                        (
+                            format!("{} {size}", mode.format),
+                            vec![
+                                cell(mode.format.clone()).into(),
+                                cell(size)
+                                    .sort_number(f64::from(mode.width * mode.height))
+                                    .into(),
+                                cell(mode.fps.to_string())
+                                    .sort_number(f64::from(mode.fps))
+                                    .into(),
+                            ],
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut body = vec![self.facts(
+            "camerafacts",
+            vec![("Format", list.format.clone()), ("Size", list.size.clone())],
+        )];
+        if list.cameras.is_empty() {
+            body.push(theme::text_line(&describe::camera::none(), theme::FONT));
+        }
+        body.push(self.table("cameras", CAMERAS, cameras, Length::Fixed(TABLE_HEIGHT)));
+        body.push(self.table("camera.modes", MODES, modes, Length::Fill));
+        self.page("camera", actions, Vec::new(), body)
+    }
+
     fn access_view(&self) -> Element<'_, Message> {
         const COLUMNS: &[Col] = &[
             col("Token", Length::Fixed(120.0)),
@@ -4246,6 +4390,7 @@ pub(super) fn page_key(page: Page) -> &'static str {
         Page::Policies => "policies",
         Page::Storage => "storage",
         Page::Audio => "audio",
+        Page::Camera => "camera",
         Page::Time => "time",
         Page::Schedules => "schedules",
         Page::Printer => "printer",

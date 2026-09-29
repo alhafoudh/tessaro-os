@@ -15,7 +15,7 @@
 //!
 //! A key starts with the `tessaro-ctl` group that acts on the same thing
 //! (`browser.*`, `screen.*`, `network.*`, `device.*`, `access.*`, `time.*`,
-//! `printer.*`); a key no
+//! `printer.*`, `camera.*`); a key no
 //! group acts on is named after the component it tunes (`agent.*`). A key
 //! that is renamed gets a migration in `tessaro-agent/migrations/device/`
 //! that moves its row and rewrites its placeholders, so devices in the field
@@ -67,6 +67,11 @@ pub enum Consumer {
     /// only when the proxy is switched on or off: the browser's policy
     /// changes, and the agent's clients are built for one or the other.
     Proxy,
+    /// The camera mirrors, `tessaro-camera@<device>.service`: their config
+    /// in `/run` is rendered again, and every running mirror restarts to
+    /// capture in the new format. A page showing a camera loses its picture
+    /// for a moment and has to ask for it again; the browser stays.
+    Camera,
 }
 
 /// Hardware a key needs. A key that names one is left out of `config keys`
@@ -101,6 +106,9 @@ pub enum Kind {
     Scale,
     /// Output mode: `preferred`, or `WIDTHxHEIGHT`.
     Resolution,
+    /// A camera frame size: `auto`, or `WIDTHxHEIGHT`. Whether a camera has
+    /// it is the camera's: one without it falls back to `auto`.
+    CameraSize,
     /// A DNS label, or empty for the name derived from the node id.
     Name,
     /// `off`, or an `address:port` to listen on.
@@ -182,6 +190,9 @@ impl Kind {
             Kind::Resolution => {
                 "preferred, or WIDTHxHEIGHT from `tessaro-ctl screen modes`".to_string()
             }
+            Kind::CameraSize => {
+                "auto, or WIDTHxHEIGHT from `tessaro-ctl camera list`".to_string()
+            }
             Kind::Name => "letters, digits and dashes, up to 40; empty derives one".to_string(),
             Kind::Listen => "address:port, or off".to_string(),
             Kind::Param => "any text; percent-encoded where browser.url uses it".to_string(),
@@ -246,6 +257,7 @@ const NETWORK: &[Consumer] = &[Consumer::Network];
 const AUDIO: &[Consumer] = &[Consumer::Audio];
 const FIRMWARE: &[Consumer] = &[Consumer::Firmware];
 const TIME: &[Consumer] = &[Consumer::Time];
+const CAMERA: &[Consumer] = &[Consumer::Camera];
 /// The proxy keys: the local proxy. The agent, whose probe and public
 /// address lookup go through it, follows only it being switched on or off.
 const PROXY: &[Consumer] = &[Consumer::Proxy];
@@ -367,6 +379,13 @@ pub static KEYS: &[Key] = &[
         "Keep the clock in sync over NTP. 0 for a network without any time server; then `tessaro-ctl time set` sets the clock by hand. `tessaro-ctl time ntp on|off`."),
     key(NTP_SERVERS, "KIOSK_NTP_SERVERS", Kind::Hosts, TIME,
         "NTP servers, comma separated. Empty uses the servers the network's DHCP offers, else the image's fallback servers."),
+    // The camera mirrors, which own every USB camera and republish it for
+    // the browser and anything else to read. Every running mirror restarts
+    // on a change; see `tessaro-ctl camera list`.
+    key(CAMERA_FORMAT, "KIOSK_CAMERA_FORMAT", Kind::Choice(CAMERA_FORMATS), CAMERA,
+        "How cameras capture: auto (MJPEG where the camera has it, else YUYV), mjpeg or yuyv. Frames reach the page as captured, never converted. A camera without the format uses auto. `tessaro-ctl camera format`."),
+    key(CAMERA_SIZE, "KIOSK_CAMERA_SIZE", Kind::CameraSize, CAMERA,
+        "Frame size cameras capture at: auto (the largest up to 1920x1080 that keeps 25 fps), or WIDTHxHEIGHT from `tessaro-ctl camera list`. A camera without the size uses auto. `tessaro-ctl camera size`."),
     // The printers themselves are in their own table, `tessaro-ctl printer`;
     // this only decides whether the page may use them.
     key(PRINTER_ENABLE, "KIOSK_PRINTING", Kind::Flag, BROWSER_AND_AGENT,
@@ -527,6 +546,11 @@ pub const TIMEZONE: &str = "time.timezone";
 pub const NTP_ENABLE: &str = "time.ntp.enable";
 pub const NTP_SERVERS: &str = "time.ntp.servers";
 pub const PRINTER_ENABLE: &str = "printer.enable";
+pub const CAMERA_FORMAT: &str = "camera.format";
+pub const CAMERA_SIZE: &str = "camera.size";
+
+/// What camera.format may be.
+pub const CAMERA_FORMATS: &[&str] = &["auto", "mjpeg", "yuyv"];
 
 /// The timezone of a device where time.timezone was never set.
 pub const DEFAULT_TIMEZONE: &str = "UTC";
@@ -861,6 +885,13 @@ pub fn validate(key: &Key, value: &str) -> Result<String, String> {
             mode => match parse_mode(mode) {
                 Some((width, height)) => Ok(format!("{width}x{height}")),
                 None => fail("must be preferred or WIDTHxHEIGHT, e.g. 1920x1080"),
+            },
+        },
+        Kind::CameraSize => match value.to_ascii_lowercase().as_str() {
+            "" | "auto" => Ok("auto".to_string()),
+            size => match parse_camera_size(size) {
+                Some((width, height)) => Ok(format!("{width}x{height}")),
+                None => fail("must be auto or WIDTHxHEIGHT, e.g. 1280x720"),
             },
         },
         Kind::Name => {
@@ -1393,6 +1424,15 @@ pub fn parse_mode(mode: &str) -> Option<(u32, u32)> {
     ((320..=16384).contains(&width) && (200..=16384).contains(&height)).then_some((width, height))
 }
 
+/// A camera.size value, `1280x720`. Smaller than a screen mode may be: a
+/// camera offers 160x120.
+pub fn parse_camera_size(size: &str) -> Option<(u32, u32)> {
+    let (width, height) = size.split_once('x')?;
+    let width: u32 = width.parse().ok()?;
+    let height: u32 = height.parse().ok()?;
+    ((16..=16384).contains(&width) && (16..=16384).contains(&height)).then_some((width, height))
+}
+
 fn url(value: &str) -> Result<&str, String> {
     if value.chars().any(char::is_whitespace) {
         return Err("must not contain whitespace (use %20)".to_string());
@@ -1532,6 +1572,19 @@ mod tests {
         assert!(check("screen.resolution", "1920x1080@60").is_err());
         assert!(check("screen.resolution", "10x10").is_err());
         assert!(find("screen.resolution").unwrap().guarded);
+    }
+
+    #[test]
+    fn camera_keys_take_a_format_and_a_size_smaller_than_a_screen() {
+        assert_eq!(check(CAMERA_FORMAT, "MJPEG").unwrap(), "mjpeg");
+        assert!(check(CAMERA_FORMAT, "h264").is_err());
+        assert_eq!(check(CAMERA_SIZE, "").unwrap(), "auto");
+        assert_eq!(check(CAMERA_SIZE, "160X120").unwrap(), "160x120");
+        assert!(check(CAMERA_SIZE, "preferred").is_err());
+        assert!(check(CAMERA_SIZE, "1280x720@30").is_err());
+        for name in [CAMERA_FORMAT, CAMERA_SIZE] {
+            assert_eq!(find(name).unwrap().consumers, [Consumer::Camera]);
+        }
     }
 
     #[test]

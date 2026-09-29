@@ -1,0 +1,229 @@
+{
+  "function": "camera::list",
+  "input": {
+    "cameras": [
+      {
+        "bus": "usb-0000:00:14.0-2",
+        "device": "video0",
+        "mode": {
+          "format": "mjpeg",
+          "fps": 30,
+          "height": 1080,
+          "width": 1920
+        },
+        "modes": [
+          {
+            "format": "mjpeg",
+            "fps": 30,
+            "height": 1080,
+            "width": 1920
+          },
+          {
+            "format": "mjpeg",
+            "fps": 30,
+            "height": 720,
+            "width": 1280
+          },
+          {
+            "format": "yuyv",
+            "fps": 30,
+            "height": 480,
+            "width": 640
+          },
+          {
+            "format": "yuyv",
+            "fps": 5,
+            "height": 1080,
+            "width": 1920
+          }
+        ],
+        "name": "HD Pro Webcam C920",
+        "virtual_device": "/dev/video50"
+      }
+    ],
+    "format": "auto",
+    "size": "auto"
+  },
+  "output": [
+    [
+      [
+        "heading",
+        "HD Pro Webcam C920",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "(usb-0000:00:14.0-2)",
+        0
+      ]
+    ],
+    [
+      [
+        "plain",
+        "    ",
+        0
+      ],
+      [
+        "label",
+        "device",
+        9
+      ],
+      [
+        "plain",
+        " /dev/video0 ",
+        0
+      ],
+      [
+        "muted",
+        "->",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "ok",
+        "/dev/video50",
+        0
+      ]
+    ],
+    [
+      [
+        "plain",
+        "    ",
+        0
+      ],
+      [
+        "label",
+        "captures",
+        9
+      ],
+      [
+        "plain",
+        " mjpeg 1920x1080 @ 30 fps",
+        0
+      ]
+    ],
+    [
+      [
+        "plain",
+        "    ",
+        0
+      ],
+      [
+        "label",
+        "mjpeg",
+        9
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "1920x1080@30 1280x720@30",
+        0
+      ]
+    ],
+    [
+      [
+        "plain",
+        "    ",
+        0
+      ],
+      [
+        "label",
+        "yuyv",
+        9
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "640x480@30 1920x1080@5",
+        0
+      ]
+    ],
+    [],
+    [
+      [
+        "label",
+        "saved",
+        9
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "label",
+        "format",
+        0
+      ],
+      [
+        "plain",
+        " auto  ",
+        0
+      ],
+      [
+        "label",
+        "size",
+        0
+      ],
+      [
+        "plain",
+        " auto",
+        0
+      ]
+    ],
+    [
+      [
+        "muted",
+        "change them with",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "cmd",
+        "tessaro-ctl camera format auto|mjpeg|yuyv",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "and",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "cmd",
+        "tessaro-ctl camera size auto|WIDTHxHEIGHT",
+        0
+      ]
+    ]
+  ]
+}

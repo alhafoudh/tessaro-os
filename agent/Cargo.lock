@@ -2329,6 +2329,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tessaro-camera"
+version = "1.0.0"
+dependencies = [
+ "libc",
+ "protocol",
+ "serde_json",
+]
+
+[[package]]
 name = "tessaro-client"
 version = "1.0.0"
 dependencies = [

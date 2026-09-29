@@ -10,7 +10,7 @@
 use std::path::Path;
 
 use serde_json::{json, Value};
-use tessaro_client::describe::{audio, browser, device, net, printer, time};
+use tessaro_client::describe::{audio, browser, camera, device, net, printer, time};
 use tessaro_client::ping;
 use tessaro_client::text::{Fact, Line};
 
@@ -180,6 +180,7 @@ fn render(function: &str, input: &Value) -> Value {
             let (shown, nothing) = plan.facts();
             json!({ "facts": facts(&shown), "nothing": nothing.as_ref().map(line), "grows": plan.grows() })
         }
+        "camera::list" => lines(&camera::list(&from(input))),
         "printer::list" => lines(&printer::list(&from(input))),
         "printer::show" => facts(&printer::show(&from(input))),
         "printer::jobs" => {

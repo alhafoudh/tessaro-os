@@ -1,0 +1,275 @@
+{
+  "function": "camera::list",
+  "input": {
+    "cameras": [
+      {
+        "bus": "usb-xhci-hcd.0-1",
+        "device": "video2",
+        "fallback": "the camera has no mjpeg; captures as auto chooses",
+        "mode": {
+          "format": "yuyv",
+          "fps": 30,
+          "height": 480,
+          "width": 640
+        },
+        "modes": [
+          {
+            "format": "yuyv",
+            "fps": 30,
+            "height": 480,
+            "width": 640
+          },
+          {
+            "format": "yuyv",
+            "fps": 30,
+            "height": 240,
+            "width": 320
+          }
+        ],
+        "name": "USB2.0 PC CAMERA",
+        "virtual_device": "/dev/video51"
+      },
+      {
+        "bus": "usb-xhci-hcd.0-2",
+        "device": "video4",
+        "error": "VIDIOC_STREAMON: No space left on device",
+        "name": "Broken Cam"
+      }
+    ],
+    "format": "mjpeg",
+    "size": "1280x720"
+  },
+  "output": [
+    [
+      [
+        "heading",
+        "USB2.0 PC CAMERA",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "(usb-xhci-hcd.0-1)",
+        0
+      ]
+    ],
+    [
+      [
+        "plain",
+        "    ",
+        0
+      ],
+      [
+        "label",
+        "device",
+        9
+      ],
+      [
+        "plain",
+        " /dev/video2 ",
+        0
+      ],
+      [
+        "muted",
+        "->",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "ok",
+        "/dev/video51",
+        0
+      ]
+    ],
+    [
+      [
+        "plain",
+        "    ",
+        0
+      ],
+      [
+        "label",
+        "captures",
+        9
+      ],
+      [
+        "plain",
+        " yuyv 640x480 @ 30 fps",
+        0
+      ]
+    ],
+    [
+      [
+        "plain",
+        "    ",
+        0
+      ],
+      [
+        "warn",
+        "the camera has no mjpeg; captures as auto chooses",
+        0
+      ]
+    ],
+    [
+      [
+        "plain",
+        "    ",
+        0
+      ],
+      [
+        "label",
+        "yuyv",
+        9
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "640x480@30 320x240@30",
+        0
+      ]
+    ],
+    [
+      [
+        "heading",
+        "Broken Cam",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "(usb-xhci-hcd.0-2)",
+        0
+      ]
+    ],
+    [
+      [
+        "plain",
+        "    ",
+        0
+      ],
+      [
+        "label",
+        "device",
+        9
+      ],
+      [
+        "plain",
+        " /dev/video4 ",
+        0
+      ],
+      [
+        "muted",
+        "->",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "(no virtual camera)",
+        0
+      ]
+    ],
+    [
+      [
+        "plain",
+        "    ",
+        0
+      ],
+      [
+        "bad",
+        "VIDIOC_STREAMON: No space left on device",
+        0
+      ]
+    ],
+    [],
+    [
+      [
+        "label",
+        "saved",
+        9
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "label",
+        "format",
+        0
+      ],
+      [
+        "plain",
+        " mjpeg  ",
+        0
+      ],
+      [
+        "label",
+        "size",
+        0
+      ],
+      [
+        "plain",
+        " 1280x720",
+        0
+      ]
+    ],
+    [
+      [
+        "muted",
+        "change them with",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "cmd",
+        "tessaro-ctl camera format auto|mjpeg|yuyv",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "and",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "cmd",
+        "tessaro-ctl camera size auto|WIDTHxHEIGHT",
+        0
+      ]
+    ]
+  ]
+}

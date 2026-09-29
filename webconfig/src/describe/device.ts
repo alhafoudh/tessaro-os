@@ -193,6 +193,8 @@ export function restarts(consumer: Schemas["Consumer"]): string {
       return "nothing on screen: applied to the clock at once; systemd-timesyncd when its servers change";
     case "proxy":
       return "the local proxy (tessaro-proxy.service); the browser and the agent when the proxy is switched on or off";
+    case "camera":
+      return "the camera mirrors (tessaro-camera@*.service); a page showing a camera asks for it again";
   }
 }
 
@@ -216,6 +218,8 @@ export function restartsShort(consumer: Schemas["Consumer"]): string {
       return "clock";
     case "proxy":
       return "local proxy (browser, agent on switching)";
+    case "camera":
+      return "camera mirrors";
   }
 }
 

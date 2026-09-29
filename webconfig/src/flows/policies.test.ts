@@ -35,6 +35,7 @@ describe("a browser policy as agent/protocol/src/policy.rs checks it", () => {
     );
     expect(say('{"ProxyMode": "direct"}')).toContain("tessaro-ctl network proxy set");
     expect(say('{"SerialAllowAllPortsForUrls": []}')).toContain("browser.device_origins");
+    expect(say('{"VideoCaptureAllowedUrls": []}')).toContain("browser.device_origins");
   });
 
   it("takes only an object of policy names", () => {

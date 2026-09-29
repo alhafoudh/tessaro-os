@@ -115,6 +115,13 @@
   // page still has to be a secure context - https, or http://127.0.0.1.
   "AudioCaptureAllowedUrls": [@device-origins@],
 
+  // The camera, the same way: getUserMedia({video: true}) without a prompt.
+  // What the page gets are the virtual cameras of tessaro-camera@.service,
+  // never a camera itself, which only its mirror may open, so a second
+  // reader can have the same picture (docs/camera.md). What they capture is
+  // camera.format and camera.size.
+  "VideoCaptureAllowedUrls": [@device-origins@],
+
   // --- the file store -----------------------------------------------------
   //
   // tessaro-ctl files puts files in /data/files, which nginx serves at

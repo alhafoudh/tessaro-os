@@ -105,7 +105,10 @@ manager of the device. Nor are the browser policies (`browser policies`),
 read or written: they are what the page may do, and a page must not read
 or loosen its own restrictions. The same goes for the printers: a page
 prints on the ones the operator set up, and `printer create`, `remove` and
-`default` are not reachable from it.
+`default` are not reachable from it. Nor is `camera list`: the page has the
+cameras themselves in `navigator.mediaDevices.enumerateDevices()`, with the
+names `camera list` shows, and `camera.format` and `.size` are the
+operator's, like any setting outside `data.*`.
 
 * **`data.set` leaves the page alone when no template uses the key.** A `data.*` is
   read by the templates and by this bridge only, so a value no template names

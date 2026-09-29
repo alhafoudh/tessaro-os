@@ -252,6 +252,7 @@
       <a href="#s8">8 Audio</a>
       <a href="#s9">9 Video</a>
       <a href="#s10">10 Synthesis</a>
+      <a href="#s11">11 Camera</a>
     </nav>
   </div>
 </header>
@@ -613,6 +614,31 @@
   <canvas id="wa-scope" style="width:100%;height:clamp(120px,18vmin,220px);background:#090c11;border:1px solid var(--line);border-radius:10px;display:block;"></canvas>
 </section>
 
+<!-- ===================================================================== -->
+<section id="s11">
+  <h2><span class="num">11</span> Camera <span class="pill" data-state="pending" id="p-camera">pending</span></h2>
+  <p class="hint">Plug in a USB camera. The page never sees the camera itself:
+    <code>tessaro-camera</code> captures it and republishes it as a virtual
+    camera of the same name, which any number of readers can open at once,
+    and that is what this list shows. The device's origins are granted the
+    camera by policy, so there is no prompt. <code>tessaro-ctl camera
+    list</code> says what the mirror captures, or why it does not.</p>
+
+  <div class="row">
+    <label>camera
+      <select id="cam-device" style="min-height:44px" disabled>
+        <option>looking</option>
+      </select>
+    </label>
+    <button id="cam-start" class="primary" disabled>Preview</button>
+    <button id="cam-stop" disabled>Stop</button>
+    <button id="cam-list">List again</button>
+  </div>
+  <video id="cam-video" muted playsinline style="width:100%;max-height:60vh;background:#090c11;border:1px solid var(--line);border-radius:10px;display:block;"></video>
+  <dl class="kv" id="cam-info" style="margin:0.8em 0"></dl>
+  <div class="log" id="cam-log"></div>
+</section>
+
 </div>
 
 <script>
@@ -636,6 +662,7 @@ const CHECKS = [
   ["audio",    "Audio playback", "manual"],
   ["video",    "Video playback", "manual"],
   ["webaudio", "Synthesis",      "manual"],
+  ["camera",   "Camera",         "checking"],
 ];
 
 const cards = {};
@@ -1825,6 +1852,121 @@ function buildWebAudio() {
 }
 
 /* ===================================================================== */
+/* 11 - camera                                                            */
+/* ===================================================================== */
+
+function buildCamera() {
+  const md = navigator.mediaDevices;
+  const select = document.getElementById("cam-device");
+  const start = document.getElementById("cam-start");
+  const stop = document.getElementById("cam-stop");
+  const video = document.getElementById("cam-video");
+
+  if (!md || !md.getUserMedia || !md.enumerateDevices) {
+    setCheck("camera", "fail", "navigator.mediaDevices is absent");
+    logTo("cam-log", "navigator.mediaDevices is not defined - it needs a secure context" +
+      (window.isSecureContext ? "" : ", and this is not one"));
+    for (const id of ["cam-start", "cam-stop", "cam-list"]) document.getElementById(id).disabled = true;
+    return;
+  }
+
+  let stream = null;
+
+  function stopStream() {
+    if (stream) for (const track of stream.getTracks()) track.stop();
+    stream = null;
+    video.srcObject = null;
+    stop.disabled = true;
+  }
+
+  function settings(track) {
+    const s = track.getSettings();
+    return s.width + " x " + s.height + (s.frameRate ? " @ " + Math.round(s.frameRate) + " fps" : "");
+  }
+
+  async function list() {
+    let cameras;
+    try {
+      cameras = (await md.enumerateDevices()).filter(d => d.kind === "videoinput");
+    } catch (err) {
+      logTo("cam-log", "enumerateDevices failed: " + err);
+      return;
+    }
+    const previous = select.value;
+    select.textContent = "";
+    if (!cameras.length) {
+      select.appendChild(el("option", null, "no camera"));
+      select.disabled = true;
+      start.disabled = true;
+      if (!stream) {
+        kv("cam-info", [["Cameras", "none - plug in a USB camera, then see tessaro-ctl camera list"]]);
+        setCheck("camera", "info", "no camera plugged in");
+      }
+      return;
+    }
+    // Without a grant the labels and ids are empty, one entry per kind. The
+    // policy grant fills them in; an empty id still previews the default.
+    cameras.forEach((camera, i) => {
+      select.appendChild(el("option", { value: camera.deviceId },
+        camera.label || "camera " + (i + 1) + " (no label - not granted?)"));
+    });
+    if (Array.from(select.options).some(o => o.value === previous)) select.value = previous;
+    select.disabled = false;
+    start.disabled = false;
+    if (!stream) {
+      kv("cam-info", [["Cameras", cameras.map(c => c.label || "(no label)").join(", ")]]);
+      setCheck("camera", "info", cameras.length + " camera(s), none opened");
+    }
+  }
+
+  start.addEventListener("click", async () => {
+    stopStream();
+    // Ask for 1080p, so the settings below are the mode the mirror
+    // captures: the virtual camera offers only that one, and without a size
+    // Chromium's default is 640 x 480, scaled down from it.
+    const video_constraints = { width: { ideal: 1920 }, height: { ideal: 1080 } };
+    if (select.value) video_constraints.deviceId = { exact: select.value };
+    try {
+      stream = await md.getUserMedia({ video: video_constraints, audio: false });
+    } catch (err) {
+      logTo("cam-log", "getUserMedia failed: " + err.name + ": " + err.message);
+      setCheck("camera", "fail", err.name);
+      return;
+    }
+    const track = stream.getVideoTracks()[0];
+    video.srcObject = stream;
+    try { await video.play(); } catch (err) { logTo("cam-log", "play() failed: " + err); }
+    stop.disabled = false;
+    const mode = settings(track);
+    kv("cam-info", [["Camera", track.label], ["Settings", mode]]);
+    logTo("cam-log", "opened " + track.label + ", " + mode);
+    setCheck("camera", "ok", mode);
+    track.addEventListener("ended", () => {
+      logTo("cam-log", "the track ended - the camera was unplugged or its mirror stopped");
+      stopStream();
+      setCheck("camera", "warn", "the track ended");
+    });
+    // The labels are there once a camera is open, if they were not before.
+    list();
+  });
+
+  stop.addEventListener("click", () => {
+    stopStream();
+    logTo("cam-log", "stopped");
+    list();
+  });
+
+  document.getElementById("cam-list").addEventListener("click", list);
+  md.addEventListener("devicechange", () => { logTo("cam-log", "devices changed"); list(); });
+
+  // The kiosk has no one to close a forgotten preview, and a reader keeps
+  // the mirror's virtual camera open.
+  window.addEventListener("pagehide", stopStream);
+
+  list();
+}
+
+/* ===================================================================== */
 
 buildSummary();
 buildEnv();
@@ -1838,6 +1980,7 @@ buildHid();
 buildAudio();
 buildVideo();
 buildWebAudio();
+buildCamera();
 
 // Fonts land asynchronously often enough to be worth one re-measure: on a cold
 // boot fontconfig may still be warming its cache when this first runs.

@@ -128,6 +128,13 @@ CORE_IMAGE_EXTRA_INSTALL += " \
     tessaro-audio \
 "
 
+# Cameras: a mirror per USB camera republishes it as a v4l2loopback device,
+# so the browser and any other reader can open the same camera at once. The
+# camera.* settings are applied by the agent; see docs/camera.md.
+CORE_IMAGE_EXTRA_INSTALL += " \
+    tessaro-camera \
+"
+
 # The clock: timezone data for time.timezone and a saved timesyncd clock that
 # survives a reboot. The time.* settings are applied by the agent; see
 # docs/time.md.

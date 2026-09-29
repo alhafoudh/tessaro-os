@@ -286,6 +286,9 @@ pub fn restarts(consumer: Consumer) -> &'static str {
         Consumer::Proxy => {
             "the local proxy (tessaro-proxy.service); the browser and the agent when the proxy is switched on or off"
         }
+        Consumer::Camera => {
+            "the camera mirrors (tessaro-camera@*.service); a page showing a camera asks for it again"
+        }
     }
 }
 
@@ -301,6 +304,7 @@ pub fn restarts_short(consumer: Consumer) -> &'static str {
         Consumer::Firmware => "firmware (next reboot)",
         Consumer::Time => "clock",
         Consumer::Proxy => "local proxy (browser, agent on switching)",
+        Consumer::Camera => "camera mirrors",
     }
 }
 

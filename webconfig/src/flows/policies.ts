@@ -29,6 +29,7 @@ const ORIGIN_POLICIES = [
   "SerialAllowAllPortsForUrls",
   "WebHidAllowAllDevicesForUrls",
   "AudioCaptureAllowedUrls",
+  "VideoCaptureAllowedUrls",
   "LocalNetworkAccessAllowedForUrls",
 ];
 const PROXY_POLICIES = ["ProxyMode", "ProxyServer", "ProxyBypassList"];

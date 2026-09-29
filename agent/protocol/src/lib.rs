@@ -480,6 +480,9 @@ pub enum Command {
         #[serde(default)]
         input: bool,
     },
+    /// Every USB camera, what its mirror captures, and the virtual camera
+    /// pages and everything else read it through. Read-only.
+    CameraList,
     /// The disk the device runs from: its partitions and how full each
     /// filesystem is. Read-only.
     Storage,
@@ -1417,6 +1420,61 @@ pub struct Storage {
 
 /// Less unallocated space than this is not worth growing into.
 pub const GROW_MIN: u64 = 64 << 20;
+
+/// Every camera, and the camera.* settings their mirrors capture with.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct CameraList {
+    /// camera.format, as saved: `auto`, `mjpeg` or `yuyv`.
+    pub format: String,
+    /// camera.size, as saved: `auto` or `WIDTHxHEIGHT`.
+    pub size: String,
+    pub cameras: Vec<CameraInfo>,
+}
+
+/// One USB camera. Only its mirror, `tessaro-camera@<device>.service`, opens
+/// the camera itself; everything else reads `virtual_device`. The mirror
+/// writes this to `/run/tessaro-camera/<device>.json`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct CameraInfo {
+    /// What the camera calls itself, `HD Pro Webcam C920`. The virtual
+    /// camera has the same name, which is what a page's
+    /// `enumerateDevices()` shows.
+    pub name: String,
+    /// The camera's own node, `video0`.
+    pub device: String,
+    /// Where it is plugged in, as the kernel says: `usb-0000:00:14.0-2`.
+    pub bus: String,
+    /// The node every reader opens, `/dev/video50`. None when the mirror
+    /// could not start.
+    #[serde(default)]
+    pub virtual_device: Option<String>,
+    /// What the mirror captures. None when it could not start.
+    #[serde(default)]
+    pub mode: Option<CameraMode>,
+    /// Why the camera.* settings are not what it captures: the camera does
+    /// not have that format or size.
+    #[serde(default)]
+    pub fallback: Option<String>,
+    /// Why the mirror is not running.
+    #[serde(default)]
+    pub error: Option<String>,
+    /// Every format and size the camera has, and the most frames a second
+    /// each gives.
+    #[serde(default)]
+    pub modes: Vec<CameraMode>,
+}
+
+/// A format, frame size and rate.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct CameraMode {
+    /// `mjpeg` or `yuyv`. A camera's other formats are not listed: the
+    /// mirror captures only these.
+    pub format: String,
+    pub width: u32,
+    pub height: u32,
+    /// Frames a second.
+    pub fps: u32,
+}
 
 /// A NetworkManager profile, as `net profiles` lists it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

@@ -9,6 +9,7 @@ import type { Scope } from "../settings/scope";
 import { Access } from "./Access";
 import { Audio } from "./Audio";
 import { Browser } from "./Browser";
+import { Camera } from "./Camera";
 import { Certificates } from "./Certificates";
 import { Files } from "./Files";
 import { Log } from "./Log";
@@ -43,6 +44,7 @@ export const PAGES: PageInfo[] = [
   { path: "certificates", title: "Certificates", component: Certificates },
   { path: "storage", title: "Storage", scope: { prefix: "storage" }, component: Storage },
   { path: "audio", title: "Audio", scope: { prefix: "audio" }, component: Audio },
+  { path: "camera", title: "Camera", scope: { prefix: "camera" }, component: Camera },
   { path: "time", title: "Time", scope: { prefix: "time" }, component: Time },
   { path: "schedules", title: "Schedules", component: Schedules },
   { path: "printer", title: "Printer", scope: { prefix: "printer" }, component: Printer },

@@ -1,0 +1,31 @@
+# USB cameras: only their mirror may open them.
+#
+# A V4L2 camera streams to one reader, so the first page to open one would
+# hold it against everyone else. tessaro-camera@<node>.service opens each
+# real camera and republishes it as a v4l2loopback device, which any number
+# of readers can open; the real node is taken away from everyone but root.
+#
+# A rule and not a group: 50-udev-default.rules puts every video4linux node
+# in `video`, which weston is in for the GPU and for the Pi's hardware
+# decoders, and a new group of our own would need an /etc/group line. The
+# image has no sysusers step, and /etc/group lives on the /data overlay,
+# where a device's first write shadows the image's copy forever.
+#
+# SUBSYSTEMS=="usb" is what limits this to USB cameras: the Pi's decoder and
+# ISP nodes (/dev/video10 and up) are platform devices and keep their
+# `video` group, and so do the v4l2loopback nodes the mirrors make, whose
+# parent is no USB device either. It covers a UVC camera's metadata node
+# as well, which nothing needs.
+#
+# 71-: after systemd's 50-udev-default.rules, whose GROUP= this overrides,
+# and 60-persistent-v4l.rules, which imports ID_V4L_CAPABILITIES from v4l_id.
+SUBSYSTEM=="video4linux", SUBSYSTEMS=="usb", OWNER="root", GROUP="root", MODE="0600"
+
+# One mirror per node that captures video. v4l_id writes the capabilities as
+# ":capture:" for a camera; a UVC metadata node has none of the ones it
+# lists and gets ":", so it starts nothing. BindsTo= in the unit stops the
+# mirror when the camera is unplugged. Not limited to ACTION=="add": a
+# change event without the systemd tag would take the device unit down,
+# and the mirror with it.
+SUBSYSTEM=="video4linux", SUBSYSTEMS=="usb", ENV{ID_V4L_CAPABILITIES}==":capture:", \
+    TAG+="systemd", ENV{SYSTEMD_WANTS}+="tessaro-camera@%k.service"

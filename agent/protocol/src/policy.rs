@@ -22,12 +22,14 @@ pub const POLICIES_MAX: usize = 32;
 /// Longest document name.
 pub const POLICY_NAME_MAX: usize = 32;
 
-/// The grants that follow the kiosk origin: the device APIs, the microphone
-/// and reaching `http://127.0.0.1` without a Local Network Access prompt.
+/// The grants that follow the kiosk origin: the device APIs, the microphone,
+/// the camera and reaching `http://127.0.0.1` without a Local Network Access
+/// prompt.
 pub const ORIGIN_POLICIES: &[&str] = &[
     "SerialAllowAllPortsForUrls",
     "WebHidAllowAllDevicesForUrls",
     "AudioCaptureAllowedUrls",
+    "VideoCaptureAllowedUrls",
     "LocalNetworkAccessAllowedForUrls",
 ];
 

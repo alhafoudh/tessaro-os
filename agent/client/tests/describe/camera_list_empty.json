@@ -1,0 +1,97 @@
+{
+  "function": "camera::list",
+  "input": {
+    "cameras": [],
+    "format": "auto",
+    "size": "auto"
+  },
+  "output": [
+    [
+      [
+        "warn",
+        "no cameras;",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "plug in a USB camera and it shows here",
+        0
+      ]
+    ],
+    [],
+    [
+      [
+        "label",
+        "saved",
+        9
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "label",
+        "format",
+        0
+      ],
+      [
+        "plain",
+        " auto  ",
+        0
+      ],
+      [
+        "label",
+        "size",
+        0
+      ],
+      [
+        "plain",
+        " auto",
+        0
+      ]
+    ],
+    [
+      [
+        "muted",
+        "change them with",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "cmd",
+        "tessaro-ctl camera format auto|mjpeg|yuyv",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "and",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "cmd",
+        "tessaro-ctl camera size auto|WIDTHxHEIGHT",
+        0
+      ]
+    ]
+  ]
+}

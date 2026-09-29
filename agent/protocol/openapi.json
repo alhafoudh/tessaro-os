@@ -34,6 +34,9 @@
       "name": "audio"
     },
     {
+      "name": "camera"
+    },
+    {
       "name": "time"
     },
     {
@@ -2323,6 +2326,37 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/AudioTested"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/camera": {
+      "get": {
+        "operationId": "camera.List",
+        "tags": [
+          "camera"
+        ],
+        "summary": "Every USB camera, what its mirror captures, and the virtual camera everything else reads it through.",
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CameraList"
                 }
               }
             }
@@ -5086,6 +5120,11 @@
             "type": "string",
             "const": "proxy",
             "description": "The device's local forwarding proxy, `tessaro-proxy.service`: its\nconfig in `/run` is rendered again, and the unit restarts, or stops\nwhen network.proxy.url is empty. The browser and the agent restart\nonly when the proxy is switched on or off: the browser's policy\nchanges, and the agent's clients are built for one or the other."
+          },
+          {
+            "type": "string",
+            "const": "camera",
+            "description": "The camera mirrors, `tessaro-camera@<device>.service`: their config\nin `/run` is rendered again, and every running mirror restarts to\ncapture in the new format. A page showing a camera loses its picture\nfor a moment and has to ask for it again; the browser stays."
           }
         ],
         "description": "What has to happen for a changed value to take effect."
@@ -6887,6 +6926,130 @@
           "message"
         ],
         "description": "What `audio test` played or heard."
+      },
+      "CameraList": {
+        "type": "object",
+        "properties": {
+          "format": {
+            "type": "string",
+            "description": "camera.format, as saved: `auto`, `mjpeg` or `yuyv`."
+          },
+          "size": {
+            "type": "string",
+            "description": "camera.size, as saved: `auto` or `WIDTHxHEIGHT`."
+          },
+          "cameras": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CameraInfo"
+            }
+          }
+        },
+        "required": [
+          "format",
+          "size",
+          "cameras"
+        ],
+        "description": "Every camera, and the camera.* settings their mirrors capture with."
+      },
+      "CameraInfo": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "What the camera calls itself, `HD Pro Webcam C920`. The virtual\ncamera has the same name, which is what a page's\n`enumerateDevices()` shows."
+          },
+          "device": {
+            "type": "string",
+            "description": "The camera's own node, `video0`."
+          },
+          "bus": {
+            "type": "string",
+            "description": "Where it is plugged in, as the kernel says: `usb-0000:00:14.0-2`."
+          },
+          "virtual_device": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The node every reader opens, `/dev/video50`. None when the mirror\ncould not start.",
+            "default": null
+          },
+          "mode": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CameraMode"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What the mirror captures. None when it could not start.",
+            "default": null
+          },
+          "fallback": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the camera.* settings are not what it captures: the camera does\nnot have that format or size.",
+            "default": null
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the mirror is not running.",
+            "default": null
+          },
+          "modes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CameraMode"
+            },
+            "description": "Every format and size the camera has, and the most frames a second\neach gives.",
+            "default": []
+          }
+        },
+        "required": [
+          "name",
+          "device",
+          "bus"
+        ],
+        "description": "One USB camera. Only its mirror, `tessaro-camera@<device>.service`, opens\nthe camera itself; everything else reads `virtual_device`. The mirror\nwrites this to `/run/tessaro-camera/<device>.json`."
+      },
+      "CameraMode": {
+        "type": "object",
+        "properties": {
+          "format": {
+            "type": "string",
+            "description": "`mjpeg` or `yuyv`. A camera's other formats are not listed: the\nmirror captures only these."
+          },
+          "width": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "height": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "fps": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "Frames a second."
+          }
+        },
+        "required": [
+          "format",
+          "width",
+          "height",
+          "fps"
+        ],
+        "description": "A format, frame size and rate."
       },
       "TimeStatus": {
         "type": "object",

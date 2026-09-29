@@ -276,6 +276,8 @@ mod tests {
                 ("KIOSK_AUTHORIZED_KEYS", at("root/.ssh/authorized_keys")),
                 ("KIOSK_CMDLINE", at("cmdline")),
                 ("KIOSK_PROXY_CONFIG", at("tinyproxy.conf")),
+                ("KIOSK_CAMERA_DIR", at("camera")),
+                ("KIOSK_CAMERA_ENV", at("camera/camera.env")),
                 ("KIOSK_URL", "http://127.0.0.1/".to_string()),
             ]
             .into_iter()
