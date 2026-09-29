@@ -553,6 +553,56 @@ pub enum Command {
         #[serde(default)]
         count: Option<u32>,
     },
+    /// Every printer, the default one, and whether pages may print.
+    PrinterList,
+    /// One printer in full: its state, what CUPS says about it, its
+    /// supplies when it reports them.
+    PrinterShow {
+        printer: String,
+    },
+    /// Printers CUPS finds on USB and the network, each with the URI
+    /// `printer-create` takes. A stream of `PrinterFound`s.
+    PrinterDiscover,
+    /// Add a printer. A driverless one is asked what it supports now, so it
+    /// has to answer.
+    PrinterCreate {
+        spec: PrinterSpec,
+    },
+    PrinterRemove {
+        printer: String,
+    },
+    /// The printer `window.print()` and a bridge call without a printer
+    /// print to.
+    PrinterDefault {
+        printer: String,
+    },
+    /// A test page: a PDF for a driverless printer, a few lines of text for
+    /// a raw one.
+    PrinterTest {
+        printer: String,
+    },
+    /// Print a document: `data`, base64, or `path`, a file in the store.
+    PrinterPrint {
+        printer: String,
+        #[serde(default)]
+        data: Option<String>,
+        #[serde(default)]
+        path: Option<String>,
+        #[serde(default)]
+        copies: Option<u32>,
+        #[serde(default)]
+        media: Option<String>,
+        #[serde(default)]
+        title: Option<String>,
+    },
+    /// The jobs not yet printed, of one printer or all of them.
+    PrinterJobs {
+        #[serde(default)]
+        printer: Option<String>,
+    },
+    PrinterCancel {
+        job: String,
+    },
 }
 
 /// The image `update-begin` describes. Its fields sit in the command itself
@@ -585,7 +635,10 @@ impl Command {
     pub fn is_job(&self) -> bool {
         matches!(
             self,
-            Command::Speedtest { .. } | Command::NetPing { .. } | Command::StorageGrow { .. }
+            Command::Speedtest { .. }
+                | Command::NetPing { .. }
+                | Command::StorageGrow { .. }
+                | Command::PrinterDiscover
         )
     }
 }
@@ -640,6 +693,7 @@ pub enum JobEvent {
     Ping(PingEvent),
     Speedtest(SpeedtestEvent),
     StorageGrow(StorageGrowEvent),
+    PrinterFound(PrinterFound),
 }
 
 /// A job the device started: poll it at `/api/v1/jobs/{job}`.
@@ -652,7 +706,8 @@ pub struct JobStarted {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct JobPage {
     /// Its steps from number `after` on, in order: `PingEvent`s,
-    /// `SpeedtestEvent`s or `StorageGrowEvent`s, by the job.
+    /// `SpeedtestEvent`s, `StorageGrowEvent`s or `PrinterFound`s, by the
+    /// job.
     #[schemars(with = "Vec<JobEvent>")]
     pub events: Vec<Value>,
     /// What to send as `after` next.
@@ -1792,6 +1847,149 @@ pub struct CalendarCheck {
     pub normalized: Vec<String>,
     /// The next times any of them fires, earliest first.
     pub next: Vec<Moment>,
+}
+
+/// The largest document `printer-print` takes as `data`, decoded: one
+/// request's worth. A larger one goes into the file store first and is
+/// printed by its `path`.
+pub const PRINT_DATA_MAX: usize = UPDATE_CHUNK;
+/// Most copies of one document.
+pub const PRINT_COPIES_MAX: u32 = 99;
+
+/// How CUPS drives a printer.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum PrinterKind {
+    /// Driverless: IPP Everywhere or AirPrint. CUPS asks the printer what
+    /// it takes and turns a PDF into it.
+    #[default]
+    Ipp,
+    /// The bytes go to the printer as they are: a receipt printer's ESC/POS,
+    /// a label printer's ZPL, or a document already in the printer's
+    /// language.
+    Raw,
+}
+
+impl PrinterKind {
+    pub const NAMES: &'static [&'static str] = &["ipp", "raw"];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            PrinterKind::Ipp => "ipp",
+            PrinterKind::Raw => "raw",
+        }
+    }
+}
+
+impl std::str::FromStr for PrinterKind {
+    type Err = String;
+    fn from_str(name: &str) -> Result<Self, String> {
+        match name {
+            "ipp" => Ok(PrinterKind::Ipp),
+            "raw" => Ok(PrinterKind::Raw),
+            _ => Err(format!("{name:?} is not ipp or raw")),
+        }
+    }
+}
+
+/// What a printer is: how it is reached and how it is driven.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PrinterSpec {
+    /// `[a-z0-9][a-z0-9_-]*`, unique on the device: what a page and
+    /// `tessaro-ctl printer print` name it by.
+    pub name: String,
+    /// Where it is, as CUPS spells it: `ipp://host/ipp/print`,
+    /// `ipps://...`, `socket://host:9100`, `usb://...`, or a `dnssd://` URI
+    /// from `printer-discover`.
+    pub uri: String,
+    #[serde(default)]
+    pub kind: PrinterKind,
+    /// The paper a job gets when it names none, as the printer names it:
+    /// `iso_a4_210x297mm`, `na_letter_8.5x11in`, `A4`. Empty for the
+    /// printer's own default.
+    #[serde(default)]
+    pub media: Option<String>,
+}
+
+/// One supply a printer reports: an ink, a toner, a waste box.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PrinterMarker {
+    pub name: String,
+    /// Percent left, when the printer says.
+    #[serde(default)]
+    pub level: Option<u8>,
+}
+
+/// One printer and what CUPS reports about it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PrinterInfo {
+    #[serde(flatten)]
+    pub spec: PrinterSpec,
+    /// `window.print()` prints here.
+    pub default: bool,
+    /// `idle`, `printing`, `stopped`, or `missing` while CUPS does not have
+    /// it yet: it did not answer when it was set up, and the device keeps
+    /// trying.
+    pub state: String,
+    /// Why, as CUPS says: `offline-report`, `media-empty`, or the error that
+    /// kept it from being set up.
+    #[serde(default)]
+    pub message: Option<String>,
+    /// Jobs waiting or printing.
+    #[serde(default)]
+    pub queued: u32,
+    /// Only from `printer-show`, and only from a printer that reports them.
+    #[serde(default)]
+    pub markers: Vec<PrinterMarker>,
+    /// The make and model the printer gave, for a driverless one.
+    #[serde(default)]
+    pub model: Option<String>,
+}
+
+/// Every printer, and whether pages may print.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PrinterList {
+    /// printer.enable: `window.print()` and the page bridge print. The
+    /// device's own clients print either way.
+    pub enabled: bool,
+    pub printers: Vec<PrinterInfo>,
+}
+
+/// One step of `printer-discover`: a printer CUPS found.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PrinterFound {
+    /// What `printer-create` takes as `uri`.
+    pub uri: String,
+    /// What the printer calls itself, or its make and model.
+    pub description: String,
+    /// How it is best driven: `ipp` for a printer that answers IPP, `raw`
+    /// for a socket or USB one.
+    pub kind: PrinterKind,
+    /// `network` or `direct` (USB), as CUPS classes it.
+    pub class: String,
+    /// A printer the device has already, by this URI.
+    #[serde(default)]
+    pub known: Option<String>,
+}
+
+/// A job CUPS holds.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PrintJob {
+    /// `office-12`: what `printer-cancel` takes.
+    pub job: String,
+    pub printer: String,
+    /// Bytes, as sent.
+    pub size: u64,
+    /// When it was sent, as CUPS writes it.
+    pub submitted: String,
+}
+
+/// A document handed to CUPS.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PrintQueued {
+    pub job: String,
+    pub printer: String,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

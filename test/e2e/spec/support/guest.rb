@@ -18,7 +18,8 @@ module AgentE2E
   # Keys a case may add on top, unset again before the next case configures.
   CASE_SETTINGS = %w[browser.probe_url agent.enable browser.maintenance.enable browser.debug.enable
                      browser.debug.template audio.output audio.volume audio.mute audio.input
-                     audio.input_volume network.proxy.url network.proxy.bypass].freeze
+                     audio.input_volume network.proxy.url network.proxy.bypass printer.enable
+                     browser.bridge.mode].freeze
 
   class Failure < StandardError; end
 

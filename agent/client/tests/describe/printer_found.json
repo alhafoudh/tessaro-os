@@ -1,0 +1,118 @@
+{
+  "function": "printer::found",
+  "input": [
+    {
+      "class": "network",
+      "description": "Brother HL-L2350DW",
+      "kind": "ipp",
+      "known": "office",
+      "uri": "ipp://BRW1234.local:631/ipp/print"
+    },
+    {
+      "class": "direct",
+      "description": "EPSON TM-T20III",
+      "kind": "raw",
+      "uri": "usb://EPSON/TM-T20III?serial=X4ZE"
+    }
+  ],
+  "output": {
+    "found": [
+      [
+        [
+          [
+            "label",
+            "ipp",
+            4
+          ],
+          [
+            "plain",
+            " ",
+            0
+          ],
+          [
+            "heading",
+            "Brother HL-L2350DW",
+            0
+          ],
+          [
+            "plain",
+            " ",
+            0
+          ],
+          [
+            "muted",
+            "(printer office)",
+            0
+          ]
+        ],
+        [
+          [
+            "plain",
+            "     ",
+            0
+          ],
+          [
+            "muted",
+            "ipp://BRW1234.local:631/ipp/print",
+            0
+          ]
+        ]
+      ],
+      [
+        [
+          [
+            "label",
+            "raw",
+            4
+          ],
+          [
+            "plain",
+            " ",
+            0
+          ],
+          [
+            "heading",
+            "EPSON TM-T20III",
+            0
+          ]
+        ],
+        [
+          [
+            "plain",
+            "     ",
+            0
+          ],
+          [
+            "muted",
+            "usb://EPSON/TM-T20III?serial=X4ZE",
+            0
+          ]
+        ]
+      ]
+    ],
+    "hint": [
+      [
+        "muted",
+        "add one with",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "cmd",
+        "tessaro-ctl printer create NAME --uri URI",
+        0
+      ]
+    ],
+    "none": [
+      [
+        "warn",
+        "no printers found; a network printer that is not announced is added by its URI",
+        0
+      ]
+    ]
+  }
+}

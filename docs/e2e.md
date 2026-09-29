@@ -69,6 +69,11 @@ start.
   which card a sound came out of from the host. They are not in the kas
   fragment, or every `mise run qemu:run` would write WAV files. QEMU's wav backend
   cannot capture, so the mic case only proves the grant.
+* **The printer lane prints to CUPS's own test printer.** qemu emulates no
+  printer, so `printer_spec.rb` runs `ippeveprinter` (from the image's
+  `cups` package) in the guest on a loopback port, keeping every job as a
+  file: a job reached the printer when a file appears. A printer that does
+  not answer is a URI with nothing listening, where a job waits.
 * **It boots its own VM, not through `mise run qemu:run`.** The guest is driven over
   SSH, and runqemu's slirp forwards the loopback inside the kas container's
   network namespace, where `-p` publishing cannot reach it, so the harness

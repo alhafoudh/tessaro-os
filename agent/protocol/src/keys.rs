@@ -14,7 +14,8 @@
 //! backslashes and `${...}` meanings of their own.
 //!
 //! A key starts with the `tessaro-ctl` group that acts on the same thing
-//! (`browser.*`, `screen.*`, `network.*`, `device.*`, `access.*`, `time.*`); a key no
+//! (`browser.*`, `screen.*`, `network.*`, `device.*`, `access.*`, `time.*`,
+//! `printer.*`); a key no
 //! group acts on is named after the component it tunes (`agent.*`). A key
 //! that is renamed gets a migration in `tessaro-agent/migrations/device/`
 //! that moves its row and rewrites its placeholders, so devices in the field
@@ -344,6 +345,10 @@ pub static KEYS: &[Key] = &[
         "Keep the clock in sync over NTP. 0 for a network without any time server; then `tessaro-ctl time set` sets the clock by hand. `tessaro-ctl time ntp on|off`."),
     key(NTP_SERVERS, "KIOSK_NTP_SERVERS", Kind::Hosts, TIME,
         "NTP servers, comma separated. Empty uses the servers the network's DHCP offers, else the image's fallback servers."),
+    // The printers themselves are in their own table, `tessaro-ctl printer`;
+    // this only decides whether the page may use them.
+    key(PRINTER_ENABLE, "KIOSK_PRINTING", Kind::Flag, BROWSER,
+        "Let the page print: window.print() goes to the default printer without a dialog, and the page bridge's printer.print() to any printer. `tessaro-ctl printer` sets the printers up; it prints either way."),
     key("agent.enable", "KIOSK_AGENT_ENABLE", Kind::Flag, AGENT,
         "Supervise the browser at all; 0 parks the agent."),
     key("agent.debug", "KIOSK_DEBUG", Kind::Flag, AGENT,
@@ -499,6 +504,7 @@ pub const AUDIO_INPUT_VOLUME: &str = "audio.input_volume";
 pub const TIMEZONE: &str = "time.timezone";
 pub const NTP_ENABLE: &str = "time.ntp.enable";
 pub const NTP_SERVERS: &str = "time.ntp.servers";
+pub const PRINTER_ENABLE: &str = "printer.enable";
 
 /// The timezone of a device where time.timezone was never set.
 pub const DEFAULT_TIMEZONE: &str = "UTC";

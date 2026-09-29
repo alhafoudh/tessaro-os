@@ -19,7 +19,7 @@ export const TEMPLATE = `// A browser policy: Chromium policies by name, merged 
     "https://shop.example.com",
   ],
 
-  "PrintingEnabled": false,
+  "SpellcheckEnabled": false,
   "PasswordManagerEnabled": false,
   "DownloadRestrictions": 3, // block every download
 }
@@ -33,12 +33,14 @@ const ORIGIN_POLICIES = [
 ];
 const PROXY_POLICIES = ["ProxyMode", "ProxyServer", "ProxyBypassList"];
 const CA_POLICY = "CACertificates";
+const PRINT_POLICIES = ["PrintingEnabled", "PrintPreviewUseSystemDefaultPrinter"];
 
 /** The command that sets a key the device renders itself, or null. */
 export function managed(key: string): string | null {
   if (ORIGIN_POLICIES.includes(key)) return "tessaro-ctl config set browser.device_origins=ORIGIN";
   if (PROXY_POLICIES.includes(key)) return "tessaro-ctl network proxy set URL";
   if (key === CA_POLICY) return "tessaro-ctl network certs add FILE";
+  if (PRINT_POLICIES.includes(key)) return "tessaro-ctl config set printer.enable=1";
   return null;
 }
 

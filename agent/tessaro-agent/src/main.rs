@@ -48,6 +48,7 @@ mod ping;
 mod policies;
 mod ports;
 mod power;
+mod printer;
 mod probe;
 mod proc;
 mod qr;
@@ -342,6 +343,7 @@ async fn start_control(
     control.watch_time();
     control.watch_cpu();
     control.watch_schedules();
+    control.watch_printers();
     control.watch_welcome();
     control.watch_screen_power();
     // Before the agent's first navigation, so the page it opens already

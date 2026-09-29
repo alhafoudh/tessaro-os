@@ -1,0 +1,54 @@
+{
+  "function": "printer::list",
+  "input": {
+    "enabled": true,
+    "printers": []
+  },
+  "output": [
+    [
+      [
+        "warn",
+        "no printers;",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "cmd",
+        "tessaro-ctl printer discover",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "finds them",
+        0
+      ]
+    ],
+    [],
+    [
+      [
+        "ok",
+        "the page prints",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "(printer.enable is on)",
+        0
+      ]
+    ]
+  ]
+}

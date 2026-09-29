@@ -1,0 +1,13 @@
+{
+  "function": "printer::jobs",
+  "input": [],
+  "output": [
+    [
+      [
+        "muted",
+        "no jobs waiting",
+        0
+      ]
+    ]
+  ]
+}

@@ -60,6 +60,12 @@
   "SafeBrowsingEnabled": false,
   "BackgroundModeEnabled": false,
   "ComponentUpdatesEnabled": false,
+
+  // --- printing -------------------------------------------------------------
+  //
+  // Off until printer.enable is set: the agent then writes true here, and
+  // PrintPreviewUseSystemDefaultPrinter so the silent --kiosk-printing goes
+  // to the CUPS default printer (render.rs `policy`, docs/printing.md).
   "PrintingEnabled": false,
 
   // --- device APIs --------------------------------------------------------

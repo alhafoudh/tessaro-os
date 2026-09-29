@@ -29,11 +29,11 @@ use crate::policy::{EffectiveEntry, PolicyDoc, PolicyInfo, PolicyRemoved, Policy
 use crate::{
     Applied, AudioStatus, AudioTested, CalendarCheck, CertInfo, CertsAdded, Claimed, Command,
     Connector, Done, EvalResult, HotspotCredentials, ImageUpload, JobPage, JobStarted, KeyInfo,
-    LogPage, Net, NetChange, NetProfile, NetProfileDetail, NodeInfo, OnError, ProxyStatus,
-    ProxyTested, Received, RestartTarget, ScheduleInfo, ScheduleSpec, ScreenPower, Secret,
-    Settings, SshAccess, SshKeyInfo, SshKeyRevoked, Storage, Ticket, TimeStatus, TokenCreated,
-    TokenInfo, UpdateBegun, UpdateStatus, Verify, WebSession, WelcomeInfo, WifiNetwork,
-    WifiSecurity, WifiStatus,
+    LogPage, Net, NetChange, NetProfile, NetProfileDetail, NodeInfo, OnError, PrintJob,
+    PrintQueued, PrinterInfo, PrinterList, PrinterSpec, ProxyStatus, ProxyTested, Received,
+    RestartTarget, ScheduleInfo, ScheduleSpec, ScreenPower, Secret, Settings, SshAccess,
+    SshKeyInfo, SshKeyRevoked, Storage, Ticket, TimeStatus, TokenCreated, TokenInfo, UpdateBegun,
+    UpdateStatus, Verify, WebSession, WelcomeInfo, WifiNetwork, WifiSecurity, WifiStatus,
 };
 
 /// The API's version, in every path. A change a client of this version
@@ -665,6 +665,43 @@ pub struct ScheduleChange {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PrinterRef {
+    pub printer: String,
+}
+
+/// Where a document goes and how. Without a body, `path` names a file in
+/// the store to print instead.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PrintQuery {
+    pub printer: String,
+    /// A file in the store, from its root, for a document sent with no
+    /// body: one larger than `PRINT_DATA_MAX`.
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub copies: Option<u32>,
+    /// The paper, as the printer names it; the printer's own `media` when
+    /// not given.
+    #[serde(default)]
+    pub media: Option<String>,
+    /// What CUPS calls the job.
+    #[serde(default)]
+    pub title: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PrintJobsQuery {
+    /// Only this printer's.
+    #[serde(default)]
+    pub printer: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PrintJobRef {
+    pub job: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct CalendarBody {
     pub calendar: Vec<String>,
     /// How many run times to answer with.
@@ -1233,6 +1270,69 @@ pub mod schedule {
     }
 }
 
+pub mod printer {
+    use super::*;
+
+    endpoints! {
+        /// Every printer, which one is the default, and whether pages may
+        /// print (printer.enable).
+        List: Get "/api/v1/printers" (Empty, ()) -> PrinterList
+            = |_, _| Action::Run(Command::PrinterList);
+
+        /// Printers found on USB and the network, as a job of
+        /// `PrinterFound`s.
+        Discover: Post "/api/v1/printers/discover" (Empty, ()) -> JobStarted
+            = |_, _| Action::Start(Command::PrinterDiscover);
+
+        /// Add a printer. A driverless one must answer while it is set up.
+        Create: Post "/api/v1/printers" (Empty, PrinterSpec) -> PrinterInfo
+            = |_, spec| Action::Run(Command::PrinterCreate { spec });
+
+        /// One printer in full, its supplies included.
+        Show: Get "/api/v1/printers/{printer}" (PrinterRef, ()) -> PrinterInfo
+            = |target, _| Action::Run(Command::PrinterShow { printer: target.printer });
+
+        /// Remove a printer and the jobs it still holds.
+        Remove: Delete "/api/v1/printers/{printer}" (PrinterRef, ()) -> Done
+            = |target, _| Action::Run(Command::PrinterRemove { printer: target.printer });
+
+        /// Make it the printer `window.print()` uses.
+        SetDefault: Post "/api/v1/printers/{printer}/default" (PrinterRef, ()) -> Done
+            = |target, _| Action::Run(Command::PrinterDefault { printer: target.printer });
+
+        /// Print a test page.
+        Test: Post "/api/v1/printers/{printer}/test" (PrinterRef, ()) -> PrintQueued
+            = |target, _| Action::Run(Command::PrinterTest { printer: target.printer });
+
+        /// Print the body, at most `PRINT_DATA_MAX` bytes: a PDF for a
+        /// driverless printer, the printer's own bytes for a raw one. With
+        /// no body, the store's file at `path`.
+        Print: Post "/api/v1/printers/{printer}/print" (PrintQuery, Blob) -> PrintQueued
+            {
+                const RAW_BODY: bool = true;
+                fn blob(bytes: Vec<u8>) -> Option<Blob> {
+                    Some(Blob(bytes))
+                }
+            }
+            = |query, data| Action::Run(Command::PrinterPrint {
+                printer: query.printer,
+                data: (!data.0.is_empty()).then(|| data_encoding::BASE64.encode(&data.0)),
+                path: query.path,
+                copies: query.copies,
+                media: query.media,
+                title: query.title,
+            });
+
+        /// The jobs not printed yet.
+        Jobs: Get "/api/v1/printers/jobs" (PrintJobsQuery, ()) -> Vec<PrintJob>
+            = |query, _| Action::Run(Command::PrinterJobs { printer: query.printer });
+
+        /// Cancel a job.
+        Cancel: Delete "/api/v1/printers/jobs/{job}" (PrintJobRef, ()) -> Done
+            = |target, _| Action::Run(Command::PrinterCancel { job: target.job });
+    }
+}
+
 pub mod update {
     use super::*;
 
@@ -1379,6 +1479,7 @@ pub fn all() -> Vec<Route> {
         audio::routes(),
         time::routes(),
         schedule::routes(),
+        printer::routes(),
         update::routes(),
         files::routes(),
         jobs::routes(),

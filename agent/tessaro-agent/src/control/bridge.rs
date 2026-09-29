@@ -46,6 +46,11 @@ const DISRUPT_GAP: Duration = Duration::from_secs(60);
 /// A speed test moves real data over a link that may be metered.
 const SPEEDTEST_GAP: Duration = Duration::from_secs(600);
 
+/// The most documents a page prints in `PRINT_WINDOW`: a page that prints
+/// in a loop empties the paper tray, not the device.
+const PRINT_BURST: usize = 10;
+const PRINT_WINDOW: Duration = Duration::from_secs(60);
+
 /// A public address this fresh is answered without asking again.
 const PUBLIC_IP_FRESH: Duration = Duration::from_secs(30);
 
@@ -66,7 +71,13 @@ const HIDDEN: &[&str] = &[
 ];
 
 /// The calls `config` mode answers; `actions` answers every call.
-const READS: &[&str] = &["log", "device.status", "network.status", "audio.status"];
+const READS: &[&str] = &[
+    "log",
+    "device.status",
+    "network.status",
+    "audio.status",
+    "printer.list",
+];
 
 /// What `main` hands over: the mode and script this agent started with, the
 /// session's end of the page scripts, and the page's calls.
@@ -90,6 +101,8 @@ pub(super) struct Bridge {
     problem: Mutex<Option<String>>,
     last_disrupt: Mutex<Instant>,
     last_speedtest: Mutex<Option<Instant>>,
+    /// When the page printed, within the last `PRINT_WINDOW`.
+    prints: Mutex<Vec<Instant>>,
     /// Held across a lookup, so calls at the same time share one request.
     public_ip: tokio::sync::Mutex<Option<(Instant, String)>>,
 }
@@ -132,6 +145,7 @@ impl Control {
             problem: Mutex::new(None),
             last_disrupt: Mutex::new(Instant::now()),
             last_speedtest: Mutex::new(None),
+            prints: Mutex::new(Vec::new()),
             public_ip: tokio::sync::Mutex::new(None),
         });
         let _ = self.bridge.set(Arc::clone(&bridge));
@@ -581,6 +595,45 @@ impl Control {
                 let path = arg(0).as_str().unwrap_or("").to_string();
                 plain(self.files.list(&path, false).await.and_then(to_value))
             }
+            "printer.list" => plain(self.printer_list().await.map(|list| page_printers(&list))),
+            "printer.print" => {
+                let job = arg(0);
+                if !job.is_object() {
+                    return plain(Err(
+                        "print takes { data or path, printer, copies, media, title }".to_string(),
+                    ));
+                }
+                if !self.printing_enabled().await {
+                    return plain(Err(
+                        "printing is off; `tessaro-ctl config set printer.enable=1` turns it on"
+                            .to_string(),
+                    ));
+                }
+                if let Err(refused) = print_allowed(bridge) {
+                    return (Err(refused), None);
+                }
+                let text = |field: &str| job[field].as_str().map(str::to_string);
+                let copies = match &job["copies"] {
+                    Value::Null => None,
+                    value => match value.as_u64().and_then(|n| u32::try_from(n).ok()) {
+                        Some(copies) => Some(copies),
+                        None => return plain(Err("copies is a whole number".to_string())),
+                    },
+                };
+                plain(
+                    self.printer_print(
+                        &caller,
+                        text("printer"),
+                        text("data"),
+                        text("path"),
+                        copies,
+                        text("media"),
+                        text("title"),
+                    )
+                    .await
+                    .and_then(to_value),
+                )
+            }
             "data.set" | "data.unset" => {
                 let Some(given) = arg(0).as_str().map(str::to_string) else {
                     return plain(Err(format!(
@@ -759,6 +812,41 @@ fn disrupt(bridge: &Bridge) -> Result<(), Value> {
     Ok(())
 }
 
+/// One more document from the page, unless it printed `PRINT_BURST` in the
+/// last `PRINT_WINDOW`.
+fn print_allowed(bridge: &Bridge) -> Result<(), Value> {
+    let mut prints = lock(&bridge.prints);
+    prints.retain(|when| when.elapsed() < PRINT_WINDOW);
+    if prints.len() >= PRINT_BURST {
+        return Err(fail(format!(
+            "refused: the page printed {PRINT_BURST} documents in the last {}s",
+            PRINT_WINDOW.as_secs()
+        )));
+    }
+    prints.push(Instant::now());
+    Ok(())
+}
+
+/// `tessaro.printer.list()`: what `printer list` shows, without where each
+/// printer is: a URI can carry a host's credentials.
+fn page_printers(list: &protocol::PrinterList) -> Value {
+    let printers: Vec<Value> = list
+        .printers
+        .iter()
+        .map(|printer| {
+            json!({
+                "name": printer.spec.name,
+                "kind": printer.spec.kind.name(),
+                "default": printer.default,
+                "state": printer.state,
+                "message": printer.message,
+                "queued": printer.queued,
+            })
+        })
+        .collect();
+    json!({ "enabled": list.enabled, "printers": printers })
+}
+
 /// `tessaro.device.status()`: what `device status` shows, without the
 /// node's name, fingerprint and claim.
 fn page_status(status: &protocol::Status) -> Value {
@@ -844,6 +932,7 @@ mod tests {
             problem: Mutex::new(None),
             last_disrupt: Mutex::new(Instant::now()),
             last_speedtest: Mutex::new(None),
+            prints: Mutex::new(Vec::new()),
             public_ip: tokio::sync::Mutex::new(None),
         }
     }

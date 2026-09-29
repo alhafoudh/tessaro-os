@@ -40,6 +40,9 @@
       "name": "schedules"
     },
     {
+      "name": "printers"
+    },
+    {
       "name": "update"
     },
     {
@@ -2653,6 +2656,464 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/CalendarCheck"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/printers": {
+      "get": {
+        "operationId": "printers.List",
+        "tags": [
+          "printers"
+        ],
+        "summary": "Every printer, which one is the default, and whether pages may print (printer.enable).",
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrinterList"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "printers.Create",
+        "tags": [
+          "printers"
+        ],
+        "summary": "Add a printer. A driverless one must answer while it is set up.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PrinterSpec"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrinterInfo"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/printers/discover": {
+      "post": {
+        "operationId": "printers.Discover",
+        "tags": [
+          "printers"
+        ],
+        "summary": "Printers found on USB and the network, as a job of `PrinterFound`s.",
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobStarted"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/printers/{printer}": {
+      "get": {
+        "operationId": "printers.Show",
+        "tags": [
+          "printers"
+        ],
+        "summary": "One printer in full, its supplies included.",
+        "parameters": [
+          {
+            "name": "printer",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrinterInfo"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "printers.Remove",
+        "tags": [
+          "printers"
+        ],
+        "summary": "Remove a printer and the jobs it still holds.",
+        "parameters": [
+          {
+            "name": "printer",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Done"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/printers/{printer}/default": {
+      "post": {
+        "operationId": "printers.SetDefault",
+        "tags": [
+          "printers"
+        ],
+        "summary": "Make it the printer `window.print()` uses.",
+        "parameters": [
+          {
+            "name": "printer",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Done"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/printers/{printer}/test": {
+      "post": {
+        "operationId": "printers.Test",
+        "tags": [
+          "printers"
+        ],
+        "summary": "Print a test page.",
+        "parameters": [
+          {
+            "name": "printer",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrintQueued"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/printers/{printer}/print": {
+      "post": {
+        "operationId": "printers.Print",
+        "tags": [
+          "printers"
+        ],
+        "summary": "Print the body, at most `PRINT_DATA_MAX` bytes: a PDF for a driverless printer, the printer's own bytes for a raw one. With no body, the store's file at `path`.",
+        "parameters": [
+          {
+            "name": "printer",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "description": "A file in the store, from its root, for a document sent with no\nbody: one larger than `PRINT_DATA_MAX`."
+          },
+          {
+            "name": "copies",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "minimum": 0,
+              "default": null
+            }
+          },
+          {
+            "name": "media",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "description": "The paper, as the printer names it; the printer's own `media` when\nnot given."
+          },
+          {
+            "name": "title",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "description": "What CUPS calls the job."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrintQueued"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/printers/jobs": {
+      "get": {
+        "operationId": "printers.Jobs",
+        "tags": [
+          "printers"
+        ],
+        "summary": "The jobs not printed yet.",
+        "parameters": [
+          {
+            "name": "printer",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "description": "Only this printer's."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PrintJob"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/printers/jobs/{job}": {
+      "delete": {
+        "operationId": "printers.Cancel",
+        "tags": [
+          "printers"
+        ],
+        "summary": "Cancel a job.",
+        "parameters": [
+          {
+            "name": "job",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Done"
                 }
               }
             }
@@ -6977,6 +7438,294 @@
         ],
         "description": "What `schedule-check` found."
       },
+      "PrinterList": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "printer.enable: `window.print()` and the page bridge print. The\ndevice's own clients print either way."
+          },
+          "printers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PrinterInfo"
+            }
+          }
+        },
+        "required": [
+          "enabled",
+          "printers"
+        ],
+        "description": "Every printer, and whether pages may print."
+      },
+      "PrinterInfo": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "`[a-z0-9][a-z0-9_-]*`, unique on the device: what a page and\n`tessaro-ctl printer print` name it by."
+          },
+          "uri": {
+            "type": "string",
+            "description": "Where it is, as CUPS spells it: `ipp://host/ipp/print`,\n`ipps://...`, `socket://host:9100`, `usb://...`, or a `dnssd://` URI\nfrom `printer-discover`."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/PrinterKind",
+            "default": "ipp"
+          },
+          "media": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The paper a job gets when it names none, as the printer names it:\n`iso_a4_210x297mm`, `na_letter_8.5x11in`, `A4`. Empty for the\nprinter's own default.",
+            "default": null
+          },
+          "default": {
+            "type": "boolean",
+            "description": "`window.print()` prints here."
+          },
+          "state": {
+            "type": "string",
+            "description": "`idle`, `printing`, `stopped`, or `missing` while CUPS does not have\nit yet: it did not answer when it was set up, and the device keeps\ntrying."
+          },
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why, as CUPS says: `offline-report`, `media-empty`, or the error that\nkept it from being set up.",
+            "default": null
+          },
+          "queued": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "Jobs waiting or printing.",
+            "default": 0
+          },
+          "markers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PrinterMarker"
+            },
+            "description": "Only from `printer-show`, and only from a printer that reports them.",
+            "default": []
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The make and model the printer gave, for a driverless one.",
+            "default": null
+          }
+        },
+        "required": [
+          "name",
+          "uri",
+          "default",
+          "state"
+        ],
+        "description": "One printer and what CUPS reports about it."
+      },
+      "PrinterKind": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "ipp",
+            "description": "Driverless: IPP Everywhere or AirPrint. CUPS asks the printer what\nit takes and turns a PDF into it."
+          },
+          {
+            "type": "string",
+            "const": "raw",
+            "description": "The bytes go to the printer as they are: a receipt printer's ESC/POS,\na label printer's ZPL, or a document already in the printer's\nlanguage."
+          }
+        ],
+        "description": "How CUPS drives a printer."
+      },
+      "PrinterMarker": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "level": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint8",
+            "minimum": 0,
+            "maximum": 255,
+            "description": "Percent left, when the printer says.",
+            "default": null
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "description": "One supply a printer reports: an ink, a toner, a waste box."
+      },
+      "PrinterSpec": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "`[a-z0-9][a-z0-9_-]*`, unique on the device: what a page and\n`tessaro-ctl printer print` name it by."
+          },
+          "uri": {
+            "type": "string",
+            "description": "Where it is, as CUPS spells it: `ipp://host/ipp/print`,\n`ipps://...`, `socket://host:9100`, `usb://...`, or a `dnssd://` URI\nfrom `printer-discover`."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/PrinterKind",
+            "default": "ipp"
+          },
+          "media": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The paper a job gets when it names none, as the printer names it:\n`iso_a4_210x297mm`, `na_letter_8.5x11in`, `A4`. Empty for the\nprinter's own default.",
+            "default": null
+          }
+        },
+        "required": [
+          "name",
+          "uri"
+        ],
+        "description": "What a printer is: how it is reached and how it is driven."
+      },
+      "PrinterRef": {
+        "type": "object",
+        "properties": {
+          "printer": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "printer"
+        ]
+      },
+      "PrintQueued": {
+        "type": "object",
+        "properties": {
+          "job": {
+            "type": "string"
+          },
+          "printer": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "job",
+          "printer",
+          "message"
+        ],
+        "description": "A document handed to CUPS."
+      },
+      "PrintQuery": {
+        "type": "object",
+        "properties": {
+          "printer": {
+            "type": "string"
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A file in the store, from its root, for a document sent with no\nbody: one larger than `PRINT_DATA_MAX`.",
+            "default": null
+          },
+          "copies": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "default": null
+          },
+          "media": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The paper, as the printer names it; the printer's own `media` when\nnot given.",
+            "default": null
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What CUPS calls the job.",
+            "default": null
+          }
+        },
+        "required": [
+          "printer"
+        ],
+        "description": "Where a document goes and how. Without a body, `path` names a file in\nthe store to print instead."
+      },
+      "PrintJobsQuery": {
+        "type": "object",
+        "properties": {
+          "printer": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Only this printer's.",
+            "default": null
+          }
+        }
+      },
+      "PrintJob": {
+        "type": "object",
+        "properties": {
+          "job": {
+            "type": "string",
+            "description": "`office-12`: what `printer-cancel` takes."
+          },
+          "printer": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Bytes, as sent."
+          },
+          "submitted": {
+            "type": "string",
+            "description": "When it was sent, as CUPS writes it."
+          }
+        },
+        "required": [
+          "job",
+          "printer",
+          "size",
+          "submitted"
+        ],
+        "description": "A job CUPS holds."
+      },
+      "PrintJobRef": {
+        "type": "object",
+        "properties": {
+          "job": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "job"
+        ]
+      },
       "UpdateStatus": {
         "type": "object",
         "properties": {
@@ -7445,7 +8194,7 @@
             "items": {
               "$ref": "#/components/schemas/JobEvent"
             },
-            "description": "Its steps from number `after` on, in order: `PingEvent`s,\n`SpeedtestEvent`s or `StorageGrowEvent`s, by the job."
+            "description": "Its steps from number `after` on, in order: `PingEvent`s,\n`SpeedtestEvent`s, `StorageGrowEvent`s or `PrinterFound`s, by the\njob."
           },
           "next": {
             "type": "integer",
@@ -7482,6 +8231,9 @@
           },
           {
             "$ref": "#/components/schemas/StorageGrowEvent"
+          },
+          {
+            "$ref": "#/components/schemas/PrinterFound"
           }
         ],
         "description": "One step of a job, of the kind the job is. Only described, for the\nAPI's document."
@@ -7866,6 +8618,42 @@
           }
         ],
         "description": "One step of `storage-grow`, in the order they arrive. Sizes in bytes."
+      },
+      "PrinterFound": {
+        "type": "object",
+        "properties": {
+          "uri": {
+            "type": "string",
+            "description": "What `printer-create` takes as `uri`."
+          },
+          "description": {
+            "type": "string",
+            "description": "What the printer calls itself, or its make and model."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/PrinterKind",
+            "description": "How it is best driven: `ipp` for a printer that answers IPP, `raw`\nfor a socket or USB one."
+          },
+          "class": {
+            "type": "string",
+            "description": "`network` or `direct` (USB), as CUPS classes it."
+          },
+          "known": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A printer the device has already, by this URI.",
+            "default": null
+          }
+        },
+        "required": [
+          "uri",
+          "description",
+          "kind",
+          "class"
+        ],
+        "description": "One step of `printer-discover`: a printer CUPS found."
       },
       "JobRef": {
         "type": "object",

@@ -126,6 +126,7 @@ KIOSK_PROXY_UNIT=tessaro-e2e-no-such-proxy.service \
 KIOSK_TIMESYNCD_DROPIN="$sandbox/timesyncd.conf" \
 KIOSK_MANAGE_SCHEDULES=0 \
 KIOSK_SYSTEMD_UNIT_DIR="$sandbox/units" \
+KIOSK_MANAGE_PRINTERS=0 \
 KIOSK_API_LISTEN=127.0.0.1:17400 \
 KIOSK_PORTAL_DIR="$sandbox/portal" \
 KIOSK_WEBCONFIG_ROOT="{{config_root}}/build/webconfig" \

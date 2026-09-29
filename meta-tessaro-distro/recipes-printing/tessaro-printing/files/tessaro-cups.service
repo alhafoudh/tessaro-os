@@ -1,0 +1,25 @@
+[Unit]
+Description=Tessaro printing: the device's CUPS
+Documentation=man:cupsd(8) man:cupsd.conf(5) man:cups-files.conf(5)
+# The device's own CUPS, instead of the stock cups.socket/cups.service, which
+# tessaro-printing leaves disabled: its config is in /usr/lib, not on the /etc
+# overlay, it listens on its socket only, and its state is under /data/cups.
+# The socket is CUPS's compiled-in default (--with-domainsocket in cups.inc),
+# so Chromium's libcups and the agent's clients find it with no client.conf.
+# The agent sets the printers up in it from printers.json (docs/printing.md).
+#
+# Before the agent and the browser, so the agent's first reconcile and
+# Chromium's first print both find it; neither needs it to start.
+Wants=avahi-daemon.service
+After=avahi-daemon.service local-fs.target
+Before=tessaro-agent.service tessaro-kiosk.service
+
+[Service]
+Type=simple
+# -f: in the foreground, logging through ErrorLog syslog into the journal.
+ExecStart=/usr/sbin/cupsd -f -c /usr/lib/tessaro-printing/cupsd.conf -s /usr/lib/tessaro-printing/cups-files.conf
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

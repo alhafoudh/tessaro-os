@@ -1,14 +1,14 @@
 //! Long work on a device, each on a connection of its own so the window's
 //! worker keeps polling: the device's own jobs (`network ping`, the speed
-//! test, growing `/data`), files going up or down, an image update, and the
-//! DevTools tunnel.
+//! test, growing `/data`, looking for printers), files going up or down, an
+//! image update, and the DevTools tunnel.
 //!
 //! A job is a subscription keyed by its id. Cancelling it drops the
 //! subscription. A device job sees that between two polls and cancels it on
 //! the device; the shared flows see it as `Report::stopped` at their next
 //! step, and for a call in flight a watcher thread shuts the connection
 //! down. The flows themselves are `tessaro_client`'s (`files`, `update`,
-//! `ping`, `storage`, `devtools`), the same as `tessaro-ctl`'s.
+//! `ping`, `storage`, `devtools`, `printer`), the same as `tessaro-ctl`'s.
 
 use std::hash::{Hash, Hasher};
 use std::net::Shutdown;
@@ -29,7 +29,7 @@ use tessaro_client::report::{self, Report as _};
 use tessaro_client::text::{Line, Tone};
 use tessaro_client::tunnel::{self, Prompts, Tunnel};
 use tessaro_client::update::{self, Plan, Sent};
-use tessaro_client::{devtools, files, ping, ssh, storage};
+use tessaro_client::{describe, devtools, files, ping, printer, ssh, storage};
 
 use crate::worker;
 
@@ -48,6 +48,9 @@ pub enum Kind {
     /// `tessaro-ctl browser devtools`: the device's DevTools port forwarded
     /// to this machine until the job is cancelled.
     DevTools,
+    /// `tessaro-ctl printer discover`: every printer the device finds, as
+    /// the job's values.
+    Discover,
 }
 
 /// The device's jobs, each with what starts it.
@@ -130,7 +133,7 @@ fn run(spec: &Spec, out: &ui::UnboundedSender<Event>) -> Result<String, String> 
     let done = Arc::new(AtomicBool::new(false));
     // A device job stops by itself, and cancels on the device on the way:
     // shutting its connection down would only lose that cancel.
-    let watched = !matches!(spec.kind, Kind::Stream(_));
+    let watched = !matches!(spec.kind, Kind::Stream(_) | Kind::Discover);
     if let Some(tcp) = session.shutdown_handle().filter(|_| watched) {
         let (out, done) = (out.clone(), done.clone());
         std::thread::spawn(move || {
@@ -157,6 +160,7 @@ fn run(spec: &Spec, out: &ui::UnboundedSender<Event>) -> Result<String, String> 
         Kind::Update(update) => update_send(&mut session, &spec.node, update, &mut report),
         Kind::ControlPing { count } => control_ping(&mut session, *count, &mut report),
         Kind::DevTools => open_devtools(&mut session, &mut report),
+        Kind::Discover => discover(&mut session, out),
     };
     done.store(true, Ordering::Relaxed);
     if out.is_closed() {
@@ -227,6 +231,17 @@ fn grow(
     }
     stream::<api::storage::Grow>(session, body, out, |_| {})
         .map_err(|error| format!("{error}; {}", storage::STOPPED_HINT))
+}
+
+/// `tessaro-ctl printer discover`: each printer as it comes, for the page to
+/// list, and what to do with them at the end.
+fn discover(session: &mut Session, out: &ui::UnboundedSender<Event>) -> Result<String, String> {
+    let found = printer::discover(session, &|| out.is_closed(), |found| {
+        if let Ok(value) = serde_json::to_value(found) {
+            let _ = out.unbounded_send(Event::Value(value));
+        }
+    })?;
+    Ok(describe::printer::found_hint(&found).to_string())
 }
 
 /// Each local path into `into`: a file as `into/NAME`, a directory as

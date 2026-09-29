@@ -8,7 +8,7 @@
     "https://shop.example.com",
   ],
 
-  "PrintingEnabled": false,
+  "SpellcheckEnabled": false,
   "PasswordManagerEnabled": false,
   "DownloadRestrictions": 3, // block every download
 }

@@ -69,8 +69,9 @@ Things to know:
 * **Flags an operator may need are variables, not constants.**
   `KIOSK_CHROMIUM_ARGS_EXTRA` (unbraced `$VAR` in `ExecStart`, so systemd
   splits it at whitespace), `KIOSK_TOUCH`, `KIOSK_ENABLE_FEATURES`,
-  `KIOSK_DISABLE_FEATURES` and `KIOSK_FPS_ARGS` (rendered from
-  `browser.fps_counter`) come from the same env files as everything else. A
+  `KIOSK_DISABLE_FEATURES`, `KIOSK_FPS_ARGS` (rendered from
+  `browser.fps_counter`) and `KIOSK_PRINT_ARGS` (`--kiosk-printing`, rendered
+  from `printer.enable`) come from the same env files as everything else. A
   flag only belongs in the unit's fixed set if `KIOSK_CHROMIUM_ARGS_EXTRA` can
   *counter* it - `--disable-pinch` is not there because Chromium 147 has no
   `--enable-pinch`. The IME switches are the documented exception - see
@@ -106,6 +107,12 @@ Things to know:
   (`render.rs`), `CACertificates` in it is `tessaro-ctl network certs`
   (see **Certificates** in [networking.md](networking.md)), and anything
   else is added with `tessaro-ctl browser policies` (see **Policies** below).
+* **Printing is off in the policy until `printer.enable`**, which sets
+  `PrintingEnabled` and `PrintPreviewUseSystemDefaultPrinter`, and adds
+  `--kiosk-printing` so `window.print()` prints without a dialog. Chromium
+  reaches printers only through libcups, which is why its `PACKAGECONFIG`
+  has `cups`; see [printing.md](printing.md). A browser policy cannot set
+  these entries: they are the device's own.
 * **`/data/kiosk` is root owned and only `/data/kiosk/chromium` is `weston`.**
   Both come from tmpfiles `d` lines, which re-apply owner and mode every boot.
   `/data/kiosk/offline.html` is a page the agent puts on screen, so a

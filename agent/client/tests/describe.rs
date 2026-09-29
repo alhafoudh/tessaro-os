@@ -10,7 +10,7 @@
 use std::path::Path;
 
 use serde_json::{json, Value};
-use tessaro_client::describe::{audio, browser, device, net, time};
+use tessaro_client::describe::{audio, browser, device, net, printer, time};
 use tessaro_client::ping;
 use tessaro_client::text::{Fact, Line};
 
@@ -157,6 +157,21 @@ fn render(function: &str, input: &Value) -> Value {
             let (shown, nothing) = plan.facts();
             json!({ "facts": facts(&shown), "nothing": nothing.as_ref().map(line), "grows": plan.grows() })
         }
+        "printer::list" => lines(&printer::list(&from(input))),
+        "printer::show" => facts(&printer::show(&from(input))),
+        "printer::jobs" => {
+            let jobs: Vec<protocol::PrintJob> = from(input);
+            lines(&printer::jobs(&jobs))
+        }
+        "printer::found" => {
+            let found: Vec<protocol::PrinterFound> = from(input);
+            json!({
+                "found": found.iter().map(|one| lines(&printer::found(one))).collect::<Vec<_>>(),
+                "hint": line(&printer::found_hint(&found)),
+                "none": line(&printer::found_hint(&[])),
+            })
+        }
+        "printer::queued" => line(&printer::queued(&from(input))),
         "schedule::moment" => {
             let now = input["now"].as_i64().unwrap();
             let moments: Vec<protocol::Moment> = from(&input["moments"]);

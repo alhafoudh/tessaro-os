@@ -14,6 +14,7 @@ import * as device from "./device";
 import * as journal from "./journal";
 import * as net from "./net";
 import * as ping from "./ping";
+import * as printer from "./printer";
 import * as transfer from "./transfer";
 import * as update from "./update";
 import * as time from "./time";
@@ -84,6 +85,15 @@ export const renderers: Record<string, (input: any) => unknown> = {
       grows: storage.grows(input),
     };
   },
+  "printer::list": (input) => lines(printer.list(input)),
+  "printer::show": (input) => facts(printer.show(input)),
+  "printer::jobs": (input) => lines(printer.jobs(input)),
+  "printer::found": (input) => ({
+    found: input.map((one: any) => lines(printer.found(one))),
+    hint: spans(printer.foundHint(input)),
+    none: spans(printer.foundHint([])),
+  }),
+  "printer::queued": (input) => spans(printer.queued(input)),
   "schedule::moment": (input) => input.moments.map((at: any) => spans(schedule.moment(at, input.now))),
   "schedule::last_run": (input) => input.infos.map((info: any) => spans(schedule.lastRun(info, input.now))),
   "schedule::words": (input) => ({

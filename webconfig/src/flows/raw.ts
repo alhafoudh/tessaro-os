@@ -48,6 +48,32 @@ export async function putPiece(
   return (await response.json()) as Schemas["Received"];
 }
 
+/** protocol::PRINT_DATA_MAX: the largest document sent to print. */
+export const PRINT_DATA_MAX = 4 * 1024 * 1024;
+
+/** A document to print, as the body; the device answers the job it became. */
+export async function printDocument(
+  printer: string,
+  query: Record<string, string | number>,
+  document: Blob,
+): Promise<Schemas["PrintQueued"]> {
+  let response: Response;
+  try {
+    response = await fetch(target(`/api/v1/printers/${encodeURIComponent(printer)}/print`, query), {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/octet-stream", [HEADER_ACTIVITY]: "1" },
+      body: document,
+    });
+  } catch (error) {
+    throw failure(error);
+  }
+  if (!response.ok) {
+    throw await refusal(response);
+  }
+  return (await response.json()) as Schemas["PrintQueued"];
+}
+
 export interface Piece {
   bytes: Uint8Array;
   /** The whole file's size and mtime, as the device says them now. */

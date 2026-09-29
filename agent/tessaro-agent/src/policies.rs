@@ -222,7 +222,7 @@ mod tests {
     #[test]
     fn stored_as_typed_and_listed_by_name() {
         let (_dir, db) = fixture();
-        let text = "// keep this\n{\"PrintingEnabled\": false,}\n";
+        let text = "// keep this\n{\"SpellcheckEnabled\": false,}\n";
         assert!(store(&db, "zeta", "{\"A\": 1}", None).unwrap());
         assert!(store(&db, "lockdown", text, None).unwrap());
         assert!(!store(&db, "lockdown", text, None).unwrap());
@@ -236,7 +236,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["lockdown", "zeta"]
         );
-        assert_eq!(listed[0].keys, ["PrintingEnabled"]);
+        assert_eq!(listed[0].keys, ["SpellcheckEnabled"]);
         assert_eq!(listed[0].revision, policy::revision(text));
     }
 

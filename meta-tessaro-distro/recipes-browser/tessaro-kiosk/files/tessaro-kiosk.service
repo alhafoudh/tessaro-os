@@ -202,6 +202,10 @@ Environment=PULSE_SERVER=unix:/run/tessaro-audio/pulse/native
 #   from browser.fps_counter: systemd cannot make a flag conditional on a
 #   0/1, so the agent turns the setting into the switch. Unbraced, so empty
 #   is no argument at all.
+# $KIOSK_PRINT_ARGS is --kiosk-printing or nothing, rendered the same way from
+#   printer.enable: window.print() goes to the CUPS default printer without
+#   the print preview dialog (docs/printing.md). Before the extra flags, so
+#   an operator's flag can follow it.
 # $KIOSK_CHROMIUM_ARGS_EXTRA is deliberately *unbraced*. systemd splits $VAR at
 #   whitespace and passes ${VAR} as one argument, so this is what lets an
 #   operator add several flags (`tessaro-ctl config set browser.args_extra=...`).
@@ -259,6 +263,7 @@ ExecStart=/usr/bin/dbus-run-session -- /usr/bin/chromium \
     --enable-features=${KIOSK_ENABLE_FEATURES} \
     --disable-features=${KIOSK_DISABLE_FEATURES} \
     $KIOSK_FPS_ARGS \
+    $KIOSK_PRINT_ARGS \
     $KIOSK_CHROMIUM_ARGS_EXTRA \
     ${KIOSK_URL}
 

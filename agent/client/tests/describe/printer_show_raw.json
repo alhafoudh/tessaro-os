@@ -1,0 +1,84 @@
+{
+  "function": "printer::show",
+  "input": {
+    "default": false,
+    "kind": "raw",
+    "markers": [],
+    "name": "front",
+    "queued": 0,
+    "state": "idle",
+    "uri": "usb://EPSON/TM-T20III?serial=X4ZE"
+  },
+  "output": [
+    {
+      "label": "name",
+      "value": [
+        [
+          "heading",
+          "front",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "state",
+      "value": [
+        [
+          "ok",
+          "idle",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "uri",
+      "value": [
+        [
+          "plain",
+          "usb://EPSON/TM-T20III?serial=X4ZE",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "kind",
+      "value": [
+        [
+          "plain",
+          "raw (bytes as they are)",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "paper",
+      "value": [
+        [
+          "muted",
+          "the printer's own",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "default",
+      "value": [
+        [
+          "muted",
+          "no",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "queued",
+      "value": [
+        [
+          "plain",
+          "0",
+          0
+        ]
+      ]
+    }
+  ]
+}

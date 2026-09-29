@@ -74,6 +74,23 @@
     device: { status: () => call("device.status") },
     network: { status: () => call("network.status") },
     audio: { status: () => call("audio.status") },
+    printer: { list: () => call("printer.list") },
+  };
+
+  // A document for printer.print: text as UTF-8, or bytes, as base64.
+  const base64 = async (data) => {
+    let bytes;
+    if (typeof data === "string") bytes = new TextEncoder().encode(data);
+    else if (data instanceof Blob) bytes = new Uint8Array(await data.arrayBuffer());
+    else if (data instanceof ArrayBuffer) bytes = new Uint8Array(data);
+    else if (ArrayBuffer.isView(data))
+      bytes = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+    else throw new Error("tessaro: print data is a string, a Blob, an ArrayBuffer or bytes");
+    let text = "";
+    for (let at = 0; at < bytes.length; at += 0x8000) {
+      text += String.fromCharCode.apply(null, bytes.subarray(at, at + 0x8000));
+    }
+    return btoa(text);
   };
 
   if (MODE === "actions") {
@@ -104,6 +121,13 @@
       off: () => call("screen.off"),
     };
     api.files = { list: (path) => call("files.list", path) };
+    Object.assign(api.printer, {
+      print: async (job) => {
+        const { data, ...rest } = job || {};
+        const sent = data === undefined || data === null ? rest : { ...rest, data: await base64(data) };
+        return call("printer.print", sent);
+      },
+    });
     api.data = {
       set: (name, value) => call("data.set", name, value),
       unset: (name) => call("data.unset", name),

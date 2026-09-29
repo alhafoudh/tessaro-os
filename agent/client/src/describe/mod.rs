@@ -6,4 +6,5 @@ pub mod audio;
 pub mod browser;
 pub mod device;
 pub mod net;
+pub mod printer;
 pub mod time;

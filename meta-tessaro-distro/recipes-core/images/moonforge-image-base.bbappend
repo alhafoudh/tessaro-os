@@ -142,6 +142,13 @@ CORE_IMAGE_EXTRA_INSTALL += " \
     sqlite3 \
 "
 
+# Printing: the device's own CUPS, listening only on its socket, with the
+# filters that turn a PDF into what a driverless printer takes. The printers
+# are set up by the agent from its store; see docs/printing.md.
+CORE_IMAGE_EXTRA_INSTALL += " \
+    tessaro-printing \
+"
+
 # The boot disk's own partitions, by label on that disk only: /data for the
 # /etc overlay on every machine (OVERLAYFS_ETC_DEVICE), and the Pi's /boot,
 # which its wks keeps out of fstab. See docs/build.md, "Pi storage boot".

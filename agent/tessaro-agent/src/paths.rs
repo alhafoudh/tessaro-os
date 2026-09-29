@@ -142,6 +142,16 @@ pub struct Paths {
     /// Where the local proxy listens: what Chromium's policy, the probe and
     /// the speed test are pointed at.
     pub proxy_listen: SocketAddr,
+    /// The device's CUPS, `tessaro-cups.service`: its socket, which its
+    /// clients get as `CUPS_SERVER`, and where they are (empty for `PATH`).
+    pub cups_server: PathBuf,
+    pub cups_bin: PathBuf,
+    /// The `ipptool` test that asks a printer for its supplies.
+    pub cups_markers_test: PathBuf,
+    /// Whether the agent sets the printers up in CUPS. Off
+    /// (`KIOSK_MANAGE_PRINTERS=0`) on a development host without the
+    /// device's CUPS: the printers are then only stored.
+    pub manage_printers: bool,
 }
 
 /// The local proxy's address: `KIOSK_PROXY_LISTEN`, else 127.0.0.1:3128.
@@ -229,6 +239,13 @@ impl Paths {
             manage_schedules: text("KIOSK_MANAGE_SCHEDULES", "1") != "0",
             systemd_analyze: path("KIOSK_SYSTEMD_ANALYZE", "systemd-analyze"),
             proxy_listen: proxy_listen(env),
+            cups_server: path("KIOSK_CUPS_SERVER", "/run/cups/cups.sock"),
+            cups_bin: path("KIOSK_CUPS_BIN", ""),
+            cups_markers_test: path(
+                "KIOSK_CUPS_MARKERS_TEST",
+                "/usr/lib/tessaro-printing/markers.test",
+            ),
+            manage_printers: text("KIOSK_MANAGE_PRINTERS", "1") != "0",
         }
     }
 

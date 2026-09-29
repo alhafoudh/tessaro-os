@@ -23,7 +23,8 @@
 //! screen: reload, eval, the keyboard), `screen` (its power), `bridge`
 //! (`window.tessaro` and the injected script), `schedules` (the
 //! schedules and their systemd units), `certs` (the extra certificate
-//! authorities) and `policies` (the browser policies).
+//! authorities), `policies` (the browser policies) and `printers` (the
+//! printers and their CUPS queues).
 
 mod access;
 mod bridge;
@@ -31,6 +32,7 @@ mod certs;
 mod network;
 mod page;
 mod policies;
+mod printers;
 mod schedules;
 mod screen;
 mod settings;
@@ -181,10 +183,17 @@ pub struct Control {
     /// environment systemd filled from the `/usr/lib` env file.
     defaults: HashMap<String, String>,
     /// `tessaro.db`: the settings, the tokens, the network passwords (never
-    /// in the settings) and the schedules.
+    /// in the settings), the schedules and the printers.
     db: Db,
     /// One reconcile of the schedules' units at a time (`schedules`).
     reconciling: tokio::sync::Mutex<()>,
+    cups: Arc<crate::printer::Cups>,
+    /// One change to the CUPS queues at a time (`printers`).
+    printing: tokio::sync::Mutex<()>,
+    /// Why the last reconcile left a printer out of CUPS, if it did.
+    printer_problem: Mutex<Option<String>>,
+    /// Held by a printer discovery for as long as it runs.
+    printer_discovering: Arc<tokio::sync::Mutex<()>>,
     /// What the `tokens` table holds, kept in memory so verifying a token is
     /// not a disk read. Only ever replaced after a successful write.
     auth: Mutex<Auth>,
@@ -267,6 +276,10 @@ impl Control {
             time: Time::new(Arc::clone(&log), &paths),
             db,
             reconciling: tokio::sync::Mutex::new(()),
+            cups: crate::printer::Cups::new(Arc::clone(&log), &paths),
+            printing: tokio::sync::Mutex::new(()),
+            printer_problem: Mutex::new(None),
+            printer_discovering: Arc::new(tokio::sync::Mutex::new(())),
             log,
             paths,
             defaults,
@@ -314,6 +327,7 @@ impl Control {
                     steps: self.net_ping(caller, plan),
                 })
             }
+            Command::PrinterDiscover => self.printer_discover(caller).map(Stream::Printers),
             _ => Err("that command is not a stream".to_string()),
         }
     }
@@ -554,9 +568,10 @@ impl Control {
                 self.welcome().await.into()
             }
             // `Command::is_job`: started through `stream`.
-            Command::Speedtest { .. } | Command::NetPing { .. } | Command::StorageGrow { .. } => {
-                Reply::err("that command runs as a job")
-            }
+            Command::Speedtest { .. }
+            | Command::NetPing { .. }
+            | Command::StorageGrow { .. }
+            | Command::PrinterDiscover => Reply::err("that command runs as a job"),
             // The hotspot's security follows the claim, re-applied once the
             // answer is out: whoever claims through the hotspot gets its new
             // password before the hotspot drops them.
@@ -691,6 +706,27 @@ impl Control {
             Command::ScheduleCheck { calendar, count } => {
                 self.schedule_check(calendar, count).await.into()
             }
+            Command::PrinterList => self.printer_list().await.into(),
+            Command::PrinterShow { printer } => self.printer_show(printer).await.into(),
+            Command::PrinterCreate { spec } => self.printer_create(caller, spec).await.into(),
+            Command::PrinterRemove { printer } => self.printer_remove(caller, printer).await.into(),
+            Command::PrinterDefault { printer } => {
+                self.printer_default(caller, printer).await.into()
+            }
+            Command::PrinterTest { printer } => self.printer_test(caller, printer).await.into(),
+            Command::PrinterPrint {
+                printer,
+                data,
+                path,
+                copies,
+                media,
+                title,
+            } => self
+                .printer_print(caller, Some(printer), data, path, copies, media, title)
+                .await
+                .into(),
+            Command::PrinterJobs { printer } => self.printer_jobs(printer).await.into(),
+            Command::PrinterCancel { job } => self.printer_cancel(caller, job).await.into(),
         }
     }
 
@@ -1169,6 +1205,7 @@ pub enum Stream {
         /// The longest the whole run can take, from the plan.
         total: Duration,
     },
+    Printers(tokio::sync::mpsc::Receiver<Result<protocol::PrinterFound, String>>),
 }
 
 /// The most entries one page of the journal carries. A page after a cursor
@@ -1335,6 +1372,8 @@ mod tests {
             ("KIOSK_MANAGE_SCHEDULES", "0".to_string()),
             ("KIOSK_SYSTEMD_UNIT_DIR", at("units")),
             ("KIOSK_SYSTEMD_ANALYZE", at("systemd-analyze")),
+            // Never this host's CUPS: the printers are only stored.
+            ("KIOSK_MANAGE_PRINTERS", "0".to_string()),
             // A qemu VM's hardware, never this host's.
             ("KIOSK_DMI", at("dmi")),
             ("KIOSK_DEVICE_TREE", at("device-tree")),
@@ -1896,6 +1935,135 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn printers_are_kept_with_a_default_and_the_page_needs_printer_enable() {
+        let fx = fixture();
+        let spec = |name: &str, uri: &str| protocol::PrinterSpec {
+            name: name.into(),
+            uri: uri.into(),
+            kind: protocol::PrinterKind::Raw,
+            media: None,
+        };
+
+        let created: protocol::PrinterInfo = ok(
+            &fx.control,
+            &Caller::Local,
+            Command::PrinterCreate {
+                spec: spec("front", "socket://10.0.0.9:9100"),
+            },
+        )
+        .await;
+        // The first printer is the default; not managed here, so CUPS has
+        // none of them.
+        assert!(created.default);
+        assert_eq!(created.state, "missing");
+        let _: protocol::PrinterInfo = ok(
+            &fx.control,
+            &Caller::Local,
+            Command::PrinterCreate {
+                spec: spec("office", "ipp://10.0.0.5/ipp/print"),
+            },
+        )
+        .await;
+        let twice = fx
+            .control
+            .handle(
+                &Caller::Local,
+                Command::PrinterCreate {
+                    spec: spec("office", "ipp://10.0.0.6/ipp/print"),
+                },
+            )
+            .await;
+        assert!(twice.result.unwrap_err().contains("exists already"));
+
+        let _: Done = ok(
+            &fx.control,
+            &Caller::Local,
+            Command::PrinterDefault {
+                printer: "office".into(),
+            },
+        )
+        .await;
+        let list: protocol::PrinterList =
+            ok(&fx.control, &Caller::Local, Command::PrinterList).await;
+        assert!(!list.enabled);
+        let defaults: Vec<(&str, bool)> = list
+            .printers
+            .iter()
+            .map(|printer| (printer.spec.name.as_str(), printer.default))
+            .collect();
+        assert_eq!(defaults, [("front", false), ("office", true)]);
+
+        // Removing the default makes the next one it.
+        let _: Done = ok(
+            &fx.control,
+            &Caller::Local,
+            Command::PrinterRemove {
+                printer: "office".into(),
+            },
+        )
+        .await;
+        let list: protocol::PrinterList =
+            ok(&fx.control, &Caller::Local, Command::PrinterList).await;
+        assert_eq!(list.printers.len(), 1);
+        assert!(list.printers[0].default);
+
+        // Printing asks CUPS, which this host does not let it reach.
+        let reply = fx
+            .control
+            .handle(
+                &Caller::Local,
+                Command::PrinterTest {
+                    printer: "front".into(),
+                },
+            )
+            .await;
+        assert!(reply.result.unwrap_err().contains("KIOSK_MANAGE_PRINTERS"));
+        let reply = fx
+            .control
+            .handle(
+                &Caller::Local,
+                Command::PrinterPrint {
+                    printer: "front".into(),
+                    data: None,
+                    path: None,
+                    copies: None,
+                    media: None,
+                    title: None,
+                },
+            )
+            .await;
+        assert_eq!(reply.result.unwrap_err(), "nothing to print");
+
+        let policy = || fs::read_to_string(&fx.paths.policy).unwrap();
+        // Saved and rendered; restarting the browser needs this host's
+        // systemd, which the fixture never reaches.
+        let reply = fx
+            .control
+            .handle(
+                &Caller::Local,
+                Command::Set {
+                    values: [("printer.enable".to_string(), "1".to_string())].into(),
+                    if_revision: None,
+                    apply: true,
+                    verify: Default::default(),
+                },
+            )
+            .await;
+        assert!(
+            reply.result.unwrap_err().contains("restarting the browser"),
+            "printer.enable is the browser's"
+        );
+        assert!(
+            policy().contains("\"PrintingEnabled\": true"),
+            "{}",
+            policy()
+        );
+        let list: protocol::PrinterList =
+            ok(&fx.control, &Caller::Local, Command::PrinterList).await;
+        assert!(list.enabled);
+    }
+
+    #[tokio::test]
     async fn a_ca_is_trusted_listed_kept_by_unclaim_and_reset_away() {
         let fx = fixture();
         let holder = claimed(&fx).await;
@@ -1972,19 +2140,19 @@ mod tests {
             text: text.to_string(),
             if_revision: if_revision.map(str::to_string),
         };
-        let text = "// kiosk\n{\"PrintingEnabled\": false,}\n";
+        let text = "// kiosk\n{\"SpellcheckEnabled\": false,}\n";
 
         // Stored and rendered; the fixture has no systemd to restart the
         // browser with, which is the only thing that fails.
         let reply = fx.control.handle(&holder, set(text, Some(""))).await;
         let failed = reply.result.unwrap_err();
         assert!(failed.contains("restarting the browser failed"), "{failed}");
-        assert!(policy().contains("\"PrintingEnabled\": false"));
+        assert!(policy().contains("\"SpellcheckEnabled\": false"));
 
         // The same text again changes nothing, so restarts nothing.
         let saved: protocol::policy::PolicySaved = ok(&fx.control, &holder, set(text, None)).await;
         assert!(saved.unchanged && !saved.restarted);
-        assert_eq!(saved.keys, ["PrintingEnabled"]);
+        assert_eq!(saved.keys, ["SpellcheckEnabled"]);
 
         let doc: protocol::policy::PolicyDoc = ok(
             &fx.control,
@@ -2013,11 +2181,13 @@ mod tests {
         assert_eq!(listed[0].revision, doc.revision);
         let effective: Vec<protocol::policy::EffectiveEntry> =
             ok(&fx.control, &holder, Command::BrowserPolicyEffective).await;
-        assert!(effective.iter().any(|entry| entry.key == "PrintingEnabled"
-            && entry.source
-                == protocol::policy::PolicySource::Policy {
-                    name: "lockdown".to_string()
-                }));
+        assert!(effective
+            .iter()
+            .any(|entry| entry.key == "SpellcheckEnabled"
+                && entry.source
+                    == protocol::policy::PolicySource::Policy {
+                        name: "lockdown".to_string()
+                    }));
 
         let _: Done = ok(&fx.control, &holder, Command::Unclaim).await;
         let listed: Vec<protocol::policy::PolicyInfo> =
@@ -2032,7 +2202,7 @@ mod tests {
         let listed: Vec<protocol::policy::PolicyInfo> =
             ok(&fx.control, &Caller::Local, Command::BrowserPolicyList).await;
         assert!(listed.is_empty());
-        assert!(!policy().contains("PrintingEnabled"));
+        assert!(!policy().contains("SpellcheckEnabled"));
     }
 
     #[tokio::test]

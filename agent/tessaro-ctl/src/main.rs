@@ -16,6 +16,7 @@ mod devtools;
 mod files;
 mod net;
 mod policies;
+mod printer;
 mod progress;
 mod prompt;
 mod schedule;
@@ -106,6 +107,8 @@ const HELP_STYLES: Styles = Styles::styled()
         \x20 tessaro-ctl time timezone Europe/Bratislava && tessaro-ctl time ntp on --server ntp.corp.test\n\
         \x20 tessaro-ctl schedule create night --on '*-*-* 22:00' --run 'tessaro-ctl screen power off'\n\
         \x20 tessaro-ctl schedule list                      when each runs next, how the last run ended\n\
+        \x20 tessaro-ctl printer discover && tessaro-ctl printer create office --uri ipp://10.0.0.5/ipp/print\n\
+        \x20 tessaro-ctl printer test office && tessaro-ctl config set printer.enable=1   window.print() prints there\n\
         \x20 tessaro-ctl config unset browser.url           back to the image default\n\
         \x20 tessaro-ctl device logs -f -u tessaro-agent.service\n\
         \x20 tessaro-ctl update send tessaro-os-qemux86-64.rootfs.wic.zst   a new image; settings are kept\n\
@@ -188,6 +191,10 @@ enum Cmd {
     /// switch on and off, run now, their output.
     #[command(subcommand)]
     Schedule(schedule::ScheduleCmd),
+    /// The printers the device prints on: find, add and remove them, the
+    /// default for window.print(), a test page, printing, the jobs.
+    #[command(subcommand)]
+    Printer(printer::PrinterCmd),
     /// Put a new image on the device, keeping its settings and claim.
     #[command(subcommand)]
     Update(UpdateCmd),
@@ -939,6 +946,7 @@ fn run(cli: Cli) -> Result<(), String> {
         Cmd::Audio(command) => audio::run(&mut session, command, json),
         Cmd::Time(command) => time::run(&mut session, command, json),
         Cmd::Schedule(command) => schedule::run(&mut session, command, json),
+        Cmd::Printer(command) => printer::run(&mut session, command, json),
         Cmd::Device(DeviceCmd::Restart { what }) => {
             done::<api::device::Restart>(&mut session, Empty {}, api::RestartBody { what }, json)
         }

@@ -244,6 +244,7 @@ mod tests {
             "src/control/page.rs",
             "src/control/screen.rs",
             "src/control/schedules.rs",
+            "src/control/printers.rs",
             "src/control/certs.rs",
             "src/power.rs",
             "src/api/mod.rs",
@@ -259,6 +260,7 @@ mod tests {
             "src/nm/nat.rs",
             "src/nm/sidescan.rs",
             "src/audio.rs",
+            "src/printer.rs",
             "src/proc.rs",
             "src/time.rs",
         ];
@@ -321,6 +323,12 @@ mod tests {
             "bus.",
             // time::Time - every method is the above.
             "self.time.",
+            // printer::Cups - every lpadmin, lpstat, lp and ipptool is
+            // run_async(); the scan of printer.rs checks that.
+            "self.cups.",
+            // The lock on the CUPS queues: every holder waits only on the
+            // above, so it is released in bounded time.
+            "self.printing.lock()",
         ];
 
         let mut offences = Vec::new();

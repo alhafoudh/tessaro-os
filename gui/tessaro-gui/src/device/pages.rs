@@ -23,8 +23,9 @@ use iced::{Element, Length, Task};
 use protocol::api::{
     self, AudioTestBody, CalendarBody, CertBody, CertQuery, DeleteBody, EvalBody, FilesQuery,
     GrowBody, KeyboardBody, MoveBody, NameBody, NavigateBody, PasswordBody, PathBody, PingBody,
-    PolicyBody, PolicyRef, ProfileQuery, ScheduleChange, ScheduleRef, ScreenPowerBody,
-    SpeedtestBody, SshKeyQuery, TokenRef, WifiJoinBody, WifiScanQuery,
+    PolicyBody, PolicyRef, PrintJobRef, PrintJobsQuery, PrinterRef, ProfileQuery, ScheduleChange,
+    ScheduleRef, ScreenPowerBody, SpeedtestBody, SshKeyQuery, TokenRef, WifiJoinBody,
+    WifiScanQuery,
 };
 use protocol::files::{self as store, FileEntry, FileKind, FilesListing};
 use protocol::keys;
@@ -32,7 +33,8 @@ use protocol::policy::{self, EffectiveEntry, PolicyDoc, PolicyInfo, PolicyRemove
 use protocol::{
     size_label, Applied, AudioDevice, AudioStatus, AudioTested, CalendarCheck, CertInfo,
     CertsAdded, Claimed, Connector, Done, HotspotCredentials, Net, NetChange, NetProfile,
-    NetProfileDetail, OnError, Password, PingEvent, ProxyTested, ScheduleInfo, ScheduleSpec,
+    NetProfileDetail, OnError, Password, PingEvent, PrintJob, PrintQueued, PrinterFound,
+    PrinterInfo, PrinterKind, PrinterList, PrinterSpec, ProxyTested, ScheduleInfo, ScheduleSpec,
     SpeedtestEvent, SshKeyInfo, SshKeyRevoked, Storage, StorageGrowEvent, TimeStatus, TokenCreated,
     TokenInfo, UpdatePhase, UpdateStatus, Verify, WifiNetwork, WifiSecurity, WifiStatus,
 };
@@ -71,6 +73,11 @@ pub struct State {
     /// Counts edits of a schedule form's calendar, so only the check of the
     /// last one is sent.
     calendar_edits: u64,
+    printers: Option<PrinterList>,
+    /// The jobs every printer still holds.
+    print_jobs: Vec<PrintJob>,
+    /// What the last discovery found, for Add.
+    found: Vec<PrinterFound>,
     tokens: Vec<TokenInfo>,
     ssh_keys: Vec<SshKeyInfo>,
     files_dir: String,
@@ -162,6 +169,10 @@ enum Action {
     /// A new schedule, or a change to the one with this id.
     ScheduleSave(Option<String>),
     ScheduleRemove(String),
+    PrinterCreate,
+    PrinterRemove(String),
+    /// A local file to print on the printer named.
+    PrinterPrint(String, PathBuf),
     WifiJoin,
     Hotspot,
     Grow,
@@ -250,6 +261,17 @@ pub enum Msg {
     ScheduleRemove,
     /// The calendar field has not changed for a moment since this edit.
     ScheduleCheckDue(u64),
+    // printer
+    PrinterNew,
+    PrinterDiscover,
+    PrinterAdd,
+    PrinterShow,
+    PrinterTest,
+    PrinterDefault,
+    PrinterPick,
+    PrinterPicked(Option<PathBuf>),
+    PrinterRemove,
+    PrintCancel,
     // access
     TokenNew,
     TokenRevoke,
@@ -505,6 +527,31 @@ fn schedule_form(existing: Option<&ScheduleInfo>) -> Form {
     .field(Field::check("Enabled", spec.enabled))
 }
 
+/// The Add printer dialog, filled from a printer discovery found when there
+/// is one.
+fn printer_form(found: Option<&PrinterFound>) -> Form {
+    let uri = found.map(|found| found.uri.clone()).unwrap_or_default();
+    let raw = found.is_some_and(|found| found.kind == PrinterKind::Raw);
+    Form::new("Add a printer", "Add", Action::PrinterCreate)
+        .intro(
+            "A driverless printer (IPP Everywhere, AirPrint) is asked what it takes now, so it has to answer. \
+             Raw sends documents as they are: a receipt printer's ESC/POS, a label printer's ZPL.",
+        )
+        .field(Field::text("Name", "", "lower-case letters, digits, - and _"))
+        .field(Field::text("URI", uri, "ipp://10.0.0.5/ipp/print, socket://10.0.0.9:9100").mono())
+        .field(Field::check("Raw", raw))
+        .field(Field::text("Paper", "", "the printer's own; or iso_a4_210x297mm"))
+}
+
+/// Shared facts as plain text, a line each, for a text dialog.
+fn fact_text(facts: &[Fact]) -> String {
+    facts
+        .iter()
+        .map(|fact| format!("{:<12} {}", fact.label, fact.value))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// The tz database's names, as the first device asked listed them. Kept
 /// for the life of the program, since a choice field holds `&'static str`s;
 /// it is one list, fetched once.
@@ -551,6 +598,7 @@ fn page_of(tag: &str) -> &'static str {
         "audio" => "audio",
         "time" => "time",
         "schedules" | "schedule" => "schedules",
+        "printers" | "printer" => "printer",
         "tokens" | "token" | "password" | "claim" | "unclaim" => "access",
         "ssh" => "ssh",
         "files" => "files",
@@ -767,6 +815,13 @@ impl Device {
             Page::Audio => self.call("audio", fetch::<api::audio::Show>()),
             Page::Time => self.call("time", fetch::<api::time::Show>()),
             Page::Schedules => self.call("schedules", fetch::<api::schedule::List>()),
+            Page::Printer => {
+                self.call("printers", fetch::<api::printer::List>());
+                self.call(
+                    "printer.jobs",
+                    call::<api::printer::Jobs>(PrintJobsQuery { printer: None }, ()),
+                );
+            }
             Page::Access => self.call("tokens", fetch::<api::access::Tokens>()),
             Page::Ssh => self.call("ssh.keys", fetch::<api::ssh::Keys>()),
             Page::Files => {
@@ -793,7 +848,7 @@ impl Device {
             *count = count.saturating_sub(1);
         }
         let result = match tag {
-            "schedule.save" | "schedule.check" | "policy.save" => {
+            "schedule.save" | "schedule.check" | "policy.save" | "printer.create" => {
                 match self.form_answer(tag, result) {
                     Some(result) => result,
                     None => return,
@@ -818,7 +873,8 @@ impl Device {
         }
     }
 
-    /// A schedule or browser policy form's answers belong in the form while
+    /// The answers of a form that stays open until the device takes it - a
+    /// schedule, a browser policy, a new printer - belong in the form while
     /// it is open: a refused save keeps it open with the device's reason, a
     /// check says when the calendar fires. What is left for the usual path,
     /// if anything.
@@ -832,6 +888,7 @@ impl Device {
                 if match form.action {
                     Action::ScheduleSave(_) => tag.starts_with("schedule."),
                     Action::PolicySave { .. } => tag == "policy.save",
+                    Action::PrinterCreate => tag == "printer.create",
                     _ => false,
                 } =>
             {
@@ -884,6 +941,33 @@ impl Device {
                     self.pages.selected.remove("schedules");
                 }
                 self.call("schedules", fetch::<api::schedule::List>());
+            }
+            "printers" => self.pages.printers = Some(parse(value)?),
+            "printer.jobs" => self.pages.print_jobs = parse(value)?,
+            "printer.create" => {
+                let info: PrinterInfo = parse(value)?;
+                self.log(Tone::Ok, format!("added printer {}", info.spec.name));
+                self.pages.selected.insert("printers", info.spec.name);
+                self.refresh_page(Page::Printer);
+            }
+            "printer.show" => {
+                let info: PrinterInfo = parse(value)?;
+                let title = format!("Printer {}", info.spec.name);
+                self.show_text(title, fact_text(&describe::printer::show(&info)));
+            }
+            "printer.test" | "printer.print" => {
+                let queued: PrintQueued = parse(value)?;
+                self.log_line(describe::printer::queued(&queued));
+                self.call(
+                    "printer.jobs",
+                    call::<api::printer::Jobs>(PrintJobsQuery { printer: None }, ()),
+                );
+            }
+            "printer.remove" => {
+                let done: Done = parse(value)?;
+                self.log(Tone::Ok, done.message);
+                self.pages.selected.remove("printers");
+                self.refresh_page(Page::Printer);
             }
             "net" => self.pages.net = Some(parse(value)?),
             "net.profiles" => self.pages.profiles = parse(value)?,
@@ -1074,6 +1158,7 @@ impl Device {
                     "net" => Page::Network,
                     "time" => Page::Time,
                     "browser" => Page::Browser,
+                    "printer" => Page::Printer,
                     _ => self.page,
                 };
                 self.refresh_page(page);
@@ -1111,6 +1196,17 @@ impl Device {
                 self.jobs[at].progress = Some((label, done, total));
             }
             jobs::Event::Line(line) => self.output(owner, line),
+            jobs::Event::Value(value) if owner == "printer" => {
+                match serde_json::from_value::<PrinterFound>(value.clone()) {
+                    Ok(found) => {
+                        for line in describe::printer::found(&found) {
+                            self.output(owner, line);
+                        }
+                        self.pages.found.push(found);
+                    }
+                    Err(_) => self.output(owner, Line::plain(value.to_string())),
+                }
+            }
             jobs::Event::Value(value) => {
                 if let Some(line) = stream_line(owner, &value) {
                     self.output(owner, line);
@@ -1471,6 +1567,91 @@ impl Device {
             Msg::ScheduleCheckDue(edit) => {
                 if edit == self.pages.calendar_edits {
                     self.check_calendar();
+                }
+            }
+            Msg::PrinterNew => self.form(printer_form(None)),
+            Msg::PrinterDiscover => {
+                self.pages.found.clear();
+                self.pages.selected.remove("found");
+                self.start_job("printer", "discover printers", jobs::Kind::Discover);
+            }
+            Msg::PrinterAdd => {
+                let found = self.selected("found").and_then(|uri| {
+                    self.pages.found.iter().find(|found| &found.uri == uri)
+                });
+                let form = printer_form(found);
+                self.form(form);
+            }
+            Msg::PrinterShow => {
+                if let Some(printer) = self.selected("printers").cloned() {
+                    self.call_long(
+                        "printer.show",
+                        call::<api::printer::Show>(PrinterRef { printer }, ()),
+                    );
+                }
+            }
+            Msg::PrinterTest => {
+                if let Some(printer) = self.selected("printers").cloned() {
+                    self.call_long(
+                        "printer.test",
+                        call::<api::printer::Test>(PrinterRef { printer }, ()),
+                    );
+                }
+            }
+            Msg::PrinterDefault => {
+                if let Some(printer) = self.selected("printers").cloned() {
+                    self.call(
+                        "printer.default",
+                        call::<api::printer::SetDefault>(PrinterRef { printer }, ()),
+                    );
+                }
+            }
+            Msg::PrinterPick => {
+                return Task::perform(
+                    rfd::AsyncFileDialog::new()
+                        .set_title("Document to print")
+                        .pick_file(),
+                    |picked| Message::P(Msg::PrinterPicked(picked.map(|handle| handle.path().to_path_buf()))),
+                );
+            }
+            Msg::PrinterPicked(Some(file)) => {
+                if let Some(printer) = self.selected("printers").cloned() {
+                    let name = file
+                        .file_name()
+                        .map(|name| name.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    self.form(
+                        Form::new(
+                            format!("Print {name} on {printer}"),
+                            "Print",
+                            Action::PrinterPrint(printer, file),
+                        )
+                        .intro("A PDF for a driverless printer, the printer's own bytes for a raw one.")
+                        .field(Field::text("Copies", "1", "1"))
+                        .field(Field::text("Paper", "", "the printer's own"))
+                        .field(Field::text("Title", name, "the file's name")),
+                    );
+                }
+            }
+            Msg::PrinterPicked(None) => {}
+            Msg::PrinterRemove => {
+                if let Some(printer) = self.selected("printers").cloned() {
+                    self.form(
+                        Form::new(
+                            format!("Remove printer {printer}"),
+                            "Remove",
+                            Action::PrinterRemove(printer),
+                        )
+                        .intro("Its jobs go with it. When it is the default, the next printer is."),
+                    );
+                }
+            }
+            Msg::PrintCancel => {
+                if let Some(job) = self.selected("print.jobs").cloned() {
+                    self.call(
+                        "printer.cancel",
+                        call::<api::printer::Cancel>(PrintJobRef { job }, ()),
+                    );
                 }
             }
             Msg::WifiScan => self.call(
@@ -1836,6 +2017,8 @@ impl Device {
             "modes" => self.page_update(Msg::UseMode),
             "schedules" => self.page_update(Msg::ScheduleEdit),
             "policies" => self.page_update(Msg::PolicyEdit),
+            "printers" => self.page_update(Msg::PrinterShow),
+            "found" => self.page_update(Msg::PrinterAdd),
             _ => Task::none(),
         }
     }
@@ -1889,6 +2072,14 @@ impl Device {
                     .schedules
                     .iter()
                     .map(|info| info.id.clone())
+                    .collect(),
+            ),
+            Page::Printer => (
+                "printers",
+                self.pages
+                    .printers
+                    .iter()
+                    .flat_map(|list| list.printers.iter().map(|info| info.spec.name.clone()))
                     .collect(),
             ),
             Page::Access => (
@@ -2070,7 +2261,7 @@ impl Device {
             Ok(())
                 if matches!(
                     form.action,
-                    Action::ScheduleSave(_) | Action::PolicySave { .. }
+                    Action::ScheduleSave(_) | Action::PolicySave { .. } | Action::PrinterCreate
                 ) =>
             {
                 self.dialog = Some(Dialog::Form(form));
@@ -2391,6 +2582,75 @@ impl Device {
                     (),
                 ),
             ),
+            Action::PrinterCreate => {
+                let name = form.value("Name").trim().to_string();
+                let uri = form.value("URI").trim().to_string();
+                if name.is_empty() || uri.is_empty() {
+                    return Err("a name and a URI, please".to_string());
+                }
+                let media =
+                    Some(form.value("Paper").trim().to_string()).filter(|media| !media.is_empty());
+                let kind = if form.checked("Raw") {
+                    PrinterKind::Raw
+                } else {
+                    PrinterKind::Ipp
+                };
+                // A driverless printer is asked what it takes: it may take a
+                // while to answer.
+                self.call_long(
+                    "printer.create",
+                    send::<api::printer::Create>(PrinterSpec {
+                        name,
+                        uri,
+                        kind,
+                        media,
+                    }),
+                );
+            }
+            Action::PrinterRemove(printer) => self.call(
+                "printer.remove",
+                call::<api::printer::Remove>(
+                    PrinterRef {
+                        printer: printer.clone(),
+                    },
+                    (),
+                ),
+            ),
+            Action::PrinterPrint(printer, file) => {
+                let copies = match form.value("Copies").trim() {
+                    "" => None,
+                    copies => Some(
+                        copies
+                            .parse::<u32>()
+                            .ok()
+                            .filter(|copies| (1..=protocol::PRINT_COPIES_MAX).contains(copies))
+                            .ok_or_else(|| {
+                                format!("copies from 1 to {}", protocol::PRINT_COPIES_MAX)
+                            })?,
+                    ),
+                };
+                let text = |label: &str| {
+                    Some(form.value(label).trim().to_string()).filter(|value| !value.is_empty())
+                };
+                let options = tessaro_client::printer::Options {
+                    copies,
+                    media: text("Paper"),
+                    title: text("Title"),
+                };
+                let (printer, file) = (printer.clone(), file.clone());
+                self.call_long(
+                    "printer.print",
+                    Box::new(move |session| {
+                        match tessaro_client::printer::print_file(session, &printer, &file, options)
+                            .and_then(|queued| {
+                                serde_json::to_value(queued).map_err(|err| err.to_string())
+                            }) {
+                            Ok(value) => Answer::Ok(value),
+                            Err(error) => Answer::Refused(error),
+                        }
+                    }),
+                );
+            }
             Action::Mkdir => {
                 let name = form.value("Name").trim();
                 if name.is_empty() {
@@ -2548,6 +2808,7 @@ impl Device {
             Page::Audio => self.audio_view(),
             Page::Time => self.time_view(),
             Page::Schedules => self.schedules_view(),
+            Page::Printer => self.printer_view(),
             Page::Access => self.access_view(),
             Page::Ssh => self.ssh_view(),
             Page::Files => self.files_view(),
@@ -3258,6 +3519,143 @@ impl Device {
         )
     }
 
+    fn printer_view(&self) -> Element<'_, Message> {
+        const PRINTERS: &[Col] = &[
+            col("Printer", Length::Fixed(150.0)),
+            col("Kind", Length::Fixed(50.0)),
+            col("State", Length::Fixed(90.0)),
+            col("Queued", Length::Fixed(60.0)),
+            col("Default", Length::Fixed(60.0)),
+            col("URI", Length::Fill),
+        ];
+        const FOUND: &[Col] = &[
+            col("Found", Length::Fixed(220.0)),
+            col("Kind", Length::Fixed(50.0)),
+            col("URI", Length::Fill),
+            col("Added as", Length::Fixed(120.0)),
+        ];
+        const JOBS: &[Col] = &[
+            col("Job", Length::Fixed(160.0)),
+            col("Size", Length::Fixed(90.0)),
+            col("Sent", Length::Fill),
+        ];
+        let list = self.pages.printers.as_ref();
+        let printers = list
+            .iter()
+            .flat_map(|list| list.printers.iter())
+            .map(|info| {
+                let tone = describe::printer::state_tone(&info.state);
+                let state = match &info.message {
+                    Some(message) => format!("{}: {message}", info.state),
+                    None => info.state.clone(),
+                };
+                (
+                    info.spec.name.clone(),
+                    vec![
+                        cell(info.spec.name.clone()).into(),
+                        cell(info.spec.kind.name()).into(),
+                        cell(state).style(theme::toned(tone)).into(),
+                        cell(info.queued.to_string()).into(),
+                        cell(if info.default { "yes" } else { "" }).into(),
+                        cell(info.spec.uri.clone()).style(theme::muted).into(),
+                    ],
+                )
+            })
+            .collect();
+        let found = self
+            .pages
+            .found
+            .iter()
+            .map(|found| {
+                (
+                    found.uri.clone(),
+                    vec![
+                        cell(found.description.clone()).into(),
+                        cell(found.kind.name()).into(),
+                        cell(found.uri.clone()).style(theme::muted).into(),
+                        cell(found.known.clone().unwrap_or_default()).into(),
+                    ],
+                )
+            })
+            .collect();
+        let jobs = self
+            .pages
+            .print_jobs
+            .iter()
+            .map(|job| {
+                (
+                    job.job.clone(),
+                    vec![
+                        cell(job.job.clone()).into(),
+                        cell(size_label(job.size)).into(),
+                        cell(job.submitted.clone()).style(theme::muted).into(),
+                    ],
+                )
+            })
+            .collect();
+
+        let chosen = self.selected("printers").is_some();
+        let with_one = |message: Msg| chosen.then_some(()).and_then(|()| self.when(message));
+        let discovering = self
+            .jobs
+            .iter()
+            .any(|job| job.owner == "printer" && job.running);
+        let mut body: Vec<Element<'_, Message>> = Vec::new();
+        if let Some(list) = list {
+            body.push(theme::text_line(
+                &describe::printer::enabled(list),
+                theme::FONT,
+            ));
+        }
+        body.push(self.table("printers", PRINTERS, printers, Length::Fill));
+        if !self.pages.found.is_empty() {
+            body.push(
+                row![
+                    self.table("found", FOUND, found, Length::Fixed(TABLE_HEIGHT)),
+                    theme::tool(
+                        "Add ...",
+                        self.selected("found")
+                            .and_then(|_| self.when(Msg::PrinterAdd))
+                    ),
+                ]
+                .spacing(6)
+                .into(),
+            );
+        }
+        body.push(
+            row![
+                self.table("print.jobs", JOBS, jobs, Length::Fixed(TABLE_HEIGHT)),
+                theme::tool(
+                    "Cancel job",
+                    self.selected("print.jobs")
+                        .and_then(|_| self.when(Msg::PrintCancel))
+                ),
+            ]
+            .spacing(6)
+            .into(),
+        );
+        self.page(
+            "printer",
+            vec![
+                action("Add printer ...", self.when(Msg::PrinterNew)),
+                action(
+                    "Discover",
+                    (!discovering)
+                        .then_some(())
+                        .and_then(|()| self.when(Msg::PrinterDiscover)),
+                ),
+            ],
+            vec![
+                action("Show", with_one(Msg::PrinterShow)),
+                action("Test page", with_one(Msg::PrinterTest)),
+                action("Make default", with_one(Msg::PrinterDefault)),
+                action("Print a file ...", with_one(Msg::PrinterPick)),
+                action("Remove ...", with_one(Msg::PrinterRemove)),
+            ],
+            body,
+        )
+    }
+
     fn wifi_view(&self) -> Element<'_, Message> {
         let mut facts = Vec::new();
         if let Some(wifi) = &self.pages.wifi {
@@ -3849,6 +4247,7 @@ pub(super) fn page_key(page: Page) -> &'static str {
         Page::Audio => "audio",
         Page::Time => "time",
         Page::Schedules => "schedules",
+        Page::Printer => "printer",
         Page::Access => "access",
         Page::Ssh => "ssh",
         Page::Files => "files",

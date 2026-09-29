@@ -69,6 +69,11 @@ impl Jobs {
                 }
                 // naked: drain bounds the whole run with the plan's total
                 Stream::Ping { steps, total } => drain(&jobs, &job, steps, "the ping", total).await,
+                Stream::Printers(steps) => {
+                    let total = crate::printer::DISCOVER + std::time::Duration::from_secs(5);
+                    // naked: drain bounds the whole run with printer::DISCOVER
+                    drain(&jobs, &job, steps, "looking for printers", total).await
+                }
             };
             jobs.end(&job, outcome.err());
         });

@@ -1,0 +1,149 @@
+{
+  "function": "printer::show",
+  "input": {
+    "default": true,
+    "kind": "ipp",
+    "markers": [
+      {
+        "level": 40,
+        "name": "Black Toner"
+      },
+      {
+        "level": 5,
+        "name": "Drum"
+      },
+      {
+        "level": null,
+        "name": "Waste"
+      }
+    ],
+    "message": "The printer is not responding.",
+    "model": "Brother HL-L2350DW series",
+    "name": "office",
+    "queued": 1,
+    "state": "stopped",
+    "uri": "ipp://10.0.0.5/ipp/print"
+  },
+  "output": [
+    {
+      "label": "name",
+      "value": [
+        [
+          "heading",
+          "office",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "state",
+      "value": [
+        [
+          "bad",
+          "stopped",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "says",
+      "value": [
+        [
+          "bad",
+          "The printer is not responding.",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "uri",
+      "value": [
+        [
+          "plain",
+          "ipp://10.0.0.5/ipp/print",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "kind",
+      "value": [
+        [
+          "plain",
+          "ipp (driverless)",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "model",
+      "value": [
+        [
+          "plain",
+          "Brother HL-L2350DW series",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "paper",
+      "value": [
+        [
+          "muted",
+          "the printer's own",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "default",
+      "value": [
+        [
+          "ok",
+          "yes",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "queued",
+      "value": [
+        [
+          "plain",
+          "1",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "Black Toner",
+      "value": [
+        [
+          "ok",
+          "40%",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "Drum",
+      "value": [
+        [
+          "warn",
+          "5%",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "Waste",
+      "value": [
+        [
+          "muted",
+          "unknown",
+          0
+        ]
+      ]
+    }
+  ]
+}

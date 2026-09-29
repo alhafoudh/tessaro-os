@@ -115,6 +115,12 @@ are on WiFi, not Network), and only where the scope has settings.
   `webconfig/src/api/jobs.ts`); leaving the page cancels one still running.
   File transfers and image updates go in `UPDATE_CHUNK` pieces and resume
   from what the device says it has (`webconfig/src/flows/`).
+* **The Printer page prints a file as one request**, its bytes the body
+  (`printDocument` in `webconfig/src/flows/raw.ts`), so at most
+  `PRINT_DATA_MAX`; a larger document goes into the store on Files and is
+  printed by its path (`tessaro-ctl printer print NAME --stored PATH`).
+  Discover is a job whose finds fill a table of their own, each added with
+  the URI it was found by ([printing.md](printing.md)).
 
 **The words are the Rust's.** A result the clients describe in words - a
 status, what a change did, a job's steps - is a port of `agent/client`'s

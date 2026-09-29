@@ -218,7 +218,7 @@ does not set can be added as a named document, merged over the image's own:
 {
   "URLBlocklist": ["*"],
   "URLAllowlist": ["https://menu.example.com"],
-  "PrintingEnabled": false,
+  "SpellcheckEnabled": false,
 }
 ```
 
@@ -359,6 +359,24 @@ device's timezone, and shell command lines run as root, in order. A failed
 line stops the run unless `--on-error continue`; `--timeout` bounds a whole
 run. Times missed while the device was off are skipped, and a run that is
 still going when the next one fires does not hold it up.
+
+### Printing
+
+```sh
+tessaro-ctl printer discover                           # printers on USB and the network, with their URIs
+tessaro-ctl printer create office --uri ipp://10.0.0.5/ipp/print
+tessaro-ctl printer create receipt --raw --uri socket://10.0.0.9:9100
+tessaro-ctl printer test office && tessaro-ctl printer list
+tessaro-ctl config set printer.enable=1                # the page may print now
+```
+
+A network printer from the last decade needs no driver (IPP Everywhere or
+AirPrint); a receipt or label printer is `--raw` and gets the page's bytes as
+they are. The first printer is the default, the one `window.print()` prints
+on without a dialog once `printer.enable` is on; `printer default` picks
+another. A page in `browser.bridge.mode=actions` can also print to any
+printer by name with `tessaro.printer.print()`. Printers that need a vendor
+driver do not work; see [docs/printing.md](docs/printing.md).
 
 ### Updating
 

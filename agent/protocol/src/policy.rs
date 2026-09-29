@@ -37,6 +37,10 @@ pub const PROXY_POLICIES: &[&str] = &["ProxyMode", "ProxyServer", "ProxyBypassLi
 /// The extra certificate authorities, as base64 DER.
 pub const CA_POLICY: &str = "CACertificates";
 
+/// printer.enable: whether the page prints, and that print preview starts on
+/// the CUPS default printer, which is where `--kiosk-printing` prints.
+pub const PRINT_POLICIES: &[&str] = &["PrintingEnabled", "PrintPreviewUseSystemDefaultPrinter"];
+
 /// What "new policy" starts from in every client.
 pub const TEMPLATE: &str = include_str!("policy-template.jsonc");
 
@@ -49,6 +53,8 @@ pub fn managed(key: &str) -> Option<&'static str> {
         Some("tessaro-ctl network proxy set URL")
     } else if key == CA_POLICY {
         Some("tessaro-ctl network certs add FILE")
+    } else if PRINT_POLICIES.contains(&key) {
+        Some("tessaro-ctl config set printer.enable=1")
     } else {
         None
     }

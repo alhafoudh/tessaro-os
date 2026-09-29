@@ -1,0 +1,91 @@
+{
+  "function": "printer::jobs",
+  "input": [
+    {
+      "job": "front-12",
+      "printer": "front",
+      "size": 1024,
+      "submitted": "Mon 29 Sep 2026 10:00:00 AM CEST"
+    },
+    {
+      "job": "office-3",
+      "printer": "office",
+      "size": 250000,
+      "submitted": "Mon 29 Sep 2026 10:01:00 AM CEST"
+    }
+  ],
+  "output": [
+    [
+      [
+        "heading",
+        "front-12",
+        20
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "plain",
+        "1.0 kB",
+        10
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "Mon 29 Sep 2026 10:00:00 AM CEST",
+        0
+      ]
+    ],
+    [
+      [
+        "heading",
+        "office-3",
+        20
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "plain",
+        "250.0 kB",
+        10
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "Mon 29 Sep 2026 10:01:00 AM CEST",
+        0
+      ]
+    ],
+    [],
+    [
+      [
+        "muted",
+        "cancel one with",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "cmd",
+        "tessaro-ctl printer cancel JOB",
+        0
+      ]
+    ]
+  ]
+}

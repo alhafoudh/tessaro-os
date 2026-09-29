@@ -78,6 +78,7 @@ answers everything:
 | `device.status()` | config | `device status`, without the node's name, fingerprint and claim: the hardware and its serial, memory and `cpuPercent` included |
 | `network.status()` | config | `network show`, without the public address |
 | `audio.status()` | config | `audio show` |
+| `printer.list()` | config | `printer list`, without each printer's URI |
 | `network.publicIp()` | actions | `config get network.public_ip`: asked now |
 | `network.online()` | actions | the same lookup, resolved as `true` or `false` |
 | `browser.reload()` | actions | `browser reload` |
@@ -92,6 +93,7 @@ answers everything:
 | `network.ping(host)` | actions | `network ping`: every event, in order |
 | `network.speedTest()` | actions | `network speedtest`: every event, in order |
 | `files.list(path)` | actions | `files list` |
+| `printer.print({ data, path, printer, copies, media, title })` | actions | `printer print`: `data` a string, `Blob`, `ArrayBuffer` or bytes; `path` a file in the store; no `printer` is the default one |
 | `data.set(name, value)`, `data.unset(name)` | actions | `config set data.NAME=...` / `unset` |
 
 Nothing under `access`, `ssh`, `update` or `device factory-reset`, and no
@@ -100,7 +102,9 @@ includes Webconfig's browser sessions and tickets (`access/session`,
 `access/ticket`): they are credentials, and the kiosk page is not a
 manager of the device. Nor are the browser policies (`browser policies`),
 read or written: they are what the page may do, and a page must not read
-or loosen its own restrictions.
+or loosen its own restrictions. The same goes for the printers: a page
+prints on the ones the operator set up, and `printer create`, `remove` and
+`default` are not reachable from it.
 
 * **`data.set` restarts nothing when no template uses the key.** A `data.*` is
   read by the templates and by this bridge only, so a value no template names
@@ -113,6 +117,15 @@ or loosen its own restrictions.
   page that calls one on load would otherwise loop.
 * **`network.speedTest()` runs at most once in 10 minutes**: it moves real
   data over a link that may be metered.
+* **`printer.print()` needs `printer.enable`, and prints at most
+  `PRINT_BURST` documents per `PRINT_WINDOW`** (`control/bridge.rs`): the
+  switch that lets `window.print()` print is the one that lets the page print
+  at all, and a page that prints in a loop empties the paper tray, not the
+  device. The preamble sends `data` as base64; the whole document goes in the
+  one call, at most `PRINT_DATA_MAX` (see **Sizes** in
+  [printing.md](printing.md)).
+* **`printer.list()` leaves out where each printer is**: a URI can carry a
+  print server's user and password, and the page needs only the names.
 * **`network.publicIp()` is shared and cached for 30s.** Calls at the same time
   wait for one request. A failure rejects with `lastKnown`, the last address
   found this boot, if any. A success also updates what

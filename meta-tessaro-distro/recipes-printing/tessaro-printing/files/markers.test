@@ -1,0 +1,18 @@
+# What `tessaro-ctl printer show` reports of a driverless printer's supplies
+# and model, asked of the printer itself: `ipptool -t PRINTER-URI
+# markers.test`. printer::parse_markers in the agent reads the DISPLAY lines
+# `ipptool -t` prints.
+{
+  NAME "Get supplies"
+  OPERATION Get-Printer-Attributes
+  GROUP operation-attributes-tag
+  ATTR charset attributes-charset utf-8
+  ATTR naturalLanguage attributes-natural-language en
+  ATTR uri printer-uri $uri
+  ATTR keyword requested-attributes marker-names,marker-levels,printer-make-and-model
+
+  STATUS successful-ok
+  DISPLAY marker-names
+  DISPLAY marker-levels
+  DISPLAY printer-make-and-model
+}

@@ -43,7 +43,7 @@ mod tests {
     fn a_file_is_read_as_typed_once_it_passes() {
         let dir = tempfile::tempdir().unwrap();
         let good = dir.path().join("lockdown.json");
-        fs::write(&good, "// mine\n{\"PrintingEnabled\": false,}\n").unwrap();
+        fs::write(&good, "// mine\n{\"SpellcheckEnabled\": false,}\n").unwrap();
         assert!(read_file(&good).unwrap().starts_with("// mine"));
 
         let bad = dir.path().join("bad.json");

@@ -375,6 +375,9 @@ impl Control {
         if let Err(err) = self.clear_schedules().await {
             return Reply::err(err);
         }
+        if let Err(err) = self.clear_printers().await {
+            return Reply::err(err);
+        }
 
         if let Err(err) = self.render(&BTreeMap::new()).await {
             return Reply::err(format!("reset, but rendering failed: {err}"));
@@ -385,7 +388,7 @@ impl Control {
 
         self.log.info(format!(
             "factory reset by {}: settings, tokens, ssh keys, passwords, the network, \
-             certificate authorities, browser policies, schedules and stored files cleared",
+             certificate authorities, browser policies, schedules, printers and stored files cleared",
             caller.describe()
         ));
         // Weston takes the browser and the agent with it (PartOf=), so every

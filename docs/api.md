@@ -112,6 +112,9 @@ header is not a browser's and passes.
 * **Uploads are raw bodies**, one piece of at most `UPDATE_CHUNK` per
   request, each acknowledged with how much the device has, so a dropped
   link resumes (`files/upload`, `update/image`; `transfer.rs` in the client).
+  `printers/{printer}/print` takes its document as a raw body too, whole, at
+  most `PRINT_DATA_MAX`; a larger one goes into the store first and is
+  printed by `path` with no body.
 * **Work that takes the agent or the network down with it waits for the
   answer**: a restart, a reboot, a network re-render run as soon as hyper
   has taken the whole response (`After`, the `Body` in `api/mod.rs` that

@@ -1,0 +1,182 @@
+{
+  "function": "printer::list",
+  "input": {
+    "enabled": false,
+    "printers": [
+      {
+        "default": true,
+        "kind": "raw",
+        "name": "front",
+        "queued": 2,
+        "state": "idle",
+        "uri": "socket://10.0.0.9:9100"
+      },
+      {
+        "default": false,
+        "kind": "ipp",
+        "media": "iso_a4_210x297mm",
+        "message": "setting up office: Unable to connect to printer",
+        "name": "office",
+        "state": "missing",
+        "uri": "ipp://10.0.0.5/ipp/print"
+      }
+    ]
+  },
+  "output": [
+    [
+      [
+        "ok",
+        "*",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "heading",
+        "front",
+        16
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "label",
+        "raw",
+        4
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "ok",
+        "idle",
+        0
+      ],
+      [
+        "plain",
+        "  ",
+        0
+      ],
+      [
+        "plain",
+        "2 queued",
+        0
+      ]
+    ],
+    [
+      [
+        "plain",
+        "    ",
+        0
+      ],
+      [
+        "muted",
+        "socket://10.0.0.9:9100",
+        0
+      ]
+    ],
+    [
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "heading",
+        "office",
+        16
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "label",
+        "ipp",
+        4
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "warn",
+        "missing",
+        0
+      ]
+    ],
+    [
+      [
+        "plain",
+        "    ",
+        0
+      ],
+      [
+        "muted",
+        "ipp://10.0.0.5/ipp/print",
+        0
+      ]
+    ],
+    [
+      [
+        "plain",
+        "    ",
+        0
+      ],
+      [
+        "warn",
+        "setting up office: Unable to connect to printer",
+        0
+      ]
+    ],
+    [],
+    [
+      [
+        "warn",
+        "the page does not print;",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "cmd",
+        "tessaro-ctl config set printer.enable=1",
+        0
+      ]
+    ],
+    [
+      [
+        "muted",
+        "* window.print() prints here; another with",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "cmd",
+        "tessaro-ctl printer default NAME",
+        0
+      ]
+    ]
+  ]
+}

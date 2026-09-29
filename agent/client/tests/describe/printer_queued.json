@@ -1,0 +1,15 @@
+{
+  "function": "printer::queued",
+  "input": {
+    "job": "office-4",
+    "message": "sent to office as job office-4",
+    "printer": "office"
+  },
+  "output": [
+    [
+      "ok",
+      "sent to office as job office-4",
+      0
+    ]
+  ]
+}

@@ -15,6 +15,7 @@ import { Log } from "./Log";
 import { Network } from "./Network";
 import { Overview } from "./Overview";
 import { Policies } from "./Policies";
+import { Printer } from "./Printer";
 import { QuickSetup } from "./QuickSetup";
 import { Schedules } from "./Schedules";
 import { Screen } from "./Screen";
@@ -44,6 +45,7 @@ export const PAGES: PageInfo[] = [
   { path: "audio", title: "Audio", scope: { prefix: "audio" }, component: Audio },
   { path: "time", title: "Time", scope: { prefix: "time" }, component: Time },
   { path: "schedules", title: "Schedules", component: Schedules },
+  { path: "printer", title: "Printer", scope: { prefix: "printer" }, component: Printer },
   { path: "access", title: "Access", scope: { prefix: "access" }, component: Access },
   { path: "ssh", title: "SSH", component: Ssh },
   { path: "files", title: "Files", component: Files },
