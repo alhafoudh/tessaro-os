@@ -297,7 +297,9 @@ pub enum Message {
     JournalUnitApply,
     JournalFilter(String),
     ToggleVnc,
-    ToggleCamera,
+    /// Show this camera in the camera panel.
+    OpenCamera(String),
+    CloseCamera,
     VncReconnect,
     /// Something on one of the pages.
     P(pages::Msg),
@@ -466,9 +468,10 @@ pub struct Device {
     live_shots: bool,
     frame: Option<Frame>,
     frame_error: Option<String>,
-    /// The camera panel on the right of the window, beside any page, as the
-    /// VNC panel is.
-    camera_open: bool,
+    /// The camera the camera panel on the right of the window shows, beside
+    /// any page as the VNC panel is: the one double-clicked on the Camera
+    /// page, until the panel is closed.
+    camera_open: Option<String>,
     /// The Live toggle of the camera panel; snapshots are only taken while
     /// the panel is open.
     live_frames: bool,
@@ -532,7 +535,7 @@ impl Device {
             live_shots: false,
             frame: None,
             frame_error: None,
-            camera_open: false,
+            camera_open: None,
             live_frames: false,
             live_camera: None,
             journal: Journal {
@@ -732,8 +735,8 @@ impl Device {
     /// Tell the worker which camera to take live snapshots of, if that
     /// changed: the panel's while it is open with Live on, else none.
     fn sync_camera_live(&mut self) {
-        let wanted = if self.camera_open && self.live_frames {
-            self.preview_camera()
+        let wanted = if self.live_frames {
+            self.camera_open.clone()
         } else {
             None
         };
@@ -1028,7 +1031,7 @@ impl Device {
             }
             Message::SaveShot => self.save_shot(),
             Message::TakeFrame => {
-                if let Some(device) = self.preview_camera() {
+                if let Some(device) = self.camera_open.clone() {
                     self.request(Request::CameraSnapshot(device));
                 }
             }
@@ -1057,13 +1060,22 @@ impl Device {
                 self.journal.state = None;
             }
             Message::JournalFilter(filter) => self.journal.filter = filter,
-            Message::ToggleCamera => {
-                self.camera_open = !self.camera_open;
-                if self.camera_open {
-                    // The panel is beside any page: the camera list is the
-                    // Camera page's, fetched here when it was never shown.
-                    self.refresh_page(Page::Camera);
+            Message::OpenCamera(device) => {
+                if self.camera_open.as_ref() != Some(&device) {
+                    // A snapshot of the camera shown before stays out of it.
+                    self.frame = None;
+                    self.frame_error = None;
+                    self.camera_open = Some(device.clone());
+                    if self.link == Link::Online {
+                        self.request(Request::CameraSnapshot(device));
+                    }
                 }
+                self.sync_camera_live();
+            }
+            Message::CloseCamera => {
+                self.camera_open = None;
+                self.frame = None;
+                self.frame_error = None;
                 self.sync_camera_live();
             }
             Message::ToggleVnc => {
@@ -1294,10 +1306,11 @@ impl Device {
                 if self.vnc.open {
                     panels = panels.push(container(self.vnc_view()).height(Length::Fill));
                 }
-                if self.camera_open {
-                    panels = panels.push(container(self.camera_panel_view()).height(Length::Fill));
+                if let Some(device) = &self.camera_open {
+                    panels =
+                        panels.push(container(self.camera_panel_view(device)).height(Length::Fill));
                 }
-                if self.vnc.open || self.camera_open {
+                if self.vnc.open || self.camera_open.is_some() {
                     body = body.push(container(panels).padding(6).width(Length::FillPortion(2)));
                 }
                 body.into()
@@ -1347,7 +1360,6 @@ impl Device {
             theme::tool("Reboot", when(Message::Ask(Restart::Reboot))),
             rule::vertical(1),
             theme::toggle("VNC", self.vnc.open, Message::ToggleVnc),
-            theme::toggle("Camera", self.camera_open, Message::ToggleCamera),
             theme::toggle("Messages", self.log_open, Message::ToggleLog),
         ]
         .spacing(6)
@@ -1451,21 +1463,28 @@ impl Device {
         .into()
     }
 
-    /// The camera panel: a snapshot of `preview_camera`, as `screenshot_view`
-    /// shows the screen, with Take, Live every `worker::LIVE_FRAME`, and Save.
-    fn camera_panel_view(&self) -> Element<'_, Message> {
+    /// The camera panel: a snapshot of `device`, as `screenshot_view` shows
+    /// the screen, with Take, Live every `worker::LIVE_FRAME`, Save and
+    /// Close.
+    fn camera_panel_view<'a>(&'a self, device: &'a str) -> Element<'a, Message> {
         let online = self.link == Link::Online;
-        let device = self.preview_camera();
-        // A snapshot of another camera than the one picked is not shown.
-        let frame = self
-            .frame
-            .as_ref()
-            .filter(|frame| Some(&frame.device) == device.as_ref());
+        // A snapshot of another camera than the one shown is not shown.
+        let frame = self.frame.as_ref().filter(|frame| frame.device == device);
+        let header = row![
+            text(self.camera_name(device).unwrap_or("Camera"))
+                .size(theme::SMALL)
+                .font(bold()),
+            text(format!("/dev/{device}"))
+                .size(theme::SMALL)
+                .style(theme::muted),
+            space::horizontal(),
+            theme::tool("Close", Some(Message::CloseCamera)),
+        ]
+        .spacing(6)
+        .height(24)
+        .align_y(iced::alignment::Vertical::Center);
         let mut toolbar = row![
-            theme::tool(
-                "Take",
-                (online && device.is_some()).then_some(Message::TakeFrame)
-            ),
+            theme::tool("Take", online.then_some(Message::TakeFrame)),
             theme::toggle(
                 if self.live_frames {
                     "Live (1s): on"
@@ -1500,15 +1519,13 @@ impl Device {
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .into(),
-            None => text(match &device {
-                Some(device) => format!("no snapshot of {device} yet"),
-                None => "no camera".to_string(),
-            })
-            .size(theme::SMALL)
-            .style(theme::muted)
-            .into(),
+            None => text(format!("no snapshot of {device} yet"))
+                .size(theme::SMALL)
+                .style(theme::muted)
+                .into(),
         };
         column![
+            header,
             toolbar,
             container(picture)
                 .width(Length::Fill)

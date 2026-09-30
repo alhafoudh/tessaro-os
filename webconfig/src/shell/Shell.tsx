@@ -1,7 +1,7 @@
 // Webconfig's window, laid out as a GUI device window (device.rs): the
 // title bar with the device tools, the menu on the left (a drawer on a
 // phone, which holds the tools there too), the page with the live Screen panel beside it where the GUI has
-// its VNC panel, the Messages pane and the status bar.
+// its VNC panel and the camera panel under it, the Messages pane and the status bar.
 
 import { useEffect, useState, type ReactNode } from "react";
 import { NavLink, useLocation } from "react-router";
@@ -14,6 +14,7 @@ import { useSession } from "../session/SessionContext";
 import { ownSections } from "../settings/scope";
 import { Button, LineView } from "../ui/controls";
 import { Confirm } from "../ui/dialogs";
+import { CameraPanel, CameraPanelContext } from "./CameraPanel";
 import { ScreenPanel, useScreenPanel } from "./ScreenPanel";
 import { StatusBar } from "./StatusBar";
 
@@ -51,6 +52,9 @@ export function Shell({ children }: { children: ReactNode }) {
   // the title bar.
   const [showMessages, setShowMessages] = useState(() => window.matchMedia("(min-width: 768px)").matches);
   const [showScreen, setShowScreen] = useScreenPanel();
+  // The camera the camera panel shows, the one last double-clicked on the
+  // Camera page; closed on a reload.
+  const [camera, setCamera] = useState<string | null>(null);
   const [asking, setAsking] = useState<Restart | null>(null);
   const location = useLocation();
   const name = status?.node.name ?? "the device";
@@ -170,10 +174,18 @@ export function Shell({ children }: { children: ReactNode }) {
           </div>
         </nav>
         {menu && <div className="absolute inset-0 z-30 bg-black/45 md:hidden" onClick={() => setMenu(false)} />}
-        {/* The screen beside the page, as the GUI's VNC panel; under it on a phone. */}
+        {/* The screen and the camera beside the page, as the GUI's VNC and
+            camera panels, one above the other; under the page on a phone. */}
         <div className="flex min-w-0 flex-1 flex-col md:flex-row">
-          <main className="min-h-0 min-w-0 flex-1 overflow-auto p-2">{children}</main>
-          {showScreen && <ScreenPanel onClose={() => setShowScreen(false)} />}
+          <main className="min-h-0 min-w-0 flex-1 overflow-auto p-2">
+            <CameraPanelContext.Provider value={setCamera}>{children}</CameraPanelContext.Provider>
+          </main>
+          {(showScreen || camera) && (
+            <div className="flex max-h-[45vh] min-h-0 flex-col divide-y divide-border border-t border-border bg-panel md:max-h-none md:w-[40%] md:max-w-[900px] md:min-w-[280px] md:border-t-0 md:border-l">
+              {showScreen && <ScreenPanel onClose={() => setShowScreen(false)} />}
+              {camera && <CameraPanel key={camera} device={camera} onClose={() => setCamera(null)} />}
+            </div>
+          )}
         </div>
       </div>
       {showMessages && (

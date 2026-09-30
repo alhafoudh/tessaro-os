@@ -813,16 +813,13 @@ impl Device {
         self.pages.selected.get(table)
     }
 
-    /// The camera the camera panel shows: the one picked in the Camera
-    /// page's table, else the first.
-    pub(super) fn preview_camera(&self) -> Option<String> {
+    /// The name of the camera on node `device`, for the camera panel.
+    pub(super) fn camera_name(&self, device: &str) -> Option<&str> {
         let list = self.pages.cameras.as_ref()?;
-        let picked = self.selected("cameras");
         list.cameras
             .iter()
-            .find(|camera| Some(&camera.device) == picked)
-            .or(list.cameras.first())
-            .map(|camera| camera.device.clone())
+            .find(|camera| camera.device == device)
+            .map(|camera| camera.name.as_str())
     }
 
     fn form(&mut self, form: Form) {
@@ -1194,10 +1191,7 @@ impl Device {
                     self.log_line(line);
                 }
             }
-            "camera" => {
-                self.pages.cameras = Some(parse(value)?);
-                self.sync_camera_live();
-            }
+            "camera" => self.pages.cameras = Some(parse(value)?),
             "time" => self.pages.time = Some(parse(value)?),
             "time.zones" => {
                 let zones = zones(parse(value)?);
@@ -1376,10 +1370,6 @@ impl Device {
         match message {
             Msg::Select(table, key) => {
                 self.pages.selected.insert(table, key);
-                if table == "cameras" {
-                    // The live preview follows the camera picked.
-                    self.sync_camera_live();
-                }
             }
             Msg::Activate(table, key) => {
                 self.pages.selected.insert(table, key.clone());
@@ -2226,6 +2216,7 @@ impl Device {
             "outputs" => self.page_update(Msg::UseAudio(keys::AUDIO_OUTPUT)),
             "inputs" => self.page_update(Msg::UseAudio(keys::AUDIO_INPUT)),
             "modes" => self.page_update(Msg::UseMode),
+            "cameras" => self.update(Message::OpenCamera(key)),
             "camera.modes" => self.page_update(Msg::CameraSize),
             "scripts" => self.page_update(Msg::ScriptEdit),
             "schedules" => self.page_update(Msg::ScheduleEdit),

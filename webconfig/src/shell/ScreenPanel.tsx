@@ -42,10 +42,7 @@ export function ScreenPanel({ onClose }: { onClose: () => void }) {
   const name = status?.node.name ?? "screen";
 
   return (
-    <aside
-      aria-label="Screen"
-      className="flex max-h-[45vh] min-h-0 flex-col gap-1 border-t border-border bg-panel p-1.5 md:max-h-none md:w-[40%] md:max-w-[900px] md:min-w-[280px] md:border-t-0 md:border-l"
-    >
+    <aside aria-label="Screen" className="flex min-h-0 flex-1 flex-col gap-1 p-1.5">
       <div className="flex flex-wrap items-center gap-1.5">
         <span className="text-sm font-bold">Screen</span>
         <Button kind={paused ? "tool" : "primary"} aria-pressed={!paused} onClick={() => setPaused((now) => !now)}>

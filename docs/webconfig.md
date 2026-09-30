@@ -103,6 +103,11 @@ are on WiFi, not Network), and only where the scope has settings.
   screenshot every 3 s (the GUI's `LIVE_SHOT`), taken only while the panel
   is open, the tab visible and the device answering, never two at once.
   VNC itself stays the native clients' ([remote-access.md](remote-access.md)).
+* **The camera panel stands under it, as the GUI's does** (**The camera
+  panel** in [gui.md](gui.md), `shell/CameraPanel.tsx`): double-clicking a
+  camera on the Camera page opens it on that camera until Close. Live
+  snapshots are taken only while it is open, the way the Screen panel's are.
+  It is not remembered across reloads.
 * **Row actions act on the selected row**; double-click or Enter opens it,
   as in the GUI. A page never asks for the name of something its table
   already shows.
