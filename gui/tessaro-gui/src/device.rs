@@ -25,6 +25,7 @@ use protocol::keys::{self, Consumer, Kind};
 use protocol::{Applied, KeyInfo, NodeInfo, RestartTarget, Setting, Settings, Source, Status};
 use tessaro_client::journal::Entry;
 use tessaro_client::nodes::Node;
+use tessaro_client::sections;
 use tessaro_client::text::{Line, Tone};
 
 use crate::dialog::{self, field};
@@ -73,7 +74,7 @@ pub fn sections(settings: &Settings) -> Vec<String> {
 /// is always among them, so the first custom value can be added.
 pub fn own_sections(settings: &Settings) -> Vec<String> {
     let claimed: Vec<Scope> = std::iter::once(Page::Overview)
-        .chain(Page::TOOLS.iter().map(|(page, _)| *page))
+        .chain(Page::TOOLS.iter().map(|(page, _, _)| *page))
         .filter_map(Page::scope)
         .collect();
     let mut own: Vec<String> = sections(settings)
@@ -353,26 +354,27 @@ pub enum Page {
 }
 
 impl Page {
-    /// The pages after Overview in the nav, in its order.
-    const TOOLS: &'static [(Page, &'static str)] = &[
-        (Page::Screen, "Screen"),
-        (Page::Browser, "Browser"),
-        (Page::Policies, "Policies"),
-        (Page::Network, "Network"),
-        (Page::Wifi, "WiFi"),
-        (Page::Certs, "Certificates"),
-        (Page::Storage, "Storage"),
-        (Page::Audio, "Audio"),
-        (Page::Camera, "Camera"),
-        (Page::Time, "Time"),
-        (Page::Scripts, "Scripts"),
-        (Page::Schedules, "Schedules"),
-        (Page::Printer, "Printer"),
-        (Page::Access, "Access"),
-        (Page::Ssh, "SSH"),
-        (Page::Files, "Files"),
-        (Page::Update, "Update"),
-        (Page::Log, "Log"),
+    /// The pages after Overview in the nav, in its order, each with the
+    /// section it is listed under. A section's pages stand together.
+    const TOOLS: &'static [(Page, &'static str, &'static str)] = &[
+        (Page::Screen, "Screen", sections::KIOSK),
+        (Page::Browser, "Browser", sections::KIOSK),
+        (Page::Policies, "Policies", sections::KIOSK),
+        (Page::Files, "Files", sections::KIOSK),
+        (Page::Audio, "Audio", sections::PERIPHERALS),
+        (Page::Camera, "Camera", sections::PERIPHERALS),
+        (Page::Printer, "Printer", sections::PERIPHERALS),
+        (Page::Network, "Network", sections::NETWORK),
+        (Page::Wifi, "WiFi", sections::NETWORK),
+        (Page::Certs, "Certificates", sections::NETWORK),
+        (Page::Scripts, "Scripts", sections::AUTOMATION),
+        (Page::Schedules, "Schedules", sections::AUTOMATION),
+        (Page::Access, "Access", sections::SECURITY),
+        (Page::Ssh, "SSH", sections::SECURITY),
+        (Page::Time, "Time", sections::SYSTEM),
+        (Page::Storage, "Storage", sections::SYSTEM),
+        (Page::Update, "Update", sections::SYSTEM),
+        (Page::Log, "Log", sections::SYSTEM),
     ];
 
     /// The settings its Configure opens. The WiFi keys are on WiFi, not on
@@ -848,7 +850,7 @@ impl Device {
     /// to.
     pub fn config_title(&self, prefix: &str) -> String {
         let label = std::iter::once((Page::Overview, "Device"))
-            .chain(Page::TOOLS.iter().copied())
+            .chain(Page::TOOLS.iter().map(|(page, label, _)| (*page, *label)))
             .find(|(page, _)| page.scope().is_some_and(|scope| scope.prefix == prefix))
             .map_or_else(|| title_case(prefix), |(_, label)| label.to_string());
         format!("{} - {label} settings", self.name())
@@ -1388,12 +1390,28 @@ impl Device {
                 .on_press(message)
                 .into()
         };
+        // A section's title above its first entry; it is not a button.
+        let heading = |title: &'static str| -> Element<'_, Message> {
+            container(text(title).size(theme::SMALL).style(theme::muted))
+                .padding(iced::Padding {
+                    top: 8.0,
+                    right: 10.0,
+                    bottom: 2.0,
+                    left: 10.0,
+                })
+                .into()
+        };
         let mut entries: Vec<Element<'_, Message>> = vec![entry(
             "Overview".to_string(),
             self.page == Page::Overview,
             Message::Page(Page::Overview),
         )];
-        for (page, label) in Page::TOOLS {
+        let mut current = None;
+        for (page, label, section) in Page::TOOLS {
+            if current != Some(*section) {
+                current = Some(*section);
+                entries.push(heading(section));
+            }
             entries.push(entry(
                 label.to_string(),
                 self.page == *page,
@@ -1401,6 +1419,7 @@ impl Device {
             ));
         }
         // The sections without a page open their settings window.
+        entries.push(heading(sections::SETTINGS));
         entries.extend(own_sections(settings).into_iter().map(|section| {
             let configure = Message::Configure(Scope::of(&section));
             entry(title_case(&section), false, configure)
@@ -2060,6 +2079,17 @@ mod tests {
                 setting("browser.touch", "auto", Source::Default),
                 setting("data.table", "12", Source::Set),
             ],
+        }
+    }
+
+    #[test]
+    fn a_nav_section_is_listed_once() {
+        let mut seen: Vec<&str> = Vec::new();
+        for (page, _, section) in Page::TOOLS {
+            if seen.last() != Some(section) {
+                assert!(!seen.contains(section), "{section} again at {page:?}");
+                seen.push(section);
+            }
         }
     }
 

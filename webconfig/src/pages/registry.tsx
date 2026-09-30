@@ -1,7 +1,8 @@
 // The left menu: Quick Setup first, then the GUI's pages in the GUI's order
-// (device.rs, `Page::TOOLS`), each with the settings its Configure opens
-// (`Page::scope`). The setting groups no page claims follow, as sections of
-// their own.
+// and under the GUI's section titles (device.rs, `Page::TOOLS`; the titles
+// are agent/client/src/sections.rs's), each with the settings its Configure
+// opens (`Page::scope`). The setting groups no page claims follow under
+// Settings, as sections of their own.
 
 import type { ComponentType } from "react";
 
@@ -30,31 +31,48 @@ import { Wifi } from "./Wifi";
 export interface PageInfo {
   path: string;
   title: string;
+  /** The section the menu lists it under; none for the first pages. */
+  section?: string;
   scope?: Scope;
   component: ComponentType<{ info: PageInfo }>;
 }
 
+const KIOSK = "Kiosk";
+const PERIPHERALS = "Peripherals";
+const NETWORK = "Network";
+const AUTOMATION = "Automation";
+const SECURITY = "Security";
+const SYSTEM = "System";
+/** The heading over the setting groups no page claims. */
+export const SETTINGS_SECTION = "Settings";
+
 export const PAGES: PageInfo[] = [
   { path: "quick-setup", title: "Quick Setup", component: QuickSetup },
   { path: "overview", title: "Overview", scope: { prefix: "device" }, component: Overview },
-  { path: "screen", title: "Screen", scope: { prefix: "screen" }, component: Screen },
-  { path: "browser", title: "Browser", scope: { prefix: "browser" }, component: Browser },
-  { path: "policies", title: "Policies", component: Policies },
-  { path: "network", title: "Network", scope: { prefix: "network", except: "network.wifi" }, component: Network },
-  { path: "wifi", title: "WiFi", scope: { prefix: "network.wifi" }, component: Wifi },
-  { path: "certificates", title: "Certificates", component: Certificates },
-  { path: "storage", title: "Storage", scope: { prefix: "storage" }, component: Storage },
-  { path: "audio", title: "Audio", scope: { prefix: "audio" }, component: Audio },
-  { path: "camera", title: "Camera", scope: { prefix: "camera" }, component: Camera },
-  { path: "time", title: "Time", scope: { prefix: "time" }, component: Time },
-  { path: "scripts", title: "Scripts", component: Scripts },
-  { path: "schedules", title: "Schedules", component: Schedules },
-  { path: "printer", title: "Printer", scope: { prefix: "printer" }, component: Printer },
-  { path: "access", title: "Access", scope: { prefix: "access" }, component: Access },
-  { path: "ssh", title: "SSH", component: Ssh },
-  { path: "files", title: "Files", component: Files },
-  { path: "update", title: "Update", component: Update },
-  { path: "log", title: "Log", component: Log },
+  { path: "screen", title: "Screen", section: KIOSK, scope: { prefix: "screen" }, component: Screen },
+  { path: "browser", title: "Browser", section: KIOSK, scope: { prefix: "browser" }, component: Browser },
+  { path: "policies", title: "Policies", section: KIOSK, component: Policies },
+  { path: "files", title: "Files", section: KIOSK, component: Files },
+  { path: "audio", title: "Audio", section: PERIPHERALS, scope: { prefix: "audio" }, component: Audio },
+  { path: "camera", title: "Camera", section: PERIPHERALS, scope: { prefix: "camera" }, component: Camera },
+  { path: "printer", title: "Printer", section: PERIPHERALS, scope: { prefix: "printer" }, component: Printer },
+  {
+    path: "network",
+    title: "Network",
+    section: NETWORK,
+    scope: { prefix: "network", except: "network.wifi" },
+    component: Network,
+  },
+  { path: "wifi", title: "WiFi", section: NETWORK, scope: { prefix: "network.wifi" }, component: Wifi },
+  { path: "certificates", title: "Certificates", section: NETWORK, component: Certificates },
+  { path: "scripts", title: "Scripts", section: AUTOMATION, component: Scripts },
+  { path: "schedules", title: "Schedules", section: AUTOMATION, component: Schedules },
+  { path: "access", title: "Access", section: SECURITY, scope: { prefix: "access" }, component: Access },
+  { path: "ssh", title: "SSH", section: SECURITY, component: Ssh },
+  { path: "time", title: "Time", section: SYSTEM, scope: { prefix: "time" }, component: Time },
+  { path: "storage", title: "Storage", section: SYSTEM, scope: { prefix: "storage" }, component: Storage },
+  { path: "update", title: "Update", section: SYSTEM, component: Update },
+  { path: "log", title: "Log", section: SYSTEM, component: Log },
 ];
 
 /** The scopes the pages claim, which the own sections leave out. */

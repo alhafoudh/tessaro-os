@@ -35,7 +35,7 @@ use std::process::ExitCode;
 use anstream::{eprintln, println};
 use clap::builder::styling::Styles;
 use clap::builder::{PossibleValuesParser, TypedValueParser};
-use clap::{Args, ColorChoice, CommandFactory, Parser, Subcommand, ValueEnum};
+use clap::{Args, ColorChoice, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum};
 use protocol::api::{self, Empty, Endpoint};
 use protocol::keys;
 use protocol::{Applied, Done, EvalResult, KeyInfo, NodeInfo, RestartTarget, Source, Status};
@@ -43,7 +43,7 @@ use serde_json::Value;
 use tessaro_client::access;
 use tessaro_client::describe::device as describe;
 use tessaro_client::nodes::Nodes;
-use tessaro_client::webconfig;
+use tessaro_client::{sections, webconfig};
 
 use connect::{Answer, Session, Target, Trust};
 use style::{pad, paint};
@@ -161,26 +161,14 @@ struct Cli {
 /// command acts on, and a setting key starts with the group that acts on the
 /// same thing (`screen confirm`, `screen.resolution`). The rules for adding
 /// to the tree are "tessaro-ctl command and key structure" in CLAUDE.md.
+///
+/// The variants are in the order of `sections::GROUPS`, which `--help` lists
+/// them by (`cli`).
 #[derive(Subcommand)]
 enum Cmd {
     /// The device itself: who it is, what it is doing, its journal, restarts.
     #[command(subcommand)]
     Device(DeviceCmd),
-    /// Who may manage the device: claiming it, tokens, the root password.
-    #[command(subcommand)]
-    Access(AccessCmd),
-    /// A root shell on the device by key, and the keys that may log in.
-    #[command(subcommand)]
-    Ssh(SshCmd),
-    /// The device's settings: documented, read and changed.
-    #[command(subcommand)]
-    Config(ConfigCmd),
-    /// The device's network: addresses, profiles, WiFi, ping, speed test.
-    #[command(subcommand)]
-    Network(net::NetworkCmd),
-    /// The device's disk: partitions, free space, growing /data.
-    #[command(subcommand)]
-    Storage(storage::StorageCmd),
     /// The physical display: what is on it, its modes, its power and the
     /// on-screen keyboard.
     #[command(subcommand)]
@@ -189,6 +177,10 @@ enum Cmd {
     /// what the page runs: the injected script, the page bridge, eval.
     #[command(subcommand)]
     Browser(BrowserCmd),
+    /// The device's file store, served to the kiosk at
+    /// http://127.0.0.1/files/: upload, download, sync, list, remove.
+    #[command(subcommand)]
+    Files(files::FilesCmd),
     /// Sound: which output plays and which input records, volume, a test.
     #[command(subcommand)]
     Audio(audio::AudioCmd),
@@ -196,9 +188,13 @@ enum Cmd {
     /// read, the format and size they capture at and how many each gets.
     #[command(subcommand)]
     Camera(camera::CameraCmd),
-    /// The clock: timezone, NTP servers and sync, setting it by hand.
+    /// The printers the device prints on: find, add and remove them, the
+    /// default for window.print(), a test page, printing, the jobs.
     #[command(subcommand)]
-    Time(time::TimeCmd),
+    Printer(printer::PrinterCmd),
+    /// The device's network: addresses, profiles, WiFi, ping, speed test.
+    #[command(subcommand)]
+    Network(net::NetworkCmd),
     /// Shell scripts the device keeps: create, change, run now, their
     /// output, the ones the kiosk page may run.
     #[command(subcommand)]
@@ -207,17 +203,24 @@ enum Cmd {
     /// on and off, their output.
     #[command(subcommand)]
     Schedule(schedule::ScheduleCmd),
-    /// The printers the device prints on: find, add and remove them, the
-    /// default for window.print(), a test page, printing, the jobs.
+    /// Who may manage the device: claiming it, tokens, the root password.
     #[command(subcommand)]
-    Printer(printer::PrinterCmd),
+    Access(AccessCmd),
+    /// A root shell on the device by key, and the keys that may log in.
+    #[command(subcommand)]
+    Ssh(SshCmd),
+    /// The clock: timezone, NTP servers and sync, setting it by hand.
+    #[command(subcommand)]
+    Time(time::TimeCmd),
+    /// The device's disk: partitions, free space, growing /data.
+    #[command(subcommand)]
+    Storage(storage::StorageCmd),
     /// Put a new image on the device, keeping its settings and claim.
     #[command(subcommand)]
     Update(UpdateCmd),
-    /// The device's file store, served to the kiosk at
-    /// http://127.0.0.1/files/: upload, download, sync, list, remove.
+    /// The device's settings: documented, read and changed.
     #[command(subcommand)]
-    Files(files::FilesCmd),
+    Config(ConfigCmd),
     /// The devices this client knows or finds. Needs no device.
     #[command(subcommand)]
     Nodes(NodesCmd),
@@ -644,7 +647,11 @@ fn main() -> ExitCode {
     #[cfg(unix)]
     default_sigpipe();
 
-    let cli = Cli::parse();
+    let mut command = cli();
+    let matches = command.get_matches_mut();
+    let cli = Cli::from_arg_matches(&matches)
+        .map_err(|err| err.format(&mut command))
+        .unwrap_or_else(|err| err.exit());
     match cli.color {
         ColorChoice::Auto => {}
         ColorChoice::Always => anstream::ColorChoice::Always.write_global(),
@@ -1168,6 +1175,48 @@ fn run(cli: Cli) -> Result<(), String> {
     }
 }
 
+/// The command line, with the root `--help` listing the groups under their
+/// sections (`sections::GROUPS`). clap puts every subcommand under one
+/// heading, so the listing is written into the template, in clap's own
+/// layout and styles, with each group's about taken from its doc comment.
+fn cli() -> clap::Command {
+    let mut built = Cli::command();
+    built.build();
+    let about = |name: &str| {
+        built
+            .find_subcommand(name)
+            .and_then(|command| command.get_about())
+            .map(ToString::to_string)
+            .unwrap_or_default()
+    };
+    let width = sections::GROUPS
+        .iter()
+        .flat_map(|(_, groups)| groups.iter())
+        .map(|group| group.len())
+        .max()
+        .unwrap_or(0);
+    let header = HELP_STYLES.get_header();
+    let literal = HELP_STYLES.get_literal();
+    let mut listing = String::new();
+    for (title, groups) in sections::GROUPS {
+        listing.push_str(&format!("{header}{title}{header:#}\n"));
+        for group in *groups {
+            listing.push_str(&format!(
+                "  {}  {}\n",
+                pad(*literal, group, width),
+                about(group)
+            ));
+        }
+        listing.push('\n');
+    }
+    Cli::command().help_template(format!(
+        "{{before-help}}{{about-with-newline}}\n\
+         {{usage-heading}} {{usage}}\n\n\
+         {listing}{header}Options:{header:#}\n\
+         {{options}}{{after-help}}"
+    ))
+}
+
 /// The completion script for `shell`.
 ///
 /// clap_complete 4.6's bash script names the root `tessaro__ctl` when it
@@ -1507,6 +1556,41 @@ mod tests {
             );
         }
         assert!(script.contains("tessaro__ctl__subcmd__ssh__subcmd__keys)"));
+    }
+
+    #[test]
+    fn help_lists_every_group_once_under_its_section() {
+        let mut built = Cli::command();
+        built.build();
+        let listed: Vec<&str> = sections::GROUPS
+            .iter()
+            .flat_map(|(_, groups)| groups.iter().copied())
+            .collect();
+        for command in built
+            .get_subcommands()
+            .filter(|command| !command.is_hide_set())
+        {
+            let name = command.get_name();
+            let times = listed.iter().filter(|group| **group == name).count();
+            assert_eq!(times, 1, "{name} is in sections::GROUPS {times} times");
+        }
+        for group in &listed {
+            assert!(built.find_subcommand(group).is_some(), "no group {group}");
+        }
+
+        let help = anstream::adapter::strip_str(&cli().render_help().to_string()).to_string();
+        let device = help.find("Commands\n  device ").expect("device first");
+        let kiosk = help.find("Kiosk\n  screen ").expect("the Kiosk section");
+        let client = help.find("Client\n  nodes ").expect("the Client section");
+        let options = help.find("Options:\n").expect("the options");
+        assert!(
+            device < kiosk && kiosk < client && client < options,
+            "{help}"
+        );
+        assert!(
+            help.contains("  completion  Print the completion script"),
+            "{help}"
+        );
     }
 
     #[test]

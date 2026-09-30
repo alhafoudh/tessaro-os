@@ -90,7 +90,10 @@ as it likes - a table instead of rows, a dialog instead of a line.
    what the answer says as `Line`s or `Fact`s (`describe/`). Tests go
    there, next to it.
 3. The ctl command: its clap arguments, a call into the client, `--json`,
-   and printing the lines with `style::line`.
+   and printing the lines with `style::line`. A new group also goes into
+   its section in `sections::GROUPS` (`sections.rs`), which the root
+   `--help` lists the groups by; a test in `main.rs` fails on a group left
+   out.
 4. Its place in the GUI in the same change (the table in
    [gui.md](gui.md)): a form or button that calls the same client function,
    showing the same lines.

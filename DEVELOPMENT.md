@@ -166,7 +166,7 @@ mise run agent:test          # cargo test for the workspace
 mise run agent:lint          # cargo fmt --check plus clippy
 mise run agent:integration   # the agent against a real headless Chromium in docker compose
 mise run ctl:build           # a release tessaro-ctl for this machine
-mise run ctl:run -- nodes list   # run that build, arguments after --; it never builds
+mise run ctl:run -- nodes list   # that build, rebuilt first if stale, arguments after --
 ```
 
 After changing any `Cargo.toml` or `agent/Cargo.lock`, regenerate the crate

@@ -111,7 +111,7 @@ Use the mise tasks rather than calling `kas-container` directly:
 | `mise run e2e:one` | One lane or case of that suite, with plain rspec |
 | `mise run e2e:setup` | `bundle install` for the suite's gems |
 | `mise run ctl:build` | Release `tessaro-ctl` for this host, to manage devices remotely |
-| `mise run ctl:run -- ARGS` | Run that built `tessaro-ctl` (never builds) |
+| `mise run ctl:run -- ARGS` | Run that `tessaro-ctl`, rebuilt first if its source changed |
 | `mise run gui:run` | Run `tessaro-gui`, the desktop client, from this checkout |
 | `mise run gui:build` | Release `tessaro-gui` for this host |
 | `mise run gui:test` / `gui:lint` | Its unit tests; `cargo fmt --check` plus clippy |
@@ -410,6 +410,9 @@ same thing. Keep to these rules when adding a command or a setting:
 * **A new command goes into an existing group.** Add a group only when at least
   two commands would share it and none of the existing groups fits; a lone
   command goes to the nearest group.
+* **A new group or page goes into a named section**:
+  `agent/client/src/sections.rs` orders the ctl's `--help`, and its titles
+  head the GUI's nav (`Page::TOOLS`) and Webconfig's menu (`registry.tsx`).
 * **Destructive commands take `-y/--yes`** and live in the group their effect
   belongs to (`device factory-reset` wipes the device, `access unclaim` only
   removes its owners).

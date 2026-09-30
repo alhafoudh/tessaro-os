@@ -204,17 +204,19 @@ echo "$CARGO_TARGET_DIR/release/tessaro-ctl"
 '''
 
 [tasks."ctl:run"]
-description = "Run the tessaro-ctl that ctl:build left, with the arguments after --"
+description = "Build tessaro-ctl if its source changed, then run it with the arguments after --"
 dir = "{{config_root}}"
-# Runs the binary as it is and never builds, so a stale one stays stale until
-# ctl:build. raw for the commands that prompt or take over the terminal
-# (access claim, ssh connect).
+# The release build ctl:build makes, brought up to date first as gui:run
+# does; cargo does nothing when it is fresh. Quiet, and on stderr, so
+# stdout is only the ctl's (--json pipes). The repo root stays the cwd, so
+# relative paths in the arguments mean what they did. raw for the commands
+# that prompt or take over the terminal (access claim, ssh connect).
 #   mise run ctl:run -- device status
 raw = true
 run = '''
-bin="$CARGO_TARGET_DIR/release/tessaro-ctl"
-[ -x "$bin" ] || { echo "$bin not found - run 'mise run ctl:build' first" >&2; exit 1; }
-exec "$bin" "$@"
+set -e
+cargo build --release --quiet --manifest-path agent/Cargo.toml -p tessaro-ctl
+exec "$CARGO_TARGET_DIR/release/tessaro-ctl" "$@"
 '''
 
 # tessaro-gui, the desktop client. gui/ is a workspace of its own with a lock

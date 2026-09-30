@@ -216,8 +216,15 @@ table keeps its full width.
   (`Page::scope`): Overview the `device.*` keys, WiFi the `network.wifi.*`
   keys, which Network leaves out. A page whose prefix the device has no
   keys for has no Configure.
-* A prefix no page shows gets an entry after the pages, in the device's
-  order (`device::own_sections`), and clicking it opens its settings window,
+* **The pages after Overview are listed under named sections**, so a long
+  nav stays readable: each entry of `Page::TOOLS` names its section, a
+  section's pages stand together, and a muted title that is not a button
+  stands above them. The titles are `agent/client/src/sections.rs`'s, which
+  also orders the groups in `tessaro-ctl --help`, so the ctl and both
+  menus sort a subject the same way.
+* A prefix no page shows gets an entry after the pages, under Settings, in
+  the device's order (`device::own_sections`), and clicking it opens its
+  settings window,
   so a group a newer image adds appears by itself. Data is always listed,
   empty or not, so the first custom value can be added there; unsetting
   one is its Delete.
@@ -399,7 +406,8 @@ snapshot is taken is **Snapshots** in [camera.md](camera.md).
 
 ## Adding a page
 
-1. Add the page to `Page` and `Page::TOOLS` in `device.rs`, and give it a
+1. Add the page to `Page` and `Page::TOOLS` in `device.rs`, beside the
+   pages of its section (`tessaro_client::sections`), and give it a
    `Page::scope` if settings belong to it (its Configure).
 2. Ask for its data in `refresh_page` with a tag, and keep the answer in
    `take_answer`.

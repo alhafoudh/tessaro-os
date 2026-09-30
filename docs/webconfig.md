@@ -92,8 +92,10 @@ in [quick-setup.md](quick-setup.md).
 
 **The menu is the GUI's** (`Page::TOOLS` in `gui/tessaro-gui/src/device.rs`,
 `webconfig/src/pages/registry.tsx`): Quick Setup first, then the GUI's pages
-in the GUI's order, then the setting groups no page claims (`own_sections`),
-Data always among them. A page's Configure opens the settings it owns in a
+in the GUI's order under the GUI's section titles (each page's `section`,
+the titles of `agent/client/src/sections.rs`), then under Settings the
+setting groups no page claims (`own_sections`), Data always among them. The
+drawer on a phone has the same headings. A page's Configure opens the settings it owns in a
 dialog over the page, with the GUI's scopes (`Page::scope`: the WiFi keys
 are on WiFi, not Network), and only where the scope has settings.
 

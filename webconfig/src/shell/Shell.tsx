@@ -9,7 +9,7 @@ import { NavLink, useLocation } from "react-router";
 import { answer, client, failure, type Schemas } from "../api/client";
 import { touched } from "../api/activity";
 import { useDevice } from "../device/DeviceContext";
-import { CLAIMED, PAGES, sectionTitle } from "../pages/registry";
+import { CLAIMED, PAGES, SETTINGS_SECTION, sectionTitle } from "../pages/registry";
 import { useSession } from "../session/SessionContext";
 import { ownSections } from "../settings/scope";
 import { Button, LineView } from "../ui/controls";
@@ -89,6 +89,18 @@ export function Shell({ children }: { children: ReactNode }) {
       {title}
     </NavLink>
   );
+  // A section's title above its first entry, as the GUI's nav has it; not a
+  // link.
+  const heading = (title: string) => (
+    <div key={`section-${title}`} className="px-2.5 pt-2 pb-0.5 text-sm whitespace-nowrap text-muted">
+      {title}
+    </div>
+  );
+  const pageLinks = PAGES.flatMap((page, at) =>
+    page.section && page.section !== PAGES[at - 1]?.section
+      ? [heading(page.section), link(`/${page.path}`, page.title)]
+      : [link(`/${page.path}`, page.title)],
+  );
 
   // A phone has no room for the title bar's tools: they are the drawer's
   // last entries there, and close it as a page link does.
@@ -158,8 +170,8 @@ export function Shell({ children }: { children: ReactNode }) {
           className={`${menu ? "flex" : "hidden"} absolute inset-y-0 left-0 z-40 w-60 max-w-[85vw] flex-col overflow-auto border-r border-border bg-panel md:static md:flex md:w-[140px] md:shrink-0`}
           aria-label="Pages"
         >
-          {PAGES.map((page) => link(`/${page.path}`, page.title))}
-          {sections.length > 0 && <div className="mx-2 my-1 h-px bg-border" />}
+          {pageLinks}
+          {sections.length > 0 && heading(SETTINGS_SECTION)}
           {sections.map((section) => link(`/settings/${section}`, sectionTitle(section)))}
           <div className="md:hidden">
             <div className="mx-2 my-1 h-px bg-border" />
