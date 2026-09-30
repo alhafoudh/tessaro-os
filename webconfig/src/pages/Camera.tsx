@@ -1,10 +1,10 @@
 // The GUI's Camera page (pages.rs camera_view): the saved camera.* settings,
-// every USB camera with its node, the virtual camera pages read and what its
+// every USB camera with its node, the virtual cameras pages read and what its
 // mirror captures, and the modes of the camera picked (else the first);
-// Format and Size set camera.format and camera.size, as
-// `tessaro-ctl camera format` and `camera size` do. Size starts from the
-// mode picked. The device checks a value at `config set`, and its refusal
-// shows in the form.
+// Format, Size and Mirrors set camera.format, camera.size and
+// camera.mirrors, as `tessaro-ctl camera format`, `camera size` and
+// `camera mirrors` do. Size starts from the mode picked. The device checks a
+// value at `config set`, and its refusal shows in the form.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
@@ -21,8 +21,11 @@ import type { PageInfo } from "./registry";
 
 const FORMAT = "camera.format";
 const SIZE = "camera.size";
+const MIRRORS = "camera.mirrors";
 /** protocol::keys::CAMERA_FORMATS. */
 const FORMATS = ["auto", "mjpeg", "yuyv"];
+/** 1 to protocol::keys::CAMERA_MIRRORS_MAX. */
+const MIRROR_COUNTS = Array.from({ length: camera.CAMERA_MIRRORS_MAX }, (_, index) => String(index + 1));
 
 interface Spec {
   title: string;
@@ -67,6 +70,15 @@ export function Camera({ info }: { info: PageInfo }) {
     initial: mode?.split(" ")[1] ?? list?.size ?? "auto",
     key: SIZE,
   });
+  const mirrorsForm = (): Spec => ({
+    title: "Camera mirrors",
+    intro:
+      "Virtual cameras each camera gets, <camera> Mirror 1 and up, all with the same picture. Each has one reader at a time - the page, or a service on the device - so this is how many may watch a camera at once. Every camera mirror restarts.",
+    label: "Mirrors",
+    initial: list ? String(list.mirrors) : "1",
+    choices: MIRROR_COUNTS,
+    key: MIRRORS,
+  });
 
   return (
     <PageFrame
@@ -80,19 +92,24 @@ export function Camera({ info }: { info: PageInfo }) {
           <Button disabled={!online} onClick={() => setForm(sizeForm())}>
             Size ...
           </Button>
+          <Button disabled={!online} onClick={() => setForm(mirrorsForm())}>
+            Mirrors ...
+          </Button>
         </>
       }
     >
       <ErrorLine error={shown.error ? failure(shown.error).message : null} />
       {list && (
         <>
-          <Facts facts={[fact("Format", list.format), fact("Size", list.size)]} />
+          <Facts
+            facts={[fact("Format", list.format), fact("Size", list.size), fact("Mirrors", String(list.mirrors))]}
+          />
           {cameras.length === 0 && <LineView line={camera.none()} className="text-sm" />}
           <Table
             columns={[
               { title: "Camera", width: "200px" },
               { title: "Device", width: "80px" },
-              { title: "Virtual", width: "100px" },
+              { title: "Mirrors", width: "120px" },
               { title: "Captures", width: "180px" },
               { title: "" },
             ]}
@@ -101,7 +118,11 @@ export function Camera({ info }: { info: PageInfo }) {
               cells: [
                 one.name,
                 `/dev/${one.device}`,
-                one.virtual_device ?? "",
+                (one.mirrors ?? []).map((mirror) => (
+                  <div key={mirror.device} title={mirror.name}>
+                    {mirror.device}
+                  </div>
+                )),
                 one.mode ? camera.mode(one.mode) : "",
                 one.error ? (
                   <span className="text-danger">{one.error}</span>

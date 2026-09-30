@@ -6,6 +6,12 @@
         "bus": "usb-xhci-hcd.0-1",
         "device": "video2",
         "fallback": "the camera has no mjpeg; captures as auto chooses",
+        "mirrors": [
+          {
+            "device": "/dev/video51",
+            "name": "USB2.0 PC CAMERA Mirror 1"
+          }
+        ],
         "mode": {
           "format": "yuyv",
           "fps": 30,
@@ -26,8 +32,7 @@
             "width": 320
           }
         ],
-        "name": "USB2.0 PC CAMERA",
-        "virtual_device": "/dev/video51"
+        "name": "USB2.0 PC CAMERA"
       },
       {
         "bus": "usb-xhci-hcd.0-2",
@@ -37,6 +42,7 @@
       }
     ],
     "format": "mjpeg",
+    "mirrors": 1,
     "size": "1280x720"
   },
   "output": [
@@ -70,13 +76,20 @@
       ],
       [
         "plain",
-        " /dev/video2 ",
+        " /dev/video2",
+        0
+      ]
+    ],
+    [
+      [
+        "plain",
+        "    ",
         0
       ],
       [
-        "muted",
-        "->",
-        0
+        "label",
+        "mirror",
+        9
       ],
       [
         "plain",
@@ -86,6 +99,11 @@
       [
         "ok",
         "/dev/video51",
+        12
+      ],
+      [
+        "plain",
+        "  USB2.0 PC CAMERA Mirror 1",
         0
       ]
     ],
@@ -170,13 +188,20 @@
       ],
       [
         "plain",
-        " /dev/video4 ",
+        " /dev/video4",
+        0
+      ]
+    ],
+    [
+      [
+        "plain",
+        "    ",
         0
       ],
       [
-        "muted",
-        "->",
-        0
+        "label",
+        "mirror",
+        9
       ],
       [
         "plain",
@@ -230,7 +255,17 @@
       ],
       [
         "plain",
-        " 1280x720",
+        " 1280x720  ",
+        0
+      ],
+      [
+        "label",
+        "mirrors",
+        0
+      ],
+      [
+        "plain",
+        " 1",
         0
       ]
     ],
@@ -251,6 +286,21 @@
         0
       ],
       [
+        "muted",
+        ",",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "cmd",
+        "tessaro-ctl camera size auto|WIDTHxHEIGHT",
+        0
+      ],
+      [
         "plain",
         " ",
         0
@@ -267,7 +317,7 @@
       ],
       [
         "cmd",
-        "tessaro-ctl camera size auto|WIDTHxHEIGHT",
+        "tessaro-ctl camera mirrors 1-8",
         0
       ]
     ]

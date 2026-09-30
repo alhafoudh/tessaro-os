@@ -5,6 +5,16 @@
       {
         "bus": "usb-0000:00:14.0-2",
         "device": "video0",
+        "mirrors": [
+          {
+            "device": "/dev/video9",
+            "name": "HD Pro Webcam C920 Mirror 1"
+          },
+          {
+            "device": "/dev/video10",
+            "name": "HD Pro Webcam C920 Mirror 2"
+          }
+        ],
         "mode": {
           "format": "mjpeg",
           "fps": 30,
@@ -37,11 +47,11 @@
             "width": 1920
           }
         ],
-        "name": "HD Pro Webcam C920",
-        "virtual_device": "/dev/video50"
+        "name": "HD Pro Webcam C920"
       }
     ],
     "format": "auto",
+    "mirrors": 2,
     "size": "auto"
   },
   "output": [
@@ -75,13 +85,20 @@
       ],
       [
         "plain",
-        " /dev/video0 ",
+        " /dev/video0",
+        0
+      ]
+    ],
+    [
+      [
+        "plain",
+        "    ",
         0
       ],
       [
-        "muted",
-        "->",
-        0
+        "label",
+        "mirror",
+        9
       ],
       [
         "plain",
@@ -90,7 +107,39 @@
       ],
       [
         "ok",
-        "/dev/video50",
+        "/dev/video9",
+        12
+      ],
+      [
+        "plain",
+        "  HD Pro Webcam C920 Mirror 1",
+        0
+      ]
+    ],
+    [
+      [
+        "plain",
+        "    ",
+        0
+      ],
+      [
+        "label",
+        "mirror",
+        9
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "ok",
+        "/dev/video10",
+        12
+      ],
+      [
+        "plain",
+        "  HD Pro Webcam C920 Mirror 2",
         0
       ]
     ],
@@ -184,7 +233,17 @@
       ],
       [
         "plain",
-        " auto",
+        " auto  ",
+        0
+      ],
+      [
+        "label",
+        "mirrors",
+        0
+      ],
+      [
+        "plain",
+        " 2",
         0
       ]
     ],
@@ -205,6 +264,21 @@
         0
       ],
       [
+        "muted",
+        ",",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "cmd",
+        "tessaro-ctl camera size auto|WIDTHxHEIGHT",
+        0
+      ],
+      [
         "plain",
         " ",
         0
@@ -221,7 +295,7 @@
       ],
       [
         "cmd",
-        "tessaro-ctl camera size auto|WIDTHxHEIGHT",
+        "tessaro-ctl camera mirrors 1-8",
         0
       ]
     ]

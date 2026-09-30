@@ -78,6 +78,17 @@ display for the browser. Both boot with `-snapshot`, so nothing a session
 changes survives it. The VNC password needs QEMU built with nettle; see
 [docs/build.md](docs/build.md), "Gotchas".
 
+The VM has no camera of its own. To give it one, with the VM up:
+
+```sh
+mise run usbcam:run -- --attach            # a moving test pattern
+mise run usbcam:run -- clip.mp4 --attach   # a clip, looped
+```
+
+It needs ffmpeg on this host, and runs until Ctrl-C, which unplugs the
+camera again. How it works is in [docs/camera.md](docs/camera.md), "Testing
+in qemu".
+
 ## From a workstation
 
 The build host is usually a remote x86 machine; the device is on your

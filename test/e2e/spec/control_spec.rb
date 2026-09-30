@@ -504,7 +504,9 @@ module AgentE2E
 
       guest.run("printf 'window.__e2e = \"one\";' > /tmp/inject.js && tessaro-ctl files upload /tmp/inject.js")
       guest.run("tessaro-ctl browser inject on --script /inject.js")
-      journal.wait_for(/^page bridge: off, injecting inject\.js$/, timeout: 30)
+      # "now": the running agent applies the change; one that restarted would
+      # say it without.
+      journal.wait_for(/^page bridge: (now )?off, injecting inject\.js$/, timeout: 30)
       wait_value.call("window.__e2e", "one", 30)
       expect(guest.run("tessaro-ctl device status")).to include("inject.js injected")
 
@@ -514,7 +516,7 @@ module AgentE2E
 
       guest.run("tessaro-ctl config set data.e2e_table=12")
       guest.run("tessaro-ctl browser bridge config")
-      journal.wait_for(/^page bridge: config, injecting inject\.js$/, timeout: 30)
+      journal.wait_for(/^page bridge: (now )?config, injecting inject\.js$/, timeout: 30)
       wait_value.call("tessaro.config['data.e2e_table']", "12", 30)
       expect(page_value.call("['device.name', 'network.public_ip', 'access.listen'].some((k) => k in tessaro.config)"))
         .to eq(false)
@@ -523,7 +525,7 @@ module AgentE2E
       expect(status).to include(KIOSK_URL)
 
       guest.run("tessaro-ctl browser bridge actions")
-      journal.wait_for(/^page bridge: actions, injecting inject\.js$/, timeout: 30)
+      journal.wait_for(/^page bridge: (now )?actions, injecting inject\.js$/, timeout: 30)
       wait_value.call("typeof tessaro.browser.reload", "function", 30)
       # Right after the agent's start: a page that reloads itself on load
       # must not loop.

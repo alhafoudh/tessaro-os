@@ -17,9 +17,18 @@
 # parent is no USB device either. It covers a UVC camera's metadata node
 # as well, which nothing needs.
 #
+# The mode alone does not do it: systemd's 70-uaccess.rules tags every
+# video4linux node `uaccess`, and 73-seat-late.rules then gives the user of
+# the active seat session an ACL on it. weston.service runs in such a session
+# (PAMName=login), so it could open the camera despite the 0600, and
+# Chromium would list the real camera beside its virtual one and, being
+# first, pick it. TAG-= takes the tag off before 73 reads it.
+#
 # 71-: after systemd's 50-udev-default.rules, whose GROUP= this overrides,
-# and 60-persistent-v4l.rules, which imports ID_V4L_CAPABILITIES from v4l_id.
-SUBSYSTEM=="video4linux", SUBSYSTEMS=="usb", OWNER="root", GROUP="root", MODE="0600"
+# 60-persistent-v4l.rules, which imports ID_V4L_CAPABILITIES from v4l_id,
+# and 70-uaccess.rules; before 73-seat-late.rules.
+SUBSYSTEM=="video4linux", SUBSYSTEMS=="usb", OWNER="root", GROUP="root", MODE="0600", \
+    TAG-="uaccess"
 
 # One mirror per node that captures video. v4l_id writes the capabilities as
 # ":capture:" for a camera; a UVC metadata node has none of the ones it

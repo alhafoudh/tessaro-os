@@ -1428,26 +1428,27 @@ pub struct CameraList {
     pub format: String,
     /// camera.size, as saved: `auto` or `WIDTHxHEIGHT`.
     pub size: String,
+    /// camera.mirrors, as saved: how many virtual cameras each camera gets.
+    pub mirrors: u32,
     pub cameras: Vec<CameraInfo>,
 }
 
 /// One USB camera. Only its mirror, `tessaro-camera@<device>.service`, opens
-/// the camera itself; everything else reads `virtual_device`. The mirror
+/// the camera itself; everything else reads one of its `mirrors`. The mirror
 /// writes this to `/run/tessaro-camera/<device>.json`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct CameraInfo {
-    /// What the camera calls itself, `HD Pro Webcam C920`. The virtual
-    /// camera has the same name, which is what a page's
-    /// `enumerateDevices()` shows.
+    /// What the camera calls itself, `HD Pro Webcam C920`.
     pub name: String,
     /// The camera's own node, `video0`.
     pub device: String,
     /// Where it is plugged in, as the kernel says: `usb-0000:00:14.0-2`.
     pub bus: String,
-    /// The node every reader opens, `/dev/video50`. None when the mirror
-    /// could not start.
+    /// The virtual cameras the mirror writes every frame into, one reader
+    /// each: v4l2loopback streams a device to one reader at a time. Empty
+    /// when the mirror could not start.
     #[serde(default)]
-    pub virtual_device: Option<String>,
+    pub mirrors: Vec<CameraMirror>,
     /// What the mirror captures. None when it could not start.
     #[serde(default)]
     pub mode: Option<CameraMode>,
@@ -1462,6 +1463,17 @@ pub struct CameraInfo {
     /// each gives.
     #[serde(default)]
     pub modes: Vec<CameraMode>,
+}
+
+/// One virtual camera of a camera.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct CameraMirror {
+    /// What readers see, and a page's `enumerateDevices()` shows: `HD Pro
+    /// Webcam C920 Mirror 1`. The camera's name is cut short to fit V4L2's
+    /// 31 characters.
+    pub name: String,
+    /// Its node, `/dev/video50`.
+    pub device: String,
 }
 
 /// A format, frame size and rate.

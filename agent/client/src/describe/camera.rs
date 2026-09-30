@@ -1,5 +1,6 @@
 //! Cameras: `tessaro-ctl camera` and the Camera page.
 
+use protocol::keys;
 use protocol::{CameraInfo, CameraList, CameraMode};
 
 use crate::text::{Line, Tone};
@@ -19,7 +20,7 @@ pub fn none() -> Line {
         .add(Tone::Muted, "plug in a USB camera and it shows here")
 }
 
-/// `camera list`: a block per camera - what it is called, its node and the
+/// `camera list`: a block per camera - what it is called, its node and each
 /// virtual camera readers open, what its mirror captures and why that is
 /// not what the settings say, every mode it has - then the saved settings.
 pub fn list(list: &CameraList) -> Vec<Line> {
@@ -38,16 +39,24 @@ pub fn list(list: &CameraList) -> Vec<Line> {
             .add(Tone::Label, "format")
             .text(format!(" {}  ", list.format))
             .add(Tone::Label, "size")
-            .text(format!(" {}", list.size)),
+            .text(format!(" {}  ", list.size))
+            .add(Tone::Label, "mirrors")
+            .text(format!(" {}", list.mirrors)),
     );
     lines.push(
         Line::of(Tone::Muted, "change them with")
             .text(" ")
             .add(Tone::Cmd, "tessaro-ctl camera format auto|mjpeg|yuyv")
+            .add(Tone::Muted, ",")
+            .text(" ")
+            .add(Tone::Cmd, "tessaro-ctl camera size auto|WIDTHxHEIGHT")
             .text(" ")
             .add(Tone::Muted, "and")
             .text(" ")
-            .add(Tone::Cmd, "tessaro-ctl camera size auto|WIDTHxHEIGHT"),
+            .add(
+                Tone::Cmd,
+                format!("tessaro-ctl camera mirrors 1-{}", keys::CAMERA_MIRRORS_MAX),
+            ),
     );
     lines
 }
@@ -57,18 +66,34 @@ fn one(camera: &CameraInfo) -> Vec<Line> {
     let mut lines = vec![Line::of(Tone::Heading, &camera.name)
         .text(" ")
         .add(Tone::Muted, format!("({})", camera.bus))];
-    let virtual_device = match &camera.virtual_device {
-        Some(node) => Line::of(Tone::Ok, node),
-        None => Line::of(Tone::Muted, "(no virtual camera)"),
-    };
     lines.push(
         indent()
             .pad(Tone::Label, "device", 9)
-            .text(format!(" /dev/{} ", camera.device))
-            .add(Tone::Muted, "->")
-            .text(" ")
-            .join(virtual_device),
+            .text(format!(" /dev/{}", camera.device)),
     );
+    if camera.mirrors.is_empty() {
+        lines.push(
+            indent()
+                .pad(Tone::Label, "mirror", 9)
+                .text(" ")
+                .add(Tone::Muted, "(no virtual camera)"),
+        );
+    }
+    let width = camera
+        .mirrors
+        .iter()
+        .map(|mirror| mirror.device.chars().count())
+        .max()
+        .unwrap_or(0);
+    for mirror in &camera.mirrors {
+        lines.push(
+            indent()
+                .pad(Tone::Label, "mirror", 9)
+                .text(" ")
+                .pad(Tone::Ok, &mirror.device, width)
+                .text(format!("  {}", mirror.name)),
+        );
+    }
     if let Some(captures) = &camera.mode {
         lines.push(
             indent()
@@ -108,6 +133,7 @@ fn one(camera: &CameraInfo) -> Vec<Line> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use protocol::CameraMirror;
 
     fn at(format: &str, width: u32, height: u32, fps: u32) -> CameraMode {
         CameraMode {
@@ -129,7 +155,7 @@ mod tests {
             name: "Cam".into(),
             device: "video0".into(),
             bus: "usb-1".into(),
-            virtual_device: Some("/dev/video50".into()),
+            mirrors: Vec::new(),
             mode: Some(at("mjpeg", 1280, 720, 30)),
             fallback: None,
             error: None,
@@ -142,5 +168,42 @@ mod tests {
         let text: Vec<String> = one(&camera).iter().map(Line::to_string).collect();
         assert!(text.iter().any(|l| l.ends_with("1920x1080@30 1280x720@30")));
         assert!(text.last().unwrap().ends_with("640x480@30"));
+    }
+
+    #[test]
+    fn every_mirror_gets_a_line_with_its_node_aligned() {
+        let mirror = |device: &str, n: u32| CameraMirror {
+            name: format!("Cam Mirror {n}"),
+            device: device.into(),
+        };
+        let camera = CameraInfo {
+            name: "Cam".into(),
+            device: "video0".into(),
+            bus: "usb-1".into(),
+            mirrors: vec![mirror("/dev/video9", 1), mirror("/dev/video10", 2)],
+            mode: None,
+            fallback: None,
+            error: None,
+            modes: Vec::new(),
+        };
+        let text: Vec<String> = one(&camera).iter().map(Line::to_string).collect();
+        assert!(text.contains(&"    mirror    /dev/video9   Cam Mirror 1".to_string()));
+        assert!(text.contains(&"    mirror    /dev/video10  Cam Mirror 2".to_string()));
+    }
+
+    #[test]
+    fn a_camera_without_mirrors_says_so() {
+        let camera = CameraInfo {
+            name: "Cam".into(),
+            device: "video0".into(),
+            bus: "usb-1".into(),
+            mirrors: Vec::new(),
+            mode: None,
+            fallback: None,
+            error: Some("broken".into()),
+            modes: Vec::new(),
+        };
+        let text: Vec<String> = one(&camera).iter().map(Line::to_string).collect();
+        assert!(text.iter().any(|l| l.ends_with("(no virtual camera)")));
     }
 }

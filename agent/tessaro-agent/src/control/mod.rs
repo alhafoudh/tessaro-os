@@ -912,9 +912,13 @@ impl Control {
         let setting = |key| {
             state::setting(&state.settings, &self.defaults, key).unwrap_or_else(|| "auto".into())
         };
+        let mirrors = state::setting(&state.settings, &self.defaults, keys::CAMERA_MIRRORS)
+            .and_then(|value| value.parse().ok())
+            .unwrap_or_else(|| render::DEFAULT_CAMERA_MIRRORS.parse().unwrap_or(1));
         Ok(protocol::CameraList {
             format: setting(keys::CAMERA_FORMAT),
             size: setting(keys::CAMERA_SIZE),
+            mirrors,
             cameras,
         })
     }
@@ -1555,13 +1559,17 @@ mod tests {
             (empty.format.as_str(), empty.size.as_str()),
             ("auto", "auto")
         );
+        assert_eq!(empty.mirrors, 2);
         assert!(empty.cameras.is_empty());
 
         let camera = protocol::CameraInfo {
             name: "HD Webcam".into(),
             device: "video0".into(),
             bus: "usb-0000:00:14.0-2".into(),
-            virtual_device: Some("/dev/video50".into()),
+            mirrors: vec![protocol::CameraMirror {
+                name: "HD Webcam Mirror 1".into(),
+                device: "/dev/video50".into(),
+            }],
             mode: None,
             fallback: None,
             error: None,

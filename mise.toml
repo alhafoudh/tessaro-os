@@ -670,6 +670,71 @@ kas-container --runtime-args "$KVM_RUNTIME $GPU_RUNTIME --network=host" shell $K
     -c "runqemu $WIC ovmf slirp snapshot $KVM_OPT $GPU_OPT serialstdio qemuparams='-object secret,id=vncpw,data=tessaro -vnc 127.0.0.1:1,password-secret=vncpw'"
 '''
 
+# A fake USB webcam for the qemu VM: test/usbcam/usbcam.rb serves a UVC camera
+# over USB/IP on this host, playing a clip (looped) or ffmpeg's test pattern,
+# and the guest attaches it through vhci-hcd, reaching this host as 10.0.2.2.
+# QEMU emulates no camera; see docs/camera.md, Testing in qemu.
+[tasks."usbcam:run"]
+description = "Serve a fake USB webcam playing a clip over USB/IP, and attach it to the qemu:run/qemu:vnc VM with --attach"
+dir = "{{config_root}}"
+raw = true
+usage = '''
+arg "[clip]" help="A video file to loop; without one, a moving test pattern"
+flag "--port <port>" default="3240" help="The USB/IP port on 127.0.0.1"
+flag "--attach" help="Also attach it in the VM on 127.0.0.1:2222, and detach it on exit"
+'''
+run = '''
+set -eu
+[ "$TESSARO_MACHINE" = "qemux86-64" ] || {
+    echo "usbcam:run only works for qemux86-64, not $TESSARO_MACHINE" >&2
+    exit 1
+}
+command -v ffmpeg >/dev/null || { echo "usbcam:run needs ffmpeg on this host" >&2; exit 1; }
+
+clip={{ usage.clip | default(value="") | quote }}
+port={{ usage.port | default(value="3240") | quote }}
+set -- --port "$port"
+[ -n "$clip" ] && set -- "$@" "$(realpath "$clip")"
+
+if [ "{{ usage.attach | default(value='false') }}" != "true" ]; then
+    exec ruby test/usbcam/usbcam.rb "$@"
+fi
+
+# The VM of qemu:run and qemu:vnc, over its SSH forward. The unclaimed image
+# has an empty root password.
+guest() {
+    ssh -p 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+        -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=5 root@127.0.0.1 "$@"
+}
+# Its log is a file, which the attach waits on and tail shows: mise runs this
+# with sh, which has no process substitution to tee it.
+log=$(mktemp)
+ruby test/usbcam/usbcam.rb "$@" 2>"$log" &
+server=$!
+tail -n +1 -f "$log" >&2 &
+shown=$!
+detach() {
+    guest 'usbip port | sed -n "s/^Port \([0-9]*\): .*/\1/p" | xargs -r -n1 usbip detach -p' || true
+    kill "$server" 2>/dev/null || true
+    wait "$server" 2>/dev/null || true
+    kill "$shown" 2>/dev/null || true
+    rm -f "$log"
+}
+trap detach EXIT INT TERM
+until grep -q '^usbcam: listening on' "$log"; do
+    kill -0 "$server" 2>/dev/null || exit 1
+    sleep 0.2
+done
+guest "modprobe vhci-hcd && usbip --tcp-port $port attach -r 10.0.2.2 -b 1-1"
+echo "attached; the VM's tessaro-ctl camera list shows it. Ctrl-C detaches." >&2
+wait "$server"
+'''
+
+[tasks."usbcam:test"]
+description = "Run the fake webcam's unit tests"
+dir = "{{config_root}}/test/usbcam"
+run = "ruby -Ilib -e 'Dir[\"test/*_test.rb\"].sort.each { require File.expand_path(_1) }'"
+
 [tasks."dev:tunnel"]
 description = "Keep an SSH tunnel to the build host up: its VNC ports here, the local device's SSH there"
 dir = "{{config_root}}"

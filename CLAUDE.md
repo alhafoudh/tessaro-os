@@ -38,7 +38,7 @@ same change as the behaviour it describes.
 | [docs/bridge.md](docs/bridge.md) | the injected script, `window.tessaro` and its modes, who may call, `browser eval` |
 | [docs/remote-access.md](docs/remote-access.md) | VNC mirror and its PAM auth, SSH and `ssh connect` keys |
 | [docs/audio.md](docs/audio.md) | PipeWire units, how `audio.*` is applied, `auto` |
-| [docs/camera.md](docs/camera.md) | the camera mirrors and v4l2loopback, why not PipeWire, hiding the real cameras, how a format is picked, `camera.*`, what does not work |
+| [docs/camera.md](docs/camera.md) | the camera mirrors and v4l2loopback, one reader per `Mirror N`, why not PipeWire, hiding the real cameras, how a format is picked, `camera.*`, the USB/IP test camera in qemu, what does not work |
 | [docs/time.md](docs/time.md) | timedated and timesyncd, how `time.*` is applied, DHCP's NTP servers, the persistent clock, where `time show`'s numbers come from |
 | [docs/scheduler.md](docs/scheduler.md) | schedules: the systemd timer and units each is rendered into, parallel runs, how the last run is recorded, the reconcile, checking `OnCalendar` expressions |
 | [docs/hardware.md](docs/hardware.md) | vendor, model, board, CPU, serial and RAM in `device status`: DMI, the device tree, placeholders, where the serial goes |
@@ -101,6 +101,8 @@ Use the mise tasks rather than calling `kas-container` directly:
 | `mise run qemu:unpack` | Decompress the `.wic` for runqemu |
 | `mise run qemu:run` | Boot in QEMU, serial console on the terminal |
 | `mise run qemu:vnc` | Boot in QEMU with VNC on localhost:5901 |
+| `mise run usbcam:run -- [CLIP] --attach` | A fake USB webcam looping CLIP (or a test pattern) over USB/IP, attached to that VM |
+| `mise run usbcam:test` | The fake webcam's unit tests |
 | `mise run agent:test` | `cargo test` for the whole agent workspace |
 | `mise run agent:lint` | `cargo fmt --check` plus clippy for the workspace |
 | `mise run agent:integration` | The agent against a real headless Chromium (`agent/compose.yaml`, needs docker compose), control plane in a sandbox |
@@ -380,7 +382,7 @@ same thing. Keep to these rules when adding a command or a setting:
   * `audio`: sound. Which output plays and which input records, volume,
     mute, a test tone and a recording level.
   * `camera`: the USB cameras. Which there are and what each captures, the
-    format and size they capture in.
+    format and size they capture in, how many mirrors each has.
   * `time`: the clock. Timezone, NTP servers and sync, its status, setting
     it by hand.
   * `schedule`: command lines the device runs on calendar times. The

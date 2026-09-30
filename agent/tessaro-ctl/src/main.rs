@@ -104,8 +104,9 @@ const HELP_STYLES: Styles = Styles::styled()
         \x20 tessaro-ctl -n brave-otter-3fa2 browser devtools   the kiosk tab in chrome://inspect, over ssh\n\
         \x20 tessaro-ctl audio show                         where sound plays, how loud, what is plugged in\n\
         \x20 tessaro-ctl audio output hdmi && tessaro-ctl audio volume 60 && tessaro-ctl audio test\n\
-        \x20 tessaro-ctl camera list                        every USB camera, what it captures, its virtual camera\n\
+        \x20 tessaro-ctl camera list                        every USB camera, what it captures, its virtual cameras\n\
         \x20 tessaro-ctl camera format mjpeg && tessaro-ctl camera size 1280x720   every mirror restarts\n\
+        \x20 tessaro-ctl camera mirrors 2                   two readers may watch each camera at once\n\
         \x20 tessaro-ctl time show                          timezone, NTP sync, offset and drift\n\
         \x20 tessaro-ctl time timezone Europe/Bratislava && tessaro-ctl time ntp on --server ntp.corp.test\n\
         \x20 tessaro-ctl schedule create night --on '*-*-* 22:00' --run 'tessaro-ctl screen power off'\n\
@@ -187,8 +188,8 @@ enum Cmd {
     /// Sound: which output plays and which input records, volume, a test.
     #[command(subcommand)]
     Audio(audio::AudioCmd),
-    /// The USB cameras: what each mirror captures, the virtual camera pages
-    /// read, the format and size they capture at.
+    /// The USB cameras: what each mirror captures, the virtual cameras pages
+    /// read, the format and size they capture at and how many each gets.
     #[command(subcommand)]
     Camera(camera::CameraCmd),
     /// The clock: timezone, NTP servers and sync, setting it by hand.

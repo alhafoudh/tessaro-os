@@ -69,6 +69,13 @@ start.
   which card a sound came out of from the host. They are not in the kas
   fragment, or every `mise run qemu:run` would write WAV files. QEMU's wav backend
   cannot capture, so the mic case only proves the grant.
+* **The camera lane plugs in a camera from the host, over USB/IP.** qemu
+  emulates no camera, so `camera_spec.rb` starts `test/usbcam/usbcam.rb`
+  on the worker's USB/IP port (3240 plus the worker's offset,
+  `support/usbcam.rb`) and the guest attaches it with `usbip attach -r
+  10.0.2.2`: no forward is needed, the guest connects out through slirp.
+  The emulator's log is `build/e2e/camera.usbcam.log`. How it works is
+  **Testing in qemu** in [camera.md](camera.md).
 * **The printer lane prints to CUPS's own test printer.** qemu emulates no
   printer, so `printer_spec.rb` runs `ippeveprinter` (from the image's
   `cups` package) in the guest on a loopback port, keeping every job as a

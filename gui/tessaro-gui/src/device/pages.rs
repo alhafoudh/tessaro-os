@@ -193,6 +193,7 @@ enum Action {
     SetClock,
     CameraFormat,
     CameraSize,
+    CameraMirrors,
 }
 
 #[derive(Debug, Clone)]
@@ -255,6 +256,7 @@ pub enum Msg {
     // camera
     CameraFormat,
     CameraSize,
+    CameraMirrors,
     // time
     Timezone,
     Ntp,
@@ -465,6 +467,10 @@ impl Form {
 }
 
 const ON_ERROR: &[&str] = OnError::NAMES;
+
+/// The Mirrors form's choices: 1 to `keys::CAMERA_MIRRORS_MAX`, which a test
+/// holds them to.
+const MIRROR_COUNTS: &[&str] = &["1", "2", "3", "4", "5", "6", "7", "8"];
 
 /// The Join form's security choice that leaves it to the last scan, as
 /// `tessaro-ctl network wifi join` without `--security` does.
@@ -1783,6 +1789,23 @@ impl Device {
                         .field(Field::text("Size", &size, "auto")),
                 );
             }
+            Msg::CameraMirrors => {
+                let saved = self
+                    .pages
+                    .cameras
+                    .as_ref()
+                    .map(|list| list.mirrors.to_string());
+                let current = MIRROR_COUNTS
+                    .iter()
+                    .find(|count| Some(**count) == saved.as_deref())
+                    .copied()
+                    .unwrap_or("1");
+                self.form(
+                    Form::new("Camera mirrors", "Set", Action::CameraMirrors)
+                        .intro("Virtual cameras each camera gets, <camera> Mirror 1 and up, all with the same picture. Each has one reader at a time - the page, or a service on the device - so this is how many may watch a camera at once. Every camera mirror restarts.")
+                        .field(Field::choice("Mirrors", current, MIRROR_COUNTS)),
+                );
+            }
             Msg::Timezone => match ZONES.get() {
                 Some(zones) => self.timezone_form(zones),
                 None => self.call("time.zones", fetch::<api::time::Zones>()),
@@ -2403,6 +2426,10 @@ impl Device {
             Action::CameraSize => {
                 let size = super::check(keys::CAMERA_SIZE, form.value("Size").trim())?;
                 self.set(&[(keys::CAMERA_SIZE, &size)]);
+                self.call("camera", fetch::<api::camera::List>());
+            }
+            Action::CameraMirrors => {
+                self.set(&[(keys::CAMERA_MIRRORS, form.value("Mirrors"))]);
                 self.call("camera", fetch::<api::camera::List>());
             }
             Action::Timezone => {
@@ -4094,6 +4121,7 @@ impl Device {
         let actions = vec![
             action("Format ...", self.when(Msg::CameraFormat)),
             action("Size ...", self.when(Msg::CameraSize)),
+            action("Mirrors ...", self.when(Msg::CameraMirrors)),
         ];
         let Some(list) = &self.pages.cameras else {
             return self.page("camera", actions, Vec::new(), Vec::new());
@@ -4101,7 +4129,7 @@ impl Device {
         const CAMERAS: &[Col] = &[
             col("Camera", Length::Fixed(200.0)),
             col("Device", Length::Fixed(80.0)),
-            col("Virtual", Length::Fixed(100.0)),
+            col("Mirrors", Length::Fixed(180.0)),
             col("Captures", Length::Fixed(180.0)),
             col("", Length::Fill),
         ];
@@ -4124,7 +4152,15 @@ impl Device {
                     vec![
                         cell(camera.name.clone()).into(),
                         cell(format!("/dev/{}", camera.device)).into(),
-                        cell(camera.virtual_device.clone().unwrap_or_default()).into(),
+                        cell(
+                            camera
+                                .mirrors
+                                .iter()
+                                .map(|mirror| mirror.device.as_str())
+                                .collect::<Vec<_>>()
+                                .join(" "),
+                        )
+                        .into(),
                         cell(
                             camera
                                 .mode
@@ -4169,7 +4205,11 @@ impl Device {
             .unwrap_or_default();
         let mut body = vec![self.facts(
             "camerafacts",
-            vec![("Format", list.format.clone()), ("Size", list.size.clone())],
+            vec![
+                ("Format", list.format.clone()),
+                ("Size", list.size.clone()),
+                ("Mirrors", list.mirrors.to_string()),
+            ],
         )];
         if list.cameras.is_empty() {
             body.push(theme::text_line(&describe::camera::none(), theme::FONT));
@@ -4482,6 +4522,14 @@ fn joined(lines: &[Line]) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn the_mirror_choices_run_from_one_to_the_most_a_camera_gets() {
+        let counts: Vec<String> = (1..=keys::CAMERA_MIRRORS_MAX)
+            .map(|n| n.to_string())
+            .collect();
+        assert_eq!(MIRROR_COUNTS, counts);
+    }
 
     #[test]
     fn a_policy_file_suggests_a_name_the_device_takes() {

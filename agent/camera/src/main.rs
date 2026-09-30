@@ -1,4 +1,4 @@
-//! tessaro-camera: mirrors one USB camera into a v4l2loopback device.
+//! tessaro-camera: mirrors one USB camera into v4l2loopback devices.
 //!
 //! ```text
 //! tessaro-camera /dev/videoN
@@ -7,15 +7,19 @@
 //! A V4L2 camera streams to one reader, so whoever opens it first holds it.
 //! This is that one reader: udev starts `tessaro-camera@videoN.service` for
 //! every USB camera (and hides the camera's own node from everyone else),
-//! and the mirror copies each frame, as captured, into a virtual camera of
-//! the same name that the browser and anything else can open at once.
+//! and the mirror copies each frame, as captured, into every one of the
+//! camera's virtual cameras, `<camera> Mirror <k>`. A loopback streams to one
+//! reader at a time too, so each reader takes a mirror of its own; see
+//! `mirrors.rs`.
 //!
 //! The mode comes from `KIOSK_CAMERA_FORMAT` and `KIOSK_CAMERA_SIZE`
 //! (camera.format and camera.size, rendered by the agent into
-//! `/run/tessaro-camera/camera.env`); see `choice.rs`. What it captures goes
-//! to `/run/tessaro-camera/videoN.json` as a `protocol::CameraInfo`, which
-//! `tessaro-ctl camera list` reads back, and is removed on exit along with
-//! the virtual camera.
+//! `/run/tessaro-camera/camera.env`); see `choice.rs`. How many mirrors it
+//! makes comes from `KIOSK_CAMERA_MIRRORS` (camera.mirrors) in the same file,
+//! read at start only: the agent restarts the mirror when it changes. What
+//! it captures goes to `/run/tessaro-camera/videoN.json` as a
+//! `protocol::CameraInfo`, which `tessaro-ctl camera list` reads back, and is
+//! removed on exit along with the virtual cameras.
 //!
 //! Exits 0 on SIGTERM and when the camera is unplugged, non-zero on any other
 //! failure, which the unit restarts. A camera it cannot mirror at all (no
@@ -24,6 +28,7 @@
 
 mod choice;
 mod loopback;
+mod mirrors;
 mod v4l2;
 
 use std::env;
@@ -37,7 +42,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
-use protocol::{CameraInfo, CameraMode};
+use protocol::{CameraInfo, CameraMirror, CameraMode};
 
 use choice::Wanted;
 use loopback::{Control, Leftovers, Removed};
@@ -173,11 +178,14 @@ fn run(device: &Path, name: &str, dir: &Path, state: &State) -> Result<()> {
     });
     let modes: Vec<CameraMode> = found.iter().map(|(mode, _)| mode.clone()).collect();
 
+    // The camera's own name, uvcvideo's repeated product dropped and without
+    // a mirror's " Mirror <k>": each mirror carries its own label.
+    let camera_name = mirrors::camera_name(&identity.card);
     let mut info = CameraInfo {
-        name: identity.card.clone(),
+        name: camera_name.clone(),
         device: name.to_string(),
         bus: identity.bus.clone(),
-        virtual_device: None,
+        mirrors: Vec::new(),
         mode: None,
         fallback: None,
         error: None,
@@ -213,26 +221,55 @@ fn run(device: &Path, name: &str, dir: &Path, state: &State) -> Result<()> {
     let mut leftovers = Leftovers::load(&dir.join(format!("{name}.leftover")));
     leftovers.sweep(&control);
 
-    let nr = check(control.add(&identity.card), "adding a v4l2loopback device")?;
-    let virtual_device = format!("/dev/video{nr}");
-    let result = mirror(
-        &camera,
-        &virtual_device,
-        &mode,
-        &mut info,
-        state,
-        &control,
-        &mut leftovers,
-    );
+    let (count, why) = mirrors::count(env::var("KIOSK_CAMERA_MIRRORS").ok().as_deref());
+    if let Some(why) = why {
+        eprintln!("{why}");
+    }
+    // Every one or none: a loopback that cannot be added removes the ones
+    // made before it, on the same path as a mirror that ends.
+    let mut made: Vec<(u32, CameraMirror)> = Vec::new();
+    let mut result = Ok(());
+    for label in mirrors::labels(&camera_name, count) {
+        match control.add(&label) {
+            Ok(nr) => made.push((
+                nr,
+                CameraMirror {
+                    name: label,
+                    device: format!("/dev/video{nr}"),
+                },
+            )),
+            Err(err) => {
+                result = Err(stop(err, "adding a v4l2loopback device"));
+                break;
+            }
+        }
+    }
+    if result.is_ok() {
+        let loopbacks: Vec<CameraMirror> = made.iter().map(|(_, m)| m.clone()).collect();
+        result = mirror(
+            &camera,
+            &loopbacks,
+            &mode,
+            &mut info,
+            state,
+            &control,
+            &mut leftovers,
+        );
+    }
     // The state first, so nothing reads a virtual device that is going.
     state.remove();
-    match control.remove(nr, true) {
-        Removed::Done => {}
-        Removed::Busy => {
-            eprintln!("{virtual_device} is still open, so it stays until its reader lets go");
-            leftovers.add(nr);
+    for (nr, made) in &made {
+        match control.remove(*nr, true) {
+            Removed::Done => {}
+            Removed::Busy => {
+                eprintln!(
+                    "{} is still open, so it stays until its reader lets go",
+                    made.device
+                );
+                leftovers.add(*nr);
+            }
+            Removed::Gone(err) => eprintln!("removing {}: {err}", made.device),
         }
-        Removed::Gone(err) => eprintln!("removing {virtual_device}: {err}"),
     }
     result
 }
@@ -275,26 +312,26 @@ fn configure(camera: &File, chosen: &CameraMode, interval: Option<Interval>) -> 
     })
 }
 
-/// Stream the camera into `virtual_device` until asked to stop.
-fn mirror(
-    camera: &File,
-    virtual_device: &str,
-    mode: &CameraMode,
-    info: &mut CameraInfo,
-    state: &State,
-    control: &Control,
-    leftovers: &mut Leftovers,
-) -> Result<()> {
-    let output = open_virtual(virtual_device)?;
-    let out_fd = output.as_raw_fd();
+/// One virtual camera the mirror writes into.
+struct Output {
+    file: File,
+    device: String,
+    /// Its last write failed, so the next failure is not said again.
+    failing: bool,
+}
+
+/// Open `device` and tell it the format and rate the camera captures.
+fn open_output(device: &str, mode: &CameraMode) -> Result<Output> {
+    let file = open_virtual(device)?;
+    let fd = file.as_raw_fd();
     let pixelformat = v4l2::pixelformat(&mode.format);
     check(
         v4l2::set_format(
-            out_fd,
+            fd,
             BUF_TYPE_VIDEO_OUTPUT,
             v4l2::pix_format(pixelformat, mode.width, mode.height, true),
         ),
-        &format!("setting {virtual_device}'s format"),
+        &format!("setting {device}'s format"),
     )?;
     if mode.fps > 0 {
         // What readers are told the rate is; frames go out as they come.
@@ -302,22 +339,48 @@ fn mirror(
             numerator: 1,
             denominator: mode.fps,
         };
-        if let Err(err) = v4l2::set_interval(out_fd, BUF_TYPE_VIDEO_OUTPUT, rate) {
-            eprintln!("setting {virtual_device}'s frame rate: {err}");
+        if let Err(err) = v4l2::set_interval(fd, BUF_TYPE_VIDEO_OUTPUT, rate) {
+            eprintln!("setting {device}'s frame rate: {err}");
         }
     }
+    Ok(Output {
+        file,
+        device: device.to_string(),
+        failing: false,
+    })
+}
+
+/// Stream the camera into every one of `loopbacks` until asked to stop.
+fn mirror(
+    camera: &File,
+    loopbacks: &[CameraMirror],
+    mode: &CameraMode,
+    info: &mut CameraInfo,
+    state: &State,
+    control: &Control,
+    leftovers: &mut Leftovers,
+) -> Result<()> {
+    let mut outputs = loopbacks
+        .iter()
+        .map(|loopback| open_output(&loopback.device, mode))
+        .collect::<Result<Vec<Output>>>()?;
 
     let capture = check(Capture::start(camera, BUFFERS), "starting the capture")?;
-    info.virtual_device = Some(virtual_device.to_string());
+    info.mirrors = loopbacks.to_vec();
     info.mode = Some(mode.clone());
     state.write(info);
+    let devices: Vec<&str> = loopbacks.iter().map(|m| m.device.as_str()).collect();
     eprintln!(
-        "capturing {} {}x{} at {} fps from {:?} into {virtual_device}",
-        mode.format, mode.width, mode.height, mode.fps, info.name
+        "capturing {} {}x{} at {} fps from {:?} into {}",
+        mode.format,
+        mode.width,
+        mode.height,
+        mode.fps,
+        info.name,
+        devices.join(", ")
     );
 
     let mut last_frame = Instant::now();
-    let mut writes_failing = false;
     while !stopping() {
         if !leftovers.is_empty() {
             leftovers.sweep(control);
@@ -353,18 +416,24 @@ fn mirror(
         };
         last_frame = Instant::now();
         if !frame.corrupt && frame.bytes > 0 {
-            // One write is one frame to v4l2loopback, so never write_all:
-            // a short write is the driver cutting the frame to its buffer.
-            match (&output).write(capture.bytes(&frame)) {
-                Ok(_) => writes_failing = false,
-                Err(err) if err.kind() == ErrorKind::Interrupted => {}
-                Err(err) => {
-                    // Said once, not at every frame; a reader changing the
-                    // format under the mirror is the likely cause.
-                    if !writes_failing {
-                        eprintln!("writing to {virtual_device}: {err}");
+            let bytes = capture.bytes(&frame);
+            // Each loopback on its own: one that refuses a frame does not
+            // keep it from the others.
+            for output in &mut outputs {
+                // One write is one frame to v4l2loopback, so never
+                // write_all: a short write is the driver cutting the frame
+                // to its buffer.
+                match (&output.file).write(bytes) {
+                    Ok(_) => output.failing = false,
+                    Err(err) if err.kind() == ErrorKind::Interrupted => {}
+                    Err(err) => {
+                        // Said once, not at every frame; a reader changing
+                        // the format under the mirror is the likely cause.
+                        if !output.failing {
+                            eprintln!("writing to {}: {err}", output.device);
+                        }
+                        output.failing = true;
                     }
-                    writes_failing = true;
                 }
             }
         }

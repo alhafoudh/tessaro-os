@@ -336,20 +336,24 @@ pub fn all(
     })
 }
 
+/// camera.mirrors on a device whose env file predates it.
+pub const DEFAULT_CAMERA_MIRRORS: &str = "2";
+
 /// camera.env, for `tessaro-camera@.service`: always both keys, `auto` for
-/// one never set, so a mirror reads the same whether or not a key was ever
-/// touched.
+/// one never set, and the image's number of mirrors, so a mirror reads the
+/// same whether or not a key was ever touched.
 fn render_camera(paths: &Paths, effective: &state::Effective) -> Result<bool, String> {
-    let value = |env| {
+    let value = |env, default: &str| {
         effective
             .get(env)
             .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| "auto".to_string())
+            .unwrap_or_else(|| default.to_string())
     };
     let body = format!(
-        "KIOSK_CAMERA_FORMAT={}\nKIOSK_CAMERA_SIZE={}\n",
-        value("KIOSK_CAMERA_FORMAT"),
-        value("KIOSK_CAMERA_SIZE"),
+        "KIOSK_CAMERA_FORMAT={}\nKIOSK_CAMERA_SIZE={}\nKIOSK_CAMERA_MIRRORS={}\n",
+        value("KIOSK_CAMERA_FORMAT", "auto"),
+        value("KIOSK_CAMERA_SIZE", "auto"),
+        value("KIOSK_CAMERA_MIRRORS", DEFAULT_CAMERA_MIRRORS),
     );
     let path = &paths.camera_env;
     store::replace_if_changed(path, body.as_bytes(), 0o644)
@@ -1184,10 +1188,14 @@ mod tests {
         all(&paths, &defaults, &settings(&[]), &log).unwrap();
         assert_eq!(
             std::fs::read_to_string(&paths.camera_env).unwrap(),
-            "KIOSK_CAMERA_FORMAT=auto\nKIOSK_CAMERA_SIZE=auto\n"
+            "KIOSK_CAMERA_FORMAT=auto\nKIOSK_CAMERA_SIZE=auto\nKIOSK_CAMERA_MIRRORS=2\n"
         );
 
-        let set = settings(&[("camera.format", "yuyv"), ("camera.size", "640x480")]);
+        let set = settings(&[
+            ("camera.format", "yuyv"),
+            ("camera.size", "640x480"),
+            ("camera.mirrors", "3"),
+        ]);
         assert_eq!(
             all(&paths, &defaults, &set, &log).unwrap(),
             Rendered {
@@ -1197,7 +1205,7 @@ mod tests {
         );
         assert_eq!(
             std::fs::read_to_string(&paths.camera_env).unwrap(),
-            "KIOSK_CAMERA_FORMAT=yuyv\nKIOSK_CAMERA_SIZE=640x480\n"
+            "KIOSK_CAMERA_FORMAT=yuyv\nKIOSK_CAMERA_SIZE=640x480\nKIOSK_CAMERA_MIRRORS=3\n"
         );
         let generated = std::fs::read_to_string(paths.generated_env()).unwrap();
         assert!(!generated.contains("KIOSK_CAMERA"), "{generated}");

@@ -386,6 +386,8 @@ pub static KEYS: &[Key] = &[
         "How cameras capture: auto (MJPEG where the camera has it, else YUYV), mjpeg or yuyv. Frames reach the page as captured, never converted. A camera without the format uses auto. `tessaro-ctl camera format`."),
     key(CAMERA_SIZE, "KIOSK_CAMERA_SIZE", Kind::CameraSize, CAMERA,
         "Frame size cameras capture at: auto (the largest up to 1920x1080 that keeps 25 fps), or WIDTHxHEIGHT from `tessaro-ctl camera list`. A camera without the size uses auto. `tessaro-ctl camera size`."),
+    key(CAMERA_MIRRORS, "KIOSK_CAMERA_MIRRORS", Kind::Int { min: 1, max: CAMERA_MIRRORS_MAX }, CAMERA,
+        "Virtual cameras each camera gets, `<camera> Mirror 1` and up, all with the same picture. Each has one reader at a time - the page, or a service on the device - so this is how many may watch a camera at once. `tessaro-ctl camera mirrors`."),
     // The printers themselves are in their own table, `tessaro-ctl printer`;
     // this only decides whether the page may use them.
     key(PRINTER_ENABLE, "KIOSK_PRINTING", Kind::Flag, BROWSER_AND_AGENT,
@@ -548,6 +550,10 @@ pub const NTP_SERVERS: &str = "time.ntp.servers";
 pub const PRINTER_ENABLE: &str = "printer.enable";
 pub const CAMERA_FORMAT: &str = "camera.format";
 pub const CAMERA_SIZE: &str = "camera.size";
+pub const CAMERA_MIRRORS: &str = "camera.mirrors";
+
+/// The most virtual cameras one camera gets: each is a copy of every frame.
+pub const CAMERA_MIRRORS_MAX: i64 = 8;
 
 /// What camera.format may be.
 pub const CAMERA_FORMATS: &[&str] = &["auto", "mjpeg", "yuyv"];
@@ -1582,7 +1588,10 @@ mod tests {
         assert_eq!(check(CAMERA_SIZE, "160X120").unwrap(), "160x120");
         assert!(check(CAMERA_SIZE, "preferred").is_err());
         assert!(check(CAMERA_SIZE, "1280x720@30").is_err());
-        for name in [CAMERA_FORMAT, CAMERA_SIZE] {
+        assert_eq!(check(CAMERA_MIRRORS, "3").unwrap(), "3");
+        assert!(check(CAMERA_MIRRORS, "0").is_err());
+        assert!(check(CAMERA_MIRRORS, "9").is_err());
+        for name in [CAMERA_FORMAT, CAMERA_SIZE, CAMERA_MIRRORS] {
             assert_eq!(find(name).unwrap().consumers, [Consumer::Camera]);
         }
     }

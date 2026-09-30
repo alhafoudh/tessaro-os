@@ -19,7 +19,8 @@ module AgentE2E
   CASE_SETTINGS = %w[browser.probe_url agent.enable browser.maintenance.enable browser.debug.enable
                      browser.debug.template audio.output audio.volume audio.mute audio.input
                      audio.input_volume network.proxy.url network.proxy.bypass printer.enable
-                     browser.bridge.mode browser.url agent.cdp_ping].freeze
+                     browser.bridge.mode browser.url agent.cdp_ping camera.format camera.size
+                     camera.mirrors].freeze
 
   class Failure < StandardError; end
 

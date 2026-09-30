@@ -1,6 +1,6 @@
 [package]
 name = "tessaro-camera"
-description = "Mirrors a USB camera into a v4l2loopback device that any number of readers can open"
+description = "Mirrors a USB camera into v4l2loopback devices, one for each reader"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

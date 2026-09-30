@@ -1,0 +1,98 @@
+<!doctype html>
+<!--
+  A camera page for checking a device by hand: every camera the page sees, a
+  full-screen preview of the one picked, and what the track delivers. Upload
+  it to the file store and open it from a device origin, where the camera is
+  granted without a prompt (docs/camera.md, The grant):
+
+    tessaro-ctl files upload test/usbcam/camera.html /camera.html
+    tessaro-ctl browser navigate http://127.0.0.1/files/camera.html
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Camera</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; color: #eee; font: 16px/1.4 system-ui, sans-serif; }
+  video { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+  #panel { position: fixed; left: 1rem; top: 1rem; padding: .75rem 1rem; background: rgba(0, 0, 0, .65); border-radius: .5rem; }
+  #panel b { color: #fff; }
+  select, button { font: inherit; }
+  .bad { color: #ff6b6b; }
+</style>
+</head>
+<body>
+<video id="video" autoplay muted playsinline></video>
+<div id="panel">
+  <div><select id="cameras"></select> <button id="stop">Stop</button></div>
+  <div id="status">Looking for cameras...</div>
+  <div id="stats"></div>
+</div>
+<script>
+  const video = document.getElementById("video");
+  const picker = document.getElementById("cameras");
+  const status = document.getElementById("status");
+  const stats = document.getElementById("stats");
+  let stream = null;
+  let frames = 0;
+
+  function stop() {
+    stream?.getTracks().forEach((track) => track.stop());
+    stream = null;
+    video.srcObject = null;
+  }
+
+  async function open(deviceId) {
+    stop();
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { deviceId: deviceId ? { exact: deviceId } : undefined, width: { ideal: 1920 }, height: { ideal: 1080 } },
+      });
+      video.srcObject = stream;
+      const track = stream.getVideoTracks()[0];
+      status.innerHTML = `<b>${track.label}</b>`;
+      track.addEventListener("ended", () => { status.innerHTML = '<span class="bad">the camera went away</span>'; });
+    } catch (error) {
+      status.innerHTML = `<span class="bad">${error.name}: ${error.message}</span>`;
+    }
+  }
+
+  async function list() {
+    const cameras = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === "videoinput");
+    const current = picker.value;
+    picker.replaceChildren(...cameras.map((camera, index) => new Option(camera.label || `camera ${index + 1}`, camera.deviceId)));
+    if (cameras.length === 0) {
+      stop();
+      status.innerHTML = '<span class="bad">no camera</span>';
+      return;
+    }
+    if (!stream || !cameras.some((camera) => camera.deviceId === current)) {
+      await open(cameras[0].deviceId);
+    } else {
+      picker.value = current;
+    }
+  }
+
+  // Frames the page actually got in the last second, beside what the track
+  // was set up with.
+  function count() {
+    frames++;
+    video.requestVideoFrameCallback(count);
+  }
+  video.requestVideoFrameCallback(count);
+  setInterval(() => {
+    const track = stream?.getVideoTracks()[0];
+    const settings = track?.getSettings() ?? {};
+    stats.textContent = track
+      ? `${settings.width}x${settings.height} @ ${Math.round(settings.frameRate ?? 0)} fps set, ${frames} fps shown`
+      : "";
+    frames = 0;
+  }, 1000);
+
+  picker.addEventListener("change", () => open(picker.value));
+  document.getElementById("stop").addEventListener("click", stop);
+  navigator.mediaDevices.addEventListener("devicechange", list);
+  list();
+</script>
+</body>
+</html>

@@ -1,9 +1,10 @@
 //! `tessaro-ctl camera ...`: the USB cameras, and how their mirrors capture.
 //!
 //! Only a camera's mirror, `tessaro-camera@<device>.service`, opens the
-//! camera itself; the page and anything else read the virtual camera it
-//! republishes, all at once. `format` and `size` are each a `config set` of
-//! one camera.* key: every running mirror restarts to capture that way.
+//! camera itself; the page and anything else read the virtual cameras it
+//! republishes, one reader each. `format`, `size` and `mirrors` are each a
+//! `config set` of one camera.* key: every running mirror restarts to
+//! capture that way.
 
 use std::collections::BTreeMap;
 
@@ -20,7 +21,7 @@ use crate::{print, show_applied};
 
 #[derive(Subcommand)]
 pub enum CameraCmd {
-    /// Every USB camera: its node and the virtual camera pages read, what
+    /// Every USB camera: its node and the virtual cameras pages read, what
     /// its mirror captures and why, every format and size it has, and the
     /// saved camera.* settings.
     List,
@@ -38,6 +39,16 @@ pub enum CameraCmd {
     ///   tessaro-ctl camera size 1280x720
     ///   tessaro-ctl camera size auto
     Size { size: String },
+    /// Virtual cameras each camera gets, `<camera> Mirror 1` and up, all
+    /// with the same picture. Each has one reader at a time - the page, or
+    /// a service on the device - so this is how many may watch a camera at
+    /// once. The same as `tessaro-ctl config set camera.mirrors=...`.
+    ///
+    ///   tessaro-ctl camera mirrors 2
+    Mirrors {
+        #[arg(value_parser = clap::value_parser!(u32).range(1..=keys::CAMERA_MIRRORS_MAX))]
+        mirrors: u32,
+    },
 }
 
 pub fn run(session: &mut Session, command: CameraCmd, json: bool) -> Result<(), String> {
@@ -52,6 +63,9 @@ pub fn run(session: &mut Session, command: CameraCmd, json: bool) -> Result<(), 
         }
         CameraCmd::Format { format } => set(session, json, keys::CAMERA_FORMAT, format),
         CameraCmd::Size { size } => set(session, json, keys::CAMERA_SIZE, size),
+        CameraCmd::Mirrors { mirrors } => {
+            set(session, json, keys::CAMERA_MIRRORS, mirrors.to_string())
+        }
     }
 }
 

@@ -47,7 +47,10 @@ mod tests {
             name: "HD Webcam".to_string(),
             device: device.to_string(),
             bus: "usb-0000:00:14.0-2".to_string(),
-            virtual_device: Some("/dev/video50".to_string()),
+            mirrors: vec![protocol::CameraMirror {
+                name: "HD Webcam Mirror 1".to_string(),
+                device: "/dev/video50".to_string(),
+            }],
             mode: Some(CameraMode {
                 format: "mjpeg".to_string(),
                 width: 1280,

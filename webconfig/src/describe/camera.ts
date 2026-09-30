@@ -3,6 +3,9 @@
 import type { Schemas } from "../api/client";
 import { Line } from "../text/line";
 
+/** protocol::keys::CAMERA_MIRRORS_MAX: the most virtual cameras one camera gets. */
+export const CAMERA_MIRRORS_MAX = 8;
+
 /** `mjpeg 1280x720 @ 30 fps`. */
 export function mode(mode: Schemas["CameraMode"]): string {
   return `${mode.format} ${mode.width}x${mode.height} @ ${mode.fps} fps`;
@@ -14,7 +17,7 @@ export function none(): Line {
 }
 
 /**
- * `camera list`: a block per camera - what it is called, its node and the virtual camera readers
+ * `camera list`: a block per camera - what it is called, its node and each virtual camera readers
  * open, what its mirror captures and why that is not what the settings say, every mode it has -
  * then the saved settings.
  */
@@ -34,16 +37,21 @@ export function list(list: Schemas["CameraList"]): Line[] {
       .add("label", "format")
       .text(` ${list.format}  `)
       .add("label", "size")
-      .text(` ${list.size}`),
+      .text(` ${list.size}  `)
+      .add("label", "mirrors")
+      .text(` ${list.mirrors}`),
   );
   lines.push(
     Line.of("muted", "change them with")
       .text(" ")
       .add("cmd", "tessaro-ctl camera format auto|mjpeg|yuyv")
+      .add("muted", ",")
+      .text(" ")
+      .add("cmd", "tessaro-ctl camera size auto|WIDTHxHEIGHT")
       .text(" ")
       .add("muted", "and")
       .text(" ")
-      .add("cmd", "tessaro-ctl camera size auto|WIDTHxHEIGHT"),
+      .add("cmd", `tessaro-ctl camera mirrors 1-${CAMERA_MIRRORS_MAX}`),
   );
   return lines;
 }
@@ -51,12 +59,15 @@ export function list(list: Schemas["CameraList"]): Line[] {
 function one(camera: Schemas["CameraInfo"]): Line[] {
   const indent = () => Line.plain("    ");
   const lines = [Line.of("heading", camera.name).text(" ").add("muted", `(${camera.bus})`)];
-  const virtualDevice = camera.virtual_device
-    ? Line.of("ok", camera.virtual_device)
-    : Line.of("muted", "(no virtual camera)");
-  lines.push(
-    indent().pad("label", "device", 9).text(` /dev/${camera.device} `).add("muted", "->").text(" ").join(virtualDevice),
-  );
+  lines.push(indent().pad("label", "device", 9).text(` /dev/${camera.device}`));
+  const mirrors = camera.mirrors ?? [];
+  if (mirrors.length === 0) {
+    lines.push(indent().pad("label", "mirror", 9).text(" ").add("muted", "(no virtual camera)"));
+  }
+  const width = Math.max(0, ...mirrors.map((mirror) => mirror.device.length));
+  for (const mirror of mirrors) {
+    lines.push(indent().pad("label", "mirror", 9).text(" ").pad("ok", mirror.device, width).text(`  ${mirror.name}`));
+  }
   if (camera.mode) {
     lines.push(
       indent()

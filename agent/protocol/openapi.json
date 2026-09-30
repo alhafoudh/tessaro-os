@@ -6938,6 +6938,12 @@
             "type": "string",
             "description": "camera.size, as saved: `auto` or `WIDTHxHEIGHT`."
           },
+          "mirrors": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "camera.mirrors, as saved: how many virtual cameras each camera gets."
+          },
           "cameras": {
             "type": "array",
             "items": {
@@ -6948,6 +6954,7 @@
         "required": [
           "format",
           "size",
+          "mirrors",
           "cameras"
         ],
         "description": "Every camera, and the camera.* settings their mirrors capture with."
@@ -6957,7 +6964,7 @@
         "properties": {
           "name": {
             "type": "string",
-            "description": "What the camera calls itself, `HD Pro Webcam C920`. The virtual\ncamera has the same name, which is what a page's\n`enumerateDevices()` shows."
+            "description": "What the camera calls itself, `HD Pro Webcam C920`."
           },
           "device": {
             "type": "string",
@@ -6967,13 +6974,13 @@
             "type": "string",
             "description": "Where it is plugged in, as the kernel says: `usb-0000:00:14.0-2`."
           },
-          "virtual_device": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The node every reader opens, `/dev/video50`. None when the mirror\ncould not start.",
-            "default": null
+          "mirrors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CameraMirror"
+            },
+            "description": "The virtual cameras the mirror writes every frame into, one reader\neach: v4l2loopback streams a device to one reader at a time. Empty\nwhen the mirror could not start.",
+            "default": []
           },
           "mode": {
             "anyOf": [
@@ -7017,7 +7024,25 @@
           "device",
           "bus"
         ],
-        "description": "One USB camera. Only its mirror, `tessaro-camera@<device>.service`, opens\nthe camera itself; everything else reads `virtual_device`. The mirror\nwrites this to `/run/tessaro-camera/<device>.json`."
+        "description": "One USB camera. Only its mirror, `tessaro-camera@<device>.service`, opens\nthe camera itself; everything else reads one of its `mirrors`. The mirror\nwrites this to `/run/tessaro-camera/<device>.json`."
+      },
+      "CameraMirror": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "What readers see, and a page's `enumerateDevices()` shows: `HD Pro\nWebcam C920 Mirror 1`. The camera's name is cut short to fit V4L2's\n31 characters."
+          },
+          "device": {
+            "type": "string",
+            "description": "Its node, `/dev/video50`."
+          }
+        },
+        "required": [
+          "name",
+          "device"
+        ],
+        "description": "One virtual camera of a camera."
       },
       "CameraMode": {
         "type": "object",

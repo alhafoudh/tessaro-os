@@ -3,6 +3,7 @@
   "input": {
     "cameras": [],
     "format": "auto",
+    "mirrors": 1,
     "size": "auto"
   },
   "output": [
@@ -52,7 +53,17 @@
       ],
       [
         "plain",
-        " auto",
+        " auto  ",
+        0
+      ],
+      [
+        "label",
+        "mirrors",
+        0
+      ],
+      [
+        "plain",
+        " 1",
         0
       ]
     ],
@@ -73,6 +84,21 @@
         0
       ],
       [
+        "muted",
+        ",",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "cmd",
+        "tessaro-ctl camera size auto|WIDTHxHEIGHT",
+        0
+      ],
+      [
         "plain",
         " ",
         0
@@ -89,7 +115,7 @@
       ],
       [
         "cmd",
-        "tessaro-ctl camera size auto|WIDTHxHEIGHT",
+        "tessaro-ctl camera mirrors 1-8",
         0
       ]
     ]

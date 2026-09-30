@@ -292,7 +292,7 @@ applies and stays, Default unsets.**
 | Certificates | `network certs list`, `add` (a file picker) and `revoke` |
 | Storage | `storage show`, partitions and filesystems, `storage grow` (check first) |
 | Audio | `audio show`, outputs and inputs, choosing one, volume, mute, `audio test` for the tone and the recording |
-| Camera | `camera list` as the saved format and size, a row per camera (its node, virtual camera, what it captures, a fallback or error) and the modes of the one selected, `camera format` (a choice), `camera size` (opening a mode fills it in) |
+| Camera | `camera list` as the saved format, size and mirrors, a row per camera (its node, the nodes of its mirrors, what it captures, a fallback or error) and the modes of the one selected, `camera format` (a choice), `camera size` (opening a mode fills it in), `camera mirrors` (a choice) |
 | Time | `time show` and its servers, `time timezone` (a choice of `time zones`), `time ntp on|off` with servers, `time sync`, `time set` (this computer's clock or a typed time) |
 | Schedules | `schedule list`, `create` and `set` in one dialog (multi-line calendar and commands, checked with `schedule check` as you type), `enable`/`disable`, `run`, `remove`, `logs` (the Log page, filtered to the schedule's runs) |
 | Printer | `printer list` with printer.enable above it, `printer discover` (a job; each printer found is a row to Add from), `create` (a dialog that stays open until the device takes it: a driverless printer must answer), `show`, `test`, `default`, `print` (a file picker), `remove`, `jobs` and `cancel` |
