@@ -813,8 +813,8 @@ impl Device {
         self.pages.selected.get(table)
     }
 
-    /// The camera the Camera page's preview shows: the one picked in its
-    /// table, else the first.
+    /// The camera the camera panel shows: the one picked in the Camera
+    /// page's table, else the first.
     pub(super) fn preview_camera(&self) -> Option<String> {
         let list = self.pages.cameras.as_ref()?;
         let picked = self.selected("cameras");
@@ -4445,10 +4445,7 @@ impl Device {
             body.push(theme::text_line(&describe::camera::none(), theme::FONT));
         }
         body.push(self.table("cameras", CAMERAS, cameras, Length::Fixed(TABLE_HEIGHT)));
-        if !list.cameras.is_empty() {
-            body.push(self.camera_preview_view());
-        }
-        body.push(self.table("camera.modes", MODES, modes, Length::Fixed(TABLE_HEIGHT)));
+        body.push(self.table("camera.modes", MODES, modes, Length::Fill));
         self.page("camera", actions, Vec::new(), body)
     }
 
