@@ -87,4 +87,7 @@ it differs.
   budgets (the `agent.probe_*` timeouts, the `agent.cdp_*` keys,
   `agent.device_access`). Its first cycle loads the page again. The proxy
   switched on or off and the extra certificate authorities restart it for
-  the same reason (**Proxy** in [networking.md](networking.md)).
+  the same reason (**Proxy** in [networking.md](networking.md)). The browser
+  keeps running: the change wakes the loop just before the stop, and a
+  stopping agent neither counts a failed CDP check (the session answers
+  "shutting down") nor restarts the browser (`restart` in `agent.rs`).

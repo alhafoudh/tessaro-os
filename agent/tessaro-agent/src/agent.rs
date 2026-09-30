@@ -275,7 +275,9 @@ impl<'a> Agent<'a> {
             }
             self.ping_fails = 0;
             self.seen_alive = true;
-        } else {
+        } else if self.running() {
+            // Not while stopping: the session answers "shutting down" then,
+            // which says nothing about the browser.
             self.ping_fails += 1;
             if self.ping_fails == 1 {
                 self.report_cdp_failure(format!("chromium is not answering on {}", config.cdp_url));
@@ -595,6 +597,16 @@ impl<'a> Agent<'a> {
     async fn restart(&mut self, reason: &str, now: i64) -> bool {
         let current = Arc::clone(&self.current);
         let unit = &current.config.unit;
+
+        // A stopping agent leaves the browser alone. A change to a key the
+        // agent sets up once per process wakes the loop and then restarts the
+        // agent, so a cycle can be half-way through when the stop comes, and
+        // the browser must not go down with the agent.
+        if !self.running() {
+            self.log
+                .debug(format!("not restarting {unit} ({reason}): stopping"));
+            return false;
+        }
 
         if now - self.last_restart < current.config.restart_backoff {
             self.log
@@ -1212,6 +1224,20 @@ mod tests {
         agent.cycle(1020).await;
 
         assert_eq!(world.navigations(), vec![OFFLINE_URI, "http://kiosk.test/"]);
+    }
+
+    #[tokio::test]
+    async fn a_stopping_agent_does_not_restart_the_browser() {
+        let world = World::new(&[]);
+        let mut agent = world.agent();
+        world.cdp.alive.set(false);
+
+        agent.cycle(1000).await;
+        agent.cycle(1010).await;
+        world.stop.send_replace(true);
+        agent.cycle(1020).await;
+
+        assert_eq!(world.units.restarts.get(), 0);
     }
 
     #[tokio::test]
