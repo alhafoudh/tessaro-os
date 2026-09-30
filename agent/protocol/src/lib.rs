@@ -483,6 +483,11 @@ pub enum Command {
     /// Every USB camera, what its mirror captures, and the virtual camera
     /// pages and everything else read it through. Read-only.
     CameraList,
+    /// The newest frame of the camera whose node is `device` (`video0`), as
+    /// a JPEG. Read-only.
+    CameraSnapshot {
+        device: String,
+    },
     /// The disk the device runs from: its partitions and how full each
     /// filesystem is. Read-only.
     Storage,
@@ -2201,6 +2206,17 @@ pub struct PrintQueued {
     pub job: String,
     pub printer: String,
     pub message: String,
+}
+
+/// A camera's newest frame.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct CameraSnapshot {
+    /// `jpeg`.
+    pub format: String,
+    /// Base64.
+    pub data: String,
+    /// How old the frame is, milliseconds.
+    pub age_ms: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

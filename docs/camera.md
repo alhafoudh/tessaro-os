@@ -127,6 +127,35 @@ cannot get more than the mirror captures.
   again; the browser and the agent stay. `tessaro-ctl camera format`,
   `camera size` and `camera mirrors` are the shorthands.
 
+## Snapshots
+
+**A snapshot is the mirror's newest frame, taken without a mirror slot, and
+only while someone asks.** Every mirror has one reader, so a preview in
+`tessaro-ctl camera snapshot`, the GUI or Webconfig must not take one. The
+mirror has every frame in hand anyway: while `/run/tessaro-camera/<device>.want`
+was touched in the last 5s, it writes the newest good frame to `<device>.jpg`
+at most every 500ms (temp file and rename). `GET
+/api/v1/camera/{device}/snapshot` touches the want file and answers that
+JPEG once it is at most 2s old, waiting up to 3s for the first after a
+pause (`camera_snapshot` in `control/mod.rs`). With nobody asking, the
+mirror writes nothing and removes its last frame, so no stale picture is
+left.
+
+* **"Asked for" is an mtime under 5s old in either direction**, so a clock
+  set back cannot leave a want file from the future keeping snapshots on.
+
+* **Nothing streams; a preview polls.** Live previews ask once a second (the
+  GUI's and Webconfig's Live, `camera snapshot --watch`), which keeps the
+  want file fresh; each viewer costs a JPEG a second over the API.
+* **An MJPEG frame is served as captured, with its Huffman tables added.**
+  UVC cameras leave out the DHT segment and rely on the standard tables of
+  JPEG Annex K; a frame without one gets them inserted before its SOS, or
+  browsers and image decoders refuse it (`snapshot.rs`).
+* **A YUYV frame is encoded**, with the `jpeg-encoder` crate, only for a
+  snapshot: the mirrors still get it raw.
+* **The device name is checked** before it goes into a path: a node name
+  (`video0`) whose mirror reported it (`want_snapshot` in `camera.rs`).
+
 ## The grant
 
 **`VideoCaptureAllowedUrls` grants the camera to the device origins**, like

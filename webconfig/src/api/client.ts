@@ -74,6 +74,13 @@ export function failure(error: unknown, status = 0): ApiFailure {
 
 /** The data of an openapi-fetch result, or its refusal thrown. */
 export async function answer<T>(pending: Promise<{ data?: T; error?: unknown; response: Response }>): Promise<T> {
+  return (await answered(pending)).data;
+}
+
+/** `answer`, with the response too, for an answer's headers. */
+export async function answered<T>(
+  pending: Promise<{ data?: T; error?: unknown; response: Response }>,
+): Promise<{ data: T; response: Response }> {
   let result;
   try {
     result = await pending;
@@ -83,5 +90,5 @@ export async function answer<T>(pending: Promise<{ data?: T; error?: unknown; re
   if (result.error !== undefined || !result.response.ok) {
     throw failure(result.error ?? `${result.response.status} ${result.response.statusText}`, result.response.status);
   }
-  return result.data as T;
+  return { data: result.data as T, response: result.response };
 }

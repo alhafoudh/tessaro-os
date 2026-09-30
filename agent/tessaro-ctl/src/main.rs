@@ -108,6 +108,7 @@ const HELP_STYLES: Styles = Styles::styled()
         \x20 tessaro-ctl camera list                        every USB camera, what it captures, its virtual cameras\n\
         \x20 tessaro-ctl camera format mjpeg && tessaro-ctl camera size 1280x720   every mirror restarts\n\
         \x20 tessaro-ctl camera mirrors 2                   two readers may watch each camera at once\n\
+        \x20 tessaro-ctl camera snapshot -o door.jpg --watch 5   what the camera sees, rewritten every 5 s\n\
         \x20 tessaro-ctl time show                          timezone, NTP sync, offset and drift\n\
         \x20 tessaro-ctl time timezone Europe/Bratislava && tessaro-ctl time ntp on --server ntp.corp.test\n\
         \x20 tessaro-ctl script create dim --body 'tessaro-ctl screen power off'\n\

@@ -19,7 +19,9 @@
 //! read at start only: the agent restarts the mirror when it changes. What
 //! it captures goes to `/run/tessaro-camera/videoN.json` as a
 //! `protocol::CameraInfo`, which `tessaro-ctl camera list` reads back, and is
-//! removed on exit along with the virtual cameras.
+//! removed on exit along with the virtual cameras. While the agent asks for
+//! snapshots, the newest frame goes to `/run/tessaro-camera/videoN.jpg` too;
+//! see `snapshot.rs`.
 //!
 //! Exits 0 on SIGTERM and when the camera is unplugged, non-zero on any other
 //! failure, which the unit restarts. A camera it cannot mirror at all (no
@@ -29,6 +31,7 @@
 mod choice;
 mod loopback;
 mod mirrors;
+mod snapshot;
 mod v4l2;
 
 use std::env;
@@ -46,6 +49,7 @@ use protocol::{CameraInfo, CameraMirror, CameraMode};
 
 use choice::Wanted;
 use loopback::{Control, Leftovers, Removed};
+use snapshot::Snapshots;
 use v4l2::{Capture, Interval, BUF_TYPE_VIDEO_CAPTURE, BUF_TYPE_VIDEO_OUTPUT};
 
 const STATE_DIR: &str = "/run/tessaro-camera";
@@ -127,8 +131,10 @@ fn main() -> ExitCode {
     let state = State {
         path: dir.join(format!("{name}.json")),
     };
-    let result = run(&device, &name, &dir, &state);
+    let mut snapshots = Snapshots::new(&dir, &name);
+    let result = run(&device, &name, &dir, &state, &mut snapshots);
     state.remove();
+    snapshots.remove();
 
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -148,7 +154,13 @@ fn usage() -> ExitCode {
     ExitCode::from(64)
 }
 
-fn run(device: &Path, name: &str, dir: &Path, state: &State) -> Result<()> {
+fn run(
+    device: &Path,
+    name: &str,
+    dir: &Path,
+    state: &State,
+    snapshots: &mut Snapshots,
+) -> Result<()> {
     // Non-blocking, so a dequeue with nothing ready returns instead of
     // hanging past a SIGTERM; poll() is what waits.
     let camera = check(
@@ -252,12 +264,14 @@ fn run(device: &Path, name: &str, dir: &Path, state: &State) -> Result<()> {
             &mode,
             &mut info,
             state,
+            snapshots,
             &control,
             &mut leftovers,
         );
     }
     // The state first, so nothing reads a virtual device that is going.
     state.remove();
+    snapshots.remove();
     for (nr, made) in &made {
         match control.remove(*nr, true) {
             Removed::Done => {}
@@ -351,12 +365,14 @@ fn open_output(device: &str, mode: &CameraMode) -> Result<Output> {
 }
 
 /// Stream the camera into every one of `loopbacks` until asked to stop.
+#[allow(clippy::too_many_arguments)]
 fn mirror(
     camera: &File,
     loopbacks: &[CameraMirror],
     mode: &CameraMode,
     info: &mut CameraInfo,
     state: &State,
+    snapshots: &mut Snapshots,
     control: &Control,
     leftovers: &mut Leftovers,
 ) -> Result<()> {
@@ -385,6 +401,7 @@ fn mirror(
         if !leftovers.is_empty() {
             leftovers.sweep(control);
         }
+        snapshots.check();
         let mut poll = libc::pollfd {
             fd: camera.as_raw_fd(),
             events: libc::POLLIN,
@@ -436,6 +453,9 @@ fn mirror(
                     }
                 }
             }
+            if snapshots.due() {
+                snapshots.write(&mode.format, bytes, mode.width, mode.height);
+            }
         }
         check(capture.give_back(frame), "VIDIOC_QBUF")?;
     }
@@ -457,32 +477,35 @@ fn open_virtual(path: &str) -> Result<File> {
     }
 }
 
+/// Whole or not at all: a temporary file in the same directory, then a
+/// rename over the real one, so a reader never sees half of it. A failure is
+/// logged, not fatal: the mirror is what matters, the files only report on it.
+fn write_whole(path: &Path, body: &[u8]) {
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("camera");
+    let temporary = path.with_file_name(format!(".{name}.tmp"));
+    let result = fs::write(&temporary, body).and_then(|()| fs::rename(&temporary, path));
+    if let Err(err) = result {
+        eprintln!("{}: {err}", path.display());
+        let _ = fs::remove_file(&temporary);
+    }
+}
+
 /// `/run/tessaro-camera/<device>.json`.
 struct State {
     path: PathBuf,
 }
 
 impl State {
-    /// Whole or not at all: a temporary file in the same directory, then a
-    /// rename over the real one. A failure is logged, not fatal: the mirror
-    /// is what matters, the file only reports on it.
     fn write(&self, info: &CameraInfo) {
-        let name = self
-            .path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("camera.json");
-        let temporary = self.path.with_file_name(format!(".{name}.tmp"));
-        let result = serde_json::to_vec_pretty(info)
-            .map_err(io::Error::other)
-            .and_then(|mut body| {
+        match serde_json::to_vec_pretty(info) {
+            Ok(mut body) => {
                 body.push(b'\n');
-                fs::write(&temporary, &body)?;
-                fs::rename(&temporary, &self.path)
-            });
-        if let Err(err) = result {
-            eprintln!("{}: {err}", self.path.display());
-            let _ = fs::remove_file(&temporary);
+                write_whole(&self.path, &body);
+            }
+            Err(err) => eprintln!("{}: {err}", self.path.display()),
         }
     }
 

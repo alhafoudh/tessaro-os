@@ -101,8 +101,9 @@ header is not a browser's and passes.
 
 * **Success is 200 with the endpoint's JSON**, or the bytes of a raw
   endpoint (`RAW_RESPONSE`): `screen/screenshot` answers a JPEG,
-  `files/content` a piece of a file with the whole file's size and mtime in
-  `x-tessaro-size` and `x-tessaro-mtime`.
+  `camera/{device}/snapshot` a camera's newest frame as a JPEG with its age
+  in `x-tessaro-frame-age`, `files/content` a piece of a file with the whole
+  file's size and mtime in `x-tessaro-size` and `x-tessaro-mtime`.
 * **A refusal is `{"error", "code"}`** (`ApiError`), with the status the
   code names (`ErrorCode::status`): 400 for a query or body that does not
   parse, 401 for a missing or invalid token, 403 for a browser request from

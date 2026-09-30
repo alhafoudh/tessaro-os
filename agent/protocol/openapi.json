@@ -2377,6 +2377,56 @@
         }
       }
     },
+    "/api/v1/camera/{device}/snapshot": {
+      "get": {
+        "operationId": "camera.Snapshot",
+        "tags": [
+          "camera"
+        ],
+        "summary": "The newest frame of a camera, as a JPEG, taken by its mirror without a mirror slot of its own. Its age is in the `x-tessaro-frame-age` header. The mirror hands frames out only while they are asked for, so poll it for a preview.",
+        "parameters": [
+          {
+            "name": "device",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The bytes.",
+            "content": {
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            },
+            "headers": {
+              "x-tessaro-frame-age": {
+                "description": "How old the frame is, milliseconds.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/time": {
       "get": {
         "operationId": "time.Show",
@@ -7243,6 +7293,18 @@
           "fps"
         ],
         "description": "A format, frame size and rate."
+      },
+      "CameraRef": {
+        "type": "object",
+        "properties": {
+          "device": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "device"
+        ],
+        "description": "A camera by its own node, as `camera list` names it: `video0`."
       },
       "TimeStatus": {
         "type": "object",

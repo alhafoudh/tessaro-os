@@ -38,7 +38,7 @@ same change as the behaviour it describes.
 | [docs/bridge.md](docs/bridge.md) | the injected script, `window.tessaro` and its modes, who may call, `browser eval` |
 | [docs/remote-access.md](docs/remote-access.md) | VNC mirror and its PAM auth, SSH and `ssh connect` keys |
 | [docs/audio.md](docs/audio.md) | PipeWire units, how `audio.*` is applied, `auto` |
-| [docs/camera.md](docs/camera.md) | the camera mirrors and v4l2loopback, one reader per `Mirror N`, why not PipeWire, hiding the real cameras, how a format is picked, `camera.*`, the USB/IP test camera in qemu, what does not work |
+| [docs/camera.md](docs/camera.md) | the camera mirrors and v4l2loopback, one reader per `Mirror N`, why not PipeWire, hiding the real cameras, how a format is picked, `camera.*`, snapshots and previews, the USB/IP test camera in qemu, what does not work |
 | [docs/time.md](docs/time.md) | timedated and timesyncd, how `time.*` is applied, DHCP's NTP servers, the persistent clock, where `time show`'s numbers come from |
 | [docs/scripts.md](docs/scripts.md) | scripts: the body file and the fire and run units, triggers and `TESSARO_TRIGGER`, concurrency, how each run is recorded, `script run` as a job, the page's scripts |
 | [docs/scheduler.md](docs/scheduler.md) | schedules: the systemd timer each is rendered into and the script it starts, the reconcile of every script and schedule unit, checking `OnCalendar` expressions |
@@ -383,7 +383,7 @@ same thing. Keep to these rules when adding a command or a setting:
   * `audio`: sound. Which output plays and which input records, volume,
     mute, a test tone and a recording level.
   * `camera`: the USB cameras. Which there are and what each captures, the
-    format and size they capture in, how many mirrors each has.
+    format and size they capture in, how many mirrors each has, a snapshot.
   * `time`: the clock. Timezone, NTP servers and sync, its status, setting
     it by hand.
   * `script`: shell scripts the device keeps and runs as root. The scripts,

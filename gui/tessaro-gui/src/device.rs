@@ -287,6 +287,9 @@ pub enum Message {
     TakeShot,
     LiveShot,
     SaveShot,
+    TakeFrame,
+    LiveFrame,
+    SaveFrame,
     JournalLive,
     JournalPause,
     JournalClear,
@@ -424,6 +427,13 @@ struct Shot {
     at: Instant,
 }
 
+/// A camera's snapshot on the Camera page.
+struct Frame {
+    device: String,
+    shot: Shot,
+    age: Option<std::time::Duration>,
+}
+
 /// The device actions on the toolbar, confirmed in a dialog first.
 #[derive(Debug, Clone, Copy)]
 pub enum Restart {
@@ -453,6 +463,13 @@ pub struct Device {
     /// The Live toggle on the Screenshot page; shots are only taken while
     /// that page is shown.
     live_shots: bool,
+    frame: Option<Frame>,
+    frame_error: Option<String>,
+    /// The Live toggle of the Camera page's preview; snapshots are only
+    /// taken while that page is shown.
+    live_frames: bool,
+    /// The camera the worker takes live snapshots of, as last asked.
+    live_camera: Option<String>,
     journal: Journal,
     vnc: Vnc,
     pages: pages::State,
@@ -509,6 +526,10 @@ impl Device {
             shot: None,
             shot_error: None,
             live_shots: false,
+            frame: None,
+            frame_error: None,
+            live_frames: false,
+            live_camera: None,
             journal: Journal {
                 live: true,
                 paused: None,
@@ -684,7 +705,8 @@ impl Device {
         self.show(Page::Log);
     }
 
-    /// Show `page`: live screenshots run only while theirs is shown.
+    /// Show `page`: live screenshots and live camera snapshots run only
+    /// while theirs is shown.
     fn show(&mut self, page: Page) {
         if page == self.page {
             return;
@@ -700,7 +722,22 @@ impl Device {
                 self.request(Request::Screenshot);
             }
         }
+        self.sync_camera_live();
         self.refresh_page(page);
+    }
+
+    /// Tell the worker which camera to take live snapshots of, if that
+    /// changed: the preview's while Live is on and the Camera page shown,
+    /// else none.
+    fn sync_camera_live(&mut self) {
+        let wanted = if self.page == Page::Camera && self.live_frames {
+            self.preview_camera()
+        } else {
+            None
+        };
+        if wanted != self.live_camera && self.request(Request::CameraLive(wanted.clone())) {
+            self.live_camera = wanted;
+        }
     }
 
     /// Write the last screenshot to the Downloads folder (else home).
@@ -708,6 +745,22 @@ impl Device {
         let Some(shot) = &self.shot else {
             return;
         };
+        let bytes = shot.bytes.clone();
+        self.save_jpeg(self.name().to_string(), &bytes);
+    }
+
+    /// Write the preview's snapshot to the Downloads folder (else home).
+    fn save_frame(&mut self) {
+        let Some(frame) = &self.frame else {
+            return;
+        };
+        let stem = format!("{}-{}", self.name(), frame.device);
+        let bytes = frame.shot.bytes.clone();
+        self.save_jpeg(stem, &bytes);
+    }
+
+    /// `<stem>-<unix time>.jpg` in the Downloads folder (else home).
+    fn save_jpeg(&mut self, stem: String, bytes: &[u8]) {
         let home = std::env::var_os("HOME")
             .or_else(|| std::env::var_os("USERPROFILE"))
             .map(std::path::PathBuf::from)
@@ -717,8 +770,8 @@ impl Device {
         let stamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |since| since.as_secs());
-        let path = dir.join(format!("{}-{stamp}.jpg", self.name()));
-        match std::fs::write(&path, &shot.bytes) {
+        let path = dir.join(format!("{stem}-{stamp}.jpg"));
+        match std::fs::write(&path, bytes) {
             Ok(()) => self.log(Tone::Ok, format!("saved {}", path.display())),
             Err(err) => self.log(Tone::Bad, format!("{}: {err}", path.display())),
         }
@@ -861,6 +914,19 @@ impl Device {
                 self.shot_error = None;
             }
             Event::Screenshot(Err(error)) => self.shot_error = Some(error),
+            Event::CameraSnapshot(Ok(frame)) => {
+                self.frame = Some(Frame {
+                    device: frame.device,
+                    shot: Shot {
+                        image: image::Handle::from_bytes(frame.jpeg.clone()),
+                        bytes: frame.jpeg,
+                        at: Instant::now(),
+                    },
+                    age: frame.age,
+                });
+                self.frame_error = None;
+            }
+            Event::CameraSnapshot(Err(error)) => self.frame_error = Some(error),
             Event::Answer(tag, result) => self.answer(tag, result),
             Event::Note(note) => self.log(Tone::Warn, note),
             Event::Pinned(note) => self.log(Tone::Ok, note),
@@ -959,6 +1025,16 @@ impl Device {
                 self.request(Request::Live(on));
             }
             Message::SaveShot => self.save_shot(),
+            Message::TakeFrame => {
+                if let Some(device) = self.preview_camera() {
+                    self.request(Request::CameraSnapshot(device));
+                }
+            }
+            Message::LiveFrame => {
+                self.live_frames = !self.live_frames;
+                self.sync_camera_live();
+            }
+            Message::SaveFrame => self.save_frame(),
             Message::JournalLive => self.journal.live = !self.journal.live,
             Message::JournalPause => {
                 self.journal.paused = match self.journal.paused {
@@ -1355,6 +1431,76 @@ impl Device {
                 .style(theme::panel)
         ]
         .spacing(4)
+        .into()
+    }
+
+    /// The Camera page's preview of `preview_camera`, as `screenshot_view`
+    /// shows the screen: Take, Live every `worker::LIVE_FRAME`, and Save.
+    fn camera_preview_view(&self) -> Element<'_, Message> {
+        let online = self.link == Link::Online;
+        let device = self.preview_camera();
+        // A snapshot of another camera than the one picked is not shown.
+        let frame = self
+            .frame
+            .as_ref()
+            .filter(|frame| Some(&frame.device) == device.as_ref());
+        let mut toolbar = row![
+            theme::tool(
+                "Take",
+                (online && device.is_some()).then_some(Message::TakeFrame)
+            ),
+            theme::toggle(
+                if self.live_frames {
+                    "Live (1s): on"
+                } else {
+                    "Live (1s)"
+                },
+                self.live_frames,
+                Message::LiveFrame
+            ),
+            theme::tool("Save", frame.map(|_| Message::SaveFrame)),
+            space::horizontal(),
+        ]
+        .spacing(4)
+        .height(24)
+        .align_y(iced::alignment::Vertical::Center);
+        if let Some(error) = &self.frame_error {
+            toolbar = toolbar.push(text(error).size(theme::SMALL).style(text::danger));
+        } else if let Some(frame) = frame {
+            let mut said = format!(
+                "{}, taken {}s ago",
+                frame.device,
+                frame.shot.at.elapsed().as_secs()
+            );
+            if let Some(age) = frame.age {
+                said = format!("{said}, {}", tessaro_client::camera::age_text(age));
+            }
+            toolbar = toolbar.push(text(said).size(theme::SMALL).style(theme::muted));
+        }
+        let picture: Element<'_, Message> = match frame {
+            Some(frame) => iced::widget::image(frame.shot.image.clone())
+                .content_fit(iced::ContentFit::Contain)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into(),
+            None => text(match &device {
+                Some(device) => format!("no snapshot of {device} yet"),
+                None => "no camera".to_string(),
+            })
+            .size(theme::SMALL)
+            .style(theme::muted)
+            .into(),
+        };
+        column![
+            toolbar,
+            container(picture)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .center(Length::Fill)
+                .style(theme::panel)
+        ]
+        .spacing(4)
+        .height(Length::Fill)
         .into()
     }
 

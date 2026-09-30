@@ -13,6 +13,7 @@
 
 pub mod access;
 pub mod actions;
+pub mod camera;
 pub mod certs;
 pub mod clock;
 pub mod connect;

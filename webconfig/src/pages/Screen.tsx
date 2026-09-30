@@ -10,7 +10,7 @@ import { answer, client, failure } from "../api/client";
 import { useDevice } from "../device/DeviceContext";
 import { PageFrame } from "../shell/PageFrame";
 import { useSecondsLeft } from "../shell/StatusBar";
-import { saveShot, useAge, useScreenshot } from "../shell/useScreenshot";
+import { LIVE_MS, saveShot, takeScreenshot, useAge, useShots } from "../shell/useScreenshot";
 import { Button, ErrorLine } from "../ui/controls";
 import { Table } from "../ui/Table";
 import type { PageInfo } from "./registry";
@@ -122,7 +122,7 @@ function Screenshot({ name, online }: { name: string; online: boolean }) {
   // Live shots are taken only while this page is shown: leaving it
   // unmounts the timer. The Screen panel beside every page has its own.
   const [live, setLive] = useState(false);
-  const { shot, error, take } = useScreenshot(live, online);
+  const { shot, error, take } = useShots(takeScreenshot, LIVE_MS, live, online);
   const age = useAge(shot?.at);
 
   const save = () => {

@@ -47,6 +47,9 @@ pub const VERSION: &str = "v1";
 pub const HEADER_SIZE: &str = "x-tessaro-size";
 pub const HEADER_MTIME: &str = "x-tessaro-mtime";
 
+/// How old a camera snapshot's frame is, milliseconds.
+pub const HEADER_FRAME_AGE: &str = "x-tessaro-frame-age";
+
 /// A browser request someone made, not a background refresh: only these
 /// keep a browser session alive (docs/webconfig.md).
 pub const HEADER_ACTIVITY: &str = "x-tessaro-activity";
@@ -704,6 +707,12 @@ pub struct PrinterRef {
     pub printer: String,
 }
 
+/// A camera by its own node, as `camera list` names it: `video0`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct CameraRef {
+    pub device: String,
+}
+
 /// Where a document goes and how. Without a body, `path` names a file in
 /// the store to print instead.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -1239,6 +1248,24 @@ pub mod camera {
         /// camera everything else reads it through.
         List: Get "/api/v1/camera" (Empty, ()) -> CameraList
             = |_, _| Action::Run(Command::CameraList);
+
+        /// The newest frame of a camera, as a JPEG, taken by its mirror
+        /// without a mirror slot of its own. Its age is in the
+        /// `x-tessaro-frame-age` header. The mirror hands frames out only
+        /// while they are asked for, so poll it for a preview.
+        Snapshot: Get "/api/v1/camera/{device}/snapshot" (CameraRef, ()) -> super::Blob
+            {
+                const RAW_RESPONSE: Option<&'static str> = Some("image/jpeg");
+                const RAW_HEADERS: &'static [(&'static str, &'static str)] = &[
+                    (HEADER_FRAME_AGE, "How old the frame is, milliseconds."),
+                ];
+                fn respond(result: Value) -> Result<Answer, String> {
+                    let mut raw = raw_data(&result, "image/jpeg")?;
+                    raw.headers.push((HEADER_FRAME_AGE, result["age_ms"].to_string()));
+                    Ok(Answer::Raw(raw))
+                }
+            }
+            = |camera, _| Action::Run(Command::CameraSnapshot { device: camera.device });
     }
 }
 

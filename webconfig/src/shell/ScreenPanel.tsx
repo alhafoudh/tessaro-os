@@ -10,7 +10,7 @@ import { useEffect, useState } from "react";
 
 import { useDevice } from "../device/DeviceContext";
 import { Button } from "../ui/controls";
-import { saveShot, useAge, useScreenshot } from "./useScreenshot";
+import { LIVE_MS, saveShot, takeScreenshot, useAge, useShots } from "./useScreenshot";
 
 const KEY = "tessaro-webconfig.screen-panel";
 
@@ -37,7 +37,7 @@ export function ScreenPanel({ onClose }: { onClose: () => void }) {
   const { status, link, log } = useDevice();
   const online = link === "online";
   const [paused, setPaused] = useState(false);
-  const { shot, error, take } = useScreenshot(!paused, online);
+  const { shot, error, take } = useShots(takeScreenshot, LIVE_MS, !paused, online);
   const age = useAge(shot?.at);
   const name = status?.node.name ?? "screen";
 

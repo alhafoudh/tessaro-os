@@ -292,7 +292,7 @@ applies and stays, Default unsets.**
 | Certificates | `network certs list`, `add` (a file picker) and `revoke` |
 | Storage | `storage show`, partitions and filesystems, `storage grow` (check first) |
 | Audio | `audio show`, outputs and inputs, choosing one, volume, mute, `audio test` for the tone and the recording |
-| Camera | `camera list` as the saved format, size and mirrors, a row per camera (its node, the nodes of its mirrors, what it captures, a fallback or error) and the modes of the one selected, `camera format` (a choice), `camera size` (opening a mode fills it in), `camera mirrors` (a choice) |
+| Camera | `camera list` as the saved format, size and mirrors, a row per camera (its node, the nodes of its mirrors, what it captures, a fallback or error), under it a preview of the one selected (else the first) with Take, a Live toggle (`camera snapshot` every second, only while the page is shown, like the Screen page's screenshot) and Save, and the modes of the one selected, `camera format` (a choice), `camera size` (opening a mode fills it in), `camera mirrors` (a choice) |
 | Time | `time show` and its servers, `time timezone` (a choice of `time zones`), `time ntp on|off` with servers, `time sync`, `time set` (this computer's clock or a typed time) |
 | Scripts | `script list`, `create` and `set` in one dialog (a multi-line body), `run` (a job; its output in a window as it comes), `remove`, `logs` (the Log page, filtered to the script's runs) |
 | Schedules | `schedule list`, `create` and `set` in one dialog (a multi-line calendar, checked with `schedule check` as you type, and the script it runs), `enable`/`disable`, `remove`, `logs` (the Log page, filtered to the runs it started) |

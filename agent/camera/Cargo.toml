@@ -23,3 +23,7 @@ serde_json = "1"
 # written out by hand in v4l2.rs and loopback.rs: the v4l crate's sys crate
 # runs bindgen at build time, which the offline bitbake build cannot.
 libc = "0.2"
+
+# A YUYV camera's snapshot, encoded to JPEG (snapshot.rs). Pure Rust with no
+# dependencies of its own; without std it writes into a Vec and has no unsafe.
+jpeg-encoder = { version = "0.7", default-features = false }

@@ -4,19 +4,25 @@
 //! camera itself; the page and anything else read the virtual cameras it
 //! republishes, one reader each. `format`, `size` and `mirrors` are each a
 //! `config set` of one camera.* key: every running mirror restarts to
-//! capture that way.
+//! capture that way. `snapshot` asks a mirror for its newest frame, without
+//! taking one of the virtual cameras.
 
 use std::collections::BTreeMap;
+use std::time::Duration;
 
-use anstream::println;
+use anstream::{eprintln, println};
 use clap::builder::PossibleValuesParser;
 use clap::Subcommand;
 use protocol::api;
 use protocol::keys;
+use serde_json::json;
+use tessaro_client::camera;
 use tessaro_client::describe::camera as describe;
+use tessaro_client::report::Report;
+use tessaro_client::text::Line;
 
 use crate::connect::Session;
-use crate::style;
+use crate::style::{self, paint};
 use crate::{print, show_applied};
 
 #[derive(Subcommand)]
@@ -49,6 +55,23 @@ pub enum CameraCmd {
         #[arg(value_parser = clap::value_parser!(u32).range(1..=keys::CAMERA_MIRRORS_MAX))]
         mirrors: u32,
     },
+    /// Save the newest frame of a camera as a JPEG, taken by its mirror
+    /// without a virtual camera of its own. DEVICE is its node from
+    /// `tessaro-ctl camera list` (`video0`), needed only with several
+    /// cameras. The first snapshot after a pause may take a few seconds.
+    ///
+    ///   tessaro-ctl camera snapshot
+    ///   tessaro-ctl camera snapshot video2 -o door.jpg --watch 5
+    Snapshot {
+        /// The camera's node, `video0`; the only camera unless given.
+        device: Option<String>,
+        /// Where the JPEG goes; `<node>-<device>.jpg` unless given.
+        #[arg(long, short)]
+        output: Option<String>,
+        /// Rewrite the file with a new snapshot every SECONDS, until Ctrl-C.
+        #[arg(long, value_name = "SECONDS")]
+        watch: Option<f64>,
+    },
 }
 
 pub fn run(session: &mut Session, command: CameraCmd, json: bool) -> Result<(), String> {
@@ -66,6 +89,72 @@ pub fn run(session: &mut Session, command: CameraCmd, json: bool) -> Result<(), 
         CameraCmd::Mirrors { mirrors } => {
             set(session, json, keys::CAMERA_MIRRORS, mirrors.to_string())
         }
+        CameraCmd::Snapshot {
+            device,
+            output,
+            watch,
+        } => snapshot(session, json, device, output, watch),
+    }
+}
+
+/// `tessaro-ctl camera snapshot`: one JPEG, or with `--watch` a new one
+/// into the same file every so often, one line per write.
+fn snapshot(
+    session: &mut Session,
+    json: bool,
+    device: Option<String>,
+    output: Option<String>,
+    watch: Option<f64>,
+) -> Result<(), String> {
+    let list = session.fetch::<api::camera::List>()?;
+    let device = camera::pick(&list, device.as_deref())?;
+    let path = output.unwrap_or_else(|| camera::file_name(&session.node.name, &device));
+    let save = |shot: camera::Snapshot| -> Result<(), String> {
+        std::fs::write(&path, &shot.jpeg).map_err(|err| format!("{path}: {err}"))?;
+        if json {
+            return crate::print_json(&json!({
+                "path": path,
+                "device": device,
+                "bytes": shot.jpeg.len(),
+                "age_ms": shot.age.map(|age| age.as_millis() as u64),
+            }));
+        }
+        let details = match shot.age {
+            Some(age) => format!("({} bytes, {})", shot.jpeg.len(), camera::age_text(age)),
+            None => format!("({} bytes)", shot.jpeg.len()),
+        };
+        println!(
+            "{} {}",
+            paint(style::OK, &path),
+            paint(style::MUTED, details)
+        );
+        Ok(())
+    };
+    match watch {
+        None => save(camera::snapshot(session, &device).into_result()?),
+        Some(seconds) if seconds.is_nan() || seconds <= 0.0 || seconds.is_infinite() => {
+            Err("--watch: the interval must be more than 0 seconds".to_string())
+        }
+        // Watching ends with Ctrl-C, which ends the process.
+        Some(seconds) => camera::watch(
+            session,
+            &device,
+            Duration::from_secs_f64(seconds),
+            &mut Stderr,
+            save,
+        ),
+    }
+}
+
+/// A failed snapshot while watching, on stderr, so stdout keeps one line
+/// per file written.
+struct Stderr;
+
+impl Report for Stderr {
+    fn progress(&mut self, _: Line, _: u64, _: u64) {}
+
+    fn line(&mut self, line: Line) {
+        eprintln!("{}", style::line(&line));
     }
 }
 

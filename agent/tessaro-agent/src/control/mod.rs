@@ -631,6 +631,7 @@ impl Control {
             Command::Ping => Reply::ok(Done::new("pong")),
             Command::Storage => self.storage().await.into(),
             Command::CameraList => self.camera_list().await.into(),
+            Command::CameraSnapshot { device } => self.camera_snapshot(device).await.into(),
             Command::NetProfiles => self.network.profiles().await.into(),
             Command::NetShow { profile } => self.network.show(&profile).await.into(),
             Command::NetLast => self.network.last().await.into(),
@@ -950,6 +951,43 @@ impl Control {
             mirrors,
             cameras,
         })
+    }
+
+    /// The camera's newest frame. The mirror writes frames only while they
+    /// are asked for, so the first request after a pause waits for one.
+    async fn camera_snapshot(&self, device: String) -> Result<protocol::CameraSnapshot, String> {
+        const WAIT: Duration = Duration::from_secs(3);
+        const EVERY: Duration = Duration::from_millis(100);
+
+        let dir = self.paths.camera_dir.clone();
+        let (asked, name) = (dir.clone(), device.clone());
+        blocking("asking a camera for a frame", move || {
+            camera::want_snapshot(&asked, &name)
+        })
+        .await?;
+        let started = tokio::time::Instant::now();
+        loop {
+            let (from, name) = (dir.clone(), device.clone());
+            let frame = blocking("reading a camera frame", move || {
+                camera::snapshot_frame(&from, &name, camera::SNAPSHOT_FRESH)
+            })
+            .await?;
+            if let Some((bytes, age)) = frame {
+                return Ok(protocol::CameraSnapshot {
+                    format: "jpeg".to_string(),
+                    data: openssl::base64::encode_block(&bytes),
+                    age_ms: u64::try_from(age.as_millis()).unwrap_or(u64::MAX),
+                });
+            }
+            if started.elapsed() >= WAIT {
+                return Err(format!(
+                    "{device} sent no frame within {}s; tessaro-ctl camera list says why",
+                    WAIT.as_secs()
+                ));
+            }
+            // naked: a fixed pause between two reads, and WAIT bounds the loop
+            tokio::time::sleep(EVERY).await;
+        }
     }
 
     async fn status(&self) -> Result<Status, String> {

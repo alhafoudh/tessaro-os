@@ -4,8 +4,8 @@ module AgentE2E
   # Cameras: v4l2loopback loaded for the camera mirrors, what `camera list`
   # reports, camera.* rendered into camera.env for them, and then a USB
   # camera: its mirror and its virtual cameras, the page reading Mirror 1
-  # while a second reader has Mirror 2, a format change, more mirrors, and
-  # unplugging it.
+  # while a second reader has Mirror 2, snapshots in both formats, a format
+  # change, more mirrors, and unplugging it.
   #
   # The camera is test/usbcam/usbcam.rb on the host, a UVC camera served over
   # USB/IP that the guest attaches through vhci-hcd (support/usbcam.rb): QEMU
@@ -152,6 +152,29 @@ module AgentE2E
 
     # These put their setting back themselves, applied: the harness unsets a
     # case's settings with --no-apply, which leaves a running mirror as it is.
+    # A whole JPEG a browser decodes: SOI, Huffman tables, EOI.
+    def snapshot_of(device)
+      guest.run("tessaro-ctl camera snapshot #{device} -o /tmp/e2e-snap.jpg")
+      guest.run("cat /tmp/e2e-snap.jpg").b
+    end
+
+    def expect_jpeg(bytes)
+      expect(bytes.byteslice(0, 2)).to eq("\xFF\xD8".b), "not a JPEG"
+      expect(bytes).to include("\xFF\xC4".b), "no Huffman tables: browsers refuse the frame"
+      expect(bytes.byteslice(-2, 2)).to eq("\xFF\xD9".b), "the JPEG is cut short"
+    end
+
+    it "camera-snapshot: a snapshot is a whole MJPEG frame, and the mirror stops writing when nobody asks" do
+      device = cameras["cameras"].first.fetch("device")
+      expect_jpeg(snapshot_of(device))
+
+      frame = "/run/tessaro-camera/#{device}.jpg"
+      guest.run("test -f #{frame}")
+      pause 8, "for the snapshot request to go stale (5s) and the mirror to notice (1s)"
+      gone = guest.run("test -e #{frame} && echo there || echo gone").strip
+      expect(gone).to eq("gone"), "the mirror kept its snapshot with nobody asking"
+    end
+
     it "camera-mirrors: camera.mirrors changes how many virtual cameras the camera has", :reconfigure do
       guest.run("tessaro-ctl camera mirrors 3")
       camera = wait_camera("with three mirrors") { _1["mirrors"]&.size == 3 }
@@ -164,6 +187,8 @@ module AgentE2E
       guest.run("tessaro-ctl camera format yuyv")
       camera = wait_camera("capturing yuyv") { _1.dig("mode", "format") == "yuyv" }
       expect(camera["mode"]).to eq("format" => "yuyv", "width" => 320, "height" => 240, "fps" => 30)
+      # A YUYV frame is encoded for the snapshot.
+      expect_jpeg(snapshot_of(camera["device"]))
     ensure
       guest.run("tessaro-ctl config unset camera.format")
     end

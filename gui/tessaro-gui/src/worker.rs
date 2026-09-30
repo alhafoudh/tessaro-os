@@ -8,7 +8,7 @@
 //! is retried with a growing pause until the window closes, which drops the
 //! subscription and with it the thread.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
 use std::sync::mpsc;
@@ -56,6 +56,10 @@ pub enum Request {
     },
     /// A screenshot every `LIVE_SHOT` from now on, or no more.
     Live(bool),
+    /// One snapshot of a camera now, by its node (`video0`).
+    CameraSnapshot(String),
+    /// A snapshot of this camera every `LIVE_FRAME` from now on, or no more.
+    CameraLive(Option<String>),
     /// Claim the device over this session, answered as the `claim` call.
     /// The session keeps the new token, and the node is pinned in
     /// the known nodes to the certificate this session was opened on.
@@ -108,6 +112,18 @@ where
 /// How often a live screenshot is taken.
 pub const LIVE_SHOT: Duration = Duration::from_secs(3);
 
+/// How often a live camera preview takes a snapshot.
+pub const LIVE_FRAME: Duration = Duration::from_secs(1);
+
+/// A camera's snapshot, for the Camera page's preview.
+#[derive(Debug, Clone)]
+pub struct Frame {
+    pub device: String,
+    pub jpeg: Vec<u8>,
+    /// How old the frame was when the device answered.
+    pub age: Option<Duration>,
+}
+
 #[derive(Debug, Clone)]
 pub enum Event {
     /// Where requests go, for as long as this worker lives.
@@ -122,6 +138,8 @@ pub enum Event {
     Done(Result<String, String>),
     /// The screen, as an encoded image (JPEG from the browser).
     Screenshot(Result<Vec<u8>, String>),
+    /// A camera's snapshot, or why there is none.
+    CameraSnapshot(Result<Frame, String>),
     /// What a `Request::Call` got back.
     Answer(&'static str, Result<serde_json::Value, String>),
     /// Worth telling the user: the device moved, a warning from the client.
@@ -203,6 +221,7 @@ fn start(spec: &Spec) -> ui::UnboundedReceiver<Event> {
         node: spec.0.clone(),
         out,
         live: Cell::new(false),
+        camera_live: RefCell::new(None),
     };
     std::thread::spawn(move || worker.run());
     receive
@@ -220,6 +239,8 @@ struct Worker {
     out: ui::UnboundedSender<Event>,
     /// Live screenshots are on; kept across reconnections.
     live: Cell<bool>,
+    /// The camera the live preview shows, if it is on; kept the same way.
+    camera_live: RefCell<Option<String>>,
 }
 
 impl Worker {
@@ -255,6 +276,10 @@ impl Worker {
             match requests.recv_timeout(pause) {
                 Ok(Request::Refresh) | Err(mpsc::RecvTimeoutError::Timeout) => {}
                 Ok(Request::Live(on)) => self.live.set(on),
+                Ok(Request::CameraLive(device)) => *self.camera_live.borrow_mut() = device,
+                Ok(Request::CameraSnapshot(_)) => {
+                    let _ = self.send(Event::CameraSnapshot(Err("not connected".to_string())));
+                }
                 // Answered by its tag, so the page stops waiting for it.
                 Ok(Request::Call { tag, .. }) => {
                     let _ = self.send(Event::Answer(tag, Err("not connected".to_string())));
@@ -294,6 +319,7 @@ impl Worker {
 
         let mut revision = None;
         let mut next_shot = Instant::now();
+        let mut next_frame = Instant::now();
         loop {
             let status: Status = ask(session.fetch::<api::device::Status>())?;
             if revision != Some(status.revision) {
@@ -315,6 +341,16 @@ impl Worker {
                 }
                 wait = wait.min(next_shot.saturating_duration_since(Instant::now()));
             }
+            let camera = self.camera_live.borrow().clone();
+            if let Some(device) = camera {
+                if Instant::now() >= next_frame {
+                    // From the start of the request: the first after a pause
+                    // waits for the mirror, and the next is due a second on.
+                    next_frame = Instant::now() + LIVE_FRAME;
+                    self.camera_snapshot(session, device)?;
+                }
+                wait = wait.min(next_frame.saturating_duration_since(Instant::now()));
+            }
 
             // Until the next poll, or right after a request: a change shows
             // in the status at once.
@@ -323,6 +359,10 @@ impl Worker {
                 Ok(Request::Live(on)) => {
                     self.live.set(on);
                     next_shot = Instant::now();
+                }
+                Ok(Request::CameraLive(device)) => {
+                    *self.camera_live.borrow_mut() = device;
+                    next_frame = Instant::now();
                 }
                 Ok(request) => self.handle(session, request)?,
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
@@ -343,6 +383,24 @@ impl Worker {
             }
         };
         self.send(Event::Screenshot(shot))
+    }
+
+    fn camera_snapshot(&self, session: &mut Session, device: String) -> Result<(), Stop> {
+        let frame = match tessaro_client::camera::snapshot(session, &device) {
+            Answer::Ok(shot) => Ok(Frame {
+                device,
+                jpeg: shot.jpeg,
+                age: shot.age,
+            }),
+            Answer::Refused(error) => Err(error),
+            Answer::Lost(why) => {
+                self.send(Event::CameraSnapshot(Err(format!(
+                    "lost the connection: {why}"
+                ))))?;
+                return Err(Stop::Lost(why));
+            }
+        };
+        self.send(Event::CameraSnapshot(frame))
     }
 
     fn handle(&self, session: &mut Session, request: Request) -> Result<(), Stop> {
@@ -380,6 +438,7 @@ impl Worker {
             }
             Request::Reboot => self.done::<api::device::Reboot>(session, ()),
             Request::Screenshot => self.screenshot(session),
+            Request::CameraSnapshot(device) => self.camera_snapshot(session, device),
             Request::Call { tag, call, long } => {
                 if long {
                     session.set_read_timeout(Some(tessaro_client::network::CHANGE));
@@ -399,7 +458,7 @@ impl Worker {
                 }
             }
             Request::Claim { name } => self.claim(session, name),
-            Request::Refresh | Request::Live(_) => Ok(()),
+            Request::Refresh | Request::Live(_) | Request::CameraLive(_) => Ok(()),
         }
     }
 

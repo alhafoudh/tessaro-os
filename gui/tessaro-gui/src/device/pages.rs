@@ -813,6 +813,18 @@ impl Device {
         self.pages.selected.get(table)
     }
 
+    /// The camera the Camera page's preview shows: the one picked in its
+    /// table, else the first.
+    pub(super) fn preview_camera(&self) -> Option<String> {
+        let list = self.pages.cameras.as_ref()?;
+        let picked = self.selected("cameras");
+        list.cameras
+            .iter()
+            .find(|camera| Some(&camera.device) == picked)
+            .or(list.cameras.first())
+            .map(|camera| camera.device.clone())
+    }
+
     fn form(&mut self, form: Form) {
         self.dialog = Some(Dialog::Form(form));
     }
@@ -1182,7 +1194,10 @@ impl Device {
                     self.log_line(line);
                 }
             }
-            "camera" => self.pages.cameras = Some(parse(value)?),
+            "camera" => {
+                self.pages.cameras = Some(parse(value)?);
+                self.sync_camera_live();
+            }
             "time" => self.pages.time = Some(parse(value)?),
             "time.zones" => {
                 let zones = zones(parse(value)?);
@@ -1361,6 +1376,10 @@ impl Device {
         match message {
             Msg::Select(table, key) => {
                 self.pages.selected.insert(table, key);
+                if table == "cameras" {
+                    // The live preview follows the camera picked.
+                    self.sync_camera_live();
+                }
             }
             Msg::Activate(table, key) => {
                 self.pages.selected.insert(table, key.clone());
@@ -4426,7 +4445,10 @@ impl Device {
             body.push(theme::text_line(&describe::camera::none(), theme::FONT));
         }
         body.push(self.table("cameras", CAMERAS, cameras, Length::Fixed(TABLE_HEIGHT)));
-        body.push(self.table("camera.modes", MODES, modes, Length::Fill));
+        if !list.cameras.is_empty() {
+            body.push(self.camera_preview_view());
+        }
+        body.push(self.table("camera.modes", MODES, modes, Length::Fixed(TABLE_HEIGHT)));
         self.page("camera", actions, Vec::new(), body)
     }
 

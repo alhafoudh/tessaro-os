@@ -4,15 +4,18 @@
 // Format, Size and Mirrors set camera.format, camera.size and
 // camera.mirrors, as `tessaro-ctl camera format`, `camera size` and
 // `camera mirrors` do. Size starts from the mode picked. The device checks a
-// value at `config set`, and its refusal shows in the form.
+// value at `config set`, and its refusal shows in the form. Under the
+// cameras, a preview of the camera picked, as `tessaro-ctl camera snapshot`
+// saves it.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 
 import { answer, client, failure } from "../api/client";
 import * as camera from "../describe/camera";
 import { useDevice } from "../device/DeviceContext";
 import { PageFrame } from "../shell/PageFrame";
+import { LIVE_FRAME_MS, saveShot, takeCameraSnapshot, useAge, useShots } from "../shell/useScreenshot";
 import { fact } from "../text/line";
 import { Button, ErrorLine, Facts, Heading, LineView } from "../ui/controls";
 import { Dialog, Field, Intro } from "../ui/Dialog";
@@ -37,7 +40,7 @@ interface Spec {
 }
 
 export function Camera({ info }: { info: PageInfo }) {
-  const { link } = useDevice();
+  const { link, status } = useDevice();
   const online = link === "online";
   const queries = useQueryClient();
   const [picked, setPicked] = useState<string | null>(null);
@@ -138,6 +141,9 @@ export function Camera({ info }: { info: PageInfo }) {
             maxHeight="170px"
             empty="no cameras"
           />
+          {chosen && (
+            <Preview key={chosen.device} device={chosen.device} name={status?.node.name ?? "camera"} online={online} />
+          )}
           <Heading>Modes{chosen ? ` of ${chosen.name}` : ""}</Heading>
           <Table
             columns={[
@@ -166,6 +172,56 @@ export function Camera({ info }: { info: PageInfo }) {
         />
       )}
     </PageFrame>
+  );
+}
+
+/**
+ * The preview of one camera (device.rs camera_preview_view): its newest
+ * frame on Take, or every second while Live. Live snapshots are taken only
+ * while this page is shown, as the screenshot's are; another camera is
+ * another preview, keyed by its device.
+ */
+function Preview({ device, name, online }: { device: string; name: string; online: boolean }) {
+  const { log } = useDevice();
+  const [live, setLive] = useState(false);
+  const take = useCallback(() => takeCameraSnapshot(device), [device]);
+  const { shot, error, take: takeOne } = useShots(take, LIVE_FRAME_MS, live, online);
+  const age = useAge(shot?.at);
+
+  const save = () => {
+    if (shot) log(`saved ${saveShot(shot, `${name}-${device}`)}`, "ok");
+  };
+
+  return (
+    <div className="flex min-h-0 flex-col gap-1">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Button disabled={!online} onClick={() => void takeOne()}>
+          Take
+        </Button>
+        <Button kind={live ? "primary" : "tool"} aria-pressed={live} onClick={() => setLive((on) => !on)}>
+          {live ? "Live (1s): on" : "Live (1s)"}
+        </Button>
+        <Button disabled={!shot} onClick={save}>
+          Save
+        </Button>
+        {error ? (
+          <span className="text-sm text-danger">{error}</span>
+        ) : (
+          shot && (
+            <span className="text-sm text-muted">
+              {device}, taken {age}s ago{shot.ageMs === undefined ? "" : `, frame ${shot.ageMs} ms old`}
+            </span>
+          )
+        )}
+      </div>
+      <div className="flex min-h-48 items-center justify-center border border-border bg-panel p-1">
+        {shot ? (
+          <img src={shot.url} alt={`What ${device} sees`} className="max-h-[50vh] max-w-full object-contain" />
+        ) : (
+          <span className="text-sm text-muted">no snapshot of {device} yet</span>
+        )}
+      </div>
+    </div>
   );
 }
 
