@@ -196,8 +196,9 @@ Environment=PULSE_SERVER=unix:/run/tessaro-audio/pulse/native
 #   KIOSK_DISABLE_FEATURES ships non-empty: it carries
 #   FallbackToSWIfGLES3NotSupported, which is what stops the GPU process
 #   refusing an ES 2.0 context and dropping the whole browser to software
-#   rendering on the Raspberry Pi 3. The reasoning is in the env file, next to
-#   the value.
+#   rendering on the Raspberry Pi 3, and PersistentHistograms, which stops
+#   every browser start leaving a metrics file on /data. The reasoning is in
+#   the env file, next to the value.
 # $KIOSK_FPS_ARGS is --show-fps-counter or nothing, rendered by tessaro-agent
 #   from browser.fps_counter: systemd cannot make a flag conditional on a
 #   0/1, so the agent turns the setting into the switch. Unbraced, so empty

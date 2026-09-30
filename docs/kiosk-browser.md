@@ -65,7 +65,11 @@ Things to know:
 * **Some flags exist because the profile persists.**
   `--hide-crash-restore-bubble`, or an unclean shutdown puts a "Restore pages?"
   bubble on a public screen; and `--disk-cache-size`, because the profile
-  grows on `/data`.
+  grows on `/data`. For the same reason the default `KIOSK_DISABLE_FEATURES`
+  carries `PersistentHistograms`: with it on, every browser start maps a 4MB
+  `BrowserMetrics-*.pma` file into the profile, and a browser killed before
+  it has started leaves its file there (the reasoning is in
+  `tessaro-kiosk.env.in`).
 * **Flags an operator may need are variables, not constants.**
   `KIOSK_CHROMIUM_ARGS_EXTRA` (unbraced `$VAR` in `ExecStart`, so systemd
   splits it at whitespace), `KIOSK_TOUCH`, `KIOSK_ENABLE_FEATURES`,

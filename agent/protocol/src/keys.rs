@@ -343,7 +343,7 @@ pub static KEYS: &[Key] = &[
     key("browser.enable_features", "KIOSK_ENABLE_FEATURES", Kind::Features, BROWSER,
         "Chromium features to enable, comma separated, e.g. WebBluetooth,WebBluetoothNewPermissionsBackend. Replaces the default: keep the AcceleratedVideoDecode* features (hardware video decode)."),
     key("browser.disable_features", "KIOSK_DISABLE_FEATURES", Kind::Features, BROWSER,
-        "Chromium features to disable. Replaces the default: keep FallbackToSWIfGLES3NotSupported (Pi 3 GPU)."),
+        "Chromium features to disable. Replaces the default: keep FallbackToSWIfGLES3NotSupported (Pi 3 GPU) and PersistentHistograms (no metrics files on /data)."),
     key("browser.fps_counter", "KIOSK_FPS_COUNTER", Kind::Flag, BROWSER,
         "Show Chromium's FPS counter in the corner of the screen (--show-fps-counter)."),
     key("browser.device_origins", "KIOSK_DEVICE_ORIGINS", Kind::Origins, BROWSER,
