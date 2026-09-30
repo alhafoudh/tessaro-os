@@ -136,13 +136,13 @@ pub struct Paths {
     pub camera_env: PathBuf,
     /// The mirrors, one per camera, as a unit pattern.
     pub camera_units: String,
-    /// Where the schedules' systemd units are rendered. In `/run`, so they
-    /// are rendered from the `schedules` table at every start and never land on
-    /// the `/etc` overlay.
+    /// Where the scripts' and schedules' systemd units are rendered. In
+    /// `/run`, so they are rendered from the store at every start and never
+    /// land on the `/etc` overlay.
     pub systemd_unit_dir: PathBuf,
-    /// Whether the agent starts and stops the schedules' timers. Off
-    /// (`KIOSK_MANAGE_SCHEDULES=0`) on a development host, whose systemd is
-    /// the host's own: the units are then only rendered.
+    /// Whether the agent starts and stops the schedules' timers and runs
+    /// scripts. Off (`KIOSK_MANAGE_SCHEDULES=0`) on a development host, whose
+    /// systemd is the host's own: the units are then only rendered.
     pub manage_schedules: bool,
     /// What checks a schedule's `OnCalendar` expressions.
     pub systemd_analyze: PathBuf,
@@ -310,10 +310,16 @@ impl Paths {
         self.state_dir.join("ca-certs")
     }
 
-    /// How each schedule's last run ended, one file per schedule id,
-    /// written by the run unit itself (`schedules.rs`).
-    pub fn schedule_runs_dir(&self) -> PathBuf {
-        self.state_dir.join("schedule-runs")
+    /// How each script's recent runs ended, `<script id>/<run>`, written by
+    /// the run unit itself (`scripts.rs`).
+    pub fn script_runs_dir(&self) -> PathBuf {
+        self.state_dir.join("script-runs")
+    }
+
+    /// The scripts' bodies, `<id>-<hash>.sh`, rendered from the `scripts`
+    /// table at every start like their units.
+    pub fn script_body_dir(&self) -> PathBuf {
+        self.run_dir.join("scripts")
     }
 
     pub fn factory_reset_marker(&self) -> PathBuf {

@@ -1,0 +1,21 @@
+{
+  "function": "script::behaviour",
+  "input": [
+    {
+      "body": "true\n",
+      "name": "plain"
+    },
+    {
+      "body": "true\n",
+      "bridge": true,
+      "concurrency": "skip",
+      "name": "restock",
+      "on_error": "continue",
+      "timeout_s": 5400
+    }
+  ],
+  "output": [
+    "stop on error, overlap",
+    "continue on error, skip if running, 1h 30min timeout, page may run it"
+  ]
+}

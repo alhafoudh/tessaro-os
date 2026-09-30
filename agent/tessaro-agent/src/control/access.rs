@@ -372,7 +372,7 @@ impl Control {
         {
             return Reply::err(err);
         }
-        if let Err(err) = self.clear_schedules().await {
+        if let Err(err) = self.clear_scripts().await {
             return Reply::err(err);
         }
         if let Err(err) = self.clear_printers().await {
@@ -388,7 +388,8 @@ impl Control {
 
         self.log.info(format!(
             "factory reset by {}: settings, tokens, ssh keys, passwords, the network, \
-             certificate authorities, browser policies, schedules, printers and stored files cleared",
+             certificate authorities, browser policies, scripts, schedules, printers and stored \
+             files cleared",
             caller.describe()
         ));
         // Weston takes the browser with it (PartOf=), and the agent restarts

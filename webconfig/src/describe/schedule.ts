@@ -1,6 +1,6 @@
-// agent/client/src/schedule.rs: the words for schedules, and reading a
-// timeout the way both clients accept it. What depends on the time takes
-// `now`, seconds since the epoch.
+// agent/client/src/schedule.rs: the words for schedules and the times and
+// runs they share with scripts, and reading a timeout the way every client
+// accepts it. What depends on the time takes `now`, seconds since the epoch.
 
 import type { Schemas } from "../api/client";
 import { fact, Line, type Fact } from "../text/line";
@@ -20,14 +20,6 @@ export function formatTimeout(seconds: number): string {
     .join("");
 }
 
-/** The command lines of a run, blank lines and `#` lines left out. */
-export function commandLines(text: string): string[] {
-  return text
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0 && !line.startsWith("#"));
-}
-
 /** `2026-09-28 07:00:00 CEST (in 1 day 15h)`. */
 export function moment(moment: Schemas["Moment"], now: number): Line {
   const local = moment.local === "" ? String(moment.unix) : moment.local;
@@ -42,23 +34,27 @@ export function upcoming(check: Schemas["CalendarCheck"], label: string, now: nu
   return check.next.map((next, at) => fact(at === 0 ? label : "", moment(next, now)));
 }
 
-function succeeded(run: Schemas["ScheduleRun"]): boolean {
+export function succeeded(run: Schemas["ScriptRun"]): boolean {
   return run.result === "success";
 }
 
 /** How a run ended: `success`, or systemd's result with its exit status. */
-export function outcome(run: Schemas["ScheduleRun"]): string {
+export function outcome(run: Schemas["ScriptRun"]): string {
   if (succeeded(run) || run.status === "" || run.status === "0") return run.result;
   return `${run.result} ${run.status}`;
 }
 
-/** How the last run went and when, and how many run now. */
+/** How the last run the schedule started went and when, and how many it has running now. */
 export function lastRun(info: Schemas["ScheduleInfo"], now: number): Line {
-  const run = info.last_run;
-  const line = run
-    ? Line.of(succeeded(run) ? "ok" : "bad", `${outcome(run)}, ${relative(run.finished.unix, now)}`)
+  return runs(info.last_run ?? null, info.running ?? 0, now);
+}
+
+/** How run `last` went and when, and `running` beside it when there are. */
+export function runs(last: Schemas["ScriptRun"] | null, running: number, now: number): Line {
+  const line = last
+    ? Line.of(succeeded(last) ? "ok" : "bad", `${outcome(last)}, ${relative(last.finished.unix, now)}`)
     : Line.of("muted", "never");
-  return info.running > 0 ? line.add("warn", ` (${info.running} running)`) : line;
+  return running > 0 ? line.add("warn", ` (${running} running)`) : line;
 }
 
 /** A timeout as typed: `90`, `90s`, `10m`, `1h30m`; `none` or `0` for none. */

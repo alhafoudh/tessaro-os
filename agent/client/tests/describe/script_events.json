@@ -1,0 +1,101 @@
+{
+  "function": "script::events",
+  "input": {
+    "events": [
+      {
+        "event": "started",
+        "run": "manual-1789995168-4f2a"
+      },
+      {
+        "event": "line",
+        "text": "cleaning /data/files/cache"
+      },
+      {
+        "event": "line",
+        "text": "rm: cannot remove 'x': Permission denied"
+      },
+      {
+        "event": "cut"
+      },
+      {
+        "event": "ended",
+        "record": {
+          "finished": {
+            "local": "",
+            "unix": 1789995170
+          },
+          "result": "success",
+          "run": "manual-1789995168-4f2a",
+          "started": {
+            "local": "",
+            "unix": 1789995168
+          },
+          "status": "0",
+          "trigger": "manual"
+        }
+      },
+      {
+        "event": "ended",
+        "record": {
+          "finished": {
+            "local": "",
+            "unix": 1789995290
+          },
+          "result": "exit-code",
+          "run": "manual-1789995168-4f2b",
+          "started": {
+            "local": "",
+            "unix": 1789995168
+          },
+          "status": "1",
+          "trigger": "manual"
+        }
+      }
+    ],
+    "name": "cleanup"
+  },
+  "output": [
+    [
+      [
+        "muted",
+        "run manual-1789995168-4f2a started",
+        0
+      ]
+    ],
+    [
+      [
+        "plain",
+        "cleaning /data/files/cache",
+        0
+      ]
+    ],
+    [
+      [
+        "plain",
+        "rm: cannot remove 'x': Permission denied",
+        0
+      ]
+    ],
+    [
+      [
+        "warn",
+        "output cut at 1000 lines; `tessaro-ctl script logs cleanup` has the rest",
+        0
+      ]
+    ],
+    [
+      [
+        "ok",
+        "run manual-1789995168-4f2a succeeded after 2s",
+        0
+      ]
+    ],
+    [
+      [
+        "bad",
+        "run manual-1789995168-4f2b failed: exit-code 1, after 2min 2s",
+        0
+      ]
+    ]
+  ]
+}

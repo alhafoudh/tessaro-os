@@ -1,14 +1,16 @@
 //! Long work on a device, each on a connection of its own so the window's
 //! worker keeps polling: the device's own jobs (`network ping`, the speed
 //! test, growing `/data`, looking for printers), files going up or down, an
-//! image update, and the DevTools tunnel.
+//! image update, the DevTools tunnel, and a script's run followed to its
+//! end.
 //!
 //! A job is a subscription keyed by its id. Cancelling it drops the
 //! subscription. A device job sees that between two polls and cancels it on
 //! the device; the shared flows see it as `Report::stopped` at their next
 //! step, and for a call in flight a watcher thread shuts the connection
 //! down. The flows themselves are `tessaro_client`'s (`files`, `update`,
-//! `ping`, `storage`, `devtools`, `printer`), the same as `tessaro-ctl`'s.
+//! `ping`, `storage`, `devtools`, `printer`, `script`), the same as
+//! `tessaro-ctl`'s.
 
 use std::hash::{Hash, Hasher};
 use std::net::Shutdown;
@@ -21,7 +23,7 @@ use iced::futures::channel::mpsc as ui;
 use iced::Subscription;
 use protocol::api::{self, Endpoint, GrowBody, PingBody, SpeedtestBody};
 use protocol::files::{self as store, FileEntry};
-use protocol::{JobStarted, PingEvent};
+use protocol::{JobStarted, PingEvent, ScriptEvent};
 use serde_json::Value;
 use tessaro_client::connect::Session;
 use tessaro_client::nodes::Node;
@@ -29,7 +31,7 @@ use tessaro_client::report::{self, Report as _};
 use tessaro_client::text::{Line, Tone};
 use tessaro_client::tunnel::{self, Prompts, Tunnel};
 use tessaro_client::update::{self, Plan, Sent};
-use tessaro_client::{describe, devtools, files, ping, printer, ssh, storage};
+use tessaro_client::{describe, devtools, files, ping, printer, script, ssh, storage};
 
 use crate::worker;
 
@@ -51,6 +53,9 @@ pub enum Kind {
     /// `tessaro-ctl printer discover`: every printer the device finds, as
     /// the job's values.
     Discover,
+    /// `tessaro-ctl script run`: the script's output as the job's lines,
+    /// then how the run ended.
+    Script(String),
 }
 
 /// The device's jobs, each with what starts it.
@@ -133,7 +138,10 @@ fn run(spec: &Spec, out: &ui::UnboundedSender<Event>) -> Result<String, String> 
     let done = Arc::new(AtomicBool::new(false));
     // A device job stops by itself, and cancels on the device on the way:
     // shutting its connection down would only lose that cancel.
-    let watched = !matches!(spec.kind, Kind::Stream(_) | Kind::Discover);
+    let watched = !matches!(
+        spec.kind,
+        Kind::Stream(_) | Kind::Discover | Kind::Script(_)
+    );
     if let Some(tcp) = session.shutdown_handle().filter(|_| watched) {
         let (out, done) = (out.clone(), done.clone());
         std::thread::spawn(move || {
@@ -161,6 +169,7 @@ fn run(spec: &Spec, out: &ui::UnboundedSender<Event>) -> Result<String, String> 
         Kind::ControlPing { count } => control_ping(&mut session, *count, &mut report),
         Kind::DevTools => open_devtools(&mut session, &mut report),
         Kind::Discover => discover(&mut session, out),
+        Kind::Script(name) => script_run(&mut session, name, out),
     };
     done.store(true, Ordering::Relaxed);
     if out.is_closed() {
@@ -242,6 +251,25 @@ fn discover(session: &mut Session, out: &ui::UnboundedSender<Event>) -> Result<S
         }
     })?;
     Ok(describe::printer::found_hint(&found).to_string())
+}
+
+/// `tessaro-ctl script run`: each line as it comes, and a failed run is a
+/// failed job. Cancelling stops following it; the run goes on.
+fn script_run(
+    session: &mut Session,
+    name: &str,
+    out: &ui::UnboundedSender<Event>,
+) -> Result<String, String> {
+    let ended = script::run(session, name, &|| out.is_closed(), |event| {
+        if !matches!(event, ScriptEvent::Ended { .. }) {
+            let _ = out.unbounded_send(Event::Line(script::event_line(event, name)));
+        }
+    })?;
+    match ended {
+        Some(run) if run.succeeded() => Ok(script::ended(&run).to_string()),
+        Some(run) => Err(script::ended(&run).to_string()),
+        None => Err("the run's end was not seen".to_string()),
+    }
 }
 
 /// Each local path into `into`: a file as `into/NAME`, a directory as

@@ -30,12 +30,13 @@ use crate::policy::{
 };
 use crate::{
     Applied, AudioStatus, AudioTested, CalendarCheck, CameraList, CertInfo, CertsAdded, Claimed,
-    Command, Connector, Done, EvalResult, HotspotCredentials, ImageUpload, JobPage, JobStarted,
-    KeyInfo, LogPage, Net, NetChange, NetProfile, NetProfileDetail, NodeInfo, OnError, PrintJob,
-    PrintQueued, PrinterInfo, PrinterList, PrinterSpec, ProxyStatus, ProxyTested, Received,
-    RestartTarget, ScheduleInfo, ScheduleSpec, ScreenPower, Secret, Settings, SshAccess,
-    SshKeyInfo, SshKeyRevoked, Storage, Ticket, TimeStatus, TokenCreated, TokenInfo, UpdateBegun,
-    UpdateStatus, Verify, WebSession, WelcomeInfo, WifiNetwork, WifiSecurity, WifiStatus,
+    Command, Concurrency, Connector, Done, EvalResult, HotspotCredentials, ImageUpload, JobPage,
+    JobStarted, KeyInfo, LogPage, Net, NetChange, NetProfile, NetProfileDetail, NodeInfo, OnError,
+    PrintJob, PrintQueued, PrinterInfo, PrinterList, PrinterSpec, ProxyStatus, ProxyTested,
+    Received, RestartTarget, ScheduleInfo, ScheduleSpec, ScreenPower, ScriptInfo, ScriptSpec,
+    Secret, Settings, SshAccess, SshKeyInfo, SshKeyRevoked, Storage, Ticket, TimeStatus,
+    TokenCreated, TokenInfo, UpdateBegun, UpdateStatus, Verify, WebSession, WelcomeInfo,
+    WifiNetwork, WifiSecurity, WifiStatus,
 };
 
 /// The API's version, in every path. A change a client of this version
@@ -652,26 +653,48 @@ pub struct TimeSetBody {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ScriptRef {
+    /// Its id or its name.
+    pub script: String,
+}
+
+/// What is given replaces what the script has.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ScriptChange {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub body: Option<String>,
+    #[serde(default)]
+    pub on_error: Option<OnError>,
+    /// `0` removes the timeout.
+    #[serde(default)]
+    pub timeout_s: Option<u64>,
+    #[serde(default)]
+    pub concurrency: Option<Concurrency>,
+    #[serde(default)]
+    pub bridge: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ScheduleRef {
     /// Its id or its name.
     pub schedule: String,
 }
 
-/// What is given replaces what the schedule has; a given `calendar` or
-/// `lines` replaces the whole list.
+/// What is given replaces what the schedule has; a given `calendar`
+/// replaces the whole list.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ScheduleChange {
     #[serde(default)]
     pub name: Option<String>,
     #[serde(default)]
     pub calendar: Option<Vec<String>>,
+    /// The script it runs, by id or name.
     #[serde(default)]
-    pub lines: Option<Vec<String>>,
-    #[serde(default)]
-    pub on_error: Option<OnError>,
-    /// `0` removes the timeout.
-    #[serde(default)]
-    pub timeout_s: Option<u64>,
+    pub script: Option<String>,
     #[serde(default)]
     pub enabled: Option<bool>,
 }
@@ -1261,6 +1284,42 @@ pub mod time {
     }
 }
 
+pub mod script {
+    use super::*;
+
+    endpoints! {
+        /// Every script and its recent runs.
+        List: Get "/api/v1/scripts" (Empty, ()) -> Vec<ScriptInfo>
+            = |_, _| Action::Run(Command::ScriptList);
+
+        /// Add a script.
+        Create: Post "/api/v1/scripts" (Empty, ScriptSpec) -> ScriptInfo
+            = |_, spec| Action::Run(Command::ScriptCreate { spec });
+
+        /// Change what is given of one script.
+        Change: Patch "/api/v1/scripts/{script}" (ScriptRef, ScriptChange) -> ScriptInfo
+            = |target, change| Action::Run(Command::ScriptSet {
+                script: target.script,
+                name: change.name,
+                description: change.description,
+                body: change.body,
+                on_error: change.on_error,
+                timeout_s: change.timeout_s,
+                concurrency: change.concurrency,
+                bridge: change.bridge,
+            });
+
+        /// Remove a script no schedule runs, and its units.
+        Remove: Delete "/api/v1/scripts/{script}" (ScriptRef, ()) -> Done
+            = |target, _| Action::Run(Command::ScriptRemove { script: target.script });
+
+        /// Run it now, as a job of `ScriptEvent`s: its output, then how it
+        /// ended.
+        Run: Post "/api/v1/scripts/{script}/run" (ScriptRef, ()) -> JobStarted
+            = |target, _| Action::Start(Command::ScriptRun { script: target.script });
+    }
+}
+
 pub mod schedule {
     use super::*;
 
@@ -1279,19 +1338,13 @@ pub mod schedule {
                 schedule: target.schedule,
                 name: change.name,
                 calendar: change.calendar,
-                lines: change.lines,
-                on_error: change.on_error,
-                timeout_s: change.timeout_s,
+                script: change.script,
                 enabled: change.enabled,
             });
 
-        /// Remove a schedule and its units.
+        /// Remove a schedule and its timer.
         Remove: Delete "/api/v1/schedules/{schedule}" (ScheduleRef, ()) -> Done
             = |target, _| Action::Run(Command::ScheduleRemove { schedule: target.schedule });
-
-        /// Start one run now, enabled or not.
-        Run: Post "/api/v1/schedules/{schedule}/run" (ScheduleRef, ()) -> Done
-            = |target, _| Action::Run(Command::ScheduleRun { schedule: target.schedule });
 
         /// Check `OnCalendar` expressions, saving nothing.
         Check: Post "/api/v1/schedules/check" (Empty, CalendarBody) -> CalendarCheck
@@ -1511,6 +1564,7 @@ pub fn all() -> Vec<Route> {
         audio::routes(),
         camera::routes(),
         time::routes(),
+        script::routes(),
         schedule::routes(),
         printer::routes(),
         update::routes(),
@@ -1588,11 +1642,11 @@ mod tests {
     #[test]
     fn a_target_fills_the_path_and_the_query() {
         assert_eq!(
-            target::<schedule::Run>(&ScheduleRef {
-                schedule: "night".into()
+            target::<script::Run>(&ScriptRef {
+                script: "night".into()
             })
             .unwrap(),
-            "/api/v1/schedules/night/run"
+            "/api/v1/scripts/night/run"
         );
         assert_eq!(
             target::<config::Get>(&ConfigQuery { key: None }).unwrap(),

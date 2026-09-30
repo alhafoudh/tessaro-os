@@ -1,9 +1,9 @@
-// The GUI's Schedules page (pages.rs schedules_view): every schedule, when
-// it fires next and how its last run went; a new one, and on the selected
-// row Edit (the same dialog, with its values), Enable or Disable, Run now,
-// Logs and Remove. While the dialog is open the device reads its calendar
-// back and says when it fires, once the typing pauses. It has no settings
-// of its own, so no Configure.
+// The GUI's Schedules page (pages.rs schedules_view): every schedule, the
+// script it runs, when it fires next and how its last run went; a new one,
+// and on the selected row Edit (the same dialog, with its values), Enable or
+// Disable, Logs and Remove. A script runs now from Scripts. While the dialog
+// is open the device reads its calendar back and says when it fires, once
+// the typing pauses. It has no settings of its own, so no Configure.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
@@ -24,7 +24,6 @@ import type { PageInfo } from "./registry";
 const CHECK_PAUSE_MS = 400;
 /** How much of a schedule's journal Logs shows. */
 const LOG_LINES = 200;
-const ON_ERROR: Schemas["OnError"][] = ["stop", "continue"];
 
 type Asking =
   { kind: "new" } | { kind: "edit"; info: Schemas["ScheduleInfo"] } | { kind: "remove"; info: Schemas["ScheduleInfo"] };
@@ -66,7 +65,7 @@ export function Schedules({ info }: { info: PageInfo }) {
       const saved = await answer(
         client.PATCH("/api/v1/schedules/{schedule}", {
           params: { path: { schedule: item.id } },
-          body: { name: null, calendar: null, lines: null, on_error: null, timeout_s: null, enabled: !item.enabled },
+          body: { name: null, calendar: null, script: null, enabled: !item.enabled },
         }),
       );
       log(`schedule ${saved.name} saved, ${saved.enabled ? "on" : "off"}`, "ok");
@@ -105,17 +104,6 @@ export function Schedules({ info }: { info: PageInfo }) {
           <Button disabled={!chosen} onClick={() => chosen && void toggle(chosen)}>
             {chosen?.enabled ? "Disable" : "Enable"}
           </Button>
-          <Button
-            disabled={!chosen}
-            onClick={() =>
-              chosen &&
-              void act(() =>
-                answer(client.POST("/api/v1/schedules/{schedule}/run", { params: { path: { schedule: chosen.id } } })),
-              )
-            }
-          >
-            Run now
-          </Button>
           <Button disabled={!chosen} onClick={() => chosen && void showLogs(chosen)}>
             Logs
           </Button>
@@ -130,6 +118,7 @@ export function Schedules({ info }: { info: PageInfo }) {
         columns={[
           { title: "Schedule", width: "160px" },
           { title: "State", width: "50px" },
+          { title: "Script", width: "140px" },
           { title: "Calendar", width: "200px" },
           { title: "Next run", width: "190px" },
           { title: "Last run" },
@@ -141,6 +130,7 @@ export function Schedules({ info }: { info: PageInfo }) {
             cells: [
               item.name,
               item.enabled ? <span className="text-success">on</span> : <span className="text-danger">off</span>,
+              item.script_name,
               item.calendar.join("  |  "),
               item.next ? schedule.moment(item.next, now).toString() : "-",
               <span className={toneClass(last.tone())}>{last.toString()}</span>,
@@ -169,7 +159,7 @@ export function Schedules({ info }: { info: PageInfo }) {
       {asking?.kind === "remove" && (
         <Confirm
           title={`Remove schedule ${asking.info.name}`}
-          body="Its timer stops; runs already going finish."
+          body="Its timer stops; runs already going finish, and its script stays."
           action="Remove"
           danger
           onConfirm={() =>
@@ -201,10 +191,18 @@ function ScheduleDialog({
   // Taken once: a refresh of the table underneath does not touch them.
   const [name, setName] = useState(existing?.name ?? "");
   const [calendar, setCalendar] = useState((existing?.calendar ?? []).join("\n"));
-  const [commands, setCommands] = useState((existing?.lines ?? []).join("\n"));
-  const [onError, setOnError] = useState<Schemas["OnError"]>(existing?.on_error ?? "stop");
-  const [timeout, setTimeoutText] = useState(existing?.timeout_s ? schedule.formatTimeout(existing.timeout_s) : "");
+  const [script, setScript] = useState(existing?.script_name ?? "");
   const [enabled, setEnabled] = useState(existing?.enabled ?? true);
+  const scripts = useQuery({
+    queryKey: ["scripts"],
+    queryFn: () => answer(client.GET("/api/v1/scripts")),
+  });
+  const names = (scripts.data ?? []).map((item) => item.name);
+  // A new schedule runs the first script until another is picked.
+  const first = names[0];
+  useEffect(() => {
+    if (script === "" && first !== undefined) setScript(first);
+  }, [script, first]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<{ lines: Line[]; error: string | null } | null>(null);
@@ -240,32 +238,14 @@ function ScheduleDialog({
 
   const save = async () => {
     setError(null);
-    let seconds: number;
-    try {
-      seconds = schedule.parseTimeout(timeout.trim() === "" ? "none" : timeout);
-    } catch (problem) {
-      setError((problem as Error).message);
-      return;
-    }
-    const body = {
-      name: name.trim(),
-      enabled,
-      calendar: lines,
-      lines: schedule.commandLines(commands),
-      on_error: onError,
-    };
+    const body = { name: name.trim(), enabled, calendar: lines, script };
     setBusy(true);
     try {
       const saved = existing
         ? await answer(
-            client.PATCH("/api/v1/schedules/{schedule}", {
-              params: { path: { schedule: existing.id } },
-              body: { ...body, timeout_s: seconds },
-            }),
+            client.PATCH("/api/v1/schedules/{schedule}", { params: { path: { schedule: existing.id } }, body }),
           )
-        : await answer(
-            client.POST("/api/v1/schedules", { body: { ...body, timeout_s: seconds > 0 ? seconds : null } }),
-          );
+        : await answer(client.POST("/api/v1/schedules", { body }));
       onSaved(saved);
       onClose();
     } catch (problem) {
@@ -285,8 +265,8 @@ function ScheduleDialog({
       onSubmit={() => void save()}
     >
       <Intro>
-        Each command line runs with /bin/sh -c as root, in order; write tessaro-ctl commands out in full. Calendar lines
-        are systemd OnCalendar expressions in the device's timezone; any of them fires.
+        A schedule runs one of the device's scripts, made on the Scripts page. Calendar lines are systemd OnCalendar
+        expressions in the device's timezone; any of them fires.
       </Intro>
       <Field label="Name">
         <input
@@ -320,32 +300,18 @@ function ScheduleDialog({
           data-autofocus={existing ? true : undefined}
         />
       </Field>
-      <Field label="Commands">
-        <textarea
-          rows={4}
-          value={commands}
-          onChange={(event) => setCommands(event.target.value)}
-          placeholder="one per line: tessaro-ctl screen power off"
-          className="font-mono"
-          spellCheck={false}
-        />
-      </Field>
-      <Field label="On error">
-        <select value={onError} onChange={(event) => setOnError(event.target.value as Schemas["OnError"])}>
-          {ON_ERROR.map((choice) => (
+      <Field
+        label="Script"
+        hint={names.length === 0 && !scripts.isPending ? "no scripts yet; add one on the Scripts page" : undefined}
+      >
+        <select value={script} onChange={(event) => setScript(event.target.value)}>
+          {script !== "" && !names.includes(script) && <option value={script}>{script}</option>}
+          {names.map((choice) => (
             <option key={choice} value={choice}>
               {choice}
             </option>
           ))}
         </select>
-      </Field>
-      <Field label="Timeout">
-        <input
-          value={timeout}
-          onChange={(event) => setTimeoutText(event.target.value)}
-          placeholder="none, or 90s, 10m, 2h"
-          spellCheck={false}
-        />
       </Field>
       <Field label="Enabled">
         <input

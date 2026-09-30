@@ -270,7 +270,7 @@ mod tests {
             .map(|p| p["name"].as_str().unwrap())
             .collect();
         assert_eq!(names, ["interface", "rescan"]);
-        let run = &document["paths"]["/api/v1/schedules/{schedule}/run"]["post"]["parameters"][0];
+        let run = &document["paths"]["/api/v1/scripts/{script}/run"]["post"]["parameters"][0];
         assert_eq!(run["in"], "path");
         assert_eq!(run["required"], true);
     }

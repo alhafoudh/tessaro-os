@@ -728,14 +728,29 @@ impl Session {
         &mut self,
         body: S::Body,
         stop: &dyn Fn() -> bool,
-        mut each: impl FnMut(Result<T, Value>),
+        each: impl FnMut(Result<T, Value>),
     ) -> Result<(), String>
     where
         S: Endpoint<Response = JobStarted>,
         S::Params: Default,
         T: DeserializeOwned,
     {
-        let JobStarted { job } = self.send::<S>(body)?;
+        self.job_at::<S, T>(S::Params::default(), body, stop, each)
+    }
+
+    /// `job` for an endpoint with a path, like one script's run.
+    pub fn job_at<S, T>(
+        &mut self,
+        params: S::Params,
+        body: S::Body,
+        stop: &dyn Fn() -> bool,
+        mut each: impl FnMut(Result<T, Value>),
+    ) -> Result<(), String>
+    where
+        S: Endpoint<Response = JobStarted>,
+        T: DeserializeOwned,
+    {
+        let JobStarted { job } = self.call::<S>(params, body)?;
         let mut after = 0;
         loop {
             if stop() {

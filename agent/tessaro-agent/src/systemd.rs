@@ -269,7 +269,8 @@ impl Units for Systemd<'_> {
 /// and pledges every call to the watchdog; a request from `tessaro-ctl` is
 /// not the state machine, and must never be what keeps the watchdog fed. So
 /// this one bounds its calls with plain `deadline::within`, on a connection
-/// of its own.
+/// of its own. A clone shares the connection.
+#[derive(Clone)]
 pub struct Bus {
     connection: Option<Connection>,
 }

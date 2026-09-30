@@ -10,7 +10,7 @@ touch one row instead of rewriting a whole document.
 
 | Store | Opened by | Tables | Why there |
 | --- | --- | --- | --- |
-| `/data/tessaro/tessaro.db` | `tessaro-agent` and `tessaro-agent boot` (`db.rs`) | `settings`, `state`, `tokens`, `secrets`, `schedules`, `browser_policies`, `printers`, `net_txn`, `net_last` | on `/data`, so it survives reboots and updates |
+| `/data/tessaro/tessaro.db` | `tessaro-agent` and `tessaro-agent boot` (`db.rs`) | `settings`, `state`, `tokens`, `secrets`, `scripts`, `schedules`, `browser_policies`, `printers`, `net_txn`, `net_last` | on `/data`, so it survives reboots and updates |
 | `/run/tessaro-kiosk/sessions.db` | `tessaro-agent` (`api/sessions.rs`) | `sessions` | on tmpfs, so a reboot ends every browser session |
 | `<config dir>/tessaro.db` | `tessaro-ctl`, `tessaro-gui` (`agent/client/src/store.rs`) | `nodes`, `gui_prefs` | the config dir is `TESSARO_CONFIG_DIR`, else `$XDG_CONFIG_HOME/tessaro`, else `~/.config/tessaro` |
 
@@ -51,7 +51,7 @@ look at.
 **`db.rs` is the only way the agent reaches `tessaro.db`.** A type kept there
 implements `Stored`: it loads itself from its tables and saves itself back,
 whole, inside the transaction it is given (`State` in `state.rs`, `Auth` in
-`auth.rs`, `Secrets` in `secrets.rs`, `Schedules` in `schedules.rs`,
+`auth.rs`, `Secrets` in `secrets.rs`, `Scripts` in `scripts.rs`, `Schedules` in `schedules.rs`,
 `Policies` in `policies.rs`, `Printers` in `printer.rs`).
 
 * **`read` never fails.** Whatever goes wrong is logged and the default comes
@@ -66,7 +66,7 @@ whole, inside the transaction it is given (`State` in `state.rs`, `Auth` in
   and the settings to `settings` together, so a power cut cannot leave a
   password for a network the settings do not name.
 * **A factory reset clears rows, not the file**: `tokens`, `settings`,
-  `state`, `secrets`, `schedules`, `browser_policies`, `printers`. The store
+  `state`, `secrets`, `scripts`, `schedules`, `browser_policies`, `printers`. The store
   and its migration history stay.
 * **`printers` is what CUPS is reconciled with**, one row per queue by name,
   and the row with `is_default` is the printer `window.print()` uses; a
@@ -87,13 +87,13 @@ whole, inside the transaction it is given (`State` in `state.rs`, `Auth` in
 **Not everything the agent keeps is in the store.** Files stay files where a
 program other than the agent reads or writes them:
 
-* `schedule-runs/<id>`, written by systemd's `ExecStopPost` shell line when a
-  run ends ([scheduler.md](scheduler.md));
+* `script-runs/<id>/<run>`, written by systemd's `ExecStopPost` shell line
+  when a run ends ([scripts.md](scripts.md));
 * `update/`, which `tessaro-flash` reads in the initramfs ([updates.md](updates.md));
 * the TLS identity, ssh's `authorized_keys`, `/etc/shadow` and the extra
   certificate authorities, which their own programs read;
 * everything the agent renders (`generated.env`, the policy, the keyfiles,
-  the schedules' units), which is written with `store.rs` and only when its
+  the scripts' bodies and units), which is written with `store.rs` and only when its
   content changes.
 
 ## The session handover
@@ -177,7 +177,7 @@ sqlite3 /data/tessaro/tessaro.db 'SELECT id, name, issued_by FROM tokens'
   set` guarantees a value is sound. Use `tessaro-ctl config set` for settings.
 * **Nothing is told about a hand edit.** The rendered files follow at the next
   boot or the next change made with tessaro-ctl (`render::all`), the tokens
-  and the settings the agent acts on at its next start, and the schedules at
-  the next reconcile, within a minute (`watch_schedules`).
+  and the settings the agent acts on at its next start, and the scripts and schedules
+  at the next reconcile, within a minute (`watch_units`).
 * **`secrets` holds the network passwords in clear**, like the keyfiles they
   are rendered into, which is why the store is 0600 and root's.

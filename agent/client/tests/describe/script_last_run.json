@@ -1,0 +1,104 @@
+{
+  "function": "script::last_run",
+  "input": {
+    "infos": [
+      {
+        "body": "tessaro-ctl screen power off\n",
+        "bridge": false,
+        "concurrency": "overlap",
+        "description": "screen off for the night",
+        "id": "5c41a7e0",
+        "name": "dim",
+        "on_error": "stop",
+        "running": 0,
+        "runs": [
+          {
+            "finished": {
+              "local": "",
+              "unix": 1789995170
+            },
+            "result": "success",
+            "run": "manual-1789995168-4f2a",
+            "schedule": null,
+            "started": {
+              "local": "",
+              "unix": 1789995168
+            },
+            "status": "0",
+            "trigger": "manual"
+          }
+        ],
+        "schedules": [
+          "night"
+        ],
+        "timeout_s": null,
+        "units": "tessaro-script-5c41a7e0*@*.service"
+      },
+      {
+        "body": "false\n",
+        "bridge": true,
+        "concurrency": "skip",
+        "description": "",
+        "id": "9d02b3f1",
+        "name": "restock",
+        "on_error": "continue",
+        "running": 1,
+        "runs": [
+          {
+            "finished": {
+              "local": "",
+              "unix": 1789999955
+            },
+            "result": "exit-code",
+            "run": "bridge-1789999950-01aa",
+            "schedule": null,
+            "started": {
+              "local": "",
+              "unix": 1789999950
+            },
+            "status": "1",
+            "trigger": "bridge"
+          }
+        ],
+        "schedules": [],
+        "timeout_s": 600,
+        "units": "tessaro-script-9d02b3f1*@*.service"
+      },
+      {
+        "body": "true\n",
+        "id": "0b7e44c9",
+        "name": "never-ran",
+        "units": "tessaro-script-0b7e44c9*@*.service"
+      }
+    ],
+    "now": 1790000000
+  },
+  "output": [
+    [
+      [
+        "ok",
+        "success, 1h 20min ago",
+        0
+      ]
+    ],
+    [
+      [
+        "bad",
+        "exit-code 1, 45s ago",
+        0
+      ],
+      [
+        "warn",
+        " (1 running)",
+        0
+      ]
+    ],
+    [
+      [
+        "muted",
+        "never",
+        0
+      ]
+    ]
+  ]
+}

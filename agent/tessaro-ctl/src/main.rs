@@ -21,6 +21,7 @@ mod printer;
 mod progress;
 mod prompt;
 mod schedule;
+mod script;
 mod ssh;
 mod storage;
 mod style;
@@ -109,7 +110,9 @@ const HELP_STYLES: Styles = Styles::styled()
         \x20 tessaro-ctl camera mirrors 2                   two readers may watch each camera at once\n\
         \x20 tessaro-ctl time show                          timezone, NTP sync, offset and drift\n\
         \x20 tessaro-ctl time timezone Europe/Bratislava && tessaro-ctl time ntp on --server ntp.corp.test\n\
-        \x20 tessaro-ctl schedule create night --on '*-*-* 22:00' --run 'tessaro-ctl screen power off'\n\
+        \x20 tessaro-ctl script create dim --body 'tessaro-ctl screen power off'\n\
+        \x20 tessaro-ctl script run dim                     run it now: its output, how it ended\n\
+        \x20 tessaro-ctl schedule create night --on '*-*-* 22:00' --script dim\n\
         \x20 tessaro-ctl schedule list                      when each runs next, how the last run ended\n\
         \x20 tessaro-ctl printer discover && tessaro-ctl printer create office --uri ipp://10.0.0.5/ipp/print\n\
         \x20 tessaro-ctl printer test office && tessaro-ctl config set printer.enable=1   window.print() prints there\n\
@@ -195,8 +198,12 @@ enum Cmd {
     /// The clock: timezone, NTP servers and sync, setting it by hand.
     #[command(subcommand)]
     Time(time::TimeCmd),
-    /// Command lines the device runs on calendar times: create, change,
-    /// switch on and off, run now, their output.
+    /// Shell scripts the device keeps: create, change, run now, their
+    /// output, the ones the kiosk page may run.
+    #[command(subcommand)]
+    Script(script::ScriptCmd),
+    /// Calendar times the device runs a script at: create, change, switch
+    /// on and off, their output.
     #[command(subcommand)]
     Schedule(schedule::ScheduleCmd),
     /// The printers the device prints on: find, add and remove them, the
@@ -954,6 +961,7 @@ fn run(cli: Cli) -> Result<(), String> {
         Cmd::Audio(command) => audio::run(&mut session, command, json),
         Cmd::Camera(command) => camera::run(&mut session, command, json),
         Cmd::Time(command) => time::run(&mut session, command, json),
+        Cmd::Script(command) => script::run(&mut session, command, json),
         Cmd::Schedule(command) => schedule::run(&mut session, command, json),
         Cmd::Printer(command) => printer::run(&mut session, command, json),
         Cmd::Device(DeviceCmd::Restart { what }) => {

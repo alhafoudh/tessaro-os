@@ -20,6 +20,7 @@ import { Printer } from "./Printer";
 import { QuickSetup } from "./QuickSetup";
 import { Schedules } from "./Schedules";
 import { Screen } from "./Screen";
+import { Scripts } from "./Scripts";
 import { Ssh } from "./Ssh";
 import { Storage } from "./Storage";
 import { Time } from "./Time";
@@ -46,6 +47,7 @@ export const PAGES: PageInfo[] = [
   { path: "audio", title: "Audio", scope: { prefix: "audio" }, component: Audio },
   { path: "camera", title: "Camera", scope: { prefix: "camera" }, component: Camera },
   { path: "time", title: "Time", scope: { prefix: "time" }, component: Time },
+  { path: "scripts", title: "Scripts", component: Scripts },
   { path: "schedules", title: "Schedules", component: Schedules },
   { path: "printer", title: "Printer", scope: { prefix: "printer" }, component: Printer },
   { path: "access", title: "Access", scope: { prefix: "access" }, component: Access },

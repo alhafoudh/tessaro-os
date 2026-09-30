@@ -40,6 +40,9 @@
       "name": "time"
     },
     {
+      "name": "scripts"
+    },
+    {
       "name": "schedules"
     },
     {
@@ -2511,6 +2514,213 @@
         }
       }
     },
+    "/api/v1/scripts": {
+      "get": {
+        "operationId": "scripts.List",
+        "tags": [
+          "scripts"
+        ],
+        "summary": "Every script and its recent runs.",
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ScriptInfo"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "scripts.Create",
+        "tags": [
+          "scripts"
+        ],
+        "summary": "Add a script.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScriptSpec"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScriptInfo"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/scripts/{script}": {
+      "patch": {
+        "operationId": "scripts.Change",
+        "tags": [
+          "scripts"
+        ],
+        "summary": "Change what is given of one script.",
+        "parameters": [
+          {
+            "name": "script",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Its id or its name."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScriptChange"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScriptInfo"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "scripts.Remove",
+        "tags": [
+          "scripts"
+        ],
+        "summary": "Remove a script no schedule runs, and its units.",
+        "parameters": [
+          {
+            "name": "script",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Its id or its name."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Done"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/scripts/{script}/run": {
+      "post": {
+        "operationId": "scripts.Run",
+        "tags": [
+          "scripts"
+        ],
+        "summary": "Run it now, as a job of `ScriptEvent`s: its output, then how it ended.",
+        "parameters": [
+          {
+            "name": "script",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Its id or its name."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobStarted"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/schedules": {
       "get": {
         "operationId": "schedules.List",
@@ -2640,49 +2850,7 @@
         "tags": [
           "schedules"
         ],
-        "summary": "Remove a schedule and its units.",
-        "parameters": [
-          {
-            "name": "schedule",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Its id or its name."
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Done.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Done"
-                }
-              }
-            }
-          },
-          "default": {
-            "description": "Refused or failed: `code` says which, `error` why.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/schedules/{schedule}/run": {
-      "post": {
-        "operationId": "schedules.Run",
-        "tags": [
-          "schedules"
-        ],
-        "summary": "Start one run now, enabled or not.",
+        "summary": "Remove a schedule and its timer.",
         "parameters": [
           {
             "name": "schedule",
@@ -7415,12 +7583,308 @@
           }
         }
       },
+      "ScriptInfo": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Stable across renames; names the script's systemd units."
+          },
+          "name": {
+            "type": "string",
+            "description": "`[a-z0-9][a-z0-9-]*`, unique on the device."
+          },
+          "description": {
+            "type": "string",
+            "description": "One line saying what it does.",
+            "default": ""
+          },
+          "body": {
+            "type": "string",
+            "description": "Run by `/bin/sh` as root, from `/`."
+          },
+          "on_error": {
+            "$ref": "#/components/schemas/OnError",
+            "default": "stop"
+          },
+          "timeout_s": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0,
+            "description": "The longest a run may take before systemd kills it.",
+            "default": null
+          },
+          "concurrency": {
+            "$ref": "#/components/schemas/Concurrency",
+            "default": "overlap"
+          },
+          "bridge": {
+            "type": "boolean",
+            "description": "The kiosk page may list it and run it (`tessaro.scripts`).",
+            "default": false
+          },
+          "runs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScriptRun"
+            },
+            "description": "Its finished runs, newest first, at most `SCRIPT_RUNS_KEPT`.",
+            "default": []
+          },
+          "running": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "Runs going right now.",
+            "default": 0
+          },
+          "schedules": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The schedules that run it, by name.",
+            "default": []
+          },
+          "units": {
+            "type": "string",
+            "description": "The journal pattern of its runs, for `logs --unit`."
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "body",
+          "units"
+        ],
+        "description": "One script, its recent runs and who runs it."
+      },
+      "OnError": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "stop",
+            "description": "The run ends there, failed: the body runs with `/bin/sh -e`."
+          },
+          {
+            "type": "string",
+            "const": "continue",
+            "description": "The rest runs anyway; the run ends as its last command does."
+          }
+        ],
+        "description": "What a run does when a command of the script fails."
+      },
+      "Concurrency": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "overlap",
+            "description": "It starts anyway; runs overlap."
+          },
+          {
+            "type": "string",
+            "const": "skip",
+            "description": "It does not start."
+          }
+        ],
+        "description": "What a run does when one of the same script is still going."
+      },
+      "ScriptRun": {
+        "type": "object",
+        "properties": {
+          "run": {
+            "type": "string",
+            "description": "The run's systemd instance, `manual-1700000000-4f2a`: what\n`logs --unit` takes after the script's template."
+          },
+          "trigger": {
+            "type": "string",
+            "description": "What started it: `manual`, `bridge` (the kiosk page) or\n`schedule`, the first word of `run`."
+          },
+          "schedule": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The schedule that started it, by name, while that schedule exists.",
+            "default": null
+          },
+          "started": {
+            "$ref": "#/components/schemas/Moment"
+          },
+          "finished": {
+            "$ref": "#/components/schemas/Moment"
+          },
+          "result": {
+            "type": "string",
+            "description": "systemd's `$SERVICE_RESULT`: `success`, `exit-code`, `timeout`,\n`signal`..."
+          },
+          "status": {
+            "type": "string",
+            "description": "systemd's `$EXIT_STATUS`: an exit code or a signal name."
+          }
+        },
+        "required": [
+          "run",
+          "trigger",
+          "started",
+          "finished",
+          "result",
+          "status"
+        ],
+        "description": "How a finished run of a script ended."
+      },
+      "Moment": {
+        "type": "object",
+        "properties": {
+          "unix": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Seconds since the epoch, UTC."
+          },
+          "local": {
+            "type": "string",
+            "description": "The device's wall clock: `2026-09-28 07:00:00 CEST`."
+          }
+        },
+        "required": [
+          "unix",
+          "local"
+        ],
+        "description": "A moment as the device reports it."
+      },
+      "ScriptSpec": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "`[a-z0-9][a-z0-9-]*`, unique on the device."
+          },
+          "description": {
+            "type": "string",
+            "description": "One line saying what it does.",
+            "default": ""
+          },
+          "body": {
+            "type": "string",
+            "description": "Run by `/bin/sh` as root, from `/`."
+          },
+          "on_error": {
+            "$ref": "#/components/schemas/OnError",
+            "default": "stop"
+          },
+          "timeout_s": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0,
+            "description": "The longest a run may take before systemd kills it.",
+            "default": null
+          },
+          "concurrency": {
+            "$ref": "#/components/schemas/Concurrency",
+            "default": "overlap"
+          },
+          "bridge": {
+            "type": "boolean",
+            "description": "The kiosk page may list it and run it (`tessaro.scripts`).",
+            "default": false
+          }
+        },
+        "required": [
+          "name",
+          "body"
+        ],
+        "description": "What a script is: a shell body and how its runs behave."
+      },
+      "ScriptRef": {
+        "type": "object",
+        "properties": {
+          "script": {
+            "type": "string",
+            "description": "Its id or its name."
+          }
+        },
+        "required": [
+          "script"
+        ]
+      },
+      "ScriptChange": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "body": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "on_error": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OnError"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "timeout_s": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0,
+            "description": "`0` removes the timeout.",
+            "default": null
+          },
+          "concurrency": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Concurrency"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "bridge": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "default": null
+          }
+        },
+        "description": "What is given replaces what the script has."
+      },
       "ScheduleInfo": {
         "type": "object",
         "properties": {
           "id": {
             "type": "string",
-            "description": "Stable across renames; names the schedule's systemd units."
+            "description": "Stable across renames; names the schedule's systemd timer."
           },
           "name": {
             "type": "string",
@@ -7437,26 +7901,13 @@
             },
             "description": "systemd `OnCalendar` expressions; the schedule fires when any of\nthem does."
           },
-          "lines": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Shell command lines, each run with `/bin/sh -c` as root, in order."
+          "script": {
+            "type": "string",
+            "description": "The script it runs: its id or its name when sent, its id when\nanswered."
           },
-          "on_error": {
-            "$ref": "#/components/schemas/OnError",
-            "default": "stop"
-          },
-          "timeout_s": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "uint64",
-            "minimum": 0,
-            "description": "The longest a whole run may take before systemd kills it.",
-            "default": null
+          "script_name": {
+            "type": "string",
+            "description": "The name of the script it runs."
           },
           "next": {
             "anyOf": [
@@ -7485,94 +7936,36 @@
           "last_run": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/ScheduleRun"
+                "$ref": "#/components/schemas/ScriptRun"
               },
               {
                 "type": "null"
               }
             ],
+            "description": "The last run this schedule started that has finished.",
             "default": null
           },
           "running": {
             "type": "integer",
             "format": "uint32",
             "minimum": 0,
-            "description": "Runs going right now; they may overlap.",
+            "description": "Runs this schedule started that are going right now.",
             "default": 0
           },
           "units": {
             "type": "string",
-            "description": "The journal pattern of its runs, for `logs --unit`."
+            "description": "The journal pattern of the runs it started, for `logs --unit`."
           }
         },
         "required": [
           "id",
           "name",
           "calendar",
-          "lines",
+          "script",
+          "script_name",
           "units"
         ],
         "description": "One schedule and what systemd reports about it."
-      },
-      "OnError": {
-        "oneOf": [
-          {
-            "type": "string",
-            "const": "stop",
-            "description": "The run ends there, failed."
-          },
-          {
-            "type": "string",
-            "const": "continue",
-            "description": "The next line runs anyway."
-          }
-        ],
-        "description": "What a run does when one of its lines fails."
-      },
-      "Moment": {
-        "type": "object",
-        "properties": {
-          "unix": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Seconds since the epoch, UTC."
-          },
-          "local": {
-            "type": "string",
-            "description": "The device's wall clock: `2026-09-28 07:00:00 CEST`."
-          }
-        },
-        "required": [
-          "unix",
-          "local"
-        ],
-        "description": "A moment as the device reports it."
-      },
-      "ScheduleRun": {
-        "type": "object",
-        "properties": {
-          "started": {
-            "$ref": "#/components/schemas/Moment"
-          },
-          "finished": {
-            "$ref": "#/components/schemas/Moment"
-          },
-          "result": {
-            "type": "string",
-            "description": "systemd's `$SERVICE_RESULT`: `success`, `exit-code`, `timeout`,\n`signal`..."
-          },
-          "status": {
-            "type": "string",
-            "description": "systemd's `$EXIT_STATUS` of the last line that ran: an exit code\nor a signal name."
-          }
-        },
-        "required": [
-          "started",
-          "finished",
-          "result",
-          "status"
-        ],
-        "description": "How a finished run ended."
       },
       "ScheduleSpec": {
         "type": "object",
@@ -7592,34 +7985,17 @@
             },
             "description": "systemd `OnCalendar` expressions; the schedule fires when any of\nthem does."
           },
-          "lines": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Shell command lines, each run with `/bin/sh -c` as root, in order."
-          },
-          "on_error": {
-            "$ref": "#/components/schemas/OnError",
-            "default": "stop"
-          },
-          "timeout_s": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "uint64",
-            "minimum": 0,
-            "description": "The longest a whole run may take before systemd kills it.",
-            "default": null
+          "script": {
+            "type": "string",
+            "description": "The script it runs: its id or its name when sent, its id when\nanswered."
           }
         },
         "required": [
           "name",
           "calendar",
-          "lines"
+          "script"
         ],
-        "description": "What a schedule is: when it fires and what a run does."
+        "description": "What a schedule is: when it fires and which script it runs."
       },
       "ScheduleRef": {
         "type": "object",
@@ -7653,35 +8029,12 @@
             },
             "default": null
           },
-          "lines": {
+          "script": {
             "type": [
-              "array",
+              "string",
               "null"
             ],
-            "items": {
-              "type": "string"
-            },
-            "default": null
-          },
-          "on_error": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/OnError"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null
-          },
-          "timeout_s": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "uint64",
-            "minimum": 0,
-            "description": "`0` removes the timeout.",
+            "description": "The script it runs, by id or name.",
             "default": null
           },
           "enabled": {
@@ -7692,7 +8045,7 @@
             "default": null
           }
         },
-        "description": "What is given replaces what the schedule has; a given `calendar` or\n`lines` replaces the whole list."
+        "description": "What is given replaces what the schedule has; a given `calendar`\nreplaces the whole list."
       },
       "CalendarBody": {
         "type": "object",
@@ -8498,7 +8851,7 @@
             "items": {
               "$ref": "#/components/schemas/JobEvent"
             },
-            "description": "Its steps from number `after` on, in order: `PingEvent`s,\n`SpeedtestEvent`s, `StorageGrowEvent`s or `PrinterFound`s, by the\njob."
+            "description": "Its steps from number `after` on, in order: `PingEvent`s,\n`SpeedtestEvent`s, `StorageGrowEvent`s, `PrinterFound`s or\n`ScriptEvent`s, by the job."
           },
           "next": {
             "type": "integer",
@@ -8538,6 +8891,9 @@
           },
           {
             "$ref": "#/components/schemas/PrinterFound"
+          },
+          {
+            "$ref": "#/components/schemas/ScriptEvent"
           }
         ],
         "description": "One step of a job, of the kind the job is. Only described, for the\nAPI's document."
@@ -8958,6 +9314,75 @@
           "class"
         ],
         "description": "One step of `printer-discover`: a printer CUPS found."
+      },
+      "ScriptEvent": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "run": {
+                "type": "string"
+              },
+              "event": {
+                "type": "string",
+                "const": "started"
+              }
+            },
+            "required": [
+              "event",
+              "run"
+            ],
+            "description": "The run started, as this systemd instance."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "text": {
+                "type": "string"
+              },
+              "event": {
+                "type": "string",
+                "const": "line"
+              }
+            },
+            "required": [
+              "event",
+              "text"
+            ],
+            "description": "One line the run wrote, to stdout or stderr: the journal keeps\nthem in one stream, in order."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "event": {
+                "type": "string",
+                "const": "cut"
+              }
+            },
+            "required": [
+              "event"
+            ],
+            "description": "Past `SCRIPT_OUTPUT_MAX` lines; the rest is only in the journal."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "record": {
+                "$ref": "#/components/schemas/ScriptRun"
+              },
+              "event": {
+                "type": "string",
+                "const": "ended"
+              }
+            },
+            "required": [
+              "event",
+              "record"
+            ],
+            "description": "How it ended, as the run recorded it; the last step."
+          }
+        ],
+        "description": "One step of `script-run`, in the order they arrive."
       },
       "JobRef": {
         "type": "object",

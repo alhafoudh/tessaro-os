@@ -216,6 +216,43 @@ fn render(function: &str, input: &Value) -> Value {
                     .collect(),
             )
         }
+        "script::last_run" => {
+            let now = input["now"].as_i64().unwrap();
+            let infos: Vec<protocol::ScriptInfo> = from(&input["infos"]);
+            Value::Array(
+                infos
+                    .iter()
+                    .map(|info| line(&tessaro_client::script::last_run(info, now)))
+                    .collect(),
+            )
+        }
+        "script::runs" => {
+            use tessaro_client::script::{ended, run_line, started_by};
+            let now = input["now"].as_i64().unwrap();
+            let runs: Vec<protocol::ScriptRun> = from(&input["runs"]);
+            json!({
+                "run_line": runs.iter().map(|run| line(&run_line(run, now))).collect::<Vec<_>>(),
+                "ended": runs.iter().map(|run| line(&ended(run))).collect::<Vec<_>>(),
+                "started_by": runs.iter().map(started_by).collect::<Vec<_>>(),
+            })
+        }
+        "script::events" => {
+            let name = input["name"].as_str().unwrap();
+            let events: Vec<protocol::ScriptEvent> = from(&input["events"]);
+            Value::Array(
+                events
+                    .iter()
+                    .map(|event| line(&tessaro_client::script::event_line(event, name)))
+                    .collect(),
+            )
+        }
+        "script::behaviour" => {
+            let specs: Vec<protocol::ScriptSpec> = from(input);
+            json!(specs
+                .iter()
+                .map(tessaro_client::script::behaviour)
+                .collect::<Vec<_>>())
+        }
         "schedule::words" => {
             use tessaro_client::schedule::{duration, format_timeout, parse_timeout, relative};
             let seconds: Vec<u64> = from(&input["seconds"]);

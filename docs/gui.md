@@ -294,7 +294,8 @@ applies and stays, Default unsets.**
 | Audio | `audio show`, outputs and inputs, choosing one, volume, mute, `audio test` for the tone and the recording |
 | Camera | `camera list` as the saved format, size and mirrors, a row per camera (its node, the nodes of its mirrors, what it captures, a fallback or error) and the modes of the one selected, `camera format` (a choice), `camera size` (opening a mode fills it in), `camera mirrors` (a choice) |
 | Time | `time show` and its servers, `time timezone` (a choice of `time zones`), `time ntp on|off` with servers, `time sync`, `time set` (this computer's clock or a typed time) |
-| Schedules | `schedule list`, `create` and `set` in one dialog (multi-line calendar and commands, checked with `schedule check` as you type), `enable`/`disable`, `run`, `remove`, `logs` (the Log page, filtered to the schedule's runs) |
+| Scripts | `script list`, `create` and `set` in one dialog (a multi-line body), `run` (a job; its output in a window as it comes), `remove`, `logs` (the Log page, filtered to the script's runs) |
+| Schedules | `schedule list`, `create` and `set` in one dialog (a multi-line calendar, checked with `schedule check` as you type, and the script it runs), `enable`/`disable`, `remove`, `logs` (the Log page, filtered to the runs it started) |
 | Printer | `printer list` with printer.enable above it, `printer discover` (a job; each printer found is a row to Add from), `create` (a dialog that stays open until the device takes it: a driverless printer must answer), `show`, `test`, `default`, `print` (a file picker), `remove`, `jobs` and `cancel` |
 | Access | `access claim` (while unclaimed), `access token create`, `list`, `revoke`, `access password set`, `access unclaim` (while claimed), `access webconfig` (Open Webconfig) |
 | SSH | `ssh keys list` and `revoke`, `ssh connect` (authorize the key, open a terminal) |
@@ -319,7 +320,8 @@ erases `/data` or rewrites the disk - wants the device's name typed first,
 as `tessaro-ctl` does. What the device shows once (a token, a password, the
 hotspot password) comes in a dialog with Copy that closes only through Done.
 After unclaim or a factory reset, the node is forgotten on this machine.
-A multi-line field (a schedule's calendar and commands, one per line) takes
+A multi-line field (a schedule's calendar, one expression per line, or a
+script's body) takes
 Enter as a new line, so its form is confirmed with the button. The schedule
 form stays open until the device takes it: a refused save shows the
 device's reason in it, and under the fields it shows how the device's

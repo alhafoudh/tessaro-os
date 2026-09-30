@@ -464,9 +464,11 @@ impl Server {
                 // naked: web waits only through Control, whose reads are blocking() under within()
                 self.web(web, &caller, via, cookie.as_deref()).await
             }
+            // naked: stream waits only through Control, whose reads are blocking() and the bus
             Action::Start(command) => match self
                 .control
                 .stream(&caller, command)
+                .await
                 .and_then(|stream| self.jobs.start(stream))
             {
                 Ok(job) => json(StatusCode::OK, &serde_json::json!(JobStarted { job })),

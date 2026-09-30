@@ -1,8 +1,9 @@
-//! The words for schedules (`protocol::ScheduleInfo`), shared by
-//! `tessaro-ctl schedule` and the GUI's Schedules page so they say it the
-//! same way, and reading a timeout the way both accept it.
+//! The words for schedules (`protocol::ScheduleInfo`) and the times and runs
+//! they share with scripts, used by `tessaro-ctl schedule` and the GUI's
+//! Schedules page so they say it the same way, and reading a timeout the way
+//! every client accepts it.
 
-use protocol::{CalendarCheck, Moment, ScheduleInfo, ScheduleRun};
+use protocol::{CalendarCheck, Moment, ScheduleInfo, ScriptRun};
 
 use crate::text::{Fact, Line, Tone};
 
@@ -23,16 +24,6 @@ pub fn format_timeout(seconds: u64) -> String {
         .iter()
         .filter(|(count, _)| *count > 0)
         .map(|(count, unit)| format!("{count}{unit}"))
-        .collect()
-}
-
-/// The command lines of a run, one a line, as typed or read from a file:
-/// blank lines and lines starting with # are left out.
-pub fn command_lines(text: &str) -> Vec<String> {
-    text.lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty() && !line.starts_with('#'))
-        .map(str::to_string)
         .collect()
 }
 
@@ -61,17 +52,23 @@ pub fn upcoming(check: &CalendarCheck, label: &str) -> Vec<Fact> {
         .collect()
 }
 
-/// How the last run went and when, and how many run now.
+/// How the last run the schedule started went and when, and how many it
+/// has running now.
 pub fn last_run(info: &ScheduleInfo, now: i64) -> Line {
-    let line = match &info.last_run {
+    runs(info.last_run.as_ref(), info.running, now)
+}
+
+/// How run `last` went and when, and `running` beside it when there are.
+pub fn runs(last: Option<&ScriptRun>, running: u32, now: i64) -> Line {
+    let line = match last {
         Some(run) => Line::of(
             if run.succeeded() { Tone::Ok } else { Tone::Bad },
             format!("{}, {}", outcome(run), relative(run.finished.unix, now)),
         ),
         None => Line::of(Tone::Muted, "never"),
     };
-    if info.running > 0 {
-        line.add(Tone::Warn, format!(" ({} running)", info.running))
+    if running > 0 {
+        line.add(Tone::Warn, format!(" ({running} running)"))
     } else {
         line
     }
@@ -156,7 +153,7 @@ pub fn relative(unix: i64, now: i64) -> String {
 
 /// How a run ended in a few words: `success`, or systemd's result with the
 /// exit status when there is one (`exit-code 1`, `timeout`).
-pub fn outcome(run: &ScheduleRun) -> String {
+pub fn outcome(run: &ScriptRun) -> String {
     if run.succeeded() || run.status.is_empty() || run.status == "0" {
         run.result.clone()
     } else {
@@ -203,14 +200,6 @@ mod tests {
     }
 
     #[test]
-    fn command_lines_skip_blanks_and_comments() {
-        assert_eq!(
-            command_lines("a\n\n  # note\n b \n"),
-            vec!["a".to_string(), "b".to_string()]
-        );
-    }
-
-    #[test]
     fn a_moment_without_local_time_shows_the_unix_time() {
         let at = Moment {
             unix: 100,
@@ -234,7 +223,10 @@ mod tests {
 
     #[test]
     fn outcomes_name_the_status_only_when_it_says_something() {
-        let run = |result: &str, status: &str| ScheduleRun {
+        let run = |result: &str, status: &str| ScriptRun {
+            run: "manual-0-1".to_string(),
+            trigger: "manual".to_string(),
+            schedule: None,
             started: protocol::Moment {
                 unix: 0,
                 local: String::new(),

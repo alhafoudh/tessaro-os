@@ -10,6 +10,7 @@ import * as browser from "./browser";
 import * as camera from "./camera";
 import * as clock from "./clock";
 import * as schedule from "./schedule";
+import * as script from "./script";
 import * as storage from "./storage";
 import * as device from "./device";
 import * as journal from "./journal";
@@ -101,6 +102,14 @@ export const renderers: Record<string, (input: any) => unknown> = {
   "printer::queued": (input) => spans(printer.queued(input)),
   "schedule::moment": (input) => input.moments.map((at: any) => spans(schedule.moment(at, input.now))),
   "schedule::last_run": (input) => input.infos.map((info: any) => spans(schedule.lastRun(info, input.now))),
+  "script::last_run": (input) => input.infos.map((info: any) => spans(script.lastRun(info, input.now))),
+  "script::runs": (input) => ({
+    run_line: input.runs.map((run: any) => spans(script.runLine(run, input.now))),
+    ended: input.runs.map((run: any) => spans(script.ended(run))),
+    started_by: input.runs.map(script.startedBy),
+  }),
+  "script::events": (input) => input.events.map((event: any) => spans(script.eventLine(event, input.name))),
+  "script::behaviour": (input) => input.map(script.behaviour),
   "schedule::words": (input) => ({
     format_timeout: input.seconds.map(schedule.formatTimeout),
     duration: input.seconds.map(schedule.duration),

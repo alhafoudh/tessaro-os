@@ -35,6 +35,7 @@ mod policies;
 mod printers;
 mod schedules;
 mod screen;
+mod scripts;
 mod settings;
 mod watchers;
 
@@ -189,7 +190,8 @@ pub struct Control {
     /// `tessaro.db`: the settings, the tokens, the network passwords (never
     /// in the settings), the schedules and the printers.
     db: Db,
-    /// One reconcile of the schedules' units at a time (`schedules`).
+    /// One reconcile of the scripts' and schedules' units at a time
+    /// (`schedules`).
     reconciling: tokio::sync::Mutex<()>,
     cups: Arc<crate::printer::Cups>,
     /// One change to the CUPS queues at a time (`printers`).
@@ -314,8 +316,15 @@ impl Control {
     /// A command run in steps (`Command::is_job`), validated and started:
     /// the API keeps what it produces as a job, the page bridge hands it to
     /// the page.
-    pub fn stream(&self, caller: &Caller, command: Command) -> Result<Stream, String> {
+    pub async fn stream(&self, caller: &Caller, command: Command) -> Result<Stream, String> {
         match command {
+            Command::ScriptRun { script } => {
+                let trigger = match caller {
+                    Caller::Page => scripts::Trigger::Bridge,
+                    _ => scripts::Trigger::Manual,
+                };
+                self.script_run(caller, script, trigger).await
+            }
             Command::Speedtest {
                 max_size,
                 tests,
@@ -581,7 +590,8 @@ impl Control {
             Command::Speedtest { .. }
             | Command::NetPing { .. }
             | Command::StorageGrow { .. }
-            | Command::PrinterDiscover => Reply::err("that command runs as a job"),
+            | Command::PrinterDiscover
+            | Command::ScriptRun { .. } => Reply::err("that command runs as a job"),
             // The hotspot's security follows the claim, re-applied once the
             // answer is out: whoever claims through the hotspot gets its new
             // password before the hotspot drops them.
@@ -696,23 +706,43 @@ impl Control {
             }
             Command::BrowserPolicyRemove { name } => self.policy_remove(caller, name).await,
             Command::BrowserPolicyEffective => self.policy_effective().await.into(),
+            Command::ScriptList => self.script_list().await.into(),
+            Command::ScriptCreate { spec } => self.script_create(caller, spec).await.into(),
+            Command::ScriptSet {
+                script,
+                name,
+                description,
+                body,
+                on_error,
+                timeout_s,
+                concurrency,
+                bridge,
+            } => {
+                let change = scripts::Change {
+                    name,
+                    description,
+                    body,
+                    on_error,
+                    timeout_s,
+                    concurrency,
+                    bridge,
+                };
+                self.script_set(caller, script, change).await.into()
+            }
+            Command::ScriptRemove { script } => self.script_remove(caller, script).await.into(),
             Command::ScheduleList => self.schedule_list().await.into(),
             Command::ScheduleCreate { spec } => self.schedule_create(caller, spec).await.into(),
             Command::ScheduleSet {
                 schedule,
                 name,
                 calendar,
-                lines,
-                on_error,
-                timeout_s,
+                script,
                 enabled,
             } => {
                 let change = schedules::Change {
                     name,
                     calendar,
-                    lines,
-                    on_error,
-                    timeout_s,
+                    script,
                     enabled,
                 };
                 self.schedule_set(caller, schedule, change).await.into()
@@ -720,7 +750,6 @@ impl Control {
             Command::ScheduleRemove { schedule } => {
                 self.schedule_remove(caller, schedule).await.into()
             }
-            Command::ScheduleRun { schedule } => self.schedule_run(caller, schedule).await.into(),
             Command::ScheduleCheck { calendar, count } => {
                 self.schedule_check(calendar, count).await.into()
             }
@@ -1262,6 +1291,12 @@ pub enum Stream {
         total: Duration,
     },
     Printers(tokio::sync::mpsc::Receiver<Result<protocol::PrinterFound, String>>),
+    Script {
+        steps: tokio::sync::mpsc::Receiver<Result<protocol::ScriptEvent, String>>,
+        /// The longest following the run can take: its timeout and a
+        /// margin.
+        total: Duration,
+    },
 }
 
 /// The most entries one page of the journal carries. A page after a cursor
@@ -1912,17 +1947,168 @@ mod tests {
         fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
     }
 
+    fn script_spec(name: &str) -> protocol::ScriptSpec {
+        protocol::ScriptSpec {
+            name: name.into(),
+            description: "screen off for the night".into(),
+            body: "tessaro-ctl screen power off\n".into(),
+            on_error: protocol::OnError::Stop,
+            timeout_s: None,
+            concurrency: protocol::Concurrency::Overlap,
+            bridge: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_script_is_created_rendered_changed_run_and_removed() {
+        let fx = fixture();
+        let units = || {
+            crate::units::present(&fx.paths.systemd_unit_dir, &[crate::scripts::PREFIX]).unwrap()
+        };
+        let bodies = || crate::units::present(&fx.paths.script_body_dir(), &[""]).unwrap();
+        let spec = script_spec("dim");
+
+        let created: protocol::ScriptInfo = ok(
+            &fx.control,
+            &Caller::Local,
+            Command::ScriptCreate { spec: spec.clone() },
+        )
+        .await;
+        assert_eq!(created.spec, spec);
+        assert_eq!(
+            created.units,
+            format!("tessaro-script-{}*@*.service", created.id)
+        );
+        assert!(created.runs.is_empty());
+        let rendered = units();
+        assert_eq!(rendered.len(), 2, "{rendered:?}");
+        assert_eq!(
+            bodies().into_values().collect::<Vec<_>>(),
+            [b"tessaro-ctl screen power off\n".to_vec()]
+        );
+
+        let reply = fx
+            .control
+            .handle(&Caller::Local, Command::ScriptCreate { spec: spec.clone() })
+            .await;
+        assert!(reply.result.unwrap_err().contains("exists already"));
+
+        let changed: protocol::ScriptInfo = ok(
+            &fx.control,
+            &Caller::Local,
+            Command::ScriptSet {
+                script: "dim".into(),
+                name: None,
+                description: None,
+                body: Some("true\nfalse".into()),
+                on_error: Some(protocol::OnError::Continue),
+                timeout_s: Some(60),
+                concurrency: Some(protocol::Concurrency::Skip),
+                bridge: Some(true),
+            },
+        )
+        .await;
+        assert_eq!(changed.id, created.id);
+        assert_eq!(changed.spec.body, "true\nfalse\n");
+        assert!(changed.spec.bridge);
+        // A new run template and body replace the old ones; nothing runs to
+        // keep them.
+        let rendered = units();
+        assert_eq!(rendered.len(), 2, "{rendered:?}");
+        let template = rendered
+            .iter()
+            .find(|(name, _)| name.contains('-') && name.ends_with("@.service"))
+            .map(|(_, body)| String::from_utf8(body.clone()).unwrap())
+            .unwrap();
+        assert!(template.contains("TimeoutStartSec=60s\n"));
+        assert!(template.contains("exec /bin/sh \\\"$$0\\\""));
+        assert_eq!(
+            bodies().into_values().collect::<Vec<_>>(),
+            [b"true\nfalse\n".to_vec()]
+        );
+
+        // How the run unit records a run, read back and pruned.
+        let runs = fx.paths.script_runs_dir().join(&created.id);
+        fs::create_dir_all(&runs).unwrap();
+        fs::write(
+            runs.join("manual-1790409110-4f2a"),
+            "1790409135 exit-code 1\n",
+        )
+        .unwrap();
+        let listed: Vec<protocol::ScriptInfo> =
+            ok(&fx.control, &Caller::Local, Command::ScriptList).await;
+        let run = listed[0].runs[0].clone();
+        assert_eq!(
+            (run.trigger.as_str(), run.run.as_str()),
+            ("manual", "manual-1790409110-4f2a")
+        );
+        assert_eq!(
+            (run.started.unix, run.finished.unix),
+            (1_790_409_110, 1_790_409_135)
+        );
+        assert!(!run.succeeded());
+
+        // Not managed here: nothing to start. The page may run only what
+        // has bridge on.
+        let refused = |result: Result<Stream, String>| match result {
+            Ok(_) => panic!("a run started"),
+            Err(err) => err,
+        };
+        let run = || Command::ScriptRun {
+            script: "dim".into(),
+        };
+        assert!(refused(fx.control.stream(&Caller::Local, run()).await)
+            .contains("KIOSK_MANAGE_SCHEDULES"));
+        let _: protocol::ScriptInfo = ok(
+            &fx.control,
+            &Caller::Local,
+            Command::ScriptSet {
+                script: "dim".into(),
+                name: None,
+                description: None,
+                body: None,
+                on_error: None,
+                timeout_s: None,
+                concurrency: None,
+                bridge: Some(false),
+            },
+        )
+        .await;
+        assert!(refused(fx.control.stream(&Caller::Page, run()).await)
+            .contains("not runnable from the page"));
+
+        let _: Done = ok(
+            &fx.control,
+            &Caller::Local,
+            Command::ScriptRemove {
+                script: created.id.clone(),
+            },
+        )
+        .await;
+        assert!(units().is_empty());
+        assert!(bodies().is_empty());
+        assert!(!runs.exists());
+    }
+
     #[tokio::test]
     async fn a_schedule_is_created_rendered_changed_and_removed() {
         let fx = fixture();
-        let units = || crate::schedules::present(&fx.paths.systemd_unit_dir).unwrap();
+        let units = || {
+            crate::units::present(&fx.paths.systemd_unit_dir, &[crate::schedules::PREFIX]).unwrap()
+        };
+        let script: protocol::ScriptInfo = ok(
+            &fx.control,
+            &Caller::Local,
+            Command::ScriptCreate {
+                spec: script_spec("dim"),
+            },
+        )
+        .await;
         let spec = protocol::ScheduleSpec {
             name: "night".into(),
             enabled: true,
             calendar: vec!["22:00".into()],
-            lines: vec!["tessaro-ctl screen power off".into()],
-            on_error: protocol::OnError::Stop,
-            timeout_s: None,
+            script: "dim".into(),
         };
 
         let created: protocol::ScheduleInfo = ok(
@@ -1931,18 +2117,41 @@ mod tests {
             Command::ScheduleCreate { spec: spec.clone() },
         )
         .await;
-        assert_eq!(created.spec, spec);
+        assert_eq!(created.spec.script, script.id);
+        assert_eq!(created.script_name, "dim");
         assert_eq!(created.running, 0);
         assert_eq!(
             created.units,
-            format!("tessaro-schedule-{}-*@*.service", created.id)
+            format!(
+                "tessaro-script-{}*@schedule-{}*.service",
+                script.id, created.id
+            )
         );
         let rendered = units();
-        assert_eq!(rendered.len(), 3, "{rendered:?}");
+        assert_eq!(rendered.len(), 1, "{rendered:?}");
         let timer =
             String::from_utf8(rendered[&format!("tessaro-schedule-{}.timer", created.id)].clone())
                 .unwrap();
         assert!(timer.contains("OnCalendar=22:00\n"));
+        assert!(timer.contains(&format!(
+            "Unit=tessaro-script-{}@schedule-{}.service\n",
+            script.id, created.id
+        )));
+
+        // A script a schedule runs is not removed.
+        let reply = fx
+            .control
+            .handle(
+                &Caller::Local,
+                Command::ScriptRemove {
+                    script: "dim".into(),
+                },
+            )
+            .await;
+        assert!(reply
+            .result
+            .unwrap_err()
+            .contains("schedule night runs dim"));
 
         // The same name twice, a bad calendar: refused, nothing saved.
         let reply = fx
@@ -1969,45 +2178,43 @@ mod tests {
                 schedule: "night".into(),
                 name: None,
                 calendar: None,
-                lines: Some(vec!["true".into(), "false".into()]),
-                on_error: Some(protocol::OnError::Continue),
-                timeout_s: Some(60),
+                script: None,
                 enabled: Some(false),
             },
         )
         .await;
         assert_eq!(changed.id, created.id);
         assert!(!changed.spec.enabled);
-        assert_eq!(changed.spec.timeout_s, Some(60));
-        // A new run template replaces the old one; nothing runs to keep it.
-        let rendered = units();
-        assert_eq!(rendered.len(), 3, "{rendered:?}");
-        let template = rendered
-            .iter()
-            .find(|(name, _)| name.ends_with("@.service"))
-            .map(|(_, body)| String::from_utf8(body.clone()).unwrap())
-            .unwrap();
-        assert!(template.contains("ExecStart=-/bin/sh -c \"false\"\n"));
-        assert!(template.contains("TimeoutStartSec=60s\n"));
+        let reply = fx
+            .control
+            .handle(
+                &Caller::Local,
+                Command::ScheduleSet {
+                    schedule: "night".into(),
+                    name: None,
+                    calendar: None,
+                    script: Some("nothing".into()),
+                    enabled: None,
+                },
+            )
+            .await;
+        assert!(reply.result.unwrap_err().contains("no script"));
 
-        let listed: Vec<protocol::ScheduleInfo> =
-            ok(&fx.control, &Caller::Local, Command::ScheduleList).await;
-        assert_eq!(listed.len(), 1);
-
-        // How the run unit records a run, read back.
-        fs::create_dir_all(fx.paths.schedule_runs_dir()).unwrap();
+        // The runs of its script this schedule started are its runs.
+        let runs = fx.paths.script_runs_dir().join(&script.id);
+        fs::create_dir_all(&runs).unwrap();
+        let started = format!("schedule-{}-1790409110-42", created.id);
+        fs::write(runs.join(&started), "1790409135 exit-code 1\n").unwrap();
         fs::write(
-            fx.paths.schedule_runs_dir().join(&created.id),
-            "1790409110-42 1790409135 exit-code 1\n",
+            runs.join("manual-1790409200-4f2a"),
+            "1790409201 success 0\n",
         )
         .unwrap();
         let listed: Vec<protocol::ScheduleInfo> =
             ok(&fx.control, &Caller::Local, Command::ScheduleList).await;
         let run = listed[0].last_run.clone().unwrap();
-        assert_eq!(
-            (run.started.unix, run.finished.unix),
-            (1_790_409_110, 1_790_409_135)
-        );
+        assert_eq!(run.run, started);
+        assert_eq!(run.schedule.as_deref(), Some("night"));
         assert!(!run.succeeded());
 
         let check: protocol::CalendarCheck = ok(
@@ -2023,18 +2230,6 @@ mod tests {
         // Both fire at the same two times: merged, not repeated.
         assert_eq!(check.next.len(), 2);
 
-        // Not managed here: nothing to start.
-        let reply = fx
-            .control
-            .handle(
-                &Caller::Local,
-                Command::ScheduleRun {
-                    schedule: "night".into(),
-                },
-            )
-            .await;
-        assert!(reply.result.unwrap_err().contains("KIOSK_MANAGE_SCHEDULES"));
-
         let _: Done = ok(
             &fx.control,
             &Caller::Local,
@@ -2044,7 +2239,16 @@ mod tests {
         )
         .await;
         assert!(units().is_empty());
-        assert!(!fx.paths.schedule_runs_dir().join(&created.id).exists());
+        // Its script stays, runs and all, and may go now.
+        assert!(runs.join(&started).exists());
+        let _: Done = ok(
+            &fx.control,
+            &Caller::Local,
+            Command::ScriptRemove {
+                script: "dim".into(),
+            },
+        )
+        .await;
     }
 
     #[tokio::test]

@@ -74,6 +74,10 @@ impl Jobs {
                     // naked: drain bounds the whole run with printer::DISCOVER
                     drain(&jobs, &job, steps, "looking for printers", total).await
                 }
+                Stream::Script { steps, total } => {
+                    // naked: drain bounds following the run with its timeout and a margin
+                    drain(&jobs, &job, steps, "following the run", total).await
+                }
             };
             jobs.end(&job, outcome.err());
         });

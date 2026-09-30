@@ -27,9 +27,10 @@ there is one copy, and both clients call it.
     (`transfer.rs`);
   * what a request is built from: network changes, the WiFi password, the
     proxy URL (`network.rs`), the clock and NTP, the root password
-    (`actions.rs`), schedule timeouts and command lines (`schedule.rs`);
+    (`actions.rs`), timeouts (`schedule.rs`), a script from its typed
+    fields (`script.rs`);
   * what an answer says, in words: `describe/` per subject, and the job
-    steps of `ping.rs`, `speedtest.rs` and `storage.rs`.
+    steps of `ping.rs`, `speedtest.rs`, `storage.rs` and `script.rs`.
 * `agent/tessaro-ctl` - clap, `--json`, prompts at the keyboard, painting
   the text for a terminal (`style.rs`, `progress.rs`).
 * `gui/tessaro-gui` - iced: pages, tables, forms and dialogs, jobs on their

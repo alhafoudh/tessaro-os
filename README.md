@@ -346,23 +346,26 @@ Devices start on UTC and take their NTP servers from the network's DHCP,
 else a public fallback. A network that blocks outside NTP needs its own
 servers named, or TLS fails once the clock drifts.
 
-### Schedules
+### Scripts and schedules
 
 ```sh
-tessaro-ctl schedule create screen-off --on 'Mon..Fri 20:00' --on 'Sat,Sun 23:00' \
-    --run 'tessaro-ctl screen power off'
-tessaro-ctl schedule create weekend --on 'Sat,Sun 08:00' \
-    --run 'tessaro-ctl config set browser.url=https://example.com/weekend'
+tessaro-ctl script create screen-off --body 'tessaro-ctl screen power off'
+tessaro-ctl script create weekend --body 'tessaro-ctl config set browser.url=https://example.com/weekend'
+tessaro-ctl script create cleanup --file cleanup.sh --on-error continue --timeout 10m
+tessaro-ctl script run cleanup                         # its output, then how it ended
+tessaro-ctl schedule create screen-off --on 'Mon..Fri 20:00' --on 'Sat,Sun 23:00' --script screen-off
+tessaro-ctl schedule create weekend --on 'Sat,Sun 08:00' --script weekend
 tessaro-ctl schedule check 'Mon..Fri 07:00'            # when it fires, before saving anything
 tessaro-ctl schedule list                              # next run, how the last one ended
-tessaro-ctl schedule run screen-off && tessaro-ctl schedule logs screen-off
+tessaro-ctl script logs cleanup
 ```
 
-A schedule is systemd `OnCalendar` expressions (`man systemd.time`) in the
-device's timezone, and shell command lines run as root, in order. A failed
-line stops the run unless `--on-error continue`; `--timeout` bounds a whole
-run. Times missed while the device was off are skipped, and a run that is
-still going when the next one fires does not hold it up.
+A script is a shell body run by `/bin/sh` as root. A failing command stops
+the run unless `--on-error continue`; `--timeout` bounds a whole run, and
+`--concurrency skip` starts no run while one is going. A schedule is systemd
+`OnCalendar` expressions (`man systemd.time`) in the device's timezone and
+the script they run. Times missed while the device was off are skipped. With
+`--bridge` the kiosk page may run a script through `tessaro.scripts.run()`.
 
 ### Printing
 

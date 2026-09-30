@@ -1,27 +1,30 @@
-//! `tessaro-ctl schedule`: the schedules in the `schedules` table of `tessaro.db`
-//! and the systemd units they are rendered into (`crate::schedules`).
+//! `tessaro-ctl schedule`: the schedules in the `schedules` table of
+//! `tessaro.db`, and the reconcile of every unit the scripts and schedules
+//! are rendered into (`crate::scripts`, `crate::schedules`).
 //!
-//! Reconciling compares the unit files on disk and the units systemd has
-//! loaded with what the schedules want, and changes only what differs: the
-//! files first, one `Reload` if any changed, then each timer started,
-//! restarted or stopped. It runs when the agent starts, which is what puts
-//! the units back in `/run` after a boot, once a minute from
-//! `watch_schedules` (a timer stopped by hand comes back, a run template
-//! whose last run ended goes), and after every change here. Like the
-//! settings, schedules stay through an unclaim and go with a factory reset.
+//! Reconciling compares the files on disk (the unit files, the script
+//! bodies) and the units systemd has loaded with what the store wants, and
+//! changes only what differs: the files first, one `Reload` if a unit
+//! changed, then each timer started, restarted or stopped. It runs when the
+//! agent starts, which is what puts the units back in `/run` after a boot,
+//! once a minute from `watch_units` (a timer stopped by hand comes back, a
+//! run template whose last run ended goes, the run records are pruned), and
+//! after every change. Like the settings, schedules stay through an unclaim
+//! and go with a factory reset.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::Duration;
 
-use protocol::{
-    CalendarCheck, Done, OnError, ScheduleInfo, ScheduleRun, ScheduleSpec, SCHEDULE_CHECK_MAX,
-};
+use protocol::{CalendarCheck, Done, ScheduleInfo, ScheduleSpec, SCHEDULE_CHECK_MAX};
 
+use super::scripts::{run_of, schedule_names};
 use super::{Caller, Control};
 use crate::deadline::blocking;
 use crate::proc;
 use crate::schedules::{self, Schedule, Schedules};
+use crate::scripts::{self, Scripts};
+use crate::units;
 
 /// One `systemd-analyze calendar` run: it parses and computes, no I/O.
 const ANALYZE: Duration = Duration::from_secs(10);
@@ -33,9 +36,7 @@ const CHECK_DEFAULT: u32 = 5;
 pub(super) struct Change {
     pub name: Option<String>,
     pub calendar: Option<Vec<String>>,
-    pub lines: Option<Vec<String>>,
-    pub on_error: Option<OnError>,
-    pub timeout_s: Option<u64>,
+    pub script: Option<String>,
     pub enabled: Option<bool>,
 }
 
@@ -50,10 +51,10 @@ struct Reported {
 
 impl Control {
     pub(super) async fn schedule_list(&self) -> Result<Vec<ScheduleInfo>, String> {
-        let all = self.read_schedules().await?;
+        let (all_scripts, all) = self.read_scripts_and_schedules().await?;
         let running = self.running_runs().await;
         let mut reported = Vec::with_capacity(all.len());
-        for schedule in all {
+        for schedule in &all {
             let timer = schedules::timer_unit(&schedule.id);
             let next_usec = if schedule.spec.enabled {
                 self.bus.timer_usec(&timer, "NextElapseUSecRealtime").await
@@ -61,19 +62,51 @@ impl Control {
                 None
             };
             let last_usec = self.bus.timer_usec(&timer, "LastTriggerUSec").await;
-            let running = running.get(&schedule.id).copied().unwrap_or(0);
+            let started = format!("{}-", schedules::trigger(&schedule.id));
+            let running = running.get(&schedule.spec.script).map_or(0, |runs| {
+                runs.iter().filter(|run| run.starts_with(&started)).count() as u32
+            });
             reported.push(Reported {
-                schedule,
+                schedule: schedule.clone(),
                 next_usec,
                 last_usec,
                 running,
             });
         }
-        let runs_dir = self.paths.schedule_runs_dir();
+        let runs_dir = self.paths.script_runs_dir();
         blocking("reading the schedules' last runs", move || {
+            let names = schedule_names(&all);
+            let script_names: BTreeMap<&str, &str> = all_scripts
+                .iter()
+                .map(|script| (script.id.as_str(), script.spec.name.as_str()))
+                .collect();
             Ok(reported
                 .into_iter()
-                .map(|reported| info(reported, &runs_dir))
+                .map(|reported| {
+                    let schedule = &reported.schedule;
+                    let script = schedule.spec.script.clone();
+                    let last_run = scripts::read_runs(&runs_dir, &script)
+                        .into_iter()
+                        .find(|run| run.schedule.as_deref() == Some(schedule.id.as_str()))
+                        .map(|ended| run_of(ended, &names));
+                    let moment_of = |usec: Option<u64>| {
+                        usec.filter(|usec| *usec > 0)
+                            .and_then(|usec| i64::try_from(usec / 1_000_000).ok())
+                            .map(schedules::moment)
+                    };
+                    ScheduleInfo {
+                        units: scripts::schedule_journal_pattern(&script, &schedule.id),
+                        script_name: script_names
+                            .get(script.as_str())
+                            .map_or_else(|| script.clone(), |name| name.to_string()),
+                        next: moment_of(reported.next_usec),
+                        last_trigger: moment_of(reported.last_usec),
+                        last_run,
+                        running: reported.running,
+                        id: schedule.id.clone(),
+                        spec: reported.schedule.spec,
+                    }
+                })
                 .collect())
         })
         .await
@@ -85,17 +118,20 @@ impl Control {
         spec: ScheduleSpec,
     ) -> Result<ScheduleInfo, String> {
         let _writes = self.writes.lock().await;
-        let existing = self.read_schedules().await?;
-        let spec = schedules::validate(spec, &existing.iter().collect::<Vec<_>>())?;
+        let (all_scripts, existing) = self.read_scripts_and_schedules().await?;
+        let spec = schedules::validate(spec, &existing.iter().collect::<Vec<_>>(), &all_scripts)?;
         self.analyze(&spec.calendar, 1).await?;
 
         let db = self.db.clone();
+        let log = Arc::clone(&self.log);
         let saved = spec.clone();
         let id = blocking("updating the schedules", move || {
+            let all_scripts = db.read::<Scripts>(&log).scripts;
             db.update(|all: &mut Schedules| {
                 let others: Vec<&Schedule> = all.schedules.iter().collect();
-                let spec = schedules::validate(saved, &others)?;
-                let id = schedules::new_id(&all.schedules)?;
+                let spec = schedules::validate(saved, &others, &all_scripts)?;
+                let id =
+                    scripts::new_id(|id| all.schedules.iter().any(|schedule| schedule.id == id))?;
                 all.schedules.push(Schedule {
                     id: id.clone(),
                     spec,
@@ -109,7 +145,7 @@ impl Control {
             spec.name,
             caller.describe()
         ));
-        self.apply_schedules().await?;
+        self.apply_units().await?;
         self.schedule_info(&id).await
     }
 
@@ -120,7 +156,7 @@ impl Control {
         change: Change,
     ) -> Result<ScheduleInfo, String> {
         let _writes = self.writes.lock().await;
-        let existing = self.read_schedules().await?;
+        let (all_scripts, existing) = self.read_scripts_and_schedules().await?;
         let at = schedules::find(&existing, &query)?;
         let id = existing[at].id.clone();
         let calendar_changed = change.calendar.is_some();
@@ -131,20 +167,14 @@ impl Control {
         if let Some(calendar) = change.calendar {
             spec.calendar = calendar;
         }
-        if let Some(lines) = change.lines {
-            spec.lines = lines;
-        }
-        if let Some(on_error) = change.on_error {
-            spec.on_error = on_error;
-        }
-        if let Some(timeout_s) = change.timeout_s {
-            spec.timeout_s = Some(timeout_s);
+        if let Some(script) = change.script {
+            spec.script = script;
         }
         if let Some(enabled) = change.enabled {
             spec.enabled = enabled;
         }
         let others: Vec<&Schedule> = existing.iter().filter(|other| other.id != id).collect();
-        let spec = schedules::validate(spec, &others)?;
+        let spec = schedules::validate(spec, &others, &all_scripts)?;
         if calendar_changed {
             self.analyze(&spec.calendar, 1).await?;
         }
@@ -165,7 +195,7 @@ impl Control {
             spec.name,
             caller.describe()
         ));
-        self.apply_schedules().await?;
+        self.apply_units().await?;
         self.schedule_info(&id).await
     }
 
@@ -176,15 +206,11 @@ impl Control {
     ) -> Result<Done, String> {
         let _writes = self.writes.lock().await;
         let db = self.db.clone();
-        let runs_dir = self.paths.schedule_runs_dir();
         let removed = blocking("updating the schedules", move || {
-            let removed = db.update(|all: &mut Schedules| {
+            db.update(|all: &mut Schedules| {
                 let at = schedules::find(&all.schedules, &query)?;
                 Ok(all.schedules.remove(at))
-            })?;
-            schedules::forget_ended(&runs_dir, &removed.id)
-                .map_err(|err| format!("{}: {err}", runs_dir.display()))?;
-            Ok(removed)
+            })
         })
         .await?;
         self.log.info(format!(
@@ -193,36 +219,10 @@ impl Control {
             removed.id,
             caller.describe()
         ));
-        self.apply_schedules().await?;
+        self.apply_units().await?;
         Ok(Done::new(format!(
             "removed schedule {}; runs already going finish",
             removed.spec.name
-        )))
-    }
-
-    pub(super) async fn schedule_run(
-        &self,
-        caller: &Caller,
-        query: String,
-    ) -> Result<Done, String> {
-        let all = self.read_schedules().await?;
-        let schedule = &all[schedules::find(&all, &query)?];
-        if !self.paths.manage_schedules {
-            return Err(
-                "this host's schedules are not managed (KIOSK_MANAGE_SCHEDULES=0)".to_string(),
-            );
-        }
-        let unit = schedules::fire_unit(&schedule.id);
-        self.bus.start(&unit).await.map_err(|err| err.to_string())?;
-        self.log.info(format!(
-            "schedule {} ({}) run by {}",
-            schedule.spec.name,
-            schedule.id,
-            caller.describe()
-        ));
-        Ok(Done::new(format!(
-            "started a run of {}; `tessaro-ctl schedule logs {}` shows its output",
-            schedule.spec.name, schedule.spec.name
         )))
     }
 
@@ -242,27 +242,9 @@ impl Control {
         .await
     }
 
-    /// A factory reset: every schedule gone, and its timer stopped now.
-    /// Runs already going finish. The caller holds `writes`.
-    pub(super) async fn clear_schedules(&self) -> Result<(), String> {
-        let db = self.db.clone();
-        let runs_dir = self.paths.schedule_runs_dir();
-        blocking("removing the schedules", move || {
-            schedules::clear(&db, &runs_dir)
-        })
-        .await?;
-        if let Err(err) = self.apply_schedules().await {
-            // /run goes with the reboot a reset ends in; until then the
-            // watcher tries again.
-            self.log
-                .info(format!("factory reset: the schedules' units: {err}"));
-        }
-        Ok(())
-    }
-
-    /// Keeps the schedules' units on the `schedules` table, from the agent's
-    /// start and then once a minute.
-    pub fn watch_schedules(self: &Arc<Self>) {
+    /// Keeps the scripts' and schedules' units on the store, from the
+    /// agent's start and then once a minute.
+    pub fn watch_units(self: &Arc<Self>) {
         const EVERY: Duration = Duration::from_secs(60);
         /// systemd or the bus not answering yet.
         const RETRY: Duration = Duration::from_secs(10);
@@ -272,13 +254,13 @@ impl Control {
         tokio::spawn(async move {
             let mut reported: Option<String> = None;
             loop {
-                // naked: apply_schedules waits only on blocking() and the bus, each bounded
-                let outcome = control.apply_schedules().await;
+                // naked: apply_units waits only on blocking() and the bus, each bounded
+                let outcome = control.apply_units().await;
                 let wait = if outcome.is_ok() { EVERY } else { RETRY };
                 let problem = outcome.err();
                 if problem != reported {
                     if let Some(err) = &problem {
-                        control.log.info(format!("schedules: {err}"));
+                        control.log.info(format!("scripts and schedules: {err}"));
                     }
                     reported = problem;
                 }
@@ -291,14 +273,18 @@ impl Control {
         });
     }
 
-    /// Reconcile: the unit files, then systemd. One at a time, whoever asks.
-    async fn apply_schedules(&self) -> Result<(), String> {
-        // naked: held only by another apply_schedules, itself bounded
+    /// Reconcile: the files, then systemd. One at a time, whoever asks.
+    pub(super) async fn apply_units(&self) -> Result<(), String> {
+        // naked: held only by another apply_units, itself bounded
         let _reconciling = self.reconciling.lock().await;
         let manage = self.paths.manage_schedules;
-        let pattern = format!("{}*", schedules::PREFIX);
+        let patterns = [
+            format!("{}*", scripts::PREFIX),
+            format!("{}*", schedules::PREFIX),
+        ];
         let loaded = if manage {
-            let listed = self.bus.list_units(&[&pattern]).await;
+            let patterns: Vec<&str> = patterns.iter().map(String::as_str).collect();
+            let listed = self.bus.list_units(&patterns).await;
             listed.map_err(|err| err.to_string())?
         } else {
             Vec::new()
@@ -306,28 +292,61 @@ impl Control {
         let busy: BTreeSet<String> = loaded
             .iter()
             .filter(|(_, state)| state != "inactive" && state != "failed")
-            .filter_map(|(name, _)| schedules::template_of(name))
+            .filter_map(|(name, _)| units::template_of(name))
+            .collect();
+        let busy_bodies: BTreeSet<String> = busy
+            .iter()
+            .filter_map(|template| scripts::body_of_template(template))
             .collect();
 
         let db = self.db.clone();
         let log = Arc::clone(&self.log);
         let unit_dir = self.paths.systemd_unit_dir.clone();
-        let runs_dir = self.paths.schedule_runs_dir();
-        let (plan, all) = blocking("rendering the schedules' units", move || {
+        let body_dir = self.paths.script_body_dir();
+        let runs_dir = self.paths.script_runs_dir();
+        let (plan, all) = blocking("rendering the scripts' and schedules' units", move || {
+            let all_scripts: Scripts = db.read(&log);
             let all: Schedules = db.read(&log);
-            let wanted = schedules::wanted(&all.schedules, &runs_dir);
-            let present = schedules::present(&unit_dir)
-                .map_err(|err| format!("{}: {err}", unit_dir.display()))?;
-            let plan = schedules::plan(&wanted, &present, &busy);
-            schedules::apply(&unit_dir, &plan)
-                .map_err(|err| format!("{}: {err}", unit_dir.display()))?;
-            Ok((plan, all.schedules))
+            let (mut wanted, bodies) = scripts::wanted(&all_scripts.scripts, &body_dir, &runs_dir);
+            let with_script: Vec<Schedule> = all
+                .schedules
+                .into_iter()
+                .filter(|schedule| {
+                    all_scripts
+                        .scripts
+                        .iter()
+                        .any(|script| script.id == schedule.spec.script)
+                })
+                .collect();
+            wanted.extend(schedules::wanted(&with_script));
+
+            let at =
+                |dir: &std::path::Path, err: std::io::Error| format!("{}: {err}", dir.display());
+            let present = units::present(&unit_dir, &[scripts::PREFIX, schedules::PREFIX])
+                .map_err(|err| at(&unit_dir, err))?;
+            let plan = units::plan(&wanted, &present, &busy);
+            units::apply(&unit_dir, &plan, 0o644).map_err(|err| at(&unit_dir, err))?;
+
+            let present = units::present(&body_dir, &[""]).map_err(|err| at(&body_dir, err))?;
+            let body_plan = units::plan(&bodies, &present, &busy_bodies);
+            units::apply(&body_dir, &body_plan, 0o600).map_err(|err| at(&body_dir, err))?;
+
+            let ids: Vec<&str> = all_scripts
+                .scripts
+                .iter()
+                .map(|script| script.id.as_str())
+                .collect();
+            scripts::forget_others(&runs_dir, &ids).map_err(|err| at(&runs_dir, err))?;
+            for id in &ids {
+                scripts::prune_runs(&runs_dir, id).map_err(|err| at(&runs_dir, err))?;
+            }
+            Ok((plan, with_script))
         })
         .await?;
         if !plan.is_empty() {
             let written: Vec<&str> = plan.write.iter().map(|(name, _)| name.as_str()).collect();
             self.log.info(format!(
-                "schedules: wrote [{}], removed [{}]",
+                "scripts and schedules: wrote [{}], removed [{}]",
                 written.join(", "),
                 plan.remove.join(", ")
             ));
@@ -395,37 +414,6 @@ impl Control {
             .ok_or_else(|| format!("schedule {id} is gone"))
     }
 
-    async fn read_schedules(&self) -> Result<Vec<Schedule>, String> {
-        let db = self.db.clone();
-        let log = Arc::clone(&self.log);
-        blocking("reading the schedules", move || {
-            Ok(db.read::<Schedules>(&log).schedules)
-        })
-        .await
-    }
-
-    /// Runs going now, by schedule id; none when the bus cannot say.
-    async fn running_runs(&self) -> BTreeMap<String, u32> {
-        let pattern = format!("{}*@*.service", schedules::PREFIX);
-        let mut running = BTreeMap::new();
-        let Ok(units) = self.bus.list_units(&[&pattern]).await else {
-            return running;
-        };
-        for (name, state) in units {
-            if state == "inactive" || state == "failed" {
-                continue;
-            }
-            let id = name
-                .trim_start_matches(schedules::PREFIX)
-                .split(['-', '@'])
-                .next()
-                .unwrap_or_default()
-                .to_string();
-            *running.entry(id).or_insert(0) += 1;
-        }
-        running
-    }
-
     /// Each expression through `systemd-analyze calendar`: how systemd
     /// normalizes it, and the next `count` times any of them fires.
     async fn analyze(
@@ -433,15 +421,7 @@ impl Control {
         calendar: &[String],
         count: u32,
     ) -> Result<(Vec<String>, Vec<i64>), String> {
-        let probe = ScheduleSpec {
-            name: "check".to_string(),
-            enabled: true,
-            calendar: calendar.to_vec(),
-            lines: vec!["true".to_string()],
-            on_error: OnError::Stop,
-            timeout_s: None,
-        };
-        let calendar = schedules::validate(probe, &[])?.calendar;
+        let calendar = schedules::check_calendar(calendar.to_vec())?;
         let mut normalized = Vec::with_capacity(calendar.len());
         let mut times = Vec::new();
         for expression in &calendar {
@@ -470,31 +450,5 @@ impl Control {
         times.dedup();
         times.truncate(count as usize);
         Ok((normalized, times))
-    }
-}
-
-/// One schedule as `schedule-list` answers it. Reads the runs file and
-/// `/etc/localtime`: call it from `blocking`.
-fn info(reported: Reported, runs_dir: &std::path::Path) -> ScheduleInfo {
-    let moment_of = |usec: Option<u64>| {
-        usec.filter(|usec| *usec > 0)
-            .and_then(|usec| i64::try_from(usec / 1_000_000).ok())
-            .map(schedules::moment)
-    };
-    let id = reported.schedule.id;
-    let last_run = schedules::read_ended(runs_dir, &id).map(|ended| ScheduleRun {
-        started: schedules::moment(ended.started),
-        finished: schedules::moment(ended.finished),
-        result: ended.result,
-        status: ended.status,
-    });
-    ScheduleInfo {
-        units: schedules::runs_pattern(&id),
-        next: moment_of(reported.next_usec),
-        last_trigger: moment_of(reported.last_usec),
-        last_run,
-        running: reported.running,
-        spec: reported.schedule.spec,
-        id,
     }
 }

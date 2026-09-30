@@ -336,6 +336,7 @@ pub enum Page {
     Audio,
     Camera,
     Time,
+    Scripts,
     Schedules,
     Printer,
     Access,
@@ -358,6 +359,7 @@ impl Page {
         (Page::Audio, "Audio"),
         (Page::Camera, "Camera"),
         (Page::Time, "Time"),
+        (Page::Scripts, "Scripts"),
         (Page::Schedules, "Schedules"),
         (Page::Printer, "Printer"),
         (Page::Access, "Access"),
@@ -384,6 +386,7 @@ impl Page {
             Page::Access => ("access", None),
             Page::Policies
             | Page::Certs
+            | Page::Scripts
             | Page::Schedules
             | Page::Ssh
             | Page::Files

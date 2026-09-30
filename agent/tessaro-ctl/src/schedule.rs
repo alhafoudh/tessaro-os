@@ -1,22 +1,15 @@
-//! `tessaro-ctl schedule ...`: shell command lines the device runs on
-//! systemd `OnCalendar` times.
+//! `tessaro-ctl schedule ...`: systemd `OnCalendar` times at which the
+//! device runs one of its scripts (`tessaro-ctl script`).
 //!
 //! The device keeps the schedules and renders each into a systemd timer;
 //! systemd does the timing, so a schedule keeps firing while the agent is
-//! down. Every line runs with `/bin/sh -c` as root, so a `tessaro-ctl`
-//! command is written out in full. Times are the device's wall clock.
-
-use std::io::Read;
-use std::path::PathBuf;
+//! down. Times are the device's wall clock.
 
 use anstream::println;
-use clap::builder::{PossibleValuesParser, TypedValueParser};
 use clap::{Args, Subcommand};
 use protocol::api::{self, CalendarBody, LogsQuery, ScheduleChange, ScheduleRef};
-use protocol::{CalendarCheck, Moment, OnError, ScheduleInfo, ScheduleSpec};
-use tessaro_client::schedule::{
-    self as shared, command_lines, duration, last_run, now, outcome, parse_timeout, relative,
-};
+use protocol::{CalendarCheck, Moment, ScheduleInfo, ScheduleSpec};
+use tessaro_client::schedule::{self as shared, duration, last_run, now, outcome, relative};
 
 use crate::connect::Session;
 use crate::style::{self, pad, paint};
@@ -24,47 +17,42 @@ use crate::{done, journal_line, print, prompt};
 
 #[derive(Subcommand)]
 pub enum ScheduleCmd {
-    /// Every schedule: on or off, when it runs next, how its last run ended.
+    /// Every schedule: on or off, the script it runs, when it runs next,
+    /// how its last run ended.
     List,
     /// One schedule in full, and the next times it fires.
     Show { schedule: String },
     /// Add a schedule. Its calendar is checked by the device's systemd first.
     ///
-    ///   tessaro-ctl schedule create screen-off --on '*-*-* 22:00' \
-    ///       --run 'tessaro-ctl screen power off'
-    ///   tessaro-ctl schedule create weekend --on 'Sat,Sun 08:00' \
-    ///       --run 'tessaro-ctl config set browser.url=https://example.com/weekend'
-    ///   tessaro-ctl schedule create cleanup --on daily --run-file cleanup.txt \
-    ///       --on-error continue --timeout 10m
+    ///   tessaro-ctl schedule create screen-off --on '*-*-* 22:00' --script dim
+    ///   tessaro-ctl schedule create weekend --on 'Sat,Sun 08:00' --script weekend-page
     Create {
         /// Lower-case letters, digits and -.
         name: String,
         #[command(flatten)]
-        body: Body,
+        when: When,
         /// Save it switched off.
         #[arg(long)]
         disabled: bool,
     },
-    /// Change a schedule, by name or id. A given --on or --run replaces
-    /// the whole list.
+    /// Change a schedule, by name or id. A given --on replaces the whole
+    /// list.
     ///
     ///   tessaro-ctl schedule set screen-off --on 'Mon..Fri 20:00' --on 'Sat,Sun 23:00'
-    ///   tessaro-ctl schedule set cleanup --timeout none
+    ///   tessaro-ctl schedule set screen-off --script dim-slowly
     Set {
         schedule: String,
         /// Rename it.
         #[arg(long)]
         name: Option<String>,
         #[command(flatten)]
-        body: Body,
+        when: When,
     },
     /// Switch a schedule's timer on.
     Enable { schedule: String },
     /// Switch a schedule's timer off; runs already going finish.
     Disable { schedule: String },
-    /// Start one run now, enabled or not.
-    Run { schedule: String },
-    /// Remove a schedule; runs already going finish.
+    /// Remove a schedule; runs already going finish, its script stays.
     Remove {
         schedule: String,
         #[arg(long, short)]
@@ -81,7 +69,7 @@ pub enum ScheduleCmd {
         #[arg(long, short, default_value_t = 5)]
         count: u32,
     },
-    /// What a schedule's runs wrote, from the device's journal.
+    /// What the runs this schedule started wrote, from the device's journal.
     Logs {
         schedule: String,
         #[arg(long, short)]
@@ -92,52 +80,16 @@ pub enum ScheduleCmd {
     },
 }
 
-/// When a schedule fires and what a run does.
+/// When a schedule fires and what it runs.
 #[derive(Args)]
-pub struct Body {
+pub struct When {
     /// A systemd OnCalendar expression (`man systemd.time`): `daily`,
     /// `Mon..Fri 07:00`, `*:0/15`. Repeat it; any of them fires.
     #[arg(long = "on", value_name = "CALENDAR")]
     calendar: Vec<String>,
-    /// A shell command line, run as root; repeat it for more, run in order.
-    #[arg(long = "run", value_name = "LINE")]
-    lines: Vec<String>,
-    /// Command lines from FILE, one per line, after any --run; `-` reads
-    /// stdin. Blank lines and lines starting with # are skipped.
-    #[arg(long = "run-file", value_name = "FILE")]
-    run_file: Option<PathBuf>,
-    /// When a line fails: stop the run there, or continue with the next.
-    #[arg(long = "on-error", value_name = "WHAT",
-        value_parser = PossibleValuesParser::new(OnError::NAMES)
-            .map(|name| name.parse::<OnError>().expect("one of the names")))]
-    on_error: Option<OnError>,
-    /// The longest a whole run may take before it is killed: 90s, 10m, 2h;
-    /// `none` for no limit.
-    #[arg(long, value_name = "DURATION", value_parser = parse_timeout)]
-    timeout: Option<u64>,
-}
-
-impl Body {
-    /// The command lines, or `None` when neither --run nor --run-file was
-    /// given.
-    fn lines(&self) -> Result<Option<Vec<String>>, String> {
-        let mut lines = self.lines.clone();
-        if let Some(path) = &self.run_file {
-            let text = if path.as_os_str() == "-" {
-                let mut text = String::new();
-                std::io::stdin()
-                    .read_to_string(&mut text)
-                    .map_err(|err| format!("stdin: {err}"))?;
-                text
-            } else {
-                std::fs::read_to_string(path).map_err(|err| format!("{}: {err}", path.display()))?
-            };
-            lines.extend(command_lines(&text));
-        } else if lines.is_empty() {
-            return Ok(None);
-        }
-        Ok(Some(lines))
-    }
+    /// The script it runs, by name or id (`tessaro-ctl script list`).
+    #[arg(long, value_name = "SCRIPT")]
+    script: Option<String>,
 }
 
 pub fn run(session: &mut Session, command: ScheduleCmd, json: bool) -> Result<(), String> {
@@ -157,16 +109,20 @@ pub fn run(session: &mut Session, command: ScheduleCmd, json: bool) -> Result<()
         }
         ScheduleCmd::Create {
             name,
-            body,
+            when,
             disabled,
         } => {
+            let Some(script) = when.script else {
+                return Err(
+                    "a schedule runs a script: --script NAME (`tessaro-ctl script list`)"
+                        .to_string(),
+                );
+            };
             let spec = ScheduleSpec {
                 name,
                 enabled: !disabled,
-                lines: body.lines()?.unwrap_or_default(),
-                calendar: body.calendar,
-                on_error: body.on_error.unwrap_or_default(),
-                timeout_s: body.timeout.filter(|seconds| *seconds > 0),
+                calendar: when.calendar,
+                script,
             };
             let info = session.send::<api::schedule::Create>(spec)?;
             print(json, &info, || {
@@ -180,25 +136,19 @@ pub fn run(session: &mut Session, command: ScheduleCmd, json: bool) -> Result<()
         ScheduleCmd::Set {
             schedule,
             name,
-            body,
+            when,
         } => {
-            let lines = body.lines()?;
-            let calendar = (!body.calendar.is_empty()).then_some(body.calendar);
+            let calendar = (!when.calendar.is_empty()).then_some(when.calendar);
             let change = ScheduleChange {
                 name,
                 calendar,
-                lines,
-                on_error: body.on_error,
-                timeout_s: body.timeout,
+                script: when.script,
                 enabled: None,
             };
             changed(session, schedule, change, json)
         }
         ScheduleCmd::Enable { schedule } => changed(session, schedule, enabled(true), json),
         ScheduleCmd::Disable { schedule } => changed(session, schedule, enabled(false), json),
-        ScheduleCmd::Run { schedule } => {
-            done::<api::schedule::Run>(session, ScheduleRef { schedule }, (), json)
-        }
         ScheduleCmd::Remove { schedule, yes } => {
             prompt::confirm(yes, &format!("Remove schedule {schedule}?"))?;
             done::<api::schedule::Remove>(session, ScheduleRef { schedule }, (), json)
@@ -221,23 +171,7 @@ pub fn run(session: &mut Session, command: ScheduleCmd, json: bool) -> Result<()
             lines,
         } => {
             let info = find(session, &schedule)?;
-            session.logs(
-                LogsQuery {
-                    unit: Some(info.units),
-                    lines: Some(lines),
-                    cursor: None,
-                },
-                follow,
-                // Following ends with Ctrl-C, which ends the process.
-                &|| false,
-                |event| {
-                    if json {
-                        println!("{event}");
-                    } else {
-                        println!("{}", journal_line(&event));
-                    }
-                },
-            )
+            journal(session, info.units, lines, follow, json)
         }
     }
 }
@@ -296,9 +230,10 @@ fn list(schedules: &[ScheduleInfo]) {
     }
     let now = now();
     println!(
-        "{} {} {} {}",
+        "{} {} {} {} {}",
         pad(style::HEADING, "name", 20),
         pad(style::HEADING, "state", 8),
+        pad(style::HEADING, "script", 20),
         pad(style::HEADING, "next", 18),
         paint(style::HEADING, "last run")
     );
@@ -314,8 +249,9 @@ fn list(schedules: &[ScheduleInfo]) {
             .map_or_else(|| "-".to_string(), |next| relative(next.unix, now));
         let last = style::line(&last_run(info, now));
         println!(
-            "{} {state} {} {last}",
+            "{} {state} {} {} {last}",
             pad(style::HEADING, &info.spec.name, 20),
+            pad(anstyle::Style::new(), &info.script_name, 20),
             pad(anstyle::Style::new(), next, 18),
         );
     }
@@ -337,19 +273,7 @@ fn show(info: &ScheduleInfo, check: Option<&CalendarCheck>) {
     for (at, expression) in spec.calendar.iter().enumerate() {
         style::row(if at == 0 { "on" } else { "" }, expression);
     }
-    for (at, line) in spec.lines.iter().enumerate() {
-        style::row(
-            if at == 0 { "runs" } else { "" },
-            &format!("{} {line}", paint(style::MUTED, format!("{}.", at + 1))),
-        );
-    }
-    style::row("on error", spec.on_error.name());
-    style::row(
-        "timeout",
-        &spec
-            .timeout_s
-            .map_or_else(|| paint(style::MUTED, "none"), duration),
-    );
+    style::row("runs", &info.script_name);
     match &info.next {
         Some(next) => style::row("next", &moment(next, now)),
         None if spec.enabled => style::row("next", &paint(style::MUTED, "not scheduled")),
@@ -389,11 +313,16 @@ fn show(info: &ScheduleInfo, check: Option<&CalendarCheck>) {
         show_upcoming(check, if spec.enabled { "fires" } else { "when on" });
     }
     println!(
-        "\n{} {}",
+        "\n{} {}   {} {}",
         paint(style::MUTED, "output:"),
         paint(
             style::CMD,
             format!("tessaro-ctl schedule logs {}", spec.name)
+        ),
+        paint(style::MUTED, "run it now:"),
+        paint(
+            style::CMD,
+            format!("tessaro-ctl script run {}", info.script_name)
         )
     );
 }
@@ -405,4 +334,31 @@ fn show_upcoming(check: &CalendarCheck, label: &str) {
 /// `2026-09-28 07:00:00 CEST (in 1 day 15h)`.
 fn moment(at: &Moment, now: i64) -> String {
     style::line(&shared::moment(at, now))
+}
+
+/// The journal of `units` for `logs`, printed as it comes.
+pub fn journal(
+    session: &mut Session,
+    units: String,
+    lines: u32,
+    follow: bool,
+    json: bool,
+) -> Result<(), String> {
+    session.logs(
+        LogsQuery {
+            unit: Some(units),
+            lines: Some(lines),
+            cursor: None,
+        },
+        follow,
+        // Following ends with Ctrl-C, which ends the process.
+        &|| false,
+        |event| {
+            if json {
+                println!("{event}");
+            } else {
+                println!("{}", journal_line(&event));
+            }
+        },
+    )
 }

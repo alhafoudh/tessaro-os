@@ -199,8 +199,11 @@ fn factory_reset(paths: &Paths, db: &Db, log: &Log) {
     if let Err(err) = crate::policies::clear(db) {
         log.info(format!("factory reset: {err}"));
     }
-    if let Err(err) = crate::schedules::clear(db, &paths.schedule_runs_dir()) {
+    if let Err(err) = crate::schedules::clear(db) {
         log.info(format!("factory reset: the schedules: {err}"));
+    }
+    if let Err(err) = crate::scripts::clear(db, &paths.script_runs_dir()) {
+        log.info(format!("factory reset: the scripts: {err}"));
     }
     match fs::remove_file(paths.factory_reset_marker()) {
         Ok(()) => {}
@@ -209,7 +212,7 @@ fn factory_reset(paths: &Paths, db: &Db, log: &Log) {
     }
     log.info(
         "factory reset: settings, tokens, ssh keys, root and network passwords, \
-         certificate authorities, browser policies, schedules, stored files cleared",
+         certificate authorities, browser policies, scripts, schedules, stored files cleared",
     );
 }
 

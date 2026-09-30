@@ -51,6 +51,11 @@ const SPEEDTEST_GAP: Duration = Duration::from_secs(600);
 const PRINT_BURST: usize = 10;
 const PRINT_WINDOW: Duration = Duration::from_secs(60);
 
+/// The most script runs a page starts in `SCRIPT_WINDOW`: each is a root
+/// shell, and a page that runs one in a loop must not pile them up.
+const SCRIPT_BURST: usize = 10;
+const SCRIPT_WINDOW: Duration = Duration::from_secs(60);
+
 /// A public address this fresh is answered without asking again.
 const PUBLIC_IP_FRESH: Duration = Duration::from_secs(30);
 
@@ -77,6 +82,7 @@ const READS: &[&str] = &[
     "network.status",
     "audio.status",
     "printer.list",
+    "scripts.list",
 ];
 
 /// What `main` hands over: the session's end of the page scripts, and the
@@ -119,6 +125,8 @@ pub(super) struct Bridge {
     last_speedtest: Mutex<Option<Instant>>,
     /// When the page printed, within the last `PRINT_WINDOW`.
     prints: Mutex<Vec<Instant>>,
+    /// When the page ran a script, within the last `SCRIPT_WINDOW`.
+    script_runs: Mutex<Vec<Instant>>,
     /// Held across a lookup, so calls at the same time share one request.
     public_ip: tokio::sync::Mutex<Option<(Instant, String)>>,
 }
@@ -147,6 +155,7 @@ impl Control {
             last_disrupt: Mutex::new(Instant::now()),
             last_speedtest: Mutex::new(None),
             prints: Mutex::new(Vec::new()),
+            script_runs: Mutex::new(Vec::new()),
             public_ip: tokio::sync::Mutex::new(None),
         });
         let _ = self.bridge.set(Arc::clone(&bridge));
@@ -731,8 +740,63 @@ impl Control {
                 self.poke_bridge();
                 outcome
             }
+            "scripts.list" => plain(self.script_list().await.map(|all| page_scripts(&all))),
+            "scripts.run" => {
+                let Some(script) = arg(0).as_str().map(str::to_string) else {
+                    return plain(Err("scripts.run takes a script's name".to_string()));
+                };
+                if let Err(refused) = script_run_allowed(bridge) {
+                    return (Err(refused), None);
+                }
+                (self.page_script_run(script).await, None)
+            }
             _ => plain(Err(format!("tessaro has no {name}"))),
         }
+    }
+
+    /// `tessaro.scripts.run(name)`: the run to its end, its output and how
+    /// it ended. Waited for `STREAM_LIMIT` at most; the run goes on after.
+    async fn page_script_run(&self, script: String) -> Answer {
+        let command = Command::ScriptRun { script };
+        let Stream::Script { mut steps, .. } =
+            self.stream(&Caller::Page, command).await.map_err(fail)?
+        else {
+            return Err(fail("not a script run"));
+        };
+        let mut run = String::new();
+        let mut output = Vec::new();
+        let mut truncated = false;
+        let follow = async {
+            // naked: bounded by the within() below
+            while let Some(step) = steps.recv().await {
+                match step.map_err(fail)? {
+                    protocol::ScriptEvent::Started { run: started } => run = started,
+                    protocol::ScriptEvent::Line { text } => output.push(text),
+                    protocol::ScriptEvent::Cut => truncated = true,
+                    protocol::ScriptEvent::Ended { record } => return Ok(Some(record)),
+                }
+            }
+            Ok::<_, Value>(None)
+        };
+        let ended = match within("the script run", STREAM_LIMIT, follow).await {
+            Ok(ended) => ended?,
+            Err(_) => {
+                return Err(json!({
+                    "message": format!(
+                        "run {run} is still going after {}s; it goes on",
+                        STREAM_LIMIT.as_secs()
+                    ),
+                    "run": run,
+                }))
+            }
+        };
+        let Some(ended) = ended else {
+            return Err(fail(format!("run {run} ended without saying how")));
+        };
+        let mut answer = page_run(&ended);
+        answer["output"] = json!(output);
+        answer["truncated"] = json!(truncated);
+        Ok(answer)
     }
 
     async fn set_one(
@@ -769,7 +833,8 @@ impl Control {
     async fn collect(&self, command: Command) -> Result<Value, String> {
         let events = async {
             let mut events = Vec::new();
-            match self.stream(&Caller::Page, command)? {
+            // naked: stream waits only through Control, whose reads are blocking() and the bus
+            match self.stream(&Caller::Page, command).await? {
                 Stream::Ping { mut steps, .. } => {
                     // naked: bounded by the within() below
                     while let Some(step) = steps.recv().await {
@@ -886,16 +951,66 @@ fn disrupt(bridge: &Bridge) -> Result<(), Value> {
 /// One more document from the page, unless it printed `PRINT_BURST` in the
 /// last `PRINT_WINDOW`.
 fn print_allowed(bridge: &Bridge) -> Result<(), Value> {
-    let mut prints = lock(&bridge.prints);
-    prints.retain(|when| when.elapsed() < PRINT_WINDOW);
-    if prints.len() >= PRINT_BURST {
-        return Err(fail(format!(
-            "refused: the page printed {PRINT_BURST} documents in the last {}s",
-            PRINT_WINDOW.as_secs()
-        )));
+    burst(&bridge.prints, PRINT_BURST, PRINT_WINDOW).map_err(|window| {
+        fail(format!(
+            "refused: the page printed {PRINT_BURST} documents in the last {window}s"
+        ))
+    })
+}
+
+/// One more script run from the page, unless it started `SCRIPT_BURST` in
+/// the last `SCRIPT_WINDOW`.
+fn script_run_allowed(bridge: &Bridge) -> Result<(), Value> {
+    burst(&bridge.script_runs, SCRIPT_BURST, SCRIPT_WINDOW).map_err(|window| {
+        fail(format!(
+            "refused: the page ran {SCRIPT_BURST} scripts in the last {window}s"
+        ))
+    })
+}
+
+/// Note one more of something now, unless `times` has `limit` within
+/// `window` already; the window's seconds when it has.
+fn burst(times: &Mutex<Vec<Instant>>, limit: usize, window: Duration) -> Result<(), u64> {
+    let mut times = lock(times);
+    times.retain(|when| when.elapsed() < window);
+    if times.len() >= limit {
+        return Err(window.as_secs());
     }
-    prints.push(Instant::now());
+    times.push(Instant::now());
     Ok(())
+}
+
+/// A finished run as the page gets it: times as seconds since the epoch.
+fn page_run(run: &protocol::ScriptRun) -> Value {
+    json!({
+        "run": run.run,
+        "trigger": run.trigger,
+        "schedule": run.schedule,
+        "started": run.started.unix,
+        "finished": run.finished.unix,
+        "result": run.result,
+        "status": run.status,
+        "succeeded": run.succeeded(),
+    })
+}
+
+/// `tessaro.scripts.list()`: the scripts the page may run, without their
+/// bodies.
+fn page_scripts(scripts: &[protocol::ScriptInfo]) -> Value {
+    let scripts: Vec<Value> = scripts
+        .iter()
+        .filter(|script| script.spec.bridge)
+        .map(|script| {
+            json!({
+                "name": script.spec.name,
+                "description": script.spec.description,
+                "concurrency": script.spec.concurrency.name(),
+                "running": script.running,
+                "lastRun": script.runs.first().map(page_run),
+            })
+        })
+        .collect();
+    Value::Array(scripts)
 }
 
 /// `tessaro.printer.list()`: what `printer list` shows, without where each
@@ -1011,6 +1126,7 @@ mod tests {
             last_disrupt: Mutex::new(Instant::now()),
             last_speedtest: Mutex::new(None),
             prints: Mutex::new(Vec::new()),
+            script_runs: Mutex::new(Vec::new()),
             public_ip: tokio::sync::Mutex::new(None),
         }
     }

@@ -1,0 +1,213 @@
+{
+  "function": "script::runs",
+  "input": {
+    "now": 1790000000,
+    "runs": [
+      {
+        "finished": {
+          "local": "",
+          "unix": 1789995170
+        },
+        "result": "success",
+        "run": "manual-1789995168-4f2a",
+        "started": {
+          "local": "",
+          "unix": 1789995168
+        },
+        "status": "0",
+        "trigger": "manual"
+      },
+      {
+        "finished": {
+          "local": "",
+          "unix": 1789999955
+        },
+        "result": "exit-code",
+        "run": "bridge-1789999950-01aa",
+        "started": {
+          "local": "",
+          "unix": 1789999950
+        },
+        "status": "2",
+        "trigger": "bridge"
+      },
+      {
+        "finished": {
+          "local": "",
+          "unix": 1789990600
+        },
+        "result": "timeout",
+        "run": "schedule-a1-1789990000-42",
+        "schedule": "night",
+        "started": {
+          "local": "",
+          "unix": 1789990000
+        },
+        "status": "",
+        "trigger": "schedule"
+      },
+      {
+        "finished": {
+          "local": "",
+          "unix": 1789900001
+        },
+        "result": "success",
+        "run": "schedule-b2-1789900000-43",
+        "schedule": null,
+        "started": {
+          "local": "",
+          "unix": 1789900000
+        },
+        "status": "0",
+        "trigger": "schedule"
+      },
+      {
+        "finished": {
+          "local": "",
+          "unix": 1789900001
+        },
+        "result": "success",
+        "run": "hook-boot-1789900000-44",
+        "started": {
+          "local": "",
+          "unix": 1789900000
+        },
+        "status": "0",
+        "trigger": "hook"
+      }
+    ]
+  },
+  "output": {
+    "ended": [
+      [
+        [
+          "ok",
+          "run manual-1789995168-4f2a succeeded after 2s",
+          0
+        ]
+      ],
+      [
+        [
+          "bad",
+          "run bridge-1789999950-01aa failed: exit-code 2, after 5s",
+          0
+        ]
+      ],
+      [
+        [
+          "bad",
+          "run schedule-a1-1789990000-42 failed: timeout, after 10min",
+          0
+        ]
+      ],
+      [
+        [
+          "ok",
+          "run schedule-b2-1789900000-43 succeeded after 1s",
+          0
+        ]
+      ],
+      [
+        [
+          "ok",
+          "run hook-boot-1789900000-44 succeeded after 1s",
+          0
+        ]
+      ]
+    ],
+    "run_line": [
+      [
+        [
+          "ok",
+          "success",
+          0
+        ],
+        [
+          "plain",
+          ", 1h 20min ago, by hand",
+          0
+        ],
+        [
+          "muted",
+          " (2s)",
+          0
+        ]
+      ],
+      [
+        [
+          "bad",
+          "exit-code 2",
+          0
+        ],
+        [
+          "plain",
+          ", 45s ago, from the page",
+          0
+        ],
+        [
+          "muted",
+          " (5s)",
+          0
+        ]
+      ],
+      [
+        [
+          "bad",
+          "timeout",
+          0
+        ],
+        [
+          "plain",
+          ", 2h 36min ago, by schedule night",
+          0
+        ],
+        [
+          "muted",
+          " (10min)",
+          0
+        ]
+      ],
+      [
+        [
+          "ok",
+          "success",
+          0
+        ],
+        [
+          "plain",
+          ", 1d 3h ago, by a removed schedule",
+          0
+        ],
+        [
+          "muted",
+          " (1s)",
+          0
+        ]
+      ],
+      [
+        [
+          "ok",
+          "success",
+          0
+        ],
+        [
+          "plain",
+          ", 1d 3h ago, by hook",
+          0
+        ],
+        [
+          "muted",
+          " (1s)",
+          0
+        ]
+      ]
+    ],
+    "started_by": [
+      "by hand",
+      "from the page",
+      "by schedule night",
+      "by a removed schedule",
+      "by hook"
+    ]
+  }
+}

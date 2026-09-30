@@ -116,6 +116,8 @@ are on WiFi, not Network), and only where the scope has settings.
   a change did goes to Messages.
 * **Long commands are jobs**, polled every 400 ms (`useJob` in
   `webconfig/src/api/jobs.ts`); leaving the page cancels one still running.
+  A script's run on Scripts is one too: leaving stops following it, and the
+  run goes on ([scripts.md](scripts.md)).
   File transfers and image updates go in `UPDATE_CHUNK` pieces and resume
   from what the device says it has (`webconfig/src/flows/`).
 * **The Printer page prints a file as one request**, its bytes the body

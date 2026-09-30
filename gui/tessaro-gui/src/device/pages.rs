@@ -24,8 +24,8 @@ use protocol::api::{
     self, AudioTestBody, CalendarBody, CertBody, CertQuery, DeleteBody, EvalBody, FilesQuery,
     GrowBody, KeyboardBody, MoveBody, NameBody, NavigateBody, PasswordBody, PathBody, PingBody,
     PolicyBody, PolicyPositionBody, PolicyRef, PrintJobRef, PrintJobsQuery, PrinterRef,
-    ProfileQuery, ScheduleChange, ScheduleRef, ScreenPowerBody, SpeedtestBody, SshKeyQuery,
-    TokenRef, WifiJoinBody, WifiScanQuery,
+    ProfileQuery, ScheduleChange, ScheduleRef, ScreenPowerBody, ScriptRef, SpeedtestBody,
+    SshKeyQuery, TokenRef, WifiJoinBody, WifiScanQuery,
 };
 use protocol::files::{self as store, FileEntry, FileKind, FilesListing};
 use protocol::keys;
@@ -34,15 +34,17 @@ use protocol::policy::{
 };
 use protocol::{
     size_label, Applied, AudioDevice, AudioStatus, AudioTested, CalendarCheck, CameraList,
-    CertInfo, CertsAdded, Claimed, Connector, Done, HotspotCredentials, Net, NetChange, NetProfile,
-    NetProfileDetail, OnError, Password, PingEvent, PrintJob, PrintQueued, PrinterFound,
-    PrinterInfo, PrinterKind, PrinterList, PrinterSpec, ProxyTested, ScheduleInfo, ScheduleSpec,
-    SpeedtestEvent, SshKeyInfo, SshKeyRevoked, Storage, StorageGrowEvent, TimeStatus, TokenCreated,
-    TokenInfo, UpdatePhase, UpdateStatus, Verify, WifiNetwork, WifiSecurity, WifiStatus,
+    CertInfo, CertsAdded, Claimed, Concurrency, Connector, Done, HotspotCredentials, Net,
+    NetChange, NetProfile, NetProfileDetail, OnError, Password, PingEvent, PrintJob, PrintQueued,
+    PrinterFound, PrinterInfo, PrinterKind, PrinterList, PrinterSpec, ProxyTested, ScheduleInfo,
+    ScheduleSpec, ScriptInfo, SpeedtestEvent, SshKeyInfo, SshKeyRevoked, Storage, StorageGrowEvent,
+    TimeStatus, TokenCreated, TokenInfo, UpdatePhase, UpdateStatus, Verify, WifiNetwork,
+    WifiSecurity, WifiStatus,
 };
 use serde_json::Value;
 use tessaro_client::connect::Answer;
 use tessaro_client::describe;
+use tessaro_client::script::Typed;
 use tessaro_client::text::{Fact, Line};
 use tessaro_client::transfer::date;
 use tessaro_client::webconfig;
@@ -72,6 +74,7 @@ pub struct State {
     input_volume: Option<u8>,
     cameras: Option<CameraList>,
     time: Option<TimeStatus>,
+    scripts: Vec<ScriptInfo>,
     schedules: Vec<ScheduleInfo>,
     /// Counts edits of a schedule form's calendar, so only the check of the
     /// last one is sent.
@@ -167,6 +170,9 @@ enum Action {
         revision: String,
     },
     PolicyRemove(String),
+    /// A new script, or a change to the one with this id.
+    ScriptSave(Option<String>),
+    ScriptRemove(String),
     /// A new schedule, or a change to the one with this id.
     ScheduleSave(Option<String>),
     ScheduleRemove(String),
@@ -262,11 +268,16 @@ pub enum Msg {
     Ntp,
     TimeSync,
     SetClock,
+    // scripts
+    ScriptNew,
+    ScriptEdit,
+    ScriptRun,
+    ScriptLogs,
+    ScriptRemove,
     // schedules
     ScheduleNew,
     ScheduleEdit,
     ScheduleToggle,
-    ScheduleRun,
     ScheduleLogs,
     ScheduleRemove,
     /// The calendar field has not changed for a moment since this edit.
@@ -490,54 +501,132 @@ fn wifi_securities() -> &'static [&'static str] {
     &CHOICES
 }
 
-/// The schedule dialog: new, or `existing` to change.
-fn schedule_form(existing: Option<&ScheduleInfo>) -> Form {
+const CONCURRENCY: &[&str] = Concurrency::NAMES;
+
+/// The label of a script form's bridge check.
+const PAGE_MAY_RUN: &str = "Page may run it";
+
+/// The script dialog: new, or `existing` to change.
+fn script_form(existing: Option<&ScriptInfo>) -> Form {
+    let typed = existing.map_or_else(Typed::default, |info| Typed::of(&info.spec));
+    let title = existing.map_or_else(
+        || "New script".to_string(),
+        |info| format!("Script {}", info.spec.name),
+    );
+    let pick = |choices: &'static [&'static str], name: &str| {
+        choices
+            .iter()
+            .find(|choice| **choice == name)
+            .copied()
+            .unwrap_or(choices[0])
+    };
+    Form::new(
+        title,
+        "Save",
+        Action::ScriptSave(existing.map(|info| info.id.clone())),
+    )
+    .intro(
+        "The body runs with /bin/sh as root, from /; write tessaro-ctl commands out in full. \
+         Run it now from the list, from a schedule, or from the kiosk page when it may.",
+    )
+    .wide()
+    .field(Field::text(
+        "Name",
+        typed.name,
+        "lower-case letters, digits and -",
+    ))
+    .field(Field::text(
+        "Description",
+        typed.description,
+        "what it does, in a line",
+    ))
+    .field(
+        Field::multiline(
+            "Body",
+            &[typed.body.trim_end().to_string()],
+            "tessaro-ctl screen power off",
+        )
+        .mono()
+        .tall(),
+    )
+    .field(Field::choice(
+        "On error",
+        pick(ON_ERROR, &typed.on_error),
+        ON_ERROR,
+    ))
+    .field(Field::text(
+        "Timeout",
+        typed.timeout,
+        "none, or 90s, 10m, 2h",
+    ))
+    .field(Field::choice(
+        "Concurrency",
+        pick(CONCURRENCY, &typed.concurrency),
+        CONCURRENCY,
+    ))
+    .field(Field::check(PAGE_MAY_RUN, typed.bridge))
+}
+
+/// The schedule dialog: new, or `existing` to change. `scripts` are what
+/// it may run.
+fn schedule_form(existing: Option<&ScheduleInfo>, scripts: &[ScriptInfo]) -> Form {
     let spec = existing
         .map(|info| info.spec.clone())
         .unwrap_or(ScheduleSpec {
             name: String::new(),
             enabled: true,
             calendar: Vec::new(),
-            lines: Vec::new(),
-            on_error: OnError::Stop,
-            timeout_s: None,
+            script: String::new(),
         });
     let title = existing.map_or_else(
         || "New schedule".to_string(),
         |info| format!("Schedule {}", info.spec.name),
     );
-    let on_error = ON_ERROR
-        .iter()
-        .find(|name| **name == spec.on_error.name())
+    let names = choices(scripts.iter().map(|info| info.spec.name.clone()).collect());
+    let script = existing
+        .and_then(|info| names.iter().find(|name| **name == info.script_name))
+        .or(names.first())
         .copied()
-        .unwrap_or("stop");
-    let timeout = spec
-        .timeout_s
-        .map(tessaro_client::schedule::format_timeout)
-        .unwrap_or_default();
+        .unwrap_or("");
     Form::new(
         title,
         "Save",
         Action::ScheduleSave(existing.map(|info| info.id.clone())),
     )
-    .intro(
-        "Each command line runs with /bin/sh -c as root, in order; write tessaro-ctl commands out in full. \
-         Calendar lines are systemd OnCalendar expressions in the device's timezone; any of them fires.",
-    )
+    .intro(if scripts.is_empty() {
+        "A schedule runs a script: add one on the Scripts page first."
+    } else {
+        "Calendar lines are systemd OnCalendar expressions in the device's timezone; any of them fires. \
+         Each time, the script runs as it is then."
+    })
     .field(Field::text("Name", spec.name, "lower-case letters, digits and -"))
     .field(Field::multiline(
         "Calendar",
         &spec.calendar,
         "one per line: Mon..Fri 07:00, Sat,Sun *:0/15, daily",
     ).mono())
-    .field(Field::multiline(
-        "Commands",
-        &spec.lines,
-        "one per line: tessaro-ctl screen power off",
-    ).mono())
-    .field(Field::choice("On error", on_error, ON_ERROR))
-    .field(Field::text("Timeout", timeout, "none, or 90s, 10m, 2h"))
+    .field(Field::choice("Script", script, names))
     .field(Field::check("Enabled", spec.enabled))
+}
+
+/// Names for a choice field, which holds `&'static str`s: each list is kept
+/// for the life of the program, once however often it is asked for.
+fn choices(names: Vec<String>) -> &'static [&'static str] {
+    static KEPT: std::sync::Mutex<BTreeMap<Vec<String>, &'static [&'static str]>> =
+        std::sync::Mutex::new(BTreeMap::new());
+    let mut kept = KEPT
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(list) = kept.get(&names) {
+        return list;
+    }
+    let list: Vec<&'static str> = names
+        .iter()
+        .map(|name| &*Box::leak(name.clone().into_boxed_str()))
+        .collect();
+    let list: &'static [&'static str] = Box::leak(list.into_boxed_slice());
+    kept.insert(names, list);
+    list
 }
 
 /// The Add printer dialog, filled from a printer discovery found when there
@@ -611,6 +700,7 @@ fn page_of(tag: &str) -> &'static str {
         "audio" => "audio",
         "camera" => "camera",
         "time" => "time",
+        "scripts" | "script" => "scripts",
         "schedules" | "schedule" => "schedules",
         "printers" | "printer" => "printer",
         "tokens" | "token" | "password" | "claim" | "unclaim" => "access",
@@ -822,7 +912,12 @@ impl Device {
             Page::Audio => self.call("audio", fetch::<api::audio::Show>()),
             Page::Camera => self.call("camera", fetch::<api::camera::List>()),
             Page::Time => self.call("time", fetch::<api::time::Show>()),
-            Page::Schedules => self.call("schedules", fetch::<api::schedule::List>()),
+            Page::Scripts => self.call("scripts", fetch::<api::script::List>()),
+            Page::Schedules => {
+                self.call("schedules", fetch::<api::schedule::List>());
+                // For the form's choice of script.
+                self.call("scripts", fetch::<api::script::List>());
+            }
             Page::Printer => {
                 self.call("printers", fetch::<api::printer::List>());
                 self.call(
@@ -856,12 +951,11 @@ impl Device {
             *count = count.saturating_sub(1);
         }
         let result = match tag {
-            "schedule.save" | "schedule.check" | "policy.save" | "printer.create" => {
-                match self.form_answer(tag, result) {
-                    Some(result) => result,
-                    None => return,
-                }
-            }
+            "script.save" | "schedule.save" | "schedule.check" | "policy.save"
+            | "printer.create" => match self.form_answer(tag, result) {
+                Some(result) => result,
+                None => return,
+            },
             _ => result,
         };
         let value = match result {
@@ -882,7 +976,7 @@ impl Device {
     }
 
     /// The answers of a form that stays open until the device takes it - a
-    /// schedule, a browser policy, a new printer - belong in the form while
+    /// script, a schedule, a browser policy, a new printer - belong in the form while
     /// it is open: a refused save keeps it open with the device's reason, a
     /// check says when the calendar fires. What is left for the usual path,
     /// if anything.
@@ -894,6 +988,7 @@ impl Device {
         let form = match &mut self.dialog {
             Some(Dialog::Form(form))
                 if match form.action {
+                    Action::ScriptSave(_) => tag == "script.save",
                     Action::ScheduleSave(_) => tag.starts_with("schedule."),
                     Action::PolicySave { .. } => tag == "policy.save",
                     Action::PrinterCreate => tag == "printer.create",
@@ -931,6 +1026,19 @@ impl Device {
     fn take_answer(&mut self, tag: &'static str, value: Value) -> Result<(), String> {
         match tag {
             "modes" => self.pages.modes = parse(value)?,
+            "scripts" => self.pages.scripts = parse(value)?,
+            "script.save" => {
+                let info: ScriptInfo = parse(value)?;
+                self.log(Tone::Ok, format!("script {} saved", info.spec.name));
+                self.pages.selected.insert("scripts", info.id);
+                self.call("scripts", fetch::<api::script::List>());
+            }
+            "script.remove" => {
+                let done: Done = parse(value)?;
+                self.log(Tone::Ok, done.message);
+                self.pages.selected.remove("scripts");
+                self.call("scripts", fetch::<api::script::List>());
+            }
             "schedules" => self.pages.schedules = parse(value)?,
             "schedule.save" | "schedule.set" => {
                 let info: ScheduleInfo = parse(value)?;
@@ -942,12 +1050,10 @@ impl Device {
                 self.pages.selected.insert("schedules", info.id);
                 self.call("schedules", fetch::<api::schedule::List>());
             }
-            "schedule.run" | "schedule.remove" => {
+            "schedule.remove" => {
                 let done: Done = parse(value)?;
                 self.log(Tone::Ok, done.message);
-                if tag == "schedule.remove" {
-                    self.pages.selected.remove("schedules");
-                }
+                self.pages.selected.remove("schedules");
                 self.call("schedules", fetch::<api::schedule::List>());
             }
             "printers" => self.pages.printers = Some(parse(value)?),
@@ -1240,6 +1346,7 @@ impl Device {
                     "files" => Some(Page::Files),
                     "update" => Some(Page::Update),
                     "storage" => Some(Page::Storage),
+                    "scripts" => Some(Page::Scripts),
                     _ => None,
                 };
                 if let Some(page) = page {
@@ -1538,10 +1645,43 @@ impl Device {
                     );
                 }
             }
-            Msg::ScheduleNew => self.form(schedule_form(None)),
+            Msg::ScriptNew => self.form(script_form(None)),
+            Msg::ScriptEdit => {
+                if let Some(info) = self.selected_script() {
+                    self.form(script_form(Some(&info)));
+                }
+            }
+            Msg::ScriptRun => {
+                if let Some(info) = self.selected_script() {
+                    let name = info.spec.name;
+                    self.start_job(
+                        "scripts",
+                        format!("run {name}"),
+                        jobs::Kind::Script(name),
+                    );
+                }
+            }
+            Msg::ScriptLogs => {
+                if let Some(info) = self.selected_script() {
+                    self.journal_of(info.units);
+                }
+            }
+            Msg::ScriptRemove => {
+                if let Some(info) = self.selected_script() {
+                    self.form(
+                        Form::new(
+                            format!("Remove script {}", info.spec.name),
+                            "Remove",
+                            Action::ScriptRemove(info.id),
+                        )
+                        .intro("Runs already going finish. A script a schedule runs is not removed."),
+                    );
+                }
+            }
+            Msg::ScheduleNew => self.form(schedule_form(None, &self.pages.scripts)),
             Msg::ScheduleEdit => {
                 if let Some(info) = self.selected_schedule() {
-                    self.form(schedule_form(Some(&info)));
+                    self.form(schedule_form(Some(&info), &self.pages.scripts));
                     return self.check_calendar_soon();
                 }
             }
@@ -1556,14 +1696,6 @@ impl Device {
                                 ..ScheduleChange::default()
                             },
                         ),
-                    );
-                }
-            }
-            Msg::ScheduleRun => {
-                if let Some(info) = self.selected_schedule() {
-                    self.call(
-                        "schedule.run",
-                        call::<api::schedule::Run>(ScheduleRef { schedule: info.id }, ()),
                     );
                 }
             }
@@ -2076,6 +2208,7 @@ impl Device {
             "inputs" => self.page_update(Msg::UseAudio(keys::AUDIO_INPUT)),
             "modes" => self.page_update(Msg::UseMode),
             "camera.modes" => self.page_update(Msg::CameraSize),
+            "scripts" => self.page_update(Msg::ScriptEdit),
             "schedules" => self.page_update(Msg::ScheduleEdit),
             "policies" => self.page_update(Msg::PolicyEdit),
             "printers" => self.page_update(Msg::PrinterShow),
@@ -2125,6 +2258,14 @@ impl Device {
                     .policies
                     .iter()
                     .map(|info| info.name.clone())
+                    .collect(),
+            ),
+            Page::Scripts => (
+                "scripts",
+                self.pages
+                    .scripts
+                    .iter()
+                    .map(|info| info.id.clone())
                     .collect(),
             ),
             Page::Schedules => (
@@ -2230,6 +2371,15 @@ impl Device {
             .policies
             .iter()
             .find(|info| &info.name == name)
+            .cloned()
+    }
+
+    fn selected_script(&self) -> Option<ScriptInfo> {
+        let id = self.selected("scripts")?;
+        self.pages
+            .scripts
+            .iter()
+            .find(|info| &info.id == id)
             .cloned()
     }
 
@@ -2339,7 +2489,10 @@ impl Device {
             Ok(())
                 if matches!(
                     form.action,
-                    Action::ScheduleSave(_) | Action::PolicySave { .. } | Action::PrinterCreate
+                    Action::ScriptSave(_)
+                        | Action::ScheduleSave(_)
+                        | Action::PolicySave { .. }
+                        | Action::PrinterCreate
                 ) =>
             {
                 self.dialog = Some(Dialog::Form(form));
@@ -2606,25 +2759,40 @@ impl Device {
                 "cert.revoke",
                 call::<api::network::CertRevoke>(CertQuery { cert: cert.clone() }, ()),
             ),
+            Action::ScriptSave(id) => {
+                let typed = Typed {
+                    name: form.value("Name").to_string(),
+                    description: form.value("Description").to_string(),
+                    body: form.value("Body").to_string(),
+                    on_error: form.value("On error").to_string(),
+                    timeout: form.value("Timeout").to_string(),
+                    concurrency: form.value("Concurrency").to_string(),
+                    bridge: form.checked(PAGE_MAY_RUN),
+                };
+                let save = match id {
+                    None => send::<api::script::Create>(typed.spec()?),
+                    Some(id) => call::<api::script::Change>(
+                        ScriptRef { script: id.clone() },
+                        typed.change()?,
+                    ),
+                };
+                self.call("script.save", save);
+            }
+            Action::ScriptRemove(id) => self.call(
+                "script.remove",
+                call::<api::script::Remove>(ScriptRef { script: id.clone() }, ()),
+            ),
             Action::ScheduleSave(id) => {
-                let timeout =
-                    tessaro_client::schedule::parse_timeout(match form.value("Timeout").trim() {
-                        "" => "none",
-                        timeout => timeout,
-                    })?;
-                let on_error = form.value("On error").parse::<OnError>()?;
                 let name = form.value("Name").trim().to_string();
                 let calendar = form.lines("Calendar");
-                let lines = tessaro_client::schedule::command_lines(form.value("Commands"));
+                let script = form.value("Script").to_string();
                 let enabled = form.checked("Enabled");
                 let save = match id {
                     None => send::<api::schedule::Create>(ScheduleSpec {
                         name,
                         enabled,
                         calendar,
-                        lines,
-                        on_error,
-                        timeout_s: (timeout > 0).then_some(timeout),
+                        script,
                     }),
                     Some(id) => call::<api::schedule::Change>(
                         ScheduleRef {
@@ -2633,9 +2801,7 @@ impl Device {
                         ScheduleChange {
                             name: Some(name),
                             calendar: Some(calendar),
-                            lines: Some(lines),
-                            on_error: Some(on_error),
-                            timeout_s: Some(timeout),
+                            script: Some(script),
                             enabled: Some(enabled),
                         },
                     ),
@@ -2901,6 +3067,7 @@ impl Device {
             Page::Audio => self.audio_view(),
             Page::Camera => self.camera_view(),
             Page::Time => self.time_view(),
+            Page::Scripts => self.scripts_view(),
             Page::Schedules => self.schedules_view(),
             Page::Printer => self.printer_view(),
             Page::Access => self.access_view(),
@@ -3542,11 +3709,55 @@ impl Device {
         )
     }
 
+    fn scripts_view(&self) -> Element<'_, Message> {
+        const SCRIPTS: &[Col] = &[
+            col("Script", Length::Fixed(160.0)),
+            col("Description", Length::Fixed(220.0)),
+            col("Runs", Length::Fixed(240.0)),
+            col("Last run", Length::Fill),
+        ];
+        let now = tessaro_client::schedule::now();
+        let scripts = self
+            .pages
+            .scripts
+            .iter()
+            .map(|info| {
+                let last = tessaro_client::script::last_run(info, now);
+                let last: Cell<'_, Message> = cell(last.to_string())
+                    .style(theme::toned(last.tone()))
+                    .into();
+                (
+                    info.id.clone(),
+                    vec![
+                        cell(info.spec.name.clone()).into(),
+                        cell(info.spec.description.clone()).into(),
+                        cell(tessaro_client::script::behaviour(&info.spec)).into(),
+                        last,
+                    ],
+                )
+            })
+            .collect();
+        let chosen = self.selected_script();
+        let with_one = |message: Msg| chosen.as_ref().and_then(|_| self.when(message));
+        self.page(
+            "scripts",
+            vec![action("New script ...", self.when(Msg::ScriptNew))],
+            vec![
+                action("Edit ...", with_one(Msg::ScriptEdit)),
+                action("Run now", with_one(Msg::ScriptRun)),
+                action("Logs", with_one(Msg::ScriptLogs)),
+                action("Remove ...", with_one(Msg::ScriptRemove)),
+            ],
+            vec![self.table("scripts", SCRIPTS, scripts, Length::Fill)],
+        )
+    }
+
     fn schedules_view(&self) -> Element<'_, Message> {
         const SCHEDULES: &[Col] = &[
             col("Schedule", Length::Fixed(160.0)),
             col("State", Length::Fixed(50.0)),
             col("Calendar", Length::Fixed(200.0)),
+            col("Script", Length::Fixed(140.0)),
             col("Next run", Length::Fixed(190.0)),
             col("Last run", Length::Fill),
         ];
@@ -3575,6 +3786,7 @@ impl Device {
                         cell(info.spec.name.clone()).into(),
                         state,
                         cell(info.spec.calendar.join("  |  ")).into(),
+                        cell(info.script_name.clone()).into(),
                         cell(next).into(),
                         last,
                     ],
@@ -3594,7 +3806,6 @@ impl Device {
             vec![
                 action("Edit ...", with_one(Msg::ScheduleEdit)),
                 action(toggle, with_one(Msg::ScheduleToggle)),
-                action("Run now", with_one(Msg::ScheduleRun)),
                 action("Logs", with_one(Msg::ScheduleLogs)),
                 action("Remove ...", with_one(Msg::ScheduleRemove)),
             ],
@@ -4432,6 +4643,7 @@ pub(super) fn page_key(page: Page) -> &'static str {
         Page::Audio => "audio",
         Page::Camera => "camera",
         Page::Time => "time",
+        Page::Scripts => "scripts",
         Page::Schedules => "schedules",
         Page::Printer => "printer",
         Page::Access => "access",

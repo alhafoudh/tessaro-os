@@ -527,6 +527,39 @@ pub enum Command {
     NetCertRevoke {
         cert: String,
     },
+    /// Every script, with its recent runs.
+    ScriptList,
+    ScriptCreate {
+        spec: ScriptSpec,
+    },
+    /// Change what is given of one script, by id or name.
+    ScriptSet {
+        script: String,
+        #[serde(default)]
+        name: Option<String>,
+        #[serde(default)]
+        description: Option<String>,
+        #[serde(default)]
+        body: Option<String>,
+        #[serde(default)]
+        on_error: Option<OnError>,
+        /// `Some(0)` removes the timeout.
+        #[serde(default)]
+        timeout_s: Option<u64>,
+        #[serde(default)]
+        concurrency: Option<Concurrency>,
+        #[serde(default)]
+        bridge: Option<bool>,
+    },
+    /// Refused while a schedule runs it.
+    ScriptRemove {
+        script: String,
+    },
+    /// Run a script now and follow it: a stream of `ScriptEvent`s, ending
+    /// with how the run ended.
+    ScriptRun {
+        script: String,
+    },
     /// Every schedule, with when it runs next and how its last run ended.
     ScheduleList,
     /// Add a schedule. Its calendar is checked with systemd before
@@ -535,28 +568,20 @@ pub enum Command {
         spec: ScheduleSpec,
     },
     /// Change what is given of one schedule, by id or name. A given
-    /// `calendar` or `lines` replaces the whole list.
+    /// `calendar` replaces the whole list.
     ScheduleSet {
         schedule: String,
         #[serde(default)]
         name: Option<String>,
         #[serde(default)]
         calendar: Option<Vec<String>>,
+        /// The script it runs, by id or name.
         #[serde(default)]
-        lines: Option<Vec<String>>,
-        #[serde(default)]
-        on_error: Option<OnError>,
-        /// `Some(0)` removes the timeout.
-        #[serde(default)]
-        timeout_s: Option<u64>,
+        script: Option<String>,
         #[serde(default)]
         enabled: Option<bool>,
     },
     ScheduleRemove {
-        schedule: String,
-    },
-    /// Start one run of a schedule now, enabled or not.
-    ScheduleRun {
         schedule: String,
     },
     /// Check `OnCalendar` expressions with systemd, saving nothing: the
@@ -652,6 +677,7 @@ impl Command {
                 | Command::NetPing { .. }
                 | Command::StorageGrow { .. }
                 | Command::PrinterDiscover
+                | Command::ScriptRun { .. }
         )
     }
 }
@@ -707,6 +733,7 @@ pub enum JobEvent {
     Speedtest(SpeedtestEvent),
     StorageGrow(StorageGrowEvent),
     PrinterFound(PrinterFound),
+    Script(ScriptEvent),
 }
 
 /// A job the device started: poll it at `/api/v1/jobs/{job}`.
@@ -719,8 +746,8 @@ pub struct JobStarted {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct JobPage {
     /// Its steps from number `after` on, in order: `PingEvent`s,
-    /// `SpeedtestEvent`s, `StorageGrowEvent`s or `PrinterFound`s, by the
-    /// job.
+    /// `SpeedtestEvent`s, `StorageGrowEvent`s, `PrinterFound`s or
+    /// `ScriptEvent`s, by the job.
     #[schemars(with = "Vec<JobEvent>")]
     pub events: Vec<Value>,
     /// What to send as `after` next.
@@ -1811,21 +1838,28 @@ pub struct CertsAdded {
 
 /// Most `OnCalendar` expressions one schedule may carry.
 pub const SCHEDULE_CALENDAR_MAX: usize = 16;
-/// Most command lines one schedule may carry.
-pub const SCHEDULE_LINES_MAX: usize = 64;
-/// Longest command line or expression, in bytes.
-pub const SCHEDULE_LINE_MAX: usize = 4096;
+/// Longest calendar expression, in bytes.
+pub const SCHEDULE_EXPRESSION_MAX: usize = 4096;
 /// Most run times `schedule-check` answers with.
 pub const SCHEDULE_CHECK_MAX: u32 = 50;
 
-/// What a run does when one of its lines fails.
+/// Longest script body, in bytes.
+pub const SCRIPT_BODY_MAX: usize = 64 * 1024;
+/// Longest script description, in bytes.
+pub const SCRIPT_DESCRIPTION_MAX: usize = 200;
+/// How many finished runs of a script the device remembers.
+pub const SCRIPT_RUNS_KEPT: usize = 20;
+/// Most output lines `script-run` answers with; the journal keeps the rest.
+pub const SCRIPT_OUTPUT_MAX: usize = 1000;
+
+/// What a run does when a command of the script fails.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum OnError {
-    /// The run ends there, failed.
+    /// The run ends there, failed: the body runs with `/bin/sh -e`.
     #[default]
     Stop,
-    /// The next line runs anyway.
+    /// The rest runs anyway; the run ends as its last command does.
     Continue,
 }
 
@@ -1851,7 +1885,62 @@ impl std::str::FromStr for OnError {
     }
 }
 
-/// What a schedule is: when it fires and what a run does.
+/// What a run does when one of the same script is still going.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum Concurrency {
+    /// It starts anyway; runs overlap.
+    #[default]
+    Overlap,
+    /// It does not start.
+    Skip,
+}
+
+impl Concurrency {
+    pub const NAMES: &'static [&'static str] = &["overlap", "skip"];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Concurrency::Overlap => "overlap",
+            Concurrency::Skip => "skip",
+        }
+    }
+}
+
+impl std::str::FromStr for Concurrency {
+    type Err = String;
+    fn from_str(name: &str) -> Result<Self, String> {
+        match name {
+            "overlap" => Ok(Concurrency::Overlap),
+            "skip" => Ok(Concurrency::Skip),
+            _ => Err(format!("{name:?} is not overlap or skip")),
+        }
+    }
+}
+
+/// What a script is: a shell body and how its runs behave.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ScriptSpec {
+    /// `[a-z0-9][a-z0-9-]*`, unique on the device.
+    pub name: String,
+    /// One line saying what it does.
+    #[serde(default)]
+    pub description: String,
+    /// Run by `/bin/sh` as root, from `/`.
+    pub body: String,
+    #[serde(default)]
+    pub on_error: OnError,
+    /// The longest a run may take before systemd kills it.
+    #[serde(default)]
+    pub timeout_s: Option<u64>,
+    #[serde(default)]
+    pub concurrency: Concurrency,
+    /// The kiosk page may list it and run it (`tessaro.scripts`).
+    #[serde(default)]
+    pub bridge: bool,
+}
+
+/// What a schedule is: when it fires and which script it runs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ScheduleSpec {
     /// `[a-z0-9][a-z0-9-]*`, unique on the device.
@@ -1861,13 +1950,9 @@ pub struct ScheduleSpec {
     /// systemd `OnCalendar` expressions; the schedule fires when any of
     /// them does.
     pub calendar: Vec<String>,
-    /// Shell command lines, each run with `/bin/sh -c` as root, in order.
-    pub lines: Vec<String>,
-    #[serde(default)]
-    pub on_error: OnError,
-    /// The longest a whole run may take before systemd kills it.
-    #[serde(default)]
-    pub timeout_s: Option<u64>,
+    /// The script it runs: its id or its name when sent, its id when
+    /// answered.
+    pub script: String,
 }
 
 /// A moment as the device reports it.
@@ -1879,44 +1964,90 @@ pub struct Moment {
     pub local: String,
 }
 
-/// How a finished run ended.
+/// How a finished run of a script ended.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct ScheduleRun {
+pub struct ScriptRun {
+    /// The run's systemd instance, `manual-1700000000-4f2a`: what
+    /// `logs --unit` takes after the script's template.
+    pub run: String,
+    /// What started it: `manual`, `bridge` (the kiosk page) or
+    /// `schedule`, the first word of `run`.
+    pub trigger: String,
+    /// The schedule that started it, by name, while that schedule exists.
+    #[serde(default)]
+    pub schedule: Option<String>,
     pub started: Moment,
     pub finished: Moment,
     /// systemd's `$SERVICE_RESULT`: `success`, `exit-code`, `timeout`,
     /// `signal`...
     pub result: String,
-    /// systemd's `$EXIT_STATUS` of the last line that ran: an exit code
-    /// or a signal name.
+    /// systemd's `$EXIT_STATUS`: an exit code or a signal name.
     pub status: String,
 }
 
-impl ScheduleRun {
+impl ScriptRun {
     pub fn succeeded(&self) -> bool {
         self.result == "success"
     }
 }
 
+/// One script, its recent runs and who runs it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ScriptInfo {
+    /// Stable across renames; names the script's systemd units.
+    pub id: String,
+    #[serde(flatten)]
+    pub spec: ScriptSpec,
+    /// Its finished runs, newest first, at most `SCRIPT_RUNS_KEPT`.
+    #[serde(default)]
+    pub runs: Vec<ScriptRun>,
+    /// Runs going right now.
+    #[serde(default)]
+    pub running: u32,
+    /// The schedules that run it, by name.
+    #[serde(default)]
+    pub schedules: Vec<String>,
+    /// The journal pattern of its runs, for `logs --unit`.
+    pub units: String,
+}
+
+/// One step of `script-run`, in the order they arrive.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "event", rename_all = "kebab-case")]
+pub enum ScriptEvent {
+    /// The run started, as this systemd instance.
+    Started { run: String },
+    /// One line the run wrote, to stdout or stderr: the journal keeps
+    /// them in one stream, in order.
+    Line { text: String },
+    /// Past `SCRIPT_OUTPUT_MAX` lines; the rest is only in the journal.
+    Cut,
+    /// How it ended, as the run recorded it; the last step.
+    Ended { record: ScriptRun },
+}
+
 /// One schedule and what systemd reports about it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ScheduleInfo {
-    /// Stable across renames; names the schedule's systemd units.
+    /// Stable across renames; names the schedule's systemd timer.
     pub id: String,
     #[serde(flatten)]
     pub spec: ScheduleSpec,
+    /// The name of the script it runs.
+    pub script_name: String,
     /// When the timer fires next; `None` while disabled.
     #[serde(default)]
     pub next: Option<Moment>,
     /// When the timer last fired.
     #[serde(default)]
     pub last_trigger: Option<Moment>,
+    /// The last run this schedule started that has finished.
     #[serde(default)]
-    pub last_run: Option<ScheduleRun>,
-    /// Runs going right now; they may overlap.
+    pub last_run: Option<ScriptRun>,
+    /// Runs this schedule started that are going right now.
     #[serde(default)]
     pub running: u32,
-    /// The journal pattern of its runs, for `logs --unit`.
+    /// The journal pattern of the runs it started, for `logs --unit`.
     pub units: String,
 }
 

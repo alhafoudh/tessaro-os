@@ -14,22 +14,22 @@
             "unix": 1789995170
           },
           "result": "success",
+          "run": "schedule-a1-1789990000-42",
+          "schedule": "night",
           "started": {
             "local": "",
             "unix": 1789990000
           },
-          "status": "0"
+          "status": "0",
+          "trigger": "schedule"
         },
         "last_trigger": null,
-        "lines": [
-          "tessaro-ctl screen power off"
-        ],
         "name": "night",
         "next": null,
-        "on_error": "stop",
         "running": 0,
-        "timeout_s": null,
-        "units": "tessaro-schedule-a1*"
+        "script": "5c41a7e0",
+        "script_name": "dim",
+        "units": "tessaro-script-5c41a7e0*@schedule-a1*.service"
       },
       {
         "calendar": [
@@ -43,22 +43,22 @@
             "unix": 1789999955
           },
           "result": "exit-code",
+          "run": "schedule-b2-1789999000-43",
+          "schedule": "morning",
           "started": {
             "local": "",
             "unix": 1789999000
           },
-          "status": "1"
+          "status": "1",
+          "trigger": "schedule"
         },
         "last_trigger": null,
-        "lines": [
-          "false"
-        ],
         "name": "morning",
         "next": null,
-        "on_error": "continue",
         "running": 2,
-        "timeout_s": 90,
-        "units": "tessaro-schedule-b2*"
+        "script": "5c41a7e0",
+        "script_name": "dim",
+        "units": "tessaro-script-5c41a7e0*@schedule-b2*.service"
       },
       {
         "calendar": [
@@ -68,15 +68,12 @@
         "id": "c3",
         "last_run": null,
         "last_trigger": null,
-        "lines": [
-          "true"
-        ],
         "name": "never-ran",
         "next": null,
-        "on_error": "stop",
         "running": 0,
-        "timeout_s": null,
-        "units": "tessaro-schedule-c3*"
+        "script": "5c41a7e0",
+        "script_name": "dim",
+        "units": "tessaro-script-5c41a7e0*@schedule-c3*.service"
       }
     ],
     "now": 1790000000

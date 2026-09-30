@@ -80,6 +80,7 @@ answers everything:
 | `network.status()` | config | `network show`, without the public address |
 | `audio.status()` | config | `audio show` |
 | `printer.list()` | config | `printer list`, without each printer's URI |
+| `scripts.list()` | config | `script list`, only the scripts with `--bridge`, without their bodies: name, description, concurrency, runs going, the last run |
 | `network.publicIp()` | actions | `config get network.public_ip`: asked now |
 | `network.online()` | actions | the same lookup, resolved as `true` or `false` |
 | `browser.reload()` | actions | `browser reload` |
@@ -96,6 +97,7 @@ answers everything:
 | `files.list(path)` | actions | `files list` |
 | `printer.print({ data, path, printer, copies, media, title })` | actions | `printer print`: `data` a string, `Blob`, `ArrayBuffer` or bytes; `path` a file in the store; no `printer` is the default one |
 | `data.set(name, value)`, `data.unset(name)` | actions | `config set data.NAME=...` / `unset` |
+| `scripts.run(name)` | actions | `script run`, of a script with `--bridge` only: resolves when the run ends with `{run, trigger, started, finished, result, status, succeeded, output, truncated}` (times in seconds since the epoch), whether it succeeded or not |
 
 Nothing under `access`, `ssh`, `update` or `device factory-reset`, and no
 `config set` of anything but `data.*`, is reachable from a page. That
@@ -136,6 +138,18 @@ any setting outside `data.*`.
   [printing.md](printing.md)).
 * **`printer.list()` leaves out where each printer is**: a URI can carry a
   print server's user and password, and the page needs only the names.
+* **The page runs only the scripts the operator marked for it, and at most
+  `SCRIPT_BURST` runs per `SCRIPT_WINDOW`** (`control/bridge.rs`). Each run
+  is a root shell, so which ones is the operator's `script create|set
+  --bridge`, never the page's, and `scripts.list()` gives no body: a page
+  learns what a script is for, not what it does. The run's trigger is
+  `bridge` and it honours the script's concurrency like any other
+  ([scripts.md](scripts.md)); a run that skipped rejects. `scripts.run` waits
+  for the end at most `STREAM_LIMIT`, then rejects with `run` naming the
+  instance, which goes on. A failed run resolves, with `succeeded: false`:
+  the page gets the output either way. The output is the run's stdout and
+  stderr in one list, at most `SCRIPT_OUTPUT_MAX` lines, `truncated` past
+  that.
 * **`network.publicIp()` is shared and cached for 30s.** Calls at the same time
   wait for one request. A failure rejects with `lastKnown`, the last address
   found this boot, if any. A success also updates what

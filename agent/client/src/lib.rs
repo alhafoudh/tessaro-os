@@ -28,6 +28,7 @@ pub mod policies;
 pub mod printer;
 pub mod report;
 pub mod schedule;
+pub mod script;
 pub mod speedtest;
 pub mod ssh;
 pub mod storage;

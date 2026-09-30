@@ -93,6 +93,7 @@
     network: { status: () => call("network.status") },
     audio: { status: () => call("audio.status") },
     printer: { list: () => call("printer.list") },
+    scripts: { list: () => call("scripts.list") },
   };
 
   // A document for printer.print: text as UTF-8, or bytes, as base64.
@@ -150,6 +151,7 @@
       set: (name, value) => call("data.set", name, value),
       unset: (name) => call("data.unset", name),
     };
+    Object.assign(api.scripts, { run: (name) => call("scripts.run", name) });
   }
 
   for (const group of Object.values(api)) {
