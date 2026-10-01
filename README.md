@@ -1,468 +1,291 @@
-# Tessaro
+<p align="center">
+  <img src="gui/tessaro-gui/icons/tessaro.svg" width="180" alt="Tessaro">
+</p>
 
-**A web kiosk that looks after itself.** Tessaro turns a Raspberry Pi or an
-x86 PC into a screen that boots straight into your site, fullscreen, and keeps
-it there - through crashed tabs, dead networks and power cuts - while you
-manage it from your laptop with one command.
+<h1 align="center">tessaro-os</h1>
 
-![The self-test page, at http://127.0.0.1/selftest.html](docs/images/selftest.jpg)
+<p align="center">
+  <strong>The web kiosk that looks after itself.</strong><br>
+  Turn a Raspberry Pi or an x86 PC into a locked-down screen that boots straight
+  into your web app, keeps it running, and is managed from anywhere.
+</p>
 
-```sh
-tessaro-ctl -n golden-thistle-5731 config set browser.url=https://menu.example.com/
-```
+<p align="center">
+  <a href="#features">Features</a> ·
+  <a href="#peripherals-straight-from-the-page">Peripherals</a> ·
+  <a href="#complete-chromium-policy-management">Policies</a> ·
+  <a href="#tested-hardware">Hardware</a> ·
+  <a href="#pre-built-images">Images</a> ·
+  <a href="#quick-start">Quick start</a>
+</p>
 
-That is the whole deployment step. The device restarts only what that setting
-touches, and the URL survives reboots and image updates.
+![A fresh Tessaro device on its welcome page: its name, address, online state and a QR code that joins a phone to its setup hotspot](docs/images/welcome.jpg)
 
-## What it does for you
-
-- **The page stays up.** An agent watches Chromium over the DevTools protocol.
-  A crashed tab is reloaded in seconds, a wedged browser is restarted, and
-  while your site is unreachable a local offline page is shown until it comes
-  back. The agent is itself under a systemd watchdog.
-- **It stays on your site.** If a link takes the browser to another origin,
-  it is brought back. Pages within your origin and redirects you control are
-  left alone.
-- **It cannot be broken by accident.** The system is read-only; settings,
-  your files and the browser profile live on a separate `/data` partition. A
-  factory reset is one command, or one word typed at the boot loader.
-- **Updates over the network that keep everything.** Send a new image and the
-  device checks it, writes it from its initramfs, verifies every block and
-  reboots into it, with settings, ownership and browser storage intact. A
-  power cut at any point leaves either the old system or a retry, never half
-  of one.
-- **Network changes that cannot lock you out.** A new static address or WiFi
-  network is kept only if the device still reaches the network afterwards.
-  Otherwise the device rolls it back by itself, even if the change cut you off.
-- **Built for real kiosk hardware.** Touch screens, an on-screen keyboard that
-  appears only when no keyboard is plugged in, screens plugged in after boot,
-  sound on HDMI, the jack or USB, and WebSerial and WebHID granted to your site
-  with no permission prompt, so the page can talk to serial and HID devices
-  on a screen nobody is standing at.
-- **Content that works offline.** Sync a directory of videos, images and JSON
-  to the device and your page loads them from `http://127.0.0.1/files/`, with
-  or without a network.
-- **Owned by whoever claims it first.** A fresh device has no password, and
-  until it is claimed anyone on its network can manage it with `tessaro-ctl`,
-  `tessaro-gui` or Webconfig. Claiming gives you a token, pins the device's
-  certificate and sets a random root password; from then on only token
-  holders get in. Everything goes over TLS.
-- **Managed from a browser too.** Webconfig, at `https://<device>:7400/`, is
-  the device's own management pages: Quick Setup for a fresh device, and
-  everything the desktop client does but its VNC view and SSH terminal. A
-  phone on the device's hotspot is sent there by itself. `tessaro-ctl access
-  webconfig` opens it signed in.
-
-## Quick start
-
-You build the image yourself, on a Linux machine with Docker,
-[kas](https://kas.readthedocs.io/) (`pipx install kas`, for `kas-container`)
-and [mise](https://mise.jdx.dev/):
-
-```sh
-git clone git@github.com:alhafoudh/tessaro-os.git && cd tessaro-os
-mise trust && mise install
-mise run image:build:rpi3     # Raspberry Pi 3B/3B+; image:build:x86 for a UEFI PC
-```
-
-The first build fetches and compiles everything, Chromium included, and takes
-hours; later ones reuse the cache. Write the image to a card or disk:
-
-```sh
-bmaptool copy build/raspberrypi3-64/tmp/deploy/images/raspberrypi3-64/tessaro-os-raspberrypi3-64.rootfs.wic.zst /dev/sdX
-```
-
-(From a separate workstation, `mise run image:pull` and `mise run
-image:flash` do the same - see [DEVELOPMENT.md](DEVELOPMENT.md).)
-
-For Raspberry Pi 5, use `mise run image:build:rpi5`. Its image is
-`build/raspberrypi5/tmp/deploy/images/raspberrypi5/tessaro-os-raspberrypi5.rootfs.wic.zst`.
-Pi images can be written to SD or USB storage, including an NVMe USB
-enclosure. Pi 5 also supports native NVMe with a compatible PCIe adapter.
-See [Pi storage boot](docs/build.md#pi-storage-boot) for firmware requirements
-and [platform status](docs/build.md#status) for validation status.
-
-Boot it with a network cable in. It comes up on its welcome page, which shows
-its name, its address and the command that claims it, and announces itself on
-the local network. Build the client, find the device and
-claim it:
-
-```sh
-mise run ctl:build                  # build/cargo-target/release/tessaro-ctl; put it on your PATH
-tessaro-ctl nodes list              # devices answering on this network
-tessaro-ctl -n golden-thistle-5731 access claim
-```
-
-```
-...
-Pin it and continue? [y/N] y
-claimed golden-thistle-5731 (d77857317a77452baadbbde45de78ba7)
-token 4cd4cf8a saved in ~/.config/tessaro/tessaro.db
-
-root password - shown this once, store it now:
-
-    ********************
-```
-
-Then point it at your site:
+Every screen you deploy is a promise: the menu is up, the check-in works, the
+dashboard is live. Tessaro keeps that promise without anyone standing next to
+it. Flash it, plug it in, point it at your site:
 
 ```sh
 tessaro-ctl -n golden-thistle-5731 config set browser.url=https://menu.example.com/
 ```
 
-```
-revision 3: browser.url
-restarting tessaro-kiosk.service
-```
+That is the whole deployment.
 
-Set `TESSARO_NODE=golden-thistle-5731` and the `-n` can go. The examples
-below leave it out.
+## Features
 
-## Using it
+### For integrators and admins
 
-### See what a device is doing
+- 🔁 **Self-healing page**: crashed tabs reload, a stuck browser restarts, an offline page covers outages, a watchdog guards the guard.
+- 🔒 **Locked to your site**: wander off your origin and the screen comes straight back.
+- 🛡️ **Unbreakable by design**: read-only system, your data on its own partition, factory reset in one command.
+- 💾 **Durable state**: settings, owners, policies and printers live in SQLite stores built to survive the power cut.
+- 📦 **Updates over the network** that keep every setting, verify every block and survive a power loss mid-write.
+- 🌐 **Network changes you cannot get wrong**: a new address or WiFi that loses the network rolls itself back.
+- 🔑 **Secure from the first boot**: claim it and it is yours, with TLS, pinned certificates, tokens and a random root password.
+- 🖥️ **Manage it your way**: a scriptable CLI, a desktop app, or Webconfig in any browser, with Quick Setup from a phone.
+- 🏢 **Enterprise networks welcome**: HTTP and SOCKS proxies, your own certificate authorities, your own NTP servers.
+- ⏰ **Scripts and schedules**: screens off at night, a different page at the weekend, anything a shell can do.
+- 🧰 **Maintenance and debug screens** at the flip of a switch, with your own message.
+- 👀 **See and reach it remotely**: a live VNC view of the panel and an SSH shell with your own key.
+- 📺 **Display safety net**: a new resolution nobody confirms reverts by itself.
+- ⚡ **Changes apply live**: most settings take effect without a restart, and nothing restarts that does not have to.
 
-```
-$ tessaro-ctl device status
-name         golden-thistle-5731
-node id      d77857317a77452baadbbde45de78ba7
-machine      qemux86-64
-agent        1.0.0
-fingerprint  d93f5f87bc4b45d9dfb36092abcf3cbe0547a3fe898092a7b0b66598bb075360
-claimed      no
-os           Tessaro OS 0.1 (main), image 0
-revision     2
-data         7.8 GB free of 8.2 GB (1% used)
-browser url  http://127.0.0.1/
-showing      http://127.0.0.1/
-browser      answering
-  tessaro-agent.service    active
-  tessaro-kiosk.service    active
-  weston.service           active
-audio        usb 80%
-time         UTC, in sync
-```
+### For developers
 
-```sh
-tessaro-ctl device logs -f -u tessaro-agent.service   # the agent's journal, live
-tessaro-ctl device ping                               # latency from here to the device
-```
+- 🧩 **One image, every screen different**: `{placeholders}` and your own `data.*` keys give each device its own URL.
+- 📁 **Offline content**: sync videos, images and JSON to the device, served at `http://127.0.0.1/files/`.
+- 🌉 **A bridge into the device**: an injected script and `window.tessaro` let your page read status, print and run scripts.
+- 📜 **A real HTTP API**, with an OpenAPI document and Swagger UI on the device.
+- 🐞 **Remote DevTools** and `browser eval`, for debugging the page as the screen runs it.
+- ⚙️ **Chromium your way**: extra flags, features and enterprise policies per device, no rebuild.
+- 📖 **Self-documenting settings**: every key says what it accepts, its default and what a change restarts.
 
-### One image, a different page per screen
+## Peripherals, straight from the page
 
-Any setting can be a placeholder in the URL, and `data.*` keys are yours to
-define. Give each device its own value and they all run the same image:
+Your web app talks to real hardware, on a screen nobody is standing at, with no
+permission prompt in the way.
 
-```sh
-tessaro-ctl config set 'browser.url=https://menu.example.com/?table={data.table}' data.table=12
-tessaro-ctl config set 'browser.url=https://{device.name}.signage.example.com/'
-```
+- 🔌 **WebSerial** and 🎮 **WebHID**, pre-granted to your site: scales, scanners, payment terminals, controllers.
+- 🧷 **WebUSB**, granted per device by vendor and product id.
+- 📶 **Web Bluetooth**, opt-in: one pairing by a technician and it stays.
+- 🎙️ **Microphone** granted to your site, with the input and level set remotely.
+- 📷 **USB cameras, shared**: your page and other software on the device watch the same camera at once.
+- 🖨️ **Printing**: `window.print()` goes silently to the default printer, and the bridge prints to any printer by name. Office printers need no driver (IPP Everywhere, AirPrint), and receipt and label printers take raw ESC/POS or ZPL. Find printers on USB and the network and set them up from the CLI, the desktop app or Webconfig.
+- 👆 **Touch screens** work out of the box.
+- ⌨️ **On-screen keyboard** that appears only when no keyboard is plugged in.
+- 🔊 **Sound** on HDMI, the headphone jack or USB, switched and leveled remotely.
 
-Values are percent-encoded into the URL, so a value can never change where
-the URL points.
+The details, and what your page needs to do, are in
+[docs/kiosk-browser.md](docs/kiosk-browser.md#device-apis-webserial-webhid-webusb-web-bluetooth),
+[docs/printing.md](docs/printing.md) and [docs/camera.md](docs/camera.md).
 
-### Every setting documents itself
+## Complete Chromium policy management
 
-```
-$ tessaro-ctl config keys browser.url
-browser.url
-    The page the kiosk shows (default: the welcome page, http://127.0.0.1/; the self-test is http://127.0.0.1/selftest.html). A new origin also re-grants the device APIs to it.
-    value     http://127.0.0.1/  (default)
-    accepts   an http, https, file or data URL; may contain {key} placeholders - any setting's key, e.g. {data.table} or {device.name}
-    restarts  nothing: the agent applies it at once
-    env       KIOSK_URL
-```
+Chromium's enterprise policies are the most powerful way to shape a browser,
+and Tessaro puts all of them in your hands.
 
-`tessaro-ctl config keys` lists them all, `config get` shows what a device is
-using, and `config unset KEY` goes back to the image default.
-
-### Maintenance and debug screens
-
-```sh
-tessaro-ctl config set 'data.msg=We are restocking the shelves. Back at 14:00.' \
-  'browser.maintenance.url=http://127.0.0.1/maintenance.html?message={data.msg}'
-tessaro-ctl browser maintenance on     # `off` goes straight back to your site
-```
-
-![The maintenance page with a custom message](docs/images/maintenance.jpg)
-
-`browser debug on` replaces the page with the device's name and addresses in
-large type - the thing a technician in front of the screen needs. The
-template is yours too:
-
-```sh
-tessaro-ctl browser debug on --template '{device.name}\n\nip     {network.cidr} via {network.gateway}\nmac    {network.mac}\ndata   {storage.data_free} free\n\nurl    {browser.url}'
-```
-
-![The debug screen with that template](docs/images/debug-screen.jpg)
-
-Neither restarts the browser, and your site's device permissions stay where
-they are.
-
-### Page zoom
-
-```sh
-tessaro-ctl browser zoom 125     # like Ctrl+/- in Chrome, 25 to 500; 100 is no zoom
-```
-
-It is the same zoom Ctrl+/- sets in a desktop Chrome, for every site and on
-top of `screen.scale`. The browser restarts to take it, so the page reloads.
-
-### Chromium policies
-
-Any [Chromium policy](https://chromeenterprise.google/policies/) the image
-does not set can be added as a named document, merged over the image's own:
+- 🔐 **Locked down out of the box**: nothing pops over your page, no sign-in, no sync, no background traffic.
+- 🔄 **Kept in step for you**: device grants, proxy and certificates follow your settings, with no hand-editing.
+- 📚 **Any [Chromium policy](https://chromeenterprise.google/policies/) you need**, as named documents with comments, in a clear priority order.
+- ✅ **Checked before they land**: a typo or a conflict with what the device manages is refused, with the line.
+- 🔍 **One merged view** of exactly what Chromium reads, and where each policy came from.
+- 🖱️ **Edited where you work**: the CLI, the desktop app or Webconfig, with Move up and Move down.
 
 ```jsonc
 // lockdown.json: comments and trailing commas are fine
 {
   "URLBlocklist": ["*"],
   "URLAllowlist": ["https://menu.example.com"],
-  "SpellcheckEnabled": false,
 }
 ```
 
 ```sh
 tessaro-ctl browser policies set lockdown lockdown.json   # or `edit lockdown` in $EDITOR
 tessaro-ctl browser policies show                          # what Chromium reads, and from where
-tessaro-ctl browser policies move lockdown 1               # the top one wins a policy others set too
+tessaro-ctl browser policies move lockdown 1               # the top one wins
 ```
 
-They are kept in priority order: when two set the same Chromium policy, the
-one higher in the list wins, and a new one goes to the bottom. The GUI and
-Webconfig edit them in place on their Policies page, with Move up and Move
-down. A mistake is
-refused with its line before anything is saved, and so is a policy the device
-sets itself (its site's device permissions, the proxy, the extra certificate
-authorities), with the command that does. The browser restarts when the
-result changes.
+The browser restarts only when the merged result actually changes. More in
+[docs/kiosk-browser.md](docs/kiosk-browser.md#policies).
 
-### Files for offline use
+## Tested hardware
 
-```
-$ tessaro-ctl files sync ./site-assets
-sent       media/promo.mp4  397.1 kB
-sent       menu.json  20 B
-done: 2 sent (0.4 MB), 0 unchanged
+| Platform | Hardware | Machine | Status |
+| --- | --- | --- | --- |
+| x86_64 | Dell OptiPlex 7050 | `genericx86-64` | ✅ tested |
+| arm64 | Raspberry Pi 3 Model B+ | `raspberrypi3-64` | ✅ tested |
+| arm64 | Raspberry Pi 5 (SD, USB or NVMe) | `raspberrypi5` | ✅ tested |
+| arm64 | Raspberry Pi 4 | | ⏳ testing pending |
+| x86_64 | Other UEFI PCs and mini PCs | `genericx86-64` | 🧪 more to come, community testing appreciated |
+| x86_64 | QEMU | `qemux86-64` | 🛠️ development and end-to-end tests |
 
-$ tessaro-ctl files list -R
-2026-09-24 18:40             media/
-2026-09-24 18:40   397.1 kB  media/promo.mp4
-2026-09-24 18:40       20 B  menu.json
-total              397.1 kB
-```
+Every machine runs the same software. On the Pi 3, plan around its 1 GB of
+memory, shared with the GPU. Tried Tessaro on other hardware? Open an issue
+and tell us how it went.
 
-`sync` works like `rsync -r --delete` and asks before removing anything. Your
-page reads `http://127.0.0.1/files/media/promo.mp4`, and an https site can
-fetch it without a mixed-content or local-network prompt. Uploads are resumed
-if the connection drops, and a file only appears once it is complete.
+## Pre-built images
 
-### The screen
+Chromium alone takes hours to compile. You do not have to: ready-to-flash
+images for every machine are published on
+**[GitHub Releases](https://github.com/alhafoudh/tessaro-os/releases)**.
+
+They are built by GitHub Actions on a **self-hosted runner** on a beefy build
+machine, which keeps the whole Yocto download and build cache warm between
+builds and has room for builds that run for hours. The same pipeline boots
+the qemu image and runs the end-to-end suite against it. How it all works is
+in [docs/ci.md](docs/ci.md).
 
 ```sh
-tessaro-ctl screen modes                                  # what the panel offers
-tessaro-ctl config set screen.resolution=1920x1080
-tessaro-ctl screen confirm                                # within 60 s, or it reverts
-tessaro-ctl config set screen.osk=always                  # on-screen keyboard even with a keyboard attached
+bmaptool copy tessaro-os-raspberrypi5-<version>.wic.zst /dev/sdX   # first install
+tessaro-ctl update send tessaro-os-raspberrypi5-<version>.wic.zst  # every update after that, over the network
 ```
 
+## Quick start
+
+1. **Flash** an image to an SD card, USB stick or disk and boot it with a
+   network cable in. The welcome page shows the device's name and address.
+2. **Get the client** and find the device:
+
+   ```sh
+   mise run ctl:build            # or the tessaro-ctl from a release
+   tessaro-ctl nodes list        # devices answering on this network
+   ```
+
+3. **Claim it.** You get a token and its root password, shown once:
+
+   ```sh
+   tessaro-ctl -n golden-thistle-5731 access claim
+   ```
+
+4. **Point it at your site**:
+
+   ```sh
+   tessaro-ctl -n golden-thistle-5731 config set browser.url=https://menu.example.com/
+   ```
+
+No laptop at hand? Join the device's hotspot with a phone, scan the QR code on
+screen, and Quick Setup opens by itself.
+
+Set `TESSARO_NODE=golden-thistle-5731` and the `-n` can go; the tour below
+leaves it out.
+
+## A quick tour
+
+**See what a device is doing**
+
 ```
-screen.resolution=1920x1080 is on probation. Check the screen, then run
-
-    tessaro-ctl screen confirm
-
-within 59s, or it goes back to the default on its own.
+$ tessaro-ctl device status
+name         golden-thistle-5731
+machine      raspberrypi5
+claimed      yes
+browser url  https://menu.example.com/
+showing      https://menu.example.com/
+browser      answering
+audio        hdmi 80%
+time         Europe/Bratislava, in sync
 ```
 
-A mode nobody can see never sticks: without the confirm, and after a reboot,
-the device goes back to what worked. High-resolution panels are scaled
-automatically.
-
-### The network
-
-```
-$ tessaro-ctl network show
-hostname     tessaro
-interface    enp0s1
-address      10.0.2.15/24
-gateway      10.0.2.2
-public ip    203.0.113.7
-dns          10.0.2.3
-mac          52:54:00:12:35:02
-
-interfaces:
-  enp0s1       ethernet  up       10.0.2.15/24 fec0::5054:ff:fe12:3502/64 fe80::5054:ff:fe12:3502/64 *
-  lo           loopback  unknown  127.0.0.1/8 ::1/128
-  sit0         virtual   down     -
-
-  * carries the default route. `tessaro-ctl network interfaces` for details.
-```
+**One image, a different page per screen**
 
 ```sh
-tessaro-ctl config set network.ethernet.mode=static \
-  network.ethernet.address=192.168.1.50/24 network.ethernet.gateway=192.168.1.1
-tessaro-ctl network wifi scan
-tessaro-ctl network wifi join Office        # prompts for the password
-tessaro-ctl network speedtest               # the device's link, not yours
-tessaro-ctl network proxy set 'http://jan:s3cret@proxy.corp.test:8080' --bypass .corp.test
-tessaro-ctl network proxy test              # the address the internet sees through it
-tessaro-ctl network speedtest --no-proxy    # the link itself, around the proxy
+tessaro-ctl config set 'browser.url=https://menu.example.com/?table={data.table}' data.table=12
+tessaro-ctl config set 'browser.url=https://{device.name}.signage.example.com/'
 ```
 
-Behind a corporate proxy everything goes through it - the browser, the
-device's own checks and the speed test - over `http://` or `socks5://`, with
-a login in the URL if the proxy wants one.
-
-Out of the box the WiFi radio is a hotspot, `tessaro-<device name>`: open
-until the device is claimed, then protected by a password shown with the root
-password.
-
-### Sound
-
-```
-$ tessaro-ctl audio show
-output   auto -> QEMU USB Audio Analog Stereo (usb)  80%
-input    auto -> (none)  100%
-```
+**Maintenance and debug screens**
 
 ```sh
-tessaro-ctl audio output hdmi && tessaro-ctl audio volume 60 && tessaro-ctl audio test
+tessaro-ctl config set 'data.msg=Back at 14:00.' \
+  'browser.maintenance.url=http://127.0.0.1/maintenance.html?message={data.msg}'
+tessaro-ctl browser maintenance on
+tessaro-ctl browser debug on      # name and addresses in large type, for the technician
 ```
 
-`auto` picks the USB or Bluetooth device plugged in last, then HDMI with a
-screen on it, then the jack. Changes apply to sound already playing, and
-nothing restarts.
+<p align="center">
+  <img src="docs/images/maintenance.jpg" width="49%" alt="The maintenance page with a custom message">
+  <img src="docs/images/debug-screen.jpg" width="49%" alt="The debug screen">
+</p>
 
-### Time
+**Offline files**
 
 ```sh
-tessaro-ctl time show                                  # timezone, in sync or not, server, offset, drift
-tessaro-ctl time timezone Europe/Bratislava            # `time zones` lists them; no restart
-tessaro-ctl time ntp on --server ntp1.corp.test --server ntp2.corp.test
-tessaro-ctl time ntp off && tessaro-ctl time set       # no time server: this computer's clock
+tessaro-ctl files sync ./site-assets      # like rsync, resumable; served at http://127.0.0.1/files/
 ```
 
-Devices start on UTC and take their NTP servers from the network's DHCP,
-else a public fallback. A network that blocks outside NTP needs its own
-servers named, or TLS fails once the clock drifts.
+**Printers**
 
-### Scripts and schedules
+```sh
+tessaro-ctl printer discover
+tessaro-ctl printer create office --uri ipp://10.0.0.5/ipp/print
+tessaro-ctl printer create receipt --raw --uri socket://10.0.0.9:9100
+tessaro-ctl config set printer.enable=1   # window.print() now prints, silently
+```
+
+**Screen, network and time**
+
+```sh
+tessaro-ctl config set screen.resolution=1920x1080 && tessaro-ctl screen confirm
+tessaro-ctl network wifi join Office
+tessaro-ctl network proxy set 'http://proxy.corp.test:8080' --bypass .corp.test
+tessaro-ctl time timezone Europe/Bratislava
+```
+
+**Scripts and schedules**
 
 ```sh
 tessaro-ctl script create screen-off --body 'tessaro-ctl screen power off'
-tessaro-ctl script create weekend --body 'tessaro-ctl config set browser.url=https://example.com/weekend'
-tessaro-ctl script create cleanup --file cleanup.sh --on-error continue --timeout 10m
-tessaro-ctl script run cleanup                         # its output, then how it ended
-tessaro-ctl schedule create screen-off --on 'Mon..Fri 20:00' --on 'Sat,Sun 23:00' --script screen-off
-tessaro-ctl schedule create weekend --on 'Sat,Sun 08:00' --script weekend
-tessaro-ctl schedule check 'Mon..Fri 07:00'            # when it fires, before saving anything
-tessaro-ctl schedule list                              # next run, how the last one ended
-tessaro-ctl script logs cleanup
+tessaro-ctl schedule create screen-off --on 'Mon..Fri 20:00' --script screen-off
 ```
 
-A script is a shell body run by `/bin/sh` as root. A failing command stops
-the run unless `--on-error continue`; `--timeout` bounds a whole run, and
-`--concurrency skip` starts no run while one is going. A schedule is systemd
-`OnCalendar` expressions (`man systemd.time`) in the device's timezone and
-the script they run. Times missed while the device was off are skipped. With
-`--bridge` the kiosk page may run a script through `tessaro.scripts.run()`.
-
-### Printing
+**Updates and access**
 
 ```sh
-tessaro-ctl printer discover                           # printers on USB and the network, with their URIs
-tessaro-ctl printer create office --uri ipp://10.0.0.5/ipp/print
-tessaro-ctl printer create receipt --raw --uri socket://10.0.0.9:9100
-tessaro-ctl printer test office && tessaro-ctl printer list
-tessaro-ctl config set printer.enable=1                # the page may print now
+tessaro-ctl update send tessaro-os-raspberrypi5-<version>.wic.zst
+tessaro-ctl ssh connect                   # root shell with your own SSH key
+tessaro-ctl access token create phone     # a token for a second client
 ```
 
-A network printer from the last decade needs no driver (IPP Everywhere or
-AirPrint); a receipt or label printer is `--raw` and gets the page's bytes as
-they are. The first printer is the default, the one `window.print()` prints
-on without a dialog once `printer.enable` is on; `printer default` picks
-another. A page in `browser.bridge.mode=actions` can also print to any
-printer by name with `tessaro.printer.print()`. Printers that need a vendor
-driver do not work; see [docs/printing.md](docs/printing.md).
+Every command group has worked examples in `tessaro-ctl <group> --help`, and
+`tessaro-ctl config keys` documents every setting.
 
-### Updating
+### The desktop app
+
+`tessaro-gui` is everything the CLI does, in windows and tables: every device
+on the network in one list, a page per area, a file manager, printers,
+policies, a live journal, and a live VNC view of the screen. It shares the
+CLI's devices and tokens, so a device claimed in one is open in the other.
+
+### Webconfig
+
+Every device serves its own management pages at `https://<device>:7400/`.
+Quick Setup gets a fresh device online from a phone, and the rest covers what
+the desktop app does, from any browser. `tessaro-ctl access webconfig` opens
+it signed in.
+
+## Build it yourself
 
 ```sh
-mise run image:update golden-thistle-5731                  # build host to device; settings stay
-tessaro-ctl update send tessaro-os-raspberrypi3-64.rootfs.wic.zst   # the same, by hand
-tessaro-ctl update status
+git clone git@github.com:alhafoudh/tessaro-os.git   # or https://github.com/alhafoudh/tessaro-os.git
+cd tessaro-os
+mise trust && mise install
+mise run image:build:rpi5     # or image:build:rpi3, image:build:x86, image:build:qemu
 ```
 
-`--wipe-data` also starts `/data` over, and `--repartition` rewrites the whole
-disk for a device on an older layout. A dropped upload resumes where it
-stopped.
+You need Linux with Docker, [kas](https://kas.readthedocs.io/) and
+[mise](https://mise.jdx.dev/), and plenty of disk. The first build takes hours;
+later ones reuse the cache. [DEVELOPMENT.md](DEVELOPMENT.md) covers building,
+QEMU, flashing from a workstation and the tests.
 
-### Getting in when you need to
-
-```sh
-tessaro-ctl ssh connect                     # root shell with your ~/.ssh key, host key pinned
-                                            # (unclaimed: no key, empty password)
-tessaro-ctl ssh connect -- journalctl -fu tessaro-kiosk
-tessaro-ctl access token create phone       # a token for a second client
-tessaro-ctl device factory-reset -y         # settings, owners and files gone
-```
-
-Tab completion: `source <(tessaro-ctl completion bash)` (also zsh and
-powershell). On the device it is already on.
-
-### The desktop client
-
-**Everything `tessaro-ctl` does, in windows and tables.** `tessaro-gui` shares
-the command line's device list, pins and tokens (`~/.config/tessaro/tessaro.db`),
-so a device claimed with one is open in the other.
-
-```sh
-mise run gui:build              # build/gui-target/release/tessaro-gui, for this machine
-```
-
-- The device list shows every device answering on the network next to the
-  ones you know. Log in to or claim one from there; the certificate is shown
-  before it is pinned.
-- Each device opens in a window of its own inside the app. It has an overview,
-  every setting in tables (double-click to edit), and a page for each command
-  group:
-  - the screen and its modes, network and WiFi, storage, sound
-  - tokens and passwords, SSH keys
-  - a file manager for `/data/files`
-  - image updates with progress
-- The Log page follows the journal live. The VNC panel shows the screen live
-  (view only) through an SSH tunnel it sets up itself.
-- Keys: Enter confirms, Esc closes, Up and Down move through a table,
-  Cmd + and Cmd - zoom.
-
-## Hardware
-
-| Hardware | Machine | State |
-| --- | --- | --- |
-| Raspberry Pi 3 Model B and B+ | `raspberrypi3-64` | kiosk validated on 3B+; direct firmware boot on SD/USB awaits hardware validation |
-| Raspberry Pi 5 | `raspberrypi5` | direct firmware boot on SD/USB/NVMe awaits hardware validation |
-| x86_64 PCs and mini PCs, UEFI | `genericx86-64` | configured, not yet built on real hardware |
-| QEMU x86_64 | `qemux86-64` | for development and the end-to-end tests |
-
-Every machine runs the same image. On the Pi 3, memory is the limit to plan
-around: 1 GB, shared with the GPU.
-
-## How it works
+## Under the hood
 
 Tessaro is a Yocto Linux distribution derived from
-[Moonforge](https://moonforgelinux.org/): a read-only root filesystem with
-`/etc` as an overlay on a persistent `/data` partition, systemd, Weston as the
-compositor and Chromium 147 as the browser. `tessaro-agent`, a Rust service,
-supervises the browser over CDP and is the device's control plane;
-`tessaro-ctl` talks to it over a local socket on the device or over pinned TLS
-from anywhere else, and `tessaro-gui` does the same from a desktop.
-[docs/](docs/) explains each part and the reasons behind it.
+[Moonforge](https://moonforgelinux.org/): a read-only root filesystem with a
+persistent data partition, systemd, Weston and Chromium. `tessaro-agent`, a
+Rust service, supervises the browser over the DevTools protocol and is the
+device's control plane, keeping its state in SQLite. `tessaro-ctl`,
+`tessaro-gui` and Webconfig all speak the same HTTP API over pinned TLS.
 
 ## More
 
-- [DEVELOPMENT.md](DEVELOPMENT.md) - building, running in QEMU, flashing from
-  a workstation, testing the agent.
-- [docs/](docs/) - how each subsystem works: the browser, settings and
-  claiming, display, networking, updates, sound, remote access, the desktop
-  client.
-- `tessaro-ctl --help` - worked examples for every command group.
+- [DEVELOPMENT.md](DEVELOPMENT.md): building, QEMU, flashing, tests and CI.
+- [docs/](docs/): how each part works, and why.

@@ -292,21 +292,19 @@ kiosk.
 
 | Machine | Purpose | State |
 | --- | --- | --- |
-| `qemux86-64` | development, boots through `mise run qemu:vnc` | builds and boots |
-| `genericx86-64` | shipping x86_64 hardware (UEFI), Intel or AMD GPU | configured, never built end to end |
-| `raspberrypi3-64` | Raspberry Pi 3B / 3B+, SD or USB | direct firmware image builds; boot files and mounts inspected; hardware validation pending |
-| `raspberrypi5` | Raspberry Pi 5, SD / USB / NVMe | direct firmware image builds; boot files and mounts inspected; hardware validation pending |
+| `qemux86-64` | development, boots through `mise run qemu:vnc` | builds and boots; the e2e suite runs on it |
+| `genericx86-64` | shipping x86_64 hardware (UEFI), Intel or AMD GPU | tested on a Dell OptiPlex 7050; other PCs untested |
+| `raspberrypi3-64` | Raspberry Pi 3B / 3B+, SD or USB | tested on a Pi 3 Model B+ |
+| `raspberrypi5` | Raspberry Pi 5, SD / USB / NVMe | tested on a Pi 5 |
 
-"Configured" means the kas chain resolves and bitbake parses it with the right
-`DISTRO`/`MACHINE`/`WKS_FILE`; `genericx86-64` has not been built or booted on
-real hardware yet. Expect its first build to surface fetch or packaging issues
-that parsing cannot.
+The Raspberry Pi 4 has no target yet. Hardware reports for x86 PCs other than
+the OptiPlex are welcome; the README keeps the matrix users see.
 
 Images are written from a workstation, not from the build host: `mise run
 image:pull` rsyncs the `$TESSARO_MACHINE` image and bmap from
 `$TESSARO_BUILD_HOST` into the repo root (gitignored), `mise run image:flash`
 writes it with bmaptool, and
 `mise run dev:tunnel` holds the VNC/SSH port forwards. Their settings live in the
-gitignored `mise.local.toml`; see README.md. Flashing is the manual path: a
+gitignored `mise.local.toml`; see DEVELOPMENT.md. Flashing is the manual path: a
 device on the update layout is updated over the network with `mise run
 image:update NAME` - see [updates.md](updates.md).

@@ -311,6 +311,22 @@ description = "Type check, ESLint and Prettier on Webconfig"
 dir = "{{config_root}}/webconfig"
 run = "npm run lint"
 
+[tasks."docs:screenshots"]
+description = "Render the README's welcome page screenshot from the shipped page and fixed data, with Playwright in docker"
+dir = "{{config_root}}"
+run = '''
+set -e
+# The fixture is the agent's own welcome.json body, QR code included.
+(cd agent && UPDATE_SCREENSHOTS=1 cargo test -p tessaro-agent welcome_screenshot_fixture)
+# The image's browser has to be the one playwright-core expects, so both
+# take the version pinned in package.json.
+version=$(node -p "require('./docs/screenshots/package.json').dependencies['playwright-core']")
+docker run --rm --init --user "$(id -u):$(id -g)" -e HOME=/tmp \
+    -v "$PWD:/repo" -w /repo/docs/screenshots \
+    "mcr.microsoft.com/playwright:v$version-noble" \
+    sh -c 'npm ci --no-audit --no-fund --silent && node shoot.mjs'
+'''
+
 [tasks."image:build"]
 description = "Build the image for $TESSARO_MACHINE (default qemux86-64)"
 dir = "{{config_root}}"

@@ -12,8 +12,12 @@ and friends through a synthetic seat. But that seat is a *second* `wl_seat`
 binds exactly one seat - `wayland_seat.cc:34` returns early once
 `connection->seat_` is set, which the libinput seat has done at startup. So
 clicks and keys are delivered to a seat the browser never bound. The fix is
-a small patch against `screen-share.c`, written up as item 11 in `TODO.md`; do
-not go looking for a flag.
+a small patch against `screen-share.c` that injects into the compositor's
+existing seat instead of creating one (`struct ss_seat` holding a
+`weston_seat *`, the `notify_*` calls unchanged), so remote and local share
+one cursor and one keyboard focus; do not go looking for a flag. Patching
+Chromium to bind more than one seat is the wrong end: a Chromium patch and a
+multi-hour rebuild against a few dozen lines in a module nothing else uses.
 
 **It cannot be done by adding a VNC backend to the running compositor.** In
 Weston a backend is what drives the display, and this one is on

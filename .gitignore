@@ -32,6 +32,10 @@
 /webconfig/src/api/schema.d.ts
 /webconfig/dist/
 
+# The README screenshot tool's Playwright, installed by
+# `mise run docs:screenshots`.
+/docs/screenshots/node_modules/
+
 # Build output and shared caches. No trailing slash on cache: in a worktree
 # it is a symlink to the main checkout's (CLAUDE.md), which `/cache/` misses.
 /build/

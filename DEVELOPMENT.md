@@ -262,6 +262,24 @@ Actions tab (`image.yml`), on a self-hosted runner on the build host, with
 e2e on the qemu image and an optional release. The runner's setup is in
 [docs/ci.md](docs/ci.md).
 
+## README screenshots
+
+**The welcome page screenshot is rendered, never taken from a device**, so it
+always shows the same made-up device and follows the page as it ships:
+
+```sh
+mise run docs:screenshots     # writes docs/images/welcome.jpg
+```
+
+The task writes `docs/screenshots/welcome.json` with the agent's own
+`welcome.json` code (`welcome_value` and `qr.rs`, through the
+`the_checked_in_welcome_screenshot_fixture_is_current` test, which also fails
+`agent:test` once the fixture is out of date), then loads the shipped
+`index.html` in Playwright's Docker image at 1920x1080 and answers its
+`/welcome.json` with that fixture (`docs/screenshots/shoot.mjs`). Rerun it
+after changing the welcome page or the QR code, and commit the fixture and
+the image together. It needs Docker.
+
 ## Repository layout
 
 | Path | What it is |
@@ -273,7 +291,7 @@ e2e on the qemu image and an optional release. The runner's setup is in
 | `gui/` | `tessaro-gui`, the desktop client (a workspace of its own) |
 | `webconfig/` | Webconfig, the management pages the device serves to a browser |
 | `test/e2e/` | the end-to-end suite |
-| `docs/` | how each subsystem works |
+| `docs/` | how each subsystem works; `docs/screenshots/` renders the README's screenshot |
 | `mise.toml` | every task |
 
 This repository is the kas root; every other layer is a pinned checkout kas

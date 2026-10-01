@@ -1042,4 +1042,39 @@ mod tests {
         assert!(!is_welcome("http://127.0.0.1:8080/", origin));
         assert!(!is_welcome("https://example.com/", origin));
     }
+
+    /// The `welcome.json` the README's screenshot of the welcome page is
+    /// rendered from (`mise run docs:screenshots`): fixed data, but the
+    /// body and the QR code this agent would send. `UPDATE_SCREENSHOTS=1
+    /// cargo test` writes it.
+    #[test]
+    fn the_checked_in_welcome_screenshot_fixture_is_current() {
+        let net = net(vec![interface(
+            "eth0",
+            "ethernet",
+            &[("192.168.1.42", "ipv4", "global")],
+        )]);
+        let body = welcome_value(&welcome(
+            "golden-thistle-5731",
+            &net,
+            Some("tessaro-golden-thistle-5731"),
+            false,
+            Some(true),
+        ));
+        let text = format!("{}\n", serde_json::to_string_pretty(&body).unwrap());
+        let file = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../docs/screenshots/welcome.json"
+        );
+        if std::env::var_os("UPDATE_SCREENSHOTS").is_some() {
+            std::fs::write(file, &text).unwrap();
+            return;
+        }
+        let checked_in = std::fs::read_to_string(file).unwrap_or_default();
+        assert!(
+            checked_in == text,
+            "docs/screenshots/welcome.json is out of date; run \
+             `mise run docs:screenshots` and commit it with the screenshots"
+        );
+    }
 }

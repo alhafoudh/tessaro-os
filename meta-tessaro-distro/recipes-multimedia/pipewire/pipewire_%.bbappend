@@ -19,7 +19,7 @@
 #       APIs, network audio and desktop integration; each is dependencies
 #       and build time for nothing a kiosk plays.
 #
-# bluez stays: Bluetooth speakers are the next step (TODO.md), and with the
+# bluez stays: Bluetooth speakers are the next step, and with the
 # codec plugins already built that is configuration, not a rebuild.
 # pw-cat is pw-play and pw-record, which the agent's `audio test` uses; they
 # need sndfile. readline is only pw-cli's line editing, for a technician.

@@ -474,7 +474,7 @@ they need from us is kernel drivers and file permissions.
   grant persists and `getDevices()` returns it on later boots. The only
   non-interactive route is CDP's experimental `DeviceAccess.selectPrompt`.
   `agent.device_access` already sends `DeviceAccess.enable`, but nothing
-  answers a prompt yet; the rest is on TODO.md.
+  answers a prompt yet.
 * **Web Bluetooth is experimental on Linux.** `runtime_enabled_features.json5`
   leaves the Linux bucket at `experimental`, so `navigator.bluetooth` does not
   exist until `KIOSK_ENABLE_FEATURES` names `WebBluetooth`. It ships empty.

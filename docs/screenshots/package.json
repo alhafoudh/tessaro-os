@@ -1,0 +1,9 @@
+{
+  "name": "tessaro-screenshots",
+  "private": true,
+  "type": "module",
+  "description": "The README's screenshots, rendered by mise run docs:screenshots",
+  "dependencies": {
+    "playwright-core": "1.63.0"
+  }
+}
