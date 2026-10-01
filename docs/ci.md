@@ -42,15 +42,17 @@ images and clients stay workflow artifacts.
 * `build` runs once per machine, one at a time, on the self-hosted runner:
   `image:name`, then `image:build`. It uploads the versioned
   `tessaro-os-<machine>-<version>-<sha>.wic.zst` and its `.wic.bmap` as the
-  `image-<machine>` artifact. On qemux86-64 it then runs `e2e:setup` and
-  `e2e:run` and uploads `build/e2e/` as `e2e-logs`.
+  `image-<machine>` artifact.
+* `e2e` runs after every build leg, on the self-hosted runner, when e2e is
+  ticked and qemux86-64 was built: `e2e:setup` and `e2e:run`, then
+  `build/e2e/` uploaded as `e2e-logs`.
 * `clients` runs `ctl:build` and `gui:build` on GitHub's runners, one leg
   per platform: linux-x86_64, linux-aarch64, macos-arm64 and
   windows-x86_64. It uploads `tessaro-ctl-<version>-<sha>-<platform>` and
   `tessaro-gui-<version>-<sha>-<platform>`, as `.tar.gz`, or `.zip` on
   Windows and for the macOS `Tessaro.app`, as `clients-<platform>`.
-* `release` runs only when asked and only when every job, e2e included,
-  passed. It tags the built commit `v<version>-<sha>` and attaches every
+* `release` runs only when asked and only when every job passed, e2e
+  included unless it was skipped. It tags the built commit `v<version>-<sha>` and attaches every
   image, bmap and client archive.
 
 **The self-hosted runner builds images and nothing else.** The clients
@@ -78,11 +80,24 @@ xattr -dr com.apple.quarantine Tessaro.app tessaro-ctl
 **On Windows the tasks run in Git Bash.** `MISE_WINDOWS_DEFAULT_INLINE_SHELL_ARGS`
 makes mise hand their sh bodies to `bash -c` instead of cmd.
 
-**e2e runs in the build job, not after it.** The suite boots runqemu out of
-the kas build tree that built the image (native qemu, OVMF, the
-`qemuboot.conf`), so it needs that workspace, not a downloaded `.wic`.
-`E2E_WORKER_OFFSET=10` moves its ports away from a workstation's own VMs and
-`dev:tunnel`'s forwards on the same host. Its gems go under `build/`.
+**e2e is a job of its own, on the build host, in the workspace the build
+left.** The suite boots runqemu out of the kas build tree that built the
+image (native qemu, OVMF, the `qemuboot.conf`), so it needs that tree, not
+a downloaded `.wic`. There is one runner and its workspace persists, so the
+tree is still there; a failed e2e is re-run on its own ("Re-run failed
+jobs") without building again. `needs: build` waits for every build leg, so
+on a run with several machines e2e starts after the last one.
+
+* **The workflow has one concurrency group, `beef-yocto`**, so no other run
+  builds into the workspace between `build` and `e2e`. A run started while
+  one is going waits; GitHub keeps only one run waiting and cancels an older
+  waiting one.
+* **`e2e` first checks the tree holds this run's image**: `image:name` must
+  be this run's version, and the deploy directory's
+  `tessaro-os-qemux86-64.rootfs.wic.zst` must point at that name. A failed
+  qemu build fails here instead of testing an older image.
+* `E2E_WORKER_OFFSET=10` moves its ports away from a workstation's own VMs
+  and `dev:tunnel`'s forwards on the same host. Its gems go under `build/`.
 
 **A release comes only from a clean tree.** `build` fails up front when
 `release` is set and `image:name` ends in `-dirty`, since that name would

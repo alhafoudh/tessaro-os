@@ -44,6 +44,13 @@ on:
 permissions:
   contents: read
 
+# One run at a time: e2e boots the image the build left in the runner's
+# workspace, so no other run may build in between. A run started while one
+# is going waits for it.
+concurrency:
+  group: beef-yocto
+  cancel-in-progress: false
+
 env:
   # mise refuses an untrusted mise.toml; the checkout is this repo's own.
   MISE_TRUSTED_CONFIG_PATHS: ${{ github.workspace }}
@@ -160,10 +167,56 @@ jobs:
           compression-level: 0
           retention-days: 14
 
-      # e2e boots the image out of the kas build tree that built it, not out
-      # of the .wic alone, so it runs here, in the same workspace.
+  # e2e boots the image out of the kas build tree that built it (native qemu,
+  # OVMF, qemuboot.conf), not out of the .wic alone, so it runs on the build
+  # host in the same workspace, which build left in place. A job of its own,
+  # so it can be re-run without the build. It waits for every build leg.
+  e2e:
+    needs: [matrix, build]
+    # A failed Pi leg does not keep the qemu image from its test; the check
+    # below fails if the qemu build is not the one in the tree.
+    if: >-
+      always() && inputs.e2e && needs.matrix.result == 'success'
+      && needs.build.result != 'cancelled'
+      && contains(fromJSON(needs.matrix.outputs.machines), 'qemux86-64')
+    runs-on: [self-hosted, yocto]
+    # The wait for the host below, plus the suite's 30.
+    timeout-minutes: 400
+    env:
+      TESSARO_MACHINE: qemux86-64
+    steps:
+      # clean: false, so the build tree build left stays.
+      - uses: actions/checkout@v5
+        with:
+          clean: false
+
+      # The tree's latest image must be this commit's, or the suite would
+      # test something else than what build uploaded.
+      - name: Check the image is this run's
+        env:
+          EXPECTED: ${{ needs.matrix.outputs.version }}
+        run: |
+          name=$(mise run --quiet image:name | tail -n 1)
+          version=${name#tessaro-os-qemux86-64-}
+          version=${version%.wic.zst}
+          [ "${version%-dirty}" = "$EXPECTED" ] || { echo "::error::the checkout is $version but the run is $EXPECTED"; exit 1; }
+          latest=$(readlink build/qemux86-64/tmp/deploy/images/qemux86-64/tessaro-os-qemux86-64.rootfs.wic.zst || true)
+          [ "$latest" = "$name" ] || { echo "::error::the tree's latest image is ${latest:-missing}, not $name"; exit 1; }
+          echo "testing $name"
+
+      # One build or e2e run at a time across every checkout on the host
+      # (CLAUDE.md).
+      - name: Wait for the host to be free
+        timeout-minutes: 360
+        run: |
+          while busy=$(pgrep -af 'kas-container|bitbake'); do
+            echo "waiting for:"
+            echo "$busy"
+            sleep 60
+          done
+
       - name: e2e
-        if: matrix.machine == 'qemux86-64' && inputs.e2e
+        timeout-minutes: 30
         env:
           E2E_ARGS: ${{ inputs.e2e_args }}
           # Ports away from the workstation's own VMs and dev:tunnel forwards.
@@ -176,7 +229,7 @@ jobs:
           mise run e2e:run -- "$@"
 
       - uses: actions/upload-artifact@v7
-        if: always() && matrix.machine == 'qemux86-64' && inputs.e2e
+        if: always()
         with:
           name: e2e-logs
           path: build/e2e/
@@ -258,8 +311,13 @@ jobs:
           retention-days: 14
 
   release:
-    needs: [matrix, build, clients]
-    if: inputs.release
+    needs: [matrix, build, e2e, clients]
+    # always(), since e2e is skipped when unticked or without qemux86-64;
+    # anything else must have passed.
+    if: >-
+      always() && inputs.release
+      && needs.build.result == 'success' && needs.clients.result == 'success'
+      && (needs.e2e.result == 'success' || needs.e2e.result == 'skipped')
     runs-on: ubuntu-latest
     permissions:
       contents: write
