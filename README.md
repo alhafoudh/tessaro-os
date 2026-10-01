@@ -122,6 +122,8 @@ The browser restarts only when the merged result actually changes. More in
 | Platform | Hardware | Machine | Status |
 | --- | --- | --- | --- |
 | x86_64 | Dell OptiPlex 7050 | `genericx86-64` | ✅ tested |
+| x86_64 | Radxa X4 (Intel N100) | `genericx86-64` | ⏳ testing pending |
+| x86_64 | Radxa X5 (Intel N150) | `genericx86-64` | ⏳ testing pending |
 | arm64 | Raspberry Pi 3 Model B+ | `raspberrypi3-64` | ✅ tested |
 | arm64 | Raspberry Pi 4 (SD or USB) | `raspberrypi4-64` | ⏳ testing pending |
 | arm64 | Raspberry Pi 5 (SD, USB or NVMe) | `raspberrypi5` | ✅ tested |
