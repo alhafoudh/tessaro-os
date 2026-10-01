@@ -3,8 +3,9 @@ python = "3.12.11"
 # The agent is built by bitbake with the rustc the Chromium pin dictates
 # (meta-lts-mixins-rust, see kas/repo/meta-chromium.yml). Pin the host
 # toolchain to the same version so `cargo test` cannot pass on a language
-# feature the image's compiler does not have.
-rust = "1.95.0"
+# feature the image's compiler does not have. The lint tasks need rustfmt and
+# clippy, which a fresh install (CI) does not bring on its own.
+rust = { version = "1.95.0", components = "rustfmt,clippy" }
 # Webconfig is built by bitbake with the nodejs-native meta-browser brings
 # for Chromium. The same version here, so a dependency that needs a newer
 # Node fails on the workstation, not in the image build.

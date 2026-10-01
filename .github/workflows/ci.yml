@@ -18,6 +18,9 @@ permissions:
 env:
   # mise refuses an untrusted mise.toml; the checkout is this repo's own.
   MISE_TRUSTED_CONFIG_PATHS: ${{ github.workspace }}
+  # Keep `mise run` to the tools each job's install_args installed, instead
+  # of installing every tool in mise.toml before the first task.
+  MISE_AUTO_INSTALL: "false"
 
 jobs:
   agent:
