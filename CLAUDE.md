@@ -91,6 +91,7 @@ Use the mise tasks rather than calling `kas-container` directly:
 | `mise run image:build:qemu` | Same, forced to `qemux86-64` |
 | `mise run image:build:x86` | Same, forced to `genericx86-64` |
 | `mise run image:build:rpi3` | Same, forced to `raspberrypi3-64` (Pi 3B / 3B+) |
+| `mise run image:build:rpi4` | Same, forced to `raspberrypi4-64` (Pi 4B / 400 / CM4) |
 | `mise run image:build:rpi5` | Same, forced to `raspberrypi5` (Pi 5) |
 | `mise run image:shell` | Interactive kas shell (cwd is the build dir) |
 | `mise run image:clean` | Drop build artifacts, keep sstate and downloads |

@@ -161,6 +161,11 @@ is how Chromium's `PACKAGECONFIG` and `CHROMIUM_EXTRA_ARGS` are set.
   include that file last, and the agent adds the include at boot to a
   `config.txt` that lacks it (`render_firmware` in `render.rs`), since an
   update never rewrites `config.txt`.
+* **The Pi 4 target is `raspberrypi4-64` and covers the 4B, 400 and CM4** -
+  the pinned `meta-raspberrypi` carries their device trees in
+  `RPI_KERNEL_DEVICETREE`, Cortex-A72 tuning and full KMS, and the fragment
+  adds nothing to the shared configuration. `device.gpu_mem` applies as on
+  the Pi 3. Storage selection follows **Pi storage boot**.
 * **The Pi 5 target is `raspberrypi5`.** The pinned
   `meta-raspberrypi` supplies Cortex-A76 tuning, the BCM2712 device tree and
   kernel configuration and full KMS. `gpu_mem` has no effect on Pi 5.
@@ -265,6 +270,7 @@ labels remain fixed. `console=tty1` exposes Linux boot messages on HDMI.
 | Target | Boot media | Firmware prerequisite |
 | --- | --- | --- |
 | Pi 3B / 3B+ | SD, USB flash or USB SSD, including NVMe in a USB enclosure | Pi 3B needs USB host boot enabled in OTP; Pi 3B+ supports it out of the box |
+| Pi 4B / 400 / CM4 | SD (eMMC on a CM4), USB flash or USB SSD, including NVMe in a USB enclosure | USB boot needs a bootloader EEPROM from September 2020 or later with USB in `BOOT_ORDER` |
 | Pi 5 | SD, USB flash or USB SSD, native NVMe through a compatible PCIe adapter | EEPROM boot order must include the selected medium; non-HAT+ PCIe adapters need `PCIE_PROBE=1` |
 
 The Pi 5 fragment enables its external PCIe connector with `dtparam=pciex1`
@@ -295,9 +301,10 @@ kiosk.
 | `qemux86-64` | development, boots through `mise run qemu:vnc` | builds and boots; the e2e suite runs on it |
 | `genericx86-64` | shipping x86_64 hardware (UEFI), Intel or AMD GPU | tested on a Dell OptiPlex 7050; other PCs untested |
 | `raspberrypi3-64` | Raspberry Pi 3B / 3B+, SD or USB | tested on a Pi 3 Model B+ |
+| `raspberrypi4-64` | Raspberry Pi 4B / 400 / CM4, SD or USB | not yet tested on hardware |
 | `raspberrypi5` | Raspberry Pi 5, SD / USB / NVMe | tested on a Pi 5 |
 
-The Raspberry Pi 4 has no target yet. Hardware reports for x86 PCs other than
+Hardware reports for the Pi 4 and for x86 PCs other than
 the OptiPlex are welcome; the README keeps the matrix users see.
 
 Images are written from a workstation, not from the build host: `mise run

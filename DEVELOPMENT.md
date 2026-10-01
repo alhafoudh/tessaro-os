@@ -26,6 +26,7 @@ mise run image:build        # the image for $TESSARO_MACHINE (plus OVMF on qemu)
 mise run image:build:qemu   # qemux86-64      - development, boots under QEMU
 mise run image:build:x86    # genericx86-64   - x86_64 PCs and mini PCs, UEFI
 mise run image:build:rpi3   # raspberrypi3-64 - Pi 3B / 3B+, SD or USB storage
+mise run image:build:rpi4   # raspberrypi4-64 - Pi 4B / 400 / CM4, SD or USB storage
 mise run image:build:rpi5   # raspberrypi5    - Pi 5, SD / USB / NVMe storage
 
 TESSARO_MACHINE=raspberrypi3-64 mise run image:shell   # any task, any target
@@ -41,12 +42,13 @@ download and sstate caches in `cache/` are shared, so the second target reuses
 most of the first one's work. On the build host `cache/` is a symlink to
 `/srv/tessaro/cache`, which the CI runner uses too ([docs/ci.md](docs/ci.md)).
 
-**Pi images carry the board version in their filenames**, so Pi 3 and Pi 5
+**Pi images carry the board version in their filenames**, so each board's
 artifacts stay distinct:
 
 | Build task | Versioned image | Stable image symlink |
 | --- | --- | --- |
 | `image:build:rpi3` | `tessaro-os-raspberrypi3-64-<version>-<sha>[-dirty].wic.zst` | `tessaro-os-raspberrypi3-64.rootfs.wic.zst` |
+| `image:build:rpi4` | `tessaro-os-raspberrypi4-64-<version>-<sha>[-dirty].wic.zst` | `tessaro-os-raspberrypi4-64.rootfs.wic.zst` |
 | `image:build:rpi5` | `tessaro-os-raspberrypi5-<version>-<sha>[-dirty].wic.zst` | `tessaro-os-raspberrypi5.rootfs.wic.zst` |
 
 The `.wic.bmap` accompanies each image. A build wrapper selects the machine

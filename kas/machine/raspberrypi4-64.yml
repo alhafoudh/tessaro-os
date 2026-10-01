@@ -1,0 +1,12 @@
+# Raspberry Pi 4B, 400 and CM4, 64-bit (Cortex-A72). The BSP includes each
+# board's device tree; firmware selects it at boot.
+header:
+  version: 16
+  includes:
+    - kas/common/raspberrypi.yml
+
+# Both keys belong in the entry point of the config chain: an include cannot
+# set them, because meta-moonforge-distro.yml sets distro too and wins by
+# order. See the note in kas/common/tessaro.yml.
+distro: tessaro
+machine: raspberrypi4-64

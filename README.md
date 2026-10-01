@@ -123,8 +123,8 @@ The browser restarts only when the merged result actually changes. More in
 | --- | --- | --- | --- |
 | x86_64 | Dell OptiPlex 7050 | `genericx86-64` | ✅ tested |
 | arm64 | Raspberry Pi 3 Model B+ | `raspberrypi3-64` | ✅ tested |
+| arm64 | Raspberry Pi 4 (SD or USB) | `raspberrypi4-64` | ⏳ testing pending |
 | arm64 | Raspberry Pi 5 (SD, USB or NVMe) | `raspberrypi5` | ✅ tested |
-| arm64 | Raspberry Pi 4 | | ⏳ testing pending |
 | x86_64 | Other UEFI PCs and mini PCs | `genericx86-64` | 🧪 more to come, community testing appreciated |
 | x86_64 | QEMU | `qemux86-64` | 🛠️ development and end-to-end tests |
 
@@ -292,7 +292,7 @@ it signed in.
 git clone git@github.com:alhafoudh/tessaro-os.git   # or https://github.com/alhafoudh/tessaro-os.git
 cd tessaro-os
 mise trust && mise install
-mise run image:build:rpi5     # or image:build:rpi3, image:build:x86, image:build:qemu
+mise run image:build:rpi5     # or image:build:rpi3, image:build:rpi4, image:build:x86, image:build:qemu
 ```
 
 You need Linux with Docker, [kas](https://kas.readthedocs.io/) and

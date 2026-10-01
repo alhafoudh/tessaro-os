@@ -22,7 +22,7 @@ node = "22.11.0"
 #
 #   TESSARO_MACHINE=raspberrypi3-64 mise run image:build
 #
-# or use the image:build:qemu / :x86 / :rpi3 / :rpi5 wrappers. Valid values
+# or use the image:build:qemu / :x86 / :rpi3 / :rpi4 / :rpi5 wrappers. Valid values
 # are the basenames in kas/machine/.
 machine = "{{ env.TESSARO_MACHINE | default(value='qemux86-64') }}"
 
@@ -365,6 +365,11 @@ run = "TESSARO_MACHINE=genericx86-64 mise run image:build"
 description = "Build the raspberrypi3-64 image (Pi 3B / 3B+, SD or USB storage)"
 dir = "{{config_root}}"
 run = "TESSARO_MACHINE=raspberrypi3-64 mise run image:build"
+
+[tasks."image:build:rpi4"]
+description = "Build the raspberrypi4-64 image (Pi 4B / 400 / CM4, SD or USB storage)"
+dir = "{{config_root}}"
+run = "TESSARO_MACHINE=raspberrypi4-64 mise run image:build"
 
 [tasks."image:build:rpi5"]
 description = "Build the raspberrypi5 image (Pi 5, SD / USB / NVMe storage)"
