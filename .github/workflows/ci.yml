@@ -1,0 +1,83 @@
+# Lint, test and build what does not need bitbake, on every push: the agent
+# workspace, tessaro-gui and Webconfig. On GitHub's runners, so it never
+# queues behind an image build. How it fits with image.yml: docs/ci.md.
+
+name: ci
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # mise refuses an untrusted mise.toml; the checkout is this repo's own.
+  MISE_TRUSTED_CONFIG_PATHS: ${{ github.workspace }}
+
+jobs:
+  agent:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential pkg-config libssl-dev
+      # Only the toolchains the job uses: python and bmaptool are for the
+      # workstation tasks.
+      - uses: jdx/mise-action@v3
+        with:
+          install_args: rust
+      # mise.toml points CARGO_TARGET_DIR at build/cargo-target.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: agent -> ../build/cargo-target
+      - run: mise run agent:lint
+      - run: mise run agent:test
+      - run: mise run ctl:build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tessaro-ctl-linux-x86_64
+          path: build/cargo-target/release/tessaro-ctl
+          retention-days: 7
+
+  gui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      # iced loads X11 and xkbcommon at runtime; the Wayland headers are for
+      # wayland-sys, should it link at build time.
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential pkg-config libssl-dev libwayland-dev libxkbcommon-dev
+      - uses: jdx/mise-action@v3
+        with:
+          install_args: rust
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: gui -> ../build/gui-target
+      - run: mise run gui:lint
+      - run: mise run gui:test
+      - run: mise run gui:build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tessaro-gui-linux-x86_64
+          path: build/gui-target/release/tessaro-gui
+          retention-days: 7
+
+  webconfig:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: jdx/mise-action@v3
+        with:
+          install_args: node
+      - uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: npm-${{ hashFiles('webconfig/package-lock.json') }}
+      - run: mise run webconfig:setup
+      - run: mise run webconfig:lint
+      # Includes bitbake-lock.json being current.
+      - run: mise run webconfig:test
+      - run: mise run webconfig:build

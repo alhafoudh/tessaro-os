@@ -38,7 +38,8 @@ Every task acts on one machine, `$TESSARO_MACHINE`, which defaults to
 `qemux86-64`. Each target gets its own build directory, `build/<machine>/`,
 and images land in `build/<machine>/tmp/deploy/images/<machine>/`. The
 download and sstate caches in `cache/` are shared, so the second target reuses
-most of the first one's work.
+most of the first one's work. On the build host `cache/` is a symlink to
+`/srv/tessaro/cache`, which the CI runner uses too ([docs/ci.md](docs/ci.md)).
 
 **Pi images carry the board version in their filenames**, so Pi 3 and Pi 5
 artifacts stay distinct:
@@ -252,6 +253,14 @@ agent journal line a case sees, `E2E_KEEP=1` leaves the VM up after its lane,
 and `E2E_REUSE=1` runs against a VM left up that way. Everything a run leaves
 is in `build/e2e/`. Lanes, ports and the harness are explained in
 [docs/e2e.md](docs/e2e.md).
+
+## CI
+
+GitHub Actions lints and tests the agent, the desktop client and Webconfig
+on every push (`.github/workflows/ci.yml`). Images are built by hand from the
+Actions tab (`image.yml`), on a self-hosted runner on the build host, with
+e2e on the qemu image and an optional release. The runner's setup is in
+[docs/ci.md](docs/ci.md).
 
 ## Repository layout
 

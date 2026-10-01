@@ -47,6 +47,7 @@ same change as the behaviour it describes.
 | [docs/networking.md](docs/networking.md) | NetworkManager, the managed profiles and their transactions, hotspot, ping, speed test, the proxy (local tinyproxy, what goes through it), extra certificate authorities |
 | [docs/updates.md](docs/updates.md) | in-place updates, `--repartition`, growing `/data` |
 | [docs/e2e.md](docs/e2e.md) | the qemu RSpec suite: running it, lanes, ports, harness quirks |
+| [docs/ci.md](docs/ci.md) | GitHub Actions: the per-push checks, the manual image build with e2e and release, the self-hosted runner and its cache used in place |
 | [docs/clients.md](docs/clients.md) | what `tessaro-ctl` and `tessaro-gui` share in `agent/client` and what each keeps, reporting without printing, tones, lines and facts, adding a command, the differences on purpose |
 | [docs/gui.md](docs/gui.md) | `tessaro-gui`: inner windows, keyboard, the node list, device pages per command group, workers and jobs, the VNC viewer |
 | [docs/webconfig.md](docs/webconfig.md) | Webconfig: browser sessions, tickets and the activity rule, the handover across restarts, opening it from ctl and the GUI, the pages, the describe port and its golden fixtures, serving and caching, the frontend and its codegen, the dev proxy, the bitbake build and `bitbake-lock.json` |
