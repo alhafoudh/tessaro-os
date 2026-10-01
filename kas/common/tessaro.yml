@@ -79,6 +79,19 @@ local_conf_header:
     # tessaro-flash included, changes.
     INITRAMFS_IMAGE = "tessaro-initramfs"
     INITRAMFS_IMAGE_BUNDLE = "1"
+    # Delete each recipe's work dir once it is built: sstate in cache/ is what
+    # makes the next build fast, and the work dirs would otherwise fill the
+    # disk with every machine's sources and objects. Images are in
+    # tmp/deploy, which rm_work never touches. Kept:
+    # - qemu-helper-native and the image recipe: the qemuboot.conf runqemu
+    #   and e2e boot from points into their recipe-sysroot-native.
+    # - tessaro-kiosk: rebuilt on every agent change, and update_crates runs
+    #   in it.
+    # - chromium-ozone-wayland: its build dir lives in the work dir, so when
+    #   its signature changes ninja rebuilds only what changed instead of all
+    #   of Chromium.
+    INHERIT += "rm_work"
+    RM_WORK_EXCLUDE += "qemu-helper-native moonforge-image-base tessaro-kiosk chromium-ozone-wayland"
 
 repos:
   # Upstream layer collection. Pinned here; kas clones and checks it out.

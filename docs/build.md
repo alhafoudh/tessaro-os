@@ -81,6 +81,22 @@ is how Chromium's `PACKAGECONFIG` and `CHROMIUM_EXTRA_ARGS` are set.
 
 ## Gotchas
 
+* **`rm_work` deletes a recipe's work dir once it is built**, set in
+  `kas/common/tessaro.yml`. The sstate in `cache/` is what saves the next
+  build, not `tmp/work`, which would otherwise hold every machine's sources
+  and objects. Images and boot files stay in `tmp/deploy`. `RM_WORK_EXCLUDE`
+  keeps what is read after the build: `qemu-helper-native` and the image
+  recipe, whose `recipe-sysroot-native` the `qemuboot.conf` that runqemu and
+  e2e boot from points into; `tessaro-kiosk`, for `update_crates` and its
+  frequent rebuilds; and `chromium-ozone-wayland`, whose ninja build dir is
+  inside its work dir, so a changed signature rebuilds only what changed. A
+  recipe whose work dir is still wanted after the build goes on that list.
+* **`build/<machine>/cache/` must survive a cleanup.** It holds
+  `hashserv.db`, the hash equivalence database: sstate objects are stored
+  under the hashes it hands out, and without it a recipe whose inputs changed
+  but whose output did not (Chromium after a dependency rebuilt the same) is
+  rebuilt instead of restored. The rest of `build/<machine>/` can go; the
+  next build restores it from sstate.
 * **`distro:` has to be set by the entry point of the kas chain.** kas resolves
   a plain scalar by include order, and a file's own value beats the ones its
   includes set. Every machine's chain includes a `meta-moonforge-*` layer
