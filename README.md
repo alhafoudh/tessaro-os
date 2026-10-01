@@ -31,6 +31,14 @@ tessaro-ctl -n golden-thistle-5731 config set browser.url=https://menu.example.c
 
 That is the whole deployment.
 
+Prefer windows to a terminal? Manage it from [the desktop app](#the-desktop-app),
+or from [Webconfig](#webconfig) in any browser:
+
+<p align="center">
+  <a href="#the-desktop-app"><img src="docs/images/gui-overview.jpg" width="49%" alt="tessaro-gui with a device window open on its Overview"></a>
+  <a href="#webconfig"><img src="docs/images/webconfig-overview.jpg" width="49%" alt="Webconfig's Overview page"></a>
+</p>
+
 ## Features
 
 ### For integrators and admins
