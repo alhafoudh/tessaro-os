@@ -52,6 +52,7 @@ That is the whole deployment.
 
 ### For developers
 
+- 🔓 **Locked down, never locked in**: full root access stays yours. Tessaro's services orchestrate standard systemd units and plain config files, so you can extend the system with your own services the usual Linux way.
 - 🧩 **One image, every screen different**: `{placeholders}` and your own `data.*` keys give each device its own URL.
 - 📁 **Offline content**: sync videos, images and JSON to the device, served at `http://127.0.0.1/files/`.
 - 🌉 **A bridge into the device**: an injected script and `window.tessaro` let your page read status, print and run scripts.
@@ -195,7 +196,7 @@ tessaro-ctl config set 'browser.url=https://{device.name}.signage.example.com/'
 **Maintenance and debug screens**
 
 ```sh
-tessaro-ctl config set 'data.msg=Back at 14:00.' \
+tessaro-ctl config set 'data.msg=We are restocking the shelves. Back at 14:00.' \
   'browser.maintenance.url=http://127.0.0.1/maintenance.html?message={data.msg}'
 tessaro-ctl browser maintenance on
 tessaro-ctl browser debug on      # name and addresses in large type, for the technician

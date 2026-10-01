@@ -122,7 +122,7 @@ Use the mise tasks rather than calling `kas-container` directly:
 | `mise run webconfig:build` | Webconfig into `build/webconfig`, which `agent:integration` serves |
 | `mise run webconfig:test` / `webconfig:lint` | Its unit tests, the golden fixtures and `bitbake-lock.json`; tsc, ESLint and Prettier |
 | `mise run webconfig:lock` | `bitbake-lock.json` from `package-lock.json`, after any change to the dependencies |
-| `mise run docs:screenshots` | The README's welcome page screenshot, from the shipped page and the agent's `welcome.json` with fixed data (Playwright in docker); rerun after changing the page or `qr.rs` |
+| `mise run docs:screenshots` | The README's screenshots, from the shipped pages and the agent's own fixtures with fixed data (Playwright in docker); rerun after changing the welcome, maintenance or debug page, `qr.rs` or the default debug template |
 | `mise run dev:tunnel` | Workstation: autossh VNC/SSH forwards to the build host |
 
 Exit the QEMU serial console with `Ctrl-a x`.

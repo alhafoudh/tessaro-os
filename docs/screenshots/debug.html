@@ -1,0 +1,45 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>tessaro debug</title>
+<style>
+html, body { margin: 0; height: 100%; color: #eaf0f8; overflow: hidden; }
+body { background:
+  radial-gradient(circle 900px at calc(50% - 400px) calc(50% - 340px),
+    rgba(18, 48, 77, 0.95), rgba(16, 36, 58, 0.35) 60%, rgba(16, 36, 58, 0)),
+  radial-gradient(circle 900px at calc(50% + 440px) calc(50% + 380px),
+    rgba(36, 27, 68, 0.95), rgba(29, 23, 51, 0.35) 60%, rgba(29, 23, 51, 0)),
+  #0a0d14; }
+body::after { content: ""; position: fixed; inset: 0; pointer-events: none;
+  background: radial-gradient(circle, rgba(184, 200, 230, 0.09) 1.6px, transparent 2.1px)
+    calc(50% + 20px) calc(50% + 20px) / 40px 40px;
+  -webkit-mask-image: radial-gradient(circle 960px, #000, rgba(0, 0, 0, 0.7) 55%, transparent);
+  mask-image: radial-gradient(circle 960px, #000, rgba(0, 0, 0, 0.7) 55%, transparent); }
+#t { position: relative; z-index: 1; box-sizing: border-box; padding: 3vh 3vw; white-space: pre;
+      font-family: "DejaVu Sans Mono", monospace; line-height: 1.25; }
+#t.wrap { white-space: pre-wrap; overflow-wrap: anywhere; }
+</style></head>
+<body><div id="t">golden-thistle-5731
+
+id     d77857317a77452baadbbde45de78ba7
+host   tessaro
+
+route  eth0 via 192.168.1.1
+ip     192.168.1.42/24
+mac    d8:9e:f3:1c:57:31
+dns    192.168.1.1
+public 203.0.113.7
+
+ifs    eth0 up 192.168.1.42/24 fe80::da9e:f3ff:fe1c:5731/64; wlan0 up 10.42.0.1/24
+ipv6   fe80::da9e:f3ff:fe1c:5731
+
+data   7.6 GB free of 8.2 GB
+
+url    https://menu.example.com/</div>
+<script>
+const t = document.getElementById("t");
+const fits = () => t.scrollWidth <= innerWidth && t.scrollHeight <= innerHeight * 0.94;
+let size = innerHeight / 8;
+t.style.fontSize = size + "px";
+while (size > 12 && !fits()) { size *= 0.94; t.style.fontSize = size + "px"; }
+if (!fits()) t.className = "wrap";
+</script>
+</body></html>

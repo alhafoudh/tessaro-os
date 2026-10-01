@@ -221,4 +221,110 @@ ip 10.0.0.2 &lt;x&gt; &amp; y</div>"#
             .unwrap()
             .contains("set here"));
     }
+
+    /// The page the README's screenshot of the debug screen is rendered from
+    /// (`mise run docs:screenshots`): the image's default template, filled in
+    /// by this agent for a made-up device. `UPDATE_SCREENSHOTS=1 cargo test`
+    /// writes it.
+    #[test]
+    fn the_checked_in_debug_screenshot_fixture_is_current() {
+        use protocol::{Net, NetAddress, NetInterface};
+
+        let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
+        let env_in = fs::read_to_string(format!(
+            "{root}/meta-tessaro-distro/recipes-browser/tessaro-kiosk/files/tessaro-kiosk.env.in"
+        ))
+        .unwrap();
+        let template = env_in
+            .lines()
+            .find_map(|line| line.strip_prefix("KIOSK_DEBUG_TEMPLATE='"))
+            .and_then(|rest| rest.strip_suffix('\''))
+            .expect("KIOSK_DEBUG_TEMPLATE='...' in tessaro-kiosk.env.in");
+
+        let address = |address: &str, prefix, family: &str, scope: &str| NetAddress {
+            address: address.into(),
+            prefix,
+            family: family.into(),
+            scope: scope.into(),
+        };
+        let interface =
+            |name: &str, kind: &str, mac: &str, default_route, addresses| NetInterface {
+                name: name.into(),
+                kind: kind.into(),
+                mac: Some(mac.into()),
+                state: "up".into(),
+                carrier: Some(true),
+                mtu: Some(1500),
+                speed_mbps: None,
+                default_route,
+                addresses,
+            };
+        let net = Net {
+            hostname: "tessaro".into(),
+            interface: Some("eth0".into()),
+            gateway: Some("192.168.1.1".into()),
+            dns: vec!["192.168.1.1".into()],
+            interfaces: vec![
+                interface(
+                    "eth0",
+                    "ethernet",
+                    "d8:9e:f3:1c:57:31",
+                    true,
+                    vec![
+                        address("192.168.1.42", 24, "ipv4", "global"),
+                        address("fe80::da9e:f3ff:fe1c:5731", 64, "ipv6", "link-local"),
+                    ],
+                ),
+                interface(
+                    "wlan0",
+                    "wireless",
+                    "dc:a6:32:4e:57:31",
+                    false,
+                    vec![address("10.42.0.1", 24, "ipv4", "global")],
+                ),
+            ],
+            public_ip: Some("203.0.113.7".into()),
+            proxy: None,
+        };
+        let mut values = crate::net::values(&net);
+        values.insert(
+            "device.id".into(),
+            "d77857317a77452baadbbde45de78ba7".into(),
+        );
+        values.insert("storage.data_free".into(), "7.6 GB".into());
+        values.insert("storage.data_size".into(), "8.2 GB".into());
+        values.insert("storage.data_used".into(), "7%".into());
+        let live = state::Live {
+            derived_name: Some("golden-thistle-5731".into()),
+            values,
+        };
+        let defaults: HashMap<String, String> =
+            [("KIOSK_DEBUG_TEMPLATE".to_string(), template.to_string())].into();
+        let settings: BTreeMap<String, String> = [(
+            "browser.url".to_string(),
+            "https://menu.example.com/".to_string(),
+        )]
+        .into();
+
+        // A placeholder the made-up device has no value for would be an
+        // empty field in the screenshot.
+        for name in protocol::keys::placeholders(template) {
+            let value = state::expand_text(&format!("{{{name}}}"), &settings, &defaults, &live).0;
+            assert!(!value.is_empty(), "give {{{name}}} a value in this test");
+        }
+        let (text, _) = state::expand_text(template, &settings, &defaults, &live);
+        let html = page(&text);
+
+        let file = format!("{root}/docs/screenshots/debug.html");
+        if std::env::var_os("UPDATE_SCREENSHOTS").is_some() {
+            fs::write(&file, &html).unwrap();
+            return;
+        }
+        let checked_in = fs::read_to_string(&file).unwrap_or_default();
+        assert!(
+            checked_in == html,
+            "docs/screenshots/debug.html is out of date; run \
+             `mise run docs:screenshots` and commit it with the screenshots"
+        );
+    }
 }

@@ -264,21 +264,23 @@ e2e on the qemu image and an optional release. The runner's setup is in
 
 ## README screenshots
 
-**The welcome page screenshot is rendered, never taken from a device**, so it
-always shows the same made-up device and follows the page as it ships:
+**The README's screenshots are rendered, never taken from a device**, so they
+always show the same made-up device and follow the pages as they ship:
 
 ```sh
-mise run docs:screenshots     # writes docs/images/welcome.jpg
+mise run docs:screenshots     # writes docs/images/{welcome,maintenance,debug-screen}.jpg
 ```
 
-The task writes `docs/screenshots/welcome.json` with the agent's own
-`welcome.json` code (`welcome_value` and `qr.rs`, through the
-`the_checked_in_welcome_screenshot_fixture_is_current` test, which also fails
-`agent:test` once the fixture is out of date), then loads the shipped
-`index.html` in Playwright's Docker image at 1920x1080 and answers its
-`/welcome.json` with that fixture (`docs/screenshots/shoot.mjs`). Rerun it
-after changing the welcome page or the QR code, and commit the fixture and
-the image together. It needs Docker.
+The task first writes the fixtures with the agent's own code, through the
+`*_screenshot_fixture_is_current` tests (which also fail `agent:test` once a
+fixture is out of date): `docs/screenshots/welcome.json` from
+`welcome_value` and `qr.rs`, and `docs/screenshots/debug.html` from
+`debug::page` and the image's default `KIOSK_DEBUG_TEMPLATE`. Then
+`docs/screenshots/shoot.mjs` loads the shipped pages in Playwright's Docker
+image at 1920x1080 and answers their requests with those fixtures. Rerun it
+after changing the welcome, maintenance or debug page, the QR code or the
+default template, and commit the fixtures and the images together. It needs
+Docker.
 
 ## Repository layout
 

@@ -312,12 +312,13 @@ dir = "{{config_root}}/webconfig"
 run = "npm run lint"
 
 [tasks."docs:screenshots"]
-description = "Render the README's welcome page screenshot from the shipped page and fixed data, with Playwright in docker"
+description = "Render the README's screenshots (welcome, maintenance, debug screen) from the shipped pages and fixed data, with Playwright in docker"
 dir = "{{config_root}}"
 run = '''
 set -e
-# The fixture is the agent's own welcome.json body, QR code included.
-(cd agent && UPDATE_SCREENSHOTS=1 cargo test -p tessaro-agent welcome_screenshot_fixture)
+# The fixtures are what the agent itself writes: the welcome page's
+# welcome.json, QR code included, and the debug screen's page.
+(cd agent && UPDATE_SCREENSHOTS=1 cargo test -p tessaro-agent screenshot_fixture)
 # The image's browser has to be the one playwright-core expects, so both
 # take the version pinned in package.json.
 version=$(node -p "require('./docs/screenshots/package.json').dependencies['playwright-core']")
