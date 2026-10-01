@@ -49,17 +49,19 @@ images and clients stay workflow artifacts.
   windows-x86_64. It uploads `tessaro-ctl-<version>-<sha>-<platform>` and
   `tessaro-gui-<version>-<sha>-<platform>`, as `.tar.gz`, or `.zip` on
   Windows and for the macOS `Tessaro.app`, as `clients-<platform>`.
-* `webconfig` runs `webconfig:setup` and `webconfig:build` and uploads
-  `tessaro-webconfig-<version>-<sha>.tar.gz` as `clients-webconfig`, for
-  serving it from elsewhere; the image builds its own copy through bitbake.
 * `release` runs only when asked and only when every job, e2e included,
   passed. It tags the built commit `v<version>-<sha>` and attaches every
   image, bmap and client archive.
 
-**The self-hosted runner builds images and nothing else.** The clients and
-Webconfig take minutes on GitHub's runners and need none of the build host's
-cache, so they run there, alongside the image builds, and never queue
-behind one. They skip lint and test: `ci.yml` ran those on the push.
+**The self-hosted runner builds images and nothing else.** The clients
+take minutes on GitHub's runners and need none of the build host's cache,
+so they run there, alongside the image builds, and never queue behind one.
+They skip lint and test: `ci.yml` ran those on the push.
+
+**Webconfig is not released on its own.** The image builds it with bitbake
+and the device serves it; served from anywhere else it cannot reach a
+device, whose API refuses browser requests from any other origin
+(**Trust and auth** in [api.md](api.md)).
 
 **The Linux clients are built on Ubuntu 22.04**, so they run on glibc 2.35
 and newer. They link the system's openssl (libssl3), and `tessaro-gui` loads

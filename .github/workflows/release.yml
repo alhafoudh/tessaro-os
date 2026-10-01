@@ -1,5 +1,5 @@
-# Build images by hand, run e2e on the qemu one, build tessaro-ctl,
-# tessaro-gui and Webconfig for every platform, and publish them all as a
+# Build images by hand, run e2e on the qemu one, build tessaro-ctl and
+# tessaro-gui for every platform, and publish them all as a
 # release when that is ticked. Only the image builds run on the
 # self-hosted runner on the build host, which uses the shared download and
 # sstate cache in place: it is far too big for a cache store. Everything else
@@ -257,41 +257,8 @@ jobs:
           compression-level: 0
           retention-days: 14
 
-  # Webconfig on its own, for serving it from elsewhere. The image builds its
-  # own copy through bitbake.
-  webconfig:
-    needs: matrix
-    runs-on: ubuntu-latest
-    env:
-      # Only the Node install_args installed, as in ci.yml.
-      MISE_AUTO_INSTALL: "false"
-    steps:
-      - uses: actions/checkout@v5
-      - uses: jdx/mise-action@v5
-        with:
-          install_args: node
-      - uses: actions/cache@v6
-        with:
-          path: ~/.npm
-          key: npm-${{ hashFiles('webconfig/package-lock.json') }}
-      - run: mise run webconfig:setup
-      - run: mise run webconfig:build
-      - name: Pack
-        env:
-          VERSION: ${{ needs.matrix.outputs.version }}
-        run: |
-          mkdir -p build/artifacts
-          tar -czf "build/artifacts/tessaro-webconfig-$VERSION.tar.gz" -C build webconfig
-          ls -l build/artifacts
-      - uses: actions/upload-artifact@v7
-        with:
-          name: clients-webconfig
-          path: build/artifacts/
-          compression-level: 0
-          retention-days: 14
-
   release:
-    needs: [matrix, build, clients, webconfig]
+    needs: [matrix, build, clients]
     if: inputs.release
     runs-on: ubuntu-latest
     permissions:

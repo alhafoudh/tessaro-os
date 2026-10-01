@@ -107,7 +107,7 @@ module AgentE2E
       create("e2e-page", "echo from the page run\nexit 3\n", "--bridge --description 'page run'")
       create("e2e-hidden", "true\n")
       guest.run("tessaro-ctl config set browser.bridge.mode=actions")
-      journal.wait_for(/^page bridge: actions/, timeout: 30)
+      journal.wait_for(/^page bridge: (now )?actions/, timeout: 30)
 
       listed = guest.run("tessaro-ctl browser eval " \
                          "'tessaro.scripts.list().then((l) => JSON.stringify(l))'")

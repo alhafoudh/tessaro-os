@@ -259,8 +259,8 @@ is in `build/e2e/`. Lanes, ports and the harness are explained in
 GitHub Actions lints and tests the agent, the desktop client and Webconfig
 on every push (`.github/workflows/ci.yml`). Releases are started by hand from
 the Actions tab (`release.yml`): the images on a self-hosted runner on the
-build host, with e2e on the qemu image, and `tessaro-ctl`, `tessaro-gui` and
-Webconfig on GitHub's runners. The runner's setup is in
+build host, with e2e on the qemu image, and `tessaro-ctl` and `tessaro-gui`
+on GitHub's runners. The runner's setup is in
 [docs/ci.md](docs/ci.md).
 
 ## README screenshots

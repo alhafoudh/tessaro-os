@@ -79,7 +79,10 @@ module AgentE2E
     it "schedule-skip: a script with concurrency skip starts no run while one is going" do
       create("e2e-skip", "*:*:0/3", "sleep 20\n", "--concurrency skip")
       wait_until("a run is going", timeout: 15) { schedule("e2e-skip").fetch("running") >= 1 }
-      journal.wait_for(/skipped: a run of e2e-skip is going/, timeout: 15)
+      # The fire unit says it, not the agent: its journal is the schedule's.
+      wait_until("the timer skipped a run", timeout: 15) do
+        guest.run("tessaro-ctl schedule logs e2e-skip").include?("skipped: a run of e2e-skip is going")
+      end
       expect(schedule("e2e-skip").fetch("running")).to eq(1)
     ensure
       remove("e2e-skip")
