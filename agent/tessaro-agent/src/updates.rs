@@ -1091,8 +1091,10 @@ mod tests {
         Ok(())
     }
 
+    // 30s: a shared CI runner, running the whole suite at once, prepares many
+    // times slower than a workstation.
     async fn settle(updates: &Arc<Updates>) -> UpdateStatus {
-        for _ in 0..500 {
+        for _ in 0..3000 {
             let status = updates.status().await.unwrap();
             if !working(status.phase) {
                 return status;
