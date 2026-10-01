@@ -105,7 +105,7 @@ pub struct Scope {
 }
 
 impl Scope {
-    fn of(prefix: &str) -> Self {
+    pub(crate) fn of(prefix: &str) -> Self {
         Self {
             prefix: prefix.to_string(),
             except: None,

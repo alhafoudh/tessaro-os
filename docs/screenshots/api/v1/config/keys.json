@@ -1,0 +1,1454 @@
+[
+  {
+    "name": "browser.url",
+    "env": "KIOSK_URL",
+    "applies": [
+      "agent"
+    ],
+    "guarded": false,
+    "doc": "The page the kiosk shows (default: the welcome page, http://127.0.0.1/; the self-test is http://127.0.0.1/selftest.html). A new origin also re-grants the device APIs to it.",
+    "values": "an http, https, file or data URL; may contain {key} placeholders - any setting's key, e.g. {data.table} or {device.name}",
+    "default": "http://127.0.0.1/",
+    "value": "https://menu.example.com/",
+    "input": {
+      "kind": "text"
+    }
+  },
+  {
+    "name": "browser.probe_url",
+    "env": "KIOSK_PROBE_URL",
+    "applies": [
+      "agent"
+    ],
+    "guarded": false,
+    "doc": "Health endpoint to probe instead of browser.url; empty probes browser.url. Needed for a file: or data: kiosk.",
+    "values": "an http, https, file or data URL, or empty",
+    "default": "",
+    "value": null,
+    "input": {
+      "kind": "text"
+    }
+  },
+  {
+    "name": "browser.offline_url",
+    "env": "KIOSK_OFFLINE_URL",
+    "applies": [
+      "agent"
+    ],
+    "guarded": false,
+    "doc": "Page shown while the site is down; empty stages /data/kiosk/offline.html or the shipped page; none stays on the site.",
+    "values": "a URL, empty, or none",
+    "default": "",
+    "value": null,
+    "input": {
+      "kind": "text"
+    }
+  },
+  {
+    "name": "browser.enforce_origin",
+    "env": "KIOSK_ENFORCE_ORIGIN",
+    "applies": [
+      "agent"
+    ],
+    "guarded": false,
+    "doc": "Bring the browser back when it leaves the kiosk origin. 0 for a site that hands visitors to another host.",
+    "values": "1 or 0 (on/off, true/false, yes/no)",
+    "default": "1",
+    "value": null,
+    "input": {
+      "kind": "flag"
+    }
+  },
+  {
+    "name": "browser.maintenance.enable",
+    "env": "KIOSK_MAINTENANCE",
+    "applies": [
+      "agent"
+    ],
+    "guarded": false,
+    "doc": "Maintenance mode: show browser.maintenance.url instead of browser.url, which is kept as it is. `tessaro-ctl browser maintenance on|off`.",
+    "values": "1 or 0 (on/off, true/false, yes/no)",
+    "default": "0",
+    "value": null,
+    "input": {
+      "kind": "flag"
+    }
+  },
+  {
+    "name": "browser.maintenance.url",
+    "env": "KIOSK_MAINTENANCE_URL",
+    "applies": [
+      "agent"
+    ],
+    "guarded": false,
+    "doc": "The page shown in maintenance mode (default: http://127.0.0.1/maintenance.html, which takes ?title= and ?message=).",
+    "values": "an http, https, file or data URL; may contain {key} placeholders - any setting's key, e.g. {data.table} or {device.name}",
+    "default": "http://127.0.0.1/maintenance.html",
+    "value": null,
+    "input": {
+      "kind": "text"
+    }
+  },
+  {
+    "name": "browser.debug.enable",
+    "env": "KIOSK_DEBUG_SCREEN",
+    "applies": [
+      "agent"
+    ],
+    "guarded": false,
+    "doc": "Show browser.debug.template full screen instead of the kiosk page. Not agent.debug, which is journal verbosity. `tessaro-ctl browser debug on|off`.",
+    "values": "1 or 0 (on/off, true/false, yes/no)",
+    "default": "0",
+    "value": null,
+    "input": {
+      "kind": "flag"
+    }
+  },
+  {
+    "name": "browser.debug.template",
+    "env": "KIOSK_DEBUG_TEMPLATE",
+    "applies": [
+      "agent"
+    ],
+    "guarded": false,
+    "doc": "What the debug screen shows: text with {key} placeholders, \\n for a new line, e.g. IP {network.ip}\\nGW {network.gateway}.",
+    "values": "text; \\n breaks a line; {key} placeholders as in browser.url, plus {browser.url}",
+    "default": "{device.name}\\n\\nid     {device.id}\\nhost   {network.hostname}\\n\\nroute  {network.interface} via {network.gateway}\\nip     {network.cidr}\\nmac    {network.mac}\\ndns    {network.dns}\\npublic {network.public_ip}\\n\\nifs    {network.interfaces}\\nipv6   {network.ipv6}\\n\\ndata   {storage.data_free} free of {storage.data_size}\\n\\nurl    {browser.url}",
+    "value": null,
+    "input": {
+      "kind": "text"
+    }
+  },
+  {
+    "name": "browser.inject.script",
+    "env": "KIOSK_INJECT_SCRIPT",
+    "applies": [
+      "agent"
+    ],
+    "guarded": false,
+    "doc": "A script from the file store run in every page before the page's own, e.g. inject.js for /data/files/inject.js. Empty for none. `tessaro-ctl browser inject on|off`.",
+    "values": "a file in the store from its root, e.g. inject.js, or empty",
+    "default": "",
+    "value": null,
+    "input": {
+      "kind": "text"
+    }
+  },
+  {
+    "name": "browser.bridge.mode",
+    "env": "KIOSK_BRIDGE_MODE",
+    "applies": [
+      "agent"
+    ],
+    "guarded": false,
+    "doc": "What the page gets as window.tessaro: off, config (the settings, read-only) or actions (the settings and device actions). `tessaro-ctl browser bridge`.",
+    "values": "one of: off, config, actions",
+    "default": "off",
+    "value": null,
+    "input": {
+      "kind": "choice",
+      "choices": [
+        "off",
+        "config",
+        "actions"
+      ]
+    }
+  },
+  {
+    "name": "browser.zoom",
+    "env": "KIOSK_ZOOM",
+    "applies": [
+      "browser"
+    ],
+    "guarded": false,
+    "doc": "Page zoom in percent, Chrome's Ctrl+/- zoom for every site, on top of screen.scale. `tessaro-ctl browser zoom`.",
+    "values": "a whole number, 25 to 500",
+    "default": "100",
+    "value": null,
+    "input": {
+      "kind": "int",
+      "min": 25,
+      "max": 500
+    }
+  },
+  {
+    "name": "browser.args_extra",
+    "env": "KIOSK_CHROMIUM_ARGS_EXTRA",
+    "applies": [
+      "browser"
+    ],
+    "guarded": false,
+    "doc": "Extra Chromium flags after the fixed set, e.g. --disable-pinch. Features go in browser.*_features.",
+    "values": "Chromium command-line flags, space separated",
+    "default": "",
+    "value": null,
+    "input": {
+      "kind": "text"
+    }
+  },
+  {
+    "name": "browser.touch",
+    "env": "KIOSK_TOUCH",
+    "applies": [
+      "browser"
+    ],
+    "guarded": false,
+    "doc": "Touch event feature detection.",
+    "values": "one of: auto, enabled, disabled",
+    "default": "auto",
+    "value": null,
+    "input": {
+      "kind": "choice",
+      "choices": [
+        "auto",
+        "enabled",
+        "disabled"
+      ]
+    }
+  },
+  {
+    "name": "browser.enable_features",
+    "env": "KIOSK_ENABLE_FEATURES",
+    "applies": [
+      "browser"
+    ],
+    "guarded": false,
+    "doc": "Chromium features to enable, comma separated, e.g. WebBluetooth,WebBluetoothNewPermissionsBackend. Replaces the default: keep the AcceleratedVideoDecode* features (hardware video decode).",
+    "values": "Chromium feature names, comma separated, no spaces",
+    "default": "AcceleratedVideoDecoder,AcceleratedVideoDecodeLinuxGL,AcceleratedVideoDecodeLinuxZeroCopyGL",
+    "value": null,
+    "input": {
+      "kind": "text"
+    }
+  },
+  {
+    "name": "browser.disable_features",
+    "env": "KIOSK_DISABLE_FEATURES",
+    "applies": [
+      "browser"
+    ],
+    "guarded": false,
+    "doc": "Chromium features to disable. Replaces the default: keep FallbackToSWIfGLES3NotSupported (Pi 3 GPU) and PersistentHistograms (no metrics files on /data).",
+    "values": "Chromium feature names, comma separated, no spaces",
+    "default": "FallbackToSWIfGLES3NotSupported,PersistentHistograms",
+    "value": null,
+    "input": {
+      "kind": "text"
+    }
+  },
+  {
+    "name": "browser.fps_counter",
+    "env": "KIOSK_FPS_COUNTER",
+    "applies": [
+      "browser"
+    ],
+    "guarded": false,
+    "doc": "Show Chromium's FPS counter in the corner of the screen (--show-fps-counter).",
+    "values": "1 or 0 (on/off, true/false, yes/no)",
+    "default": "0",
+    "value": null,
+    "input": {
+      "kind": "flag"
+    }
+  },
+  {
+    "name": "browser.device_origins",
+    "env": "KIOSK_DEVICE_ORIGINS",
+    "applies": [
+      "browser"
+    ],
+    "guarded": false,
+    "doc": "Origins granted WebSerial and WebHID besides the kiosk and self-test origins.",
+    "values": "origins (scheme://host[:port]), space or comma separated",
+    "default": "",
+    "value": null,
+    "input": {
+      "kind": "text"
+    }
+  },
+  {
+    "name": "screen.scale",
+    "env": "KIOSK_SCALE",
+    "applies": [
+      "weston"
+    ],
+    "guarded": false,
+    "doc": "Weston output scale: auto (2 above 3400px wide), none, or 1-4.",
+    "values": "auto, none, or 1 to 4",
+    "default": "",
+    "value": null,
+    "input": {
+      "kind": "text"
+    }
+  },
+  {
+    "name": "screen.resolution",
+    "env": "KIOSK_RESOLUTION",
+    "applies": [
+      "weston"
+    ],
+    "guarded": true,
+    "doc": "Output mode, WIDTHxHEIGHT from `tessaro-ctl screen modes`, or preferred. Reverts unless confirmed with `tessaro-ctl screen confirm`.",
+    "values": "preferred, or WIDTHxHEIGHT from `tessaro-ctl screen modes`",
+    "default": "preferred",
+    "value": null,
+    "input": {
+      "kind": "text"
+    }
+  },
+  {
+    "name": "screen.osk",
+    "env": "KIOSK_OSK",
+    "applies": [
+      "weston"
+    ],
+    "guarded": false,
+    "doc": "On-screen keyboard: auto shows it only without a USB/Bluetooth keyboard.",
+    "values": "one of: auto, always, never",
+    "default": "auto",
+    "value": null,
+    "input": {
+      "kind": "choice",
+      "choices": [
+        "auto",
+        "always",
+        "never"
+      ]
+    }
+  },
+  {
+    "name": "screen.vnc",
+    "env": "KIOSK_VNC",
+    "applies": [
+      "weston"
+    ],
+    "guarded": false,
+    "doc": "Mirror the screen to VNC on 127.0.0.1:5900.",
+    "values": "one of: on, off",
+    "default": "on",
+    "value": null,
+    "input": {
+      "kind": "choice",
+      "choices": [
+        "on",
+        "off"
+      ]
+    }
+  },
+  {
+    "name": "audio.output",
+    "env": "KIOSK_AUDIO_OUTPUT",
+    "applies": [
+      "audio"
+    ],
+    "guarded": false,
+    "doc": "Where sound plays: auto (the latest USB or Bluetooth output, else HDMI with a screen, else the jack), hdmi, jack, usb, bluetooth, off, or one output from `tessaro-ctl audio outputs`. One that is not plugged in plays on auto until it is back.",
+    "values": "one of: auto, hdmi, jack, usb, bluetooth, off, or an output's name from `tessaro-ctl audio outputs`",
+    "default": "auto",
+    "value": null,
+    "input": {
+      "kind": "text"
+    }
+  },
+  {
+    "name": "audio.volume",
+    "env": "KIOSK_AUDIO_VOLUME",
+    "applies": [
+      "audio"
+    ],
+    "guarded": false,
+    "doc": "Output volume in percent, on whichever output is playing.",
+    "values": "a whole number, 0 to 100",
+    "default": "80",
+    "value": null,
+    "input": {
+      "kind": "int",
+      "min": 0,
+      "max": 100
+    }
+  },
+  {
+    "name": "audio.mute",
+    "env": "KIOSK_AUDIO_MUTE",
+    "applies": [
+      "audio"
+    ],
+    "guarded": false,
+    "doc": "Mute the output; audio.volume is kept for when it is unmuted.",
+    "values": "1 or 0 (on/off, true/false, yes/no)",
+    "default": "0",
+    "value": null,
+    "input": {
+      "kind": "flag"
+    }
+  },
+  {
+    "name": "audio.input",
+    "env": "KIOSK_AUDIO_INPUT",
+    "applies": [
+      "audio"
+    ],
+    "guarded": false,
+    "doc": "Where sound is recorded from, for pages that use the microphone: auto (the latest USB or Bluetooth input, else the jack), usb, jack, bluetooth, off (the page records silence), or one input from `tessaro-ctl audio inputs`.",
+    "values": "one of: auto, jack, usb, bluetooth, off, or an input's name from `tessaro-ctl audio inputs`",
+    "default": "auto",
+    "value": null,
+    "input": {
+      "kind": "text"
+    }
+  },
+  {
+    "name": "audio.input_volume",
+    "env": "KIOSK_AUDIO_INPUT_VOLUME",
+    "applies": [
+      "audio"
+    ],
+    "guarded": false,
+    "doc": "Input (microphone) level in percent.",
+    "values": "a whole number, 0 to 100",
+    "default": "100",
+    "value": null,
+    "input": {
+      "kind": "int",
+      "min": 0,
+      "max": 100
+    }
+  },
+  {
+    "name": "time.timezone",
+    "env": "KIOSK_TIMEZONE",
+    "applies": [
+      "time"
+    ],
+    "guarded": false,
+    "doc": "The device's timezone, e.g. Europe/Bratislava, from `tessaro-ctl time zones`. Pages and the journal show local time in it; the browser follows without a restart. `tessaro-ctl time timezone`.",
+    "values": "a timezone, e.g. Europe/Bratislava or UTC, from `tessaro-ctl time zones`",
+    "default": "UTC",
+    "value": null,
+    "input": {
+      "kind": "text"
+    }
+  },
+  {
+    "name": "time.ntp.enable",
+    "env": "KIOSK_NTP",
+    "applies": [
+      "time"
+    ],
+    "guarded": false,
+    "doc": "Keep the clock in sync over NTP. 0 for a network without any time server; then `tessaro-ctl time set` sets the clock by hand. `tessaro-ctl time ntp on|off`.",
+    "values": "1 or 0 (on/off, true/false, yes/no)",
+    "default": "1",
+    "value": null,
+    "input": {
+      "kind": "flag"
+    }
+  },
+  {
+    "name": "time.ntp.servers",
+    "env": "KIOSK_NTP_SERVERS",
+    "applies": [
+      "time"
+    ],
+    "guarded": false,
+    "doc": "NTP servers, comma separated. Empty uses the servers the network's DHCP offers, else the image's fallback servers.",
+    "values": "host names or IP addresses, comma separated, or empty",
+    "default": "",
+    "value": null,
+    "input": {
+      "kind": "text"
+    }
+  },
+  {
+    "name": "camera.format",
+    "env": "KIOSK_CAMERA_FORMAT",
+    "applies": [
+      "camera"
+    ],
+    "guarded": false,
+    "doc": "How cameras capture: auto (MJPEG where the camera has it, else YUYV), mjpeg or yuyv. Frames reach the page as captured, never converted. A camera without the format uses auto. `tessaro-ctl camera format`.",
+    "values": "one of: auto, mjpeg, yuyv",
+    "default": "auto",
+    "value": null,
+    "input": {
+      "kind": "choice",
+      "choices": [
+        "auto",
+        "mjpeg",
+        "yuyv"
+      ]
+    }
+  },
+  {
+    "name": "camera.size",
+    "env": "KIOSK_CAMERA_SIZE",
+    "applies": [
+      "camera"
+    ],
+    "guarded": false,
+    "doc": "Frame size cameras capture at: auto (the largest up to 1920x1080 that keeps 25 fps), or WIDTHxHEIGHT from `tessaro-ctl camera list`. A camera without the size uses auto. `tessaro-ctl camera size`.",
+    "values": "auto, or WIDTHxHEIGHT from `tessaro-ctl camera list`",
+    "default": "auto",
+    "value": null,
+    "input": {
+      "kind": "text"
+    }
+  },
+  {
+    "name": "camera.mirrors",
+    "env": "KIOSK_CAMERA_MIRRORS",
+    "applies": [
+      "camera"
+    ],
+    "guarded": false,
+    "doc": "Virtual cameras each camera gets, `<camera> Mirror 1` and up, all with the same picture. Each has one reader at a time - the page, or a service on the device - so this is how many may watch a camera at once. `tessaro-ctl camera mirrors`.",
+    "values": "a whole number, 1 to 8",
+    "default": "2",
+    "value": null,
+    "input": {
+      "kind": "int",
+      "min": 1,
+      "max": 8
+    }
+  },
+  {
+    "name": "printer.enable",
+    "env": "KIOSK_PRINTING",
+    "applies": [
+      "browser",
+      "agent"
+    ],
+    "guarded": false,
+    "doc": "Let the page print: window.print() goes to the default printer without a dialog, and the page bridge's printer.print() to any printer. `tessaro-ctl printer` sets the printers up; it prints either way.",
+    "values": "1 or 0 (on/off, true/false, yes/no)",
+    "default": "0",
+    "value": null,
+    "input": {
+      "kind": "flag"
+    }
+  },
+  {
+    "name": "agent.enable",
+    "env": "KIOSK_AGENT_ENABLE",
+    "applies": [
+      "agent"
+    ],
+    "guarded": false,
+    "doc": "Supervise the browser at all; 0 parks the agent.",
+    "values": "1 or 0 (on/off, true/false, yes/no)",
+    "default": "1",
+    "value": null,
+    "input": {
+      "kind": "flag"
+    }
+  },
+  {
+    "name": "agent.debug",
+    "env": "KIOSK_DEBUG",
+    "applies": [
+      "agent"
+    ],
+    "guarded": false,
+    "doc": "Debug lines in the agent's journal.",
+    "values": "1 or 0 (on/off, true/false, yes/no)",
+    "default": null,
+    "value": null,
+    "input": {
+      "kind": "flag"
+    }
+  },
+  {
+    "name": "agent.watchdog",
+    "env": "KIOSK_WATCHDOG",
+    "applies": [
+      "agent"
+    ],
+    "guarded": false,
+    "doc": "Judge the agent's pledges before pinging the systemd watchdog.",
+    "values": "1 or 0 (on/off, true/false, yes/no)",
+    "default": "1",
+    "value": null,
+    "input": {
+      "kind": "flag"
+    }
+  },
+  {
+    "name": "agent.device_access",
+    "env": "KIOSK_DEVICE_ACCESS",
+    "applies": [
+      "agent-restart"
+    ],
+    "guarded": false,
+    "doc": "Enable CDP DeviceAccess on the page session.",
+    "values": "1 or 0 (on/off, true/false, yes/no)",
+    "default": "0",
+    "value": null,
+    "input": {
+      "kind": "flag"
+    }
+  },
+  {
+    "name": "agent.probe_interval",
+    "env": "KIOSK_PROBE_INTERVAL",
+    "applies": [
+      "agent"
+    ],
+    "guarded": false,
+    "doc": "Seconds between probes while the site is up.",
+    "values": "a whole number, 1 to 3600",
+    "default": "30",
+    "value": null,
+    "input": {
+      "kind": "int",
+      "min": 1,
+      "max": 3600
+    }
+  },
+  {
+    "name": "agent.probe_interval_fail",
+    "env": "KIOSK_PROBE_INTERVAL_FAIL",
+    "applies": [
+      "agent"
+    ],
+    "guarded": false,
+    "doc": "Seconds between probes while the site is down.",
+    "values": "a whole number, 1 to 3600",
+    "default": "10",
+    "value": null,
+    "input": {
+      "kind": "int",
+      "min": 1,
+      "max": 3600
+    }
+  },
+  {
+    "name": "agent.probe_connect_timeout",
+    "env": "KIOSK_PROBE_CONNECT_TIMEOUT",
+    "applies": [
+      "agent-restart"
+    ],
+    "guarded": false,
+    "doc": "Probe connect timeout, seconds.",
+    "values": "a whole number, 1 to 120",
+    "default": "5",
+    "value": null,
+    "input": {
+      "kind": "int",
+      "min": 1,
+      "max": 120
+    }
+  },
+  {
+    "name": "agent.probe_timeout",
+    "env": "KIOSK_PROBE_TIMEOUT",
+    "applies": [
+      "agent-restart"
+    ],
+    "guarded": false,
+    "doc": "Probe response timeout, seconds.",
+    "values": "a whole number, 1 to 120",
+    "default": "10",
+    "value": null,
+    "input": {
+      "kind": "int",
+      "min": 1,
+      "max": 120
+    }
+  },
+  {
+    "name": "agent.fail_threshold",
+    "env": "KIOSK_FAIL_THRESHOLD",
+    "applies": [
+      "agent"
+    ],
+    "guarded": false,
+    "doc": "Failed probes before the offline page.",
+    "values": "a whole number, 1 to 1000",
+    "default": "2",
+    "value": null,
+    "input": {
+      "kind": "int",
+      "min": 1,
+      "max": 1000
+    }
+  },
+  {
+    "name": "agent.refresh_interval",
+    "env": "KIOSK_REFRESH_INTERVAL",
+    "applies": [
+      "agent"
+    ],
+    "guarded": false,
+    "doc": "Seconds between reloads of the kiosk page; 0 never reloads. Set 0 for a manual self-test pass.",
+    "values": "a whole number, 0 to 86400",
+    "default": "600",
+    "value": null,
+    "input": {
+      "kind": "int",
+      "min": 0,
+      "max": 86400
+    }
+  },
+  {
+    "name": "agent.offline_refresh",
+    "env": "KIOSK_OFFLINE_REFRESH",
+    "applies": [
+      "agent"
+    ],
+    "guarded": false,
+    "doc": "Seconds between reloads of the offline page.",
+    "values": "a whole number, 0 to 86400",
+    "default": "300",
+    "value": null,
+    "input": {
+      "kind": "int",
+      "min": 0,
+      "max": 86400
+    }
+  },
+  {
+    "name": "agent.ping_fails",
+    "env": "KIOSK_PING_FAILS",
+    "applies": [
+      "agent"
+    ],
+    "guarded": false,
+    "doc": "Failed browser checks before the browser is restarted.",
+    "values": "a whole number, 1 to 1000",
+    "default": "3",
+    "value": null,
+    "input": {
+      "kind": "int",
+      "min": 1,
+      "max": 1000
+    }
+  },
+  {
+    "name": "agent.restart_after",
+    "env": "KIOSK_RESTART_AFTER",
+    "applies": [
+      "agent"
+    ],
+    "guarded": false,
+    "doc": "Failed probes while down before the browser is restarted; 0 never.",
+    "values": "a whole number, 0 to 100000",
+    "default": "40",
+    "value": null,
+    "input": {
+      "kind": "int",
+      "min": 0,
+      "max": 100000
+    }
+  },
+  {
+    "name": "agent.restart_backoff",
+    "env": "KIOSK_RESTART_BACKOFF",
+    "applies": [
+      "agent"
+    ],
+    "guarded": false,
+    "doc": "Minimum seconds between browser restarts.",
+    "values": "a whole number, 0 to 86400",
+    "default": "300",
+    "value": null,
+    "input": {
+      "kind": "int",
+      "min": 0,
+      "max": 86400
+    }
+  },
+  {
+    "name": "agent.cdp_timeout",
+    "env": "KIOSK_CDP_TIMEOUT",
+    "applies": [
+      "agent-restart"
+    ],
+    "guarded": false,
+    "doc": "Budget for one DevTools command, seconds.",
+    "values": "a whole number, 1 to 120",
+    "default": "5",
+    "value": null,
+    "input": {
+      "kind": "int",
+      "min": 1,
+      "max": 120
+    }
+  },
+  {
+    "name": "agent.cdp_ping",
+    "env": "KIOSK_CDP_PING",
+    "applies": [
+      "agent-restart"
+    ],
+    "guarded": false,
+    "doc": "DevTools websocket keepalive, seconds.",
+    "values": "a whole number, 1 to 3600",
+    "default": "10",
+    "value": null,
+    "input": {
+      "kind": "int",
+      "min": 1,
+      "max": 3600
+    }
+  },
+  {
+    "name": "agent.cdp_reconnect_max",
+    "env": "KIOSK_CDP_RECONNECT_MAX",
+    "applies": [
+      "agent-restart"
+    ],
+    "guarded": false,
+    "doc": "Ceiling on the DevTools reconnect backoff, seconds.",
+    "values": "a whole number, 1 to 3600",
+    "default": "15",
+    "value": null,
+    "input": {
+      "kind": "int",
+      "min": 1,
+      "max": 3600
+    }
+  },
+  {
+    "name": "device.name",
+    "env": "KIOSK_NODE_NAME",
+    "applies": [
+      "agent-restart",
+      "network"
+    ],
+    "guarded": false,
+    "doc": "The device's name on the network (NAME.local, and the hotspot tessaro-NAME); empty derives one from the node id.",
+    "values": "letters, digits and dashes, up to 40; empty derives one",
+    "default": "",
+    "value": null,
+    "input": {
+      "kind": "text"
+    }
+  },
+  {
+    "name": "access.listen",
+    "env": "KIOSK_API_LISTEN",
+    "applies": [
+      "agent-restart"
+    ],
+    "guarded": false,
+    "doc": "Where the TLS control API listens, address:port, or off.",
+    "values": "address:port, or off",
+    "default": "0.0.0.0:7400",
+    "value": null,
+    "input": {
+      "kind": "text"
+    }
+  },
+  {
+    "name": "access.mdns",
+    "env": "KIOSK_MDNS",
+    "applies": [
+      "agent-restart"
+    ],
+    "guarded": false,
+    "doc": "Advertise the device as NAME.local and _tessaro._tcp.",
+    "values": "one of: on, off",
+    "default": "on",
+    "value": null,
+    "input": {
+      "kind": "choice",
+      "choices": [
+        "on",
+        "off"
+      ]
+    }
+  },
+  {
+    "name": "access.session_timeout",
+    "env": "KIOSK_SESSION_TIMEOUT",
+    "applies": [],
+    "guarded": false,
+    "doc": "How long a Webconfig browser session lasts without being used, seconds (default: a week). Open pages refreshing in the background do not count as use.",
+    "values": "a whole number, 300 to 31536000",
+    "default": "604800",
+    "value": null,
+    "input": {
+      "kind": "int",
+      "min": 300,
+      "max": 31536000
+    }
+  },
+  {
+    "name": "network.ethernet.interface",
+    "env": "KIOSK_ETHERNET_INTERFACE",
+    "applies": [
+      "network"
+    ],
+    "guarded": false,
+    "doc": "The Ethernet port the device manages; auto is the first one that comes up. Other ports are left to hand-made profiles.",
+    "values": "an interface name (eth0, enp1s0, wlan0), or auto",
+    "default": "auto",
+    "value": null,
+    "input": {
+      "kind": "text"
+    }
+  },
+  {
+    "name": "network.ethernet.mode",
+    "env": "KIOSK_ETHERNET_MODE",
+    "applies": [
+      "network"
+    ],
+    "guarded": false,
+    "doc": "dhcp, or static with network.ethernet.address, .gateway and .dns.",
+    "values": "one of: dhcp, static",
+    "default": "dhcp",
+    "value": null,
+    "input": {
+      "kind": "choice",
+      "choices": [
+        "dhcp",
+        "static"
+      ]
+    }
+  },
+  {
+    "name": "network.ethernet.address",
+    "env": "KIOSK_ETHERNET_ADDRESS",
+    "applies": [
+      "network"
+    ],
+    "guarded": false,
+    "doc": "The static address with network.ethernet.mode=static, e.g. 192.168.1.50/24.",
+    "values": "ADDRESS/PREFIX, e.g. 192.168.1.50/24, or empty",
+    "default": null,
+    "value": null,
+    "input": {
+      "kind": "text"
+    }
+  },
+  {
+    "name": "network.ethernet.gateway",
+    "env": "KIOSK_ETHERNET_GATEWAY",
+    "applies": [
+      "network"
+    ],
+    "guarded": false,
+    "doc": "The default gateway with network.ethernet.mode=static; inside network.ethernet.address. Empty for none.",
+    "values": "an IPv4 address, or empty",
+    "default": null,
+    "value": null,
+    "input": {
+      "kind": "text"
+    }
+  },
+  {
+    "name": "network.ethernet.dns",
+    "env": "KIOSK_ETHERNET_DNS",
+    "applies": [
+      "network"
+    ],
+    "guarded": false,
+    "doc": "DNS servers with network.ethernet.mode=static, comma separated.",
+    "values": "IPv4 addresses, comma separated, or empty",
+    "default": null,
+    "value": null,
+    "input": {
+      "kind": "text"
+    }
+  },
+  {
+    "name": "network.wifi.interface",
+    "env": "KIOSK_WIFI_INTERFACE",
+    "applies": [
+      "network"
+    ],
+    "guarded": false,
+    "doc": "The WiFi device the device manages; auto is whichever there is (wlan0, wlp1s0), so name it when there is more than one. Without one, nothing WiFi ever comes up.",
+    "values": "an interface name (eth0, enp1s0, wlan0), or auto",
+    "default": "auto",
+    "value": null,
+    "input": {
+      "kind": "text"
+    }
+  },
+  {
+    "name": "network.wifi.mode",
+    "env": "KIOSK_WIFI_MODE",
+    "applies": [
+      "network"
+    ],
+    "guarded": false,
+    "doc": "hotspot (tessaro-NAME, for installation and management), client (joins network.wifi.ssid; `tessaro-ctl network wifi join`; falls back to the hotspot when it does not connect after boot, see network.wifi.fallback_after), or off.",
+    "values": "one of: hotspot, client, off",
+    "default": "hotspot",
+    "value": null,
+    "input": {
+      "kind": "choice",
+      "choices": [
+        "hotspot",
+        "client",
+        "off"
+      ]
+    }
+  },
+  {
+    "name": "network.wifi.nat",
+    "env": "KIOSK_WIFI_NAT",
+    "applies": [
+      "network"
+    ],
+    "guarded": false,
+    "doc": "Let hotspot clients reach the internet and the LAN through the device; 0 lets them reach the device only.",
+    "values": "1 or 0 (on/off, true/false, yes/no)",
+    "default": "1",
+    "value": null,
+    "input": {
+      "kind": "flag"
+    }
+  },
+  {
+    "name": "network.wifi.captive",
+    "env": "KIOSK_WIFI_CAPTIVE",
+    "applies": [],
+    "guarded": false,
+    "doc": "While the device is unclaimed, a phone joining the hotspot gets its sign-in sheet with Quick Setup. Quick Setup turns it off with its first saved change; Webconfig itself stays at https://10.42.0.1:7400/.",
+    "values": "1 or 0 (on/off, true/false, yes/no)",
+    "default": "1",
+    "value": null,
+    "input": {
+      "kind": "flag"
+    }
+  },
+  {
+    "name": "network.wifi.ssid",
+    "env": "KIOSK_WIFI_SSID",
+    "applies": [
+      "network"
+    ],
+    "guarded": false,
+    "doc": "The network network.wifi.mode=client joins. Its password is set by `tessaro-ctl network wifi join` and never shown.",
+    "values": "a WiFi network name, 1 to 32 bytes",
+    "default": null,
+    "value": null,
+    "input": {
+      "kind": "text"
+    }
+  },
+  {
+    "name": "network.wifi.security",
+    "env": "KIOSK_WIFI_SECURITY",
+    "applies": [
+      "network"
+    ],
+    "guarded": false,
+    "doc": "The client network's security: psk (WPA2), sae (WPA3) or open. `network wifi join` finds it by scanning.",
+    "values": "one of: psk, sae, open",
+    "default": "psk",
+    "value": null,
+    "input": {
+      "kind": "choice",
+      "choices": [
+        "psk",
+        "sae",
+        "open"
+      ]
+    }
+  },
+  {
+    "name": "network.wifi.hidden",
+    "env": "KIOSK_WIFI_HIDDEN",
+    "applies": [
+      "network"
+    ],
+    "guarded": false,
+    "doc": "The client network does not broadcast its name.",
+    "values": "1 or 0 (on/off, true/false, yes/no)",
+    "default": "0",
+    "value": null,
+    "input": {
+      "kind": "flag"
+    }
+  },
+  {
+    "name": "network.wifi.ipv4",
+    "env": "KIOSK_WIFI_IPV4",
+    "applies": [
+      "network"
+    ],
+    "guarded": false,
+    "doc": "Client addressing: dhcp, or static with network.wifi.address, .gateway and .dns.",
+    "values": "one of: dhcp, static",
+    "default": "dhcp",
+    "value": null,
+    "input": {
+      "kind": "choice",
+      "choices": [
+        "dhcp",
+        "static"
+      ]
+    }
+  },
+  {
+    "name": "network.wifi.address",
+    "env": "KIOSK_WIFI_ADDRESS",
+    "applies": [
+      "network"
+    ],
+    "guarded": false,
+    "doc": "The static client address with network.wifi.ipv4=static, e.g. 192.168.1.51/24.",
+    "values": "ADDRESS/PREFIX, e.g. 192.168.1.50/24, or empty",
+    "default": null,
+    "value": null,
+    "input": {
+      "kind": "text"
+    }
+  },
+  {
+    "name": "network.wifi.gateway",
+    "env": "KIOSK_WIFI_GATEWAY",
+    "applies": [
+      "network"
+    ],
+    "guarded": false,
+    "doc": "The default gateway with network.wifi.ipv4=static; inside network.wifi.address. Empty for none.",
+    "values": "an IPv4 address, or empty",
+    "default": null,
+    "value": null,
+    "input": {
+      "kind": "text"
+    }
+  },
+  {
+    "name": "network.wifi.dns",
+    "env": "KIOSK_WIFI_DNS",
+    "applies": [
+      "network"
+    ],
+    "guarded": false,
+    "doc": "DNS servers with network.wifi.ipv4=static, comma separated.",
+    "values": "IPv4 addresses, comma separated, or empty",
+    "default": null,
+    "value": null,
+    "input": {
+      "kind": "text"
+    }
+  },
+  {
+    "name": "network.wifi.fallback_after",
+    "env": "KIOSK_WIFI_FALLBACK_AFTER",
+    "applies": [
+      "agent"
+    ],
+    "guarded": false,
+    "doc": "Seconds network.wifi.mode=client may go without connecting after boot before the device falls back to its hotspot until the next boot; 0 never.",
+    "values": "a whole number, 0 to 86400",
+    "default": "120",
+    "value": null,
+    "input": {
+      "kind": "int",
+      "min": 0,
+      "max": 86400
+    }
+  },
+  {
+    "name": "network.proxy.url",
+    "env": "KIOSK_PROXY_URL",
+    "applies": [
+      "proxy"
+    ],
+    "guarded": false,
+    "doc": "The proxy everything reaches the internet through: http://host:port or socks5://host:port, optionally with user:password@; empty for none. `tessaro-ctl network proxy set`.",
+    "values": "http://[user:password@]host:port or socks5://[user:password@]host:port, or empty; percent-encode $ \" ' \\ ` @ in a password",
+    "default": null,
+    "value": null,
+    "input": {
+      "kind": "text"
+    }
+  },
+  {
+    "name": "network.proxy.bypass",
+    "env": "KIOSK_PROXY_BYPASS",
+    "applies": [
+      "proxy"
+    ],
+    "guarded": false,
+    "doc": "What goes around the proxy, comma separated: host names, .domain suffixes, IP addresses, networks like 192.168.0.0/16. Loopback always does.",
+    "values": "host names, .domain suffixes, IP addresses or networks (10.0.0.0/8), comma separated",
+    "default": null,
+    "value": null,
+    "input": {
+      "kind": "text"
+    }
+  },
+  {
+    "name": "device.id",
+    "env": "",
+    "applies": [],
+    "guarded": false,
+    "doc": "The node id: systemd's app-specific machine id, never the machine id itself.",
+    "values": "read-only: reported by the device, cannot be set",
+    "default": null,
+    "value": "d77857317a77452baadbbde45de78ba7",
+    "input": {
+      "kind": "read-only"
+    }
+  },
+  {
+    "name": "network.hostname",
+    "env": "",
+    "applies": [],
+    "guarded": false,
+    "doc": "The kernel hostname.",
+    "values": "read-only: reported by the device, cannot be set",
+    "default": null,
+    "value": "tessaro",
+    "input": {
+      "kind": "read-only"
+    }
+  },
+  {
+    "name": "network.interface",
+    "env": "",
+    "applies": [],
+    "guarded": false,
+    "doc": "The interface carrying the IPv4 default route.",
+    "values": "read-only: reported by the device, cannot be set",
+    "default": null,
+    "value": "eth0",
+    "input": {
+      "kind": "read-only"
+    }
+  },
+  {
+    "name": "network.mac",
+    "env": "",
+    "applies": [],
+    "guarded": false,
+    "doc": "MAC address of network.interface.",
+    "values": "read-only: reported by the device, cannot be set",
+    "default": null,
+    "value": "d8:9e:f3:1c:57:31",
+    "input": {
+      "kind": "read-only"
+    }
+  },
+  {
+    "name": "network.ip",
+    "env": "",
+    "applies": [],
+    "guarded": false,
+    "doc": "The first IPv4 address of network.interface.",
+    "values": "read-only: reported by the device, cannot be set",
+    "default": null,
+    "value": "192.168.1.42",
+    "input": {
+      "kind": "read-only"
+    }
+  },
+  {
+    "name": "network.netmask",
+    "env": "",
+    "applies": [],
+    "guarded": false,
+    "doc": "Netmask of network.ip, dotted (255.255.255.0).",
+    "values": "read-only: reported by the device, cannot be set",
+    "default": null,
+    "value": "255.255.255.0",
+    "input": {
+      "kind": "read-only"
+    }
+  },
+  {
+    "name": "network.cidr",
+    "env": "",
+    "applies": [],
+    "guarded": false,
+    "doc": "network.ip with its prefix length (192.168.1.20/24).",
+    "values": "read-only: reported by the device, cannot be set",
+    "default": null,
+    "value": "192.168.1.42/24",
+    "input": {
+      "kind": "read-only"
+    }
+  },
+  {
+    "name": "network.gateway",
+    "env": "",
+    "applies": [],
+    "guarded": false,
+    "doc": "The IPv4 default gateway.",
+    "values": "read-only: reported by the device, cannot be set",
+    "default": null,
+    "value": "192.168.1.1",
+    "input": {
+      "kind": "read-only"
+    }
+  },
+  {
+    "name": "network.dns",
+    "env": "",
+    "applies": [],
+    "guarded": false,
+    "doc": "DNS servers in use, comma separated.",
+    "values": "read-only: reported by the device, cannot be set",
+    "default": null,
+    "value": "192.168.1.1",
+    "input": {
+      "kind": "read-only"
+    }
+  },
+  {
+    "name": "network.ipv4",
+    "env": "",
+    "applies": [],
+    "guarded": false,
+    "doc": "Every IPv4 address on every interface but loopback, comma separated.",
+    "values": "read-only: reported by the device, cannot be set",
+    "default": null,
+    "value": "192.168.1.42,10.42.0.1",
+    "input": {
+      "kind": "read-only"
+    }
+  },
+  {
+    "name": "network.ipv6",
+    "env": "",
+    "applies": [],
+    "guarded": false,
+    "doc": "Every IPv6 address on every interface but loopback, comma separated.",
+    "values": "read-only: reported by the device, cannot be set",
+    "default": null,
+    "value": "fe80::da9e:f3ff:fe1c:5731",
+    "input": {
+      "kind": "read-only"
+    }
+  },
+  {
+    "name": "network.public_ip",
+    "env": "",
+    "applies": [],
+    "guarded": false,
+    "doc": "The address the internet sees, from Cloudflare's trace; looked up by `network show` and `config get network.public_ip`, and every 5 minutes while browser.url uses it.",
+    "values": "read-only: reported by the device, cannot be set",
+    "default": null,
+    "value": "203.0.113.7",
+    "input": {
+      "kind": "read-only"
+    }
+  },
+  {
+    "name": "network.interfaces",
+    "env": "",
+    "applies": [],
+    "guarded": false,
+    "doc": "Every interface but loopback with its state and addresses, as eth0 up 10.0.0.20/24; wlan0 down.",
+    "values": "read-only: reported by the device, cannot be set",
+    "default": null,
+    "value": "eth0 up 192.168.1.42/24 fe80::da9e:f3ff:fe1c:5731/64; wlan0 up 10.42.0.1/24",
+    "input": {
+      "kind": "read-only"
+    }
+  },
+  {
+    "name": "network.wifi.hotspot_ssid",
+    "env": "",
+    "applies": [],
+    "guarded": false,
+    "doc": "The hotspot's network name, tessaro-NAME. Open while the device is unclaimed; claiming it sets a password, shown once.",
+    "values": "read-only: reported by the device, cannot be set",
+    "default": null,
+    "value": "tessaro-golden-thistle-5731",
+    "input": {
+      "kind": "read-only"
+    }
+  },
+  {
+    "name": "storage.size",
+    "env": "",
+    "applies": [],
+    "guarded": false,
+    "doc": "The size of the disk the device runs from, as 64.0 GB.",
+    "values": "read-only: reported by the device, cannot be set",
+    "default": null,
+    "value": "",
+    "input": {
+      "kind": "read-only"
+    }
+  },
+  {
+    "name": "storage.unallocated",
+    "env": "",
+    "applies": [],
+    "guarded": false,
+    "doc": "Space after the last partition, which `storage grow` gives to /data; 0 B once it has.",
+    "values": "read-only: reported by the device, cannot be set",
+    "default": null,
+    "value": "",
+    "input": {
+      "kind": "read-only"
+    }
+  },
+  {
+    "name": "storage.data_size",
+    "env": "",
+    "applies": [],
+    "guarded": false,
+    "doc": "The size of the /data filesystem.",
+    "values": "read-only: reported by the device, cannot be set",
+    "default": null,
+    "value": "8.2 GB",
+    "input": {
+      "kind": "read-only"
+    }
+  },
+  {
+    "name": "storage.data_free",
+    "env": "",
+    "applies": [],
+    "guarded": false,
+    "doc": "Space still free on /data.",
+    "values": "read-only: reported by the device, cannot be set",
+    "default": null,
+    "value": "7.6 GB",
+    "input": {
+      "kind": "read-only"
+    }
+  },
+  {
+    "name": "storage.data_used",
+    "env": "",
+    "applies": [],
+    "guarded": false,
+    "doc": "How full /data is, in percent (42%).",
+    "values": "read-only: reported by the device, cannot be set",
+    "default": null,
+    "value": "7%",
+    "input": {
+      "kind": "read-only"
+    }
+  },
+  {
+    "name": "storage.root_free",
+    "env": "",
+    "applies": [],
+    "guarded": false,
+    "doc": "Space free on the root filesystem, which is read-only and changes only with an update.",
+    "values": "read-only: reported by the device, cannot be set",
+    "default": null,
+    "value": "",
+    "input": {
+      "kind": "read-only"
+    }
+  },
+  {
+    "name": "data.<name>",
+    "env": "",
+    "applies": [
+      "agent"
+    ],
+    "guarded": false,
+    "doc": "Custom values with names you choose, for browser.url: data.table=12 fills {data.table}, as in https://menu.test/?table={data.table}. The kiosk gives them no meaning of its own. Set them before or together with a browser.url that uses them. A placeholder is always a full key, so built-in settings work the same way: {device.name}, {screen.scale}, ... No custom values are defined on this device yet.",
+    "values": "any text; percent-encoded where browser.url uses it",
+    "default": null,
+    "value": null,
+    "input": {
+      "kind": "text"
+    }
+  }
+]

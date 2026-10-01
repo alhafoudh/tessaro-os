@@ -248,4 +248,8 @@ from the host as a browser does (`Browser` in `support/api.rb`, which sends
 `Origin` and keeps cookies): the files and their caching, the origin rule,
 a claim that signs the browser in, tickets, signing out, a revoked token,
 and a change the agent restarts for against a restart someone asks for.
-How the pages look and behave is checked in a browser by hand.
+How the pages look and behave is checked in a browser by hand. The README's
+pictures of Quick Setup and Overview are the built pages answered from the
+agent's fixtures, never a device (**README screenshots** in
+[DEVELOPMENT.md](../DEVELOPMENT.md)); a page they show that asks for a new
+endpoint needs its answer in `docs/screenshots/api/`.

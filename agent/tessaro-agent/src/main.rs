@@ -55,6 +55,8 @@ mod proc;
 mod qr;
 mod render;
 mod schedules;
+#[cfg(test)]
+mod screenshots;
 mod scripts;
 mod secrets;
 mod shadow;

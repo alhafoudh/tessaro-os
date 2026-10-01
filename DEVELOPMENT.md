@@ -269,19 +269,33 @@ on GitHub's runners. The runner's setup is in
 always show the same made-up device and follow the pages as they ship:
 
 ```sh
-mise run docs:screenshots     # writes docs/images/{welcome,maintenance,debug-screen}.jpg
+mise run docs:screenshots     # writes docs/images/*.jpg
 ```
 
 The task first writes the fixtures with the agent's own code, through the
-`*_screenshot_fixture_is_current` tests (which also fail `agent:test` once a
-fixture is out of date): `docs/screenshots/welcome.json` from
-`welcome_value` and `qr.rs`, and `docs/screenshots/debug.html` from
-`debug::page` and the image's default `KIOSK_DEBUG_TEMPLATE`. Then
-`docs/screenshots/shoot.mjs` loads the shipped pages in Playwright's Docker
-image at 1920x1080 and answers their requests with those fixtures. Rerun it
-after changing the welcome, maintenance or debug page, the QR code or the
-default template, and commit the fixtures and the images together. It needs
-Docker.
+`*_screenshot_fixture*` tests (which also fail `agent:test` once a fixture is
+out of date): `docs/screenshots/welcome.json` from `welcome_value` and
+`qr.rs`, `docs/screenshots/debug.html` from `debug::page` and the image's
+default `KIOSK_DEBUG_TEMPLATE`, and `docs/screenshots/api/`, the API's
+answers by path. Those come from a control plane in a sandbox on the image's
+defaults (`screenshots.rs`), with what a sandbox cannot know - hardware, the
+browser, units, the read-only keys - filled in for one made-up device, which
+the debug screen shows too.
+
+It then builds Webconfig and draws `tessaro-gui` headless: the ignored
+`screenshot::the_readme_screenshots` test boots the app on an empty config
+directory, opens a device window and feeds it what a worker would send, from
+those fixtures, and renders it with iced's tiny-skia renderer (no GPU, the
+same pixels everywhere) into `build/screenshots/`. A page call without a
+fixture fails the test by its tag; answer it in `call_answers`.
+
+Last, `docs/screenshots/shoot.mjs` loads the shipped pages in Playwright's
+Docker image and answers their requests with the fixtures: the kiosk's pages
+at 1920x1080, Webconfig at 1280x800 from `build/webconfig` with `/api`
+answered from `api/` (a request without a fixture is named and fails the
+run), and the GUI's PNGs turned into JPEGs. Every image is saved 1600 wide.
+Rerun it after changing any page it shows, the QR code or the default
+template, and commit the fixtures and the images together. It needs Docker.
 
 ## Repository layout
 

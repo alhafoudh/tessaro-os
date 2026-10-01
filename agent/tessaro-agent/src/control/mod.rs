@@ -1440,7 +1440,7 @@ fn not_offered(key: &Key) -> String {
 
 /// A `Control` in a sandbox, for the server's tests.
 #[cfg(test)]
-pub(crate) use tests::fixture;
+pub(crate) use tests::{fixture, fixture_with};
 
 #[cfg(test)]
 mod tests {
@@ -1474,6 +1474,20 @@ mod tests {
     }
 
     pub(crate) fn fixture() -> Fixture {
+        fixture_with(
+            [
+                ("KIOSK_URL".to_string(), "http://127.0.0.1/".to_string()),
+                (
+                    "KIOSK_MAINTENANCE_URL".to_string(),
+                    "http://127.0.0.1/maintenance.html".to_string(),
+                ),
+            ]
+            .into(),
+        )
+    }
+
+    /// The same, on these image defaults.
+    pub(crate) fn fixture_with(defaults: HashMap<String, String>) -> Fixture {
         let dir = tempfile::tempdir().unwrap();
         let at = |name: &str| dir.path().join(name).display().to_string();
         let env: HashMap<String, String> = [
@@ -1543,14 +1557,6 @@ mod tests {
         .unwrap();
 
         let paths = Paths::load(&env);
-        let defaults: HashMap<String, String> = [
-            ("KIOSK_URL".to_string(), "http://127.0.0.1/".to_string()),
-            (
-                "KIOSK_MAINTENANCE_URL".to_string(),
-                "http://127.0.0.1/maintenance.html".to_string(),
-            ),
-        ]
-        .into();
         let (stop, shutdown) = watch::channel(false);
         let log = Arc::new(Log::buffered(true));
         // What the boot oneshot has always done by the time the agent runs.

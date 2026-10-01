@@ -1,0 +1,563 @@
+{
+  "revision": 1,
+  "settings": [
+    {
+      "key": "browser.url",
+      "env": "KIOSK_URL",
+      "value": "https://menu.example.com/",
+      "source": "set"
+    },
+    {
+      "key": "browser.probe_url",
+      "env": "KIOSK_PROBE_URL",
+      "value": "",
+      "source": "default"
+    },
+    {
+      "key": "browser.offline_url",
+      "env": "KIOSK_OFFLINE_URL",
+      "value": "",
+      "source": "default"
+    },
+    {
+      "key": "browser.enforce_origin",
+      "env": "KIOSK_ENFORCE_ORIGIN",
+      "value": "1",
+      "source": "default"
+    },
+    {
+      "key": "browser.maintenance.enable",
+      "env": "KIOSK_MAINTENANCE",
+      "value": "0",
+      "source": "default"
+    },
+    {
+      "key": "browser.maintenance.url",
+      "env": "KIOSK_MAINTENANCE_URL",
+      "value": "http://127.0.0.1/maintenance.html",
+      "source": "default"
+    },
+    {
+      "key": "browser.debug.enable",
+      "env": "KIOSK_DEBUG_SCREEN",
+      "value": "0",
+      "source": "default"
+    },
+    {
+      "key": "browser.debug.template",
+      "env": "KIOSK_DEBUG_TEMPLATE",
+      "value": "{device.name}\\n\\nid     {device.id}\\nhost   {network.hostname}\\n\\nroute  {network.interface} via {network.gateway}\\nip     {network.cidr}\\nmac    {network.mac}\\ndns    {network.dns}\\npublic {network.public_ip}\\n\\nifs    {network.interfaces}\\nipv6   {network.ipv6}\\n\\ndata   {storage.data_free} free of {storage.data_size}\\n\\nurl    {browser.url}",
+      "source": "default"
+    },
+    {
+      "key": "browser.inject.script",
+      "env": "KIOSK_INJECT_SCRIPT",
+      "value": "",
+      "source": "default"
+    },
+    {
+      "key": "browser.bridge.mode",
+      "env": "KIOSK_BRIDGE_MODE",
+      "value": "off",
+      "source": "default"
+    },
+    {
+      "key": "browser.zoom",
+      "env": "KIOSK_ZOOM",
+      "value": "100",
+      "source": "default"
+    },
+    {
+      "key": "browser.args_extra",
+      "env": "KIOSK_CHROMIUM_ARGS_EXTRA",
+      "value": "",
+      "source": "default"
+    },
+    {
+      "key": "browser.touch",
+      "env": "KIOSK_TOUCH",
+      "value": "auto",
+      "source": "default"
+    },
+    {
+      "key": "browser.enable_features",
+      "env": "KIOSK_ENABLE_FEATURES",
+      "value": "AcceleratedVideoDecoder,AcceleratedVideoDecodeLinuxGL,AcceleratedVideoDecodeLinuxZeroCopyGL",
+      "source": "default"
+    },
+    {
+      "key": "browser.disable_features",
+      "env": "KIOSK_DISABLE_FEATURES",
+      "value": "FallbackToSWIfGLES3NotSupported,PersistentHistograms",
+      "source": "default"
+    },
+    {
+      "key": "browser.fps_counter",
+      "env": "KIOSK_FPS_COUNTER",
+      "value": "0",
+      "source": "default"
+    },
+    {
+      "key": "browser.device_origins",
+      "env": "KIOSK_DEVICE_ORIGINS",
+      "value": "",
+      "source": "default"
+    },
+    {
+      "key": "screen.scale",
+      "env": "KIOSK_SCALE",
+      "value": "",
+      "source": "default"
+    },
+    {
+      "key": "screen.resolution",
+      "env": "KIOSK_RESOLUTION",
+      "value": "preferred",
+      "source": "default"
+    },
+    {
+      "key": "screen.osk",
+      "env": "KIOSK_OSK",
+      "value": "auto",
+      "source": "default"
+    },
+    {
+      "key": "screen.vnc",
+      "env": "KIOSK_VNC",
+      "value": "on",
+      "source": "default"
+    },
+    {
+      "key": "audio.output",
+      "env": "KIOSK_AUDIO_OUTPUT",
+      "value": "auto",
+      "source": "default"
+    },
+    {
+      "key": "audio.volume",
+      "env": "KIOSK_AUDIO_VOLUME",
+      "value": "80",
+      "source": "default"
+    },
+    {
+      "key": "audio.mute",
+      "env": "KIOSK_AUDIO_MUTE",
+      "value": "0",
+      "source": "default"
+    },
+    {
+      "key": "audio.input",
+      "env": "KIOSK_AUDIO_INPUT",
+      "value": "auto",
+      "source": "default"
+    },
+    {
+      "key": "audio.input_volume",
+      "env": "KIOSK_AUDIO_INPUT_VOLUME",
+      "value": "100",
+      "source": "default"
+    },
+    {
+      "key": "time.timezone",
+      "env": "KIOSK_TIMEZONE",
+      "value": "UTC",
+      "source": "default"
+    },
+    {
+      "key": "time.ntp.enable",
+      "env": "KIOSK_NTP",
+      "value": "1",
+      "source": "default"
+    },
+    {
+      "key": "time.ntp.servers",
+      "env": "KIOSK_NTP_SERVERS",
+      "value": "",
+      "source": "default"
+    },
+    {
+      "key": "camera.format",
+      "env": "KIOSK_CAMERA_FORMAT",
+      "value": "auto",
+      "source": "default"
+    },
+    {
+      "key": "camera.size",
+      "env": "KIOSK_CAMERA_SIZE",
+      "value": "auto",
+      "source": "default"
+    },
+    {
+      "key": "camera.mirrors",
+      "env": "KIOSK_CAMERA_MIRRORS",
+      "value": "2",
+      "source": "default"
+    },
+    {
+      "key": "printer.enable",
+      "env": "KIOSK_PRINTING",
+      "value": "0",
+      "source": "default"
+    },
+    {
+      "key": "agent.enable",
+      "env": "KIOSK_AGENT_ENABLE",
+      "value": "1",
+      "source": "default"
+    },
+    {
+      "key": "agent.debug",
+      "env": "KIOSK_DEBUG",
+      "value": null,
+      "source": "default"
+    },
+    {
+      "key": "agent.watchdog",
+      "env": "KIOSK_WATCHDOG",
+      "value": "1",
+      "source": "default"
+    },
+    {
+      "key": "agent.device_access",
+      "env": "KIOSK_DEVICE_ACCESS",
+      "value": "0",
+      "source": "default"
+    },
+    {
+      "key": "agent.probe_interval",
+      "env": "KIOSK_PROBE_INTERVAL",
+      "value": "30",
+      "source": "default"
+    },
+    {
+      "key": "agent.probe_interval_fail",
+      "env": "KIOSK_PROBE_INTERVAL_FAIL",
+      "value": "10",
+      "source": "default"
+    },
+    {
+      "key": "agent.probe_connect_timeout",
+      "env": "KIOSK_PROBE_CONNECT_TIMEOUT",
+      "value": "5",
+      "source": "default"
+    },
+    {
+      "key": "agent.probe_timeout",
+      "env": "KIOSK_PROBE_TIMEOUT",
+      "value": "10",
+      "source": "default"
+    },
+    {
+      "key": "agent.fail_threshold",
+      "env": "KIOSK_FAIL_THRESHOLD",
+      "value": "2",
+      "source": "default"
+    },
+    {
+      "key": "agent.refresh_interval",
+      "env": "KIOSK_REFRESH_INTERVAL",
+      "value": "600",
+      "source": "default"
+    },
+    {
+      "key": "agent.offline_refresh",
+      "env": "KIOSK_OFFLINE_REFRESH",
+      "value": "300",
+      "source": "default"
+    },
+    {
+      "key": "agent.ping_fails",
+      "env": "KIOSK_PING_FAILS",
+      "value": "3",
+      "source": "default"
+    },
+    {
+      "key": "agent.restart_after",
+      "env": "KIOSK_RESTART_AFTER",
+      "value": "40",
+      "source": "default"
+    },
+    {
+      "key": "agent.restart_backoff",
+      "env": "KIOSK_RESTART_BACKOFF",
+      "value": "300",
+      "source": "default"
+    },
+    {
+      "key": "agent.cdp_timeout",
+      "env": "KIOSK_CDP_TIMEOUT",
+      "value": "5",
+      "source": "default"
+    },
+    {
+      "key": "agent.cdp_ping",
+      "env": "KIOSK_CDP_PING",
+      "value": "10",
+      "source": "default"
+    },
+    {
+      "key": "agent.cdp_reconnect_max",
+      "env": "KIOSK_CDP_RECONNECT_MAX",
+      "value": "15",
+      "source": "default"
+    },
+    {
+      "key": "device.name",
+      "env": "KIOSK_NODE_NAME",
+      "value": "",
+      "source": "default"
+    },
+    {
+      "key": "access.listen",
+      "env": "KIOSK_API_LISTEN",
+      "value": "0.0.0.0:7400",
+      "source": "default"
+    },
+    {
+      "key": "access.mdns",
+      "env": "KIOSK_MDNS",
+      "value": "on",
+      "source": "default"
+    },
+    {
+      "key": "access.session_timeout",
+      "env": "KIOSK_SESSION_TIMEOUT",
+      "value": "604800",
+      "source": "default"
+    },
+    {
+      "key": "network.ethernet.interface",
+      "env": "KIOSK_ETHERNET_INTERFACE",
+      "value": "auto",
+      "source": "default"
+    },
+    {
+      "key": "network.ethernet.mode",
+      "env": "KIOSK_ETHERNET_MODE",
+      "value": "dhcp",
+      "source": "default"
+    },
+    {
+      "key": "network.ethernet.address",
+      "env": "KIOSK_ETHERNET_ADDRESS",
+      "value": null,
+      "source": "default"
+    },
+    {
+      "key": "network.ethernet.gateway",
+      "env": "KIOSK_ETHERNET_GATEWAY",
+      "value": null,
+      "source": "default"
+    },
+    {
+      "key": "network.ethernet.dns",
+      "env": "KIOSK_ETHERNET_DNS",
+      "value": null,
+      "source": "default"
+    },
+    {
+      "key": "network.wifi.interface",
+      "env": "KIOSK_WIFI_INTERFACE",
+      "value": "auto",
+      "source": "default"
+    },
+    {
+      "key": "network.wifi.mode",
+      "env": "KIOSK_WIFI_MODE",
+      "value": "hotspot",
+      "source": "default"
+    },
+    {
+      "key": "network.wifi.nat",
+      "env": "KIOSK_WIFI_NAT",
+      "value": "1",
+      "source": "default"
+    },
+    {
+      "key": "network.wifi.captive",
+      "env": "KIOSK_WIFI_CAPTIVE",
+      "value": "1",
+      "source": "default"
+    },
+    {
+      "key": "network.wifi.ssid",
+      "env": "KIOSK_WIFI_SSID",
+      "value": null,
+      "source": "default"
+    },
+    {
+      "key": "network.wifi.security",
+      "env": "KIOSK_WIFI_SECURITY",
+      "value": "psk",
+      "source": "default"
+    },
+    {
+      "key": "network.wifi.hidden",
+      "env": "KIOSK_WIFI_HIDDEN",
+      "value": "0",
+      "source": "default"
+    },
+    {
+      "key": "network.wifi.ipv4",
+      "env": "KIOSK_WIFI_IPV4",
+      "value": "dhcp",
+      "source": "default"
+    },
+    {
+      "key": "network.wifi.address",
+      "env": "KIOSK_WIFI_ADDRESS",
+      "value": null,
+      "source": "default"
+    },
+    {
+      "key": "network.wifi.gateway",
+      "env": "KIOSK_WIFI_GATEWAY",
+      "value": null,
+      "source": "default"
+    },
+    {
+      "key": "network.wifi.dns",
+      "env": "KIOSK_WIFI_DNS",
+      "value": null,
+      "source": "default"
+    },
+    {
+      "key": "network.wifi.fallback_after",
+      "env": "KIOSK_WIFI_FALLBACK_AFTER",
+      "value": "120",
+      "source": "default"
+    },
+    {
+      "key": "network.proxy.url",
+      "env": "KIOSK_PROXY_URL",
+      "value": null,
+      "source": "default"
+    },
+    {
+      "key": "network.proxy.bypass",
+      "env": "KIOSK_PROXY_BYPASS",
+      "value": null,
+      "source": "default"
+    },
+    {
+      "key": "device.id",
+      "env": "",
+      "value": "d77857317a77452baadbbde45de78ba7",
+      "source": "live"
+    },
+    {
+      "key": "network.hostname",
+      "env": "",
+      "value": "tessaro",
+      "source": "live"
+    },
+    {
+      "key": "network.interface",
+      "env": "",
+      "value": "eth0",
+      "source": "live"
+    },
+    {
+      "key": "network.mac",
+      "env": "",
+      "value": "d8:9e:f3:1c:57:31",
+      "source": "live"
+    },
+    {
+      "key": "network.ip",
+      "env": "",
+      "value": "192.168.1.42",
+      "source": "live"
+    },
+    {
+      "key": "network.netmask",
+      "env": "",
+      "value": "255.255.255.0",
+      "source": "live"
+    },
+    {
+      "key": "network.cidr",
+      "env": "",
+      "value": "192.168.1.42/24",
+      "source": "live"
+    },
+    {
+      "key": "network.gateway",
+      "env": "",
+      "value": "192.168.1.1",
+      "source": "live"
+    },
+    {
+      "key": "network.dns",
+      "env": "",
+      "value": "192.168.1.1",
+      "source": "live"
+    },
+    {
+      "key": "network.ipv4",
+      "env": "",
+      "value": "192.168.1.42,10.42.0.1",
+      "source": "live"
+    },
+    {
+      "key": "network.ipv6",
+      "env": "",
+      "value": "fe80::da9e:f3ff:fe1c:5731",
+      "source": "live"
+    },
+    {
+      "key": "network.public_ip",
+      "env": "",
+      "value": "203.0.113.7",
+      "source": "live"
+    },
+    {
+      "key": "network.interfaces",
+      "env": "",
+      "value": "eth0 up 192.168.1.42/24 fe80::da9e:f3ff:fe1c:5731/64; wlan0 up 10.42.0.1/24",
+      "source": "live"
+    },
+    {
+      "key": "network.wifi.hotspot_ssid",
+      "env": "",
+      "value": "tessaro-golden-thistle-5731",
+      "source": "live"
+    },
+    {
+      "key": "storage.size",
+      "env": "",
+      "value": "",
+      "source": "live"
+    },
+    {
+      "key": "storage.unallocated",
+      "env": "",
+      "value": "",
+      "source": "live"
+    },
+    {
+      "key": "storage.data_size",
+      "env": "",
+      "value": "8.2 GB",
+      "source": "live"
+    },
+    {
+      "key": "storage.data_free",
+      "env": "",
+      "value": "7.6 GB",
+      "source": "live"
+    },
+    {
+      "key": "storage.data_used",
+      "env": "",
+      "value": "7%",
+      "source": "live"
+    },
+    {
+      "key": "storage.root_free",
+      "env": "",
+      "value": "",
+      "source": "live"
+    }
+  ]
+}

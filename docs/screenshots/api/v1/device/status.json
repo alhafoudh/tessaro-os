@@ -1,0 +1,91 @@
+{
+  "node": {
+    "id": "d77857317a77452baadbbde45de78ba7",
+    "name": "golden-thistle-5731",
+    "version": "1.0.0",
+    "machine": "raspberrypi5",
+    "fingerprint": "9c41e0d8b7a35f2e6c1d4b8a0f73e5d29a6c8b1e4f07d3a5c2b9e6f1a8d4c731",
+    "claimed": false
+  },
+  "revision": 1,
+  "kiosk_url": "https://menu.example.com/",
+  "current_url": "https://menu.example.com/",
+  "browser_answering": true,
+  "units": {
+    "tessaro-agent.service": "active",
+    "tessaro-kiosk.service": "active",
+    "weston.service": "active"
+  },
+  "pending": null,
+  "os": "Tessaro 0.1.0",
+  "image_version": "0.1.0",
+  "maintenance": false,
+  "debug_screen": false,
+  "devtools": false,
+  "audio": {
+    "running": true,
+    "error": null,
+    "output": {
+      "setting": "auto",
+      "using": {
+        "name": "alsa_output.platform-107c701400.hdmi.hdmi-stereo",
+        "description": "Built-in Audio Stereo",
+        "kind": "hdmi",
+        "available": true,
+        "in_use": true,
+        "needs_profile": false
+      },
+      "fallback": null,
+      "volume": 80,
+      "muted": false,
+      "devices": [
+        {
+          "name": "alsa_output.platform-107c701400.hdmi.hdmi-stereo",
+          "description": "Built-in Audio Stereo",
+          "kind": "hdmi",
+          "available": true,
+          "in_use": true,
+          "needs_profile": false
+        }
+      ]
+    },
+    "input": {
+      "setting": "auto",
+      "using": null,
+      "fallback": "no microphone",
+      "volume": 100,
+      "muted": false,
+      "devices": []
+    }
+  },
+  "data": {
+    "mountpoint": "/data",
+    "source": "/dev/mmcblk0p3",
+    "fstype": "ext4",
+    "size": 8200000000,
+    "used": 574000000,
+    "available": 7626000000
+  },
+  "screen_on": true,
+  "bridge": null,
+  "time": {
+    "timezone": "Europe/Bratislava",
+    "synchronized": true,
+    "ntp": true
+  },
+  "hardware": {
+    "vendor": "Raspberry Pi",
+    "model": "5 Model B Rev 1.0",
+    "board": "Sony UK",
+    "firmware": null,
+    "serial": "d77857317a77452b",
+    "cpu": "BCM2712",
+    "cores": 4,
+    "arch": "aarch64"
+  },
+  "memory": {
+    "total": 4000000000,
+    "available": 2900000000
+  },
+  "cpu_percent": 12
+}

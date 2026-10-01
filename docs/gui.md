@@ -420,3 +420,14 @@ snapshot is taken is **Snapshots** in [camera.md](camera.md).
 
 It then looks and behaves like the other pages: selection, double-click and
 Enter, Up and Down, disabled actions, dialogs.
+
+## The README's screenshots
+
+**The README's pictures of the app are drawn headless, never taken from a
+screen**: the ignored test in `screenshot.rs` boots `App`, opens a device
+window and plays it the worker's events from the agent's fixtures, then
+renders with tiny-skia (**README screenshots** in
+[DEVELOPMENT.md](../DEVELOPMENT.md)). No worker runs, so a call the shown
+page makes needs an entry in `call_answers`, by its tag. Monospaced text
+comes from the host's fonts, the only part of the picture that differs
+between machines.

@@ -313,13 +313,21 @@ dir = "{{config_root}}/webconfig"
 run = "npm run lint"
 
 [tasks."docs:screenshots"]
-description = "Render the README's screenshots (welcome, maintenance, debug screen) from the shipped pages and fixed data, with Playwright in docker"
+description = "Render the README's screenshots (the kiosk's pages, Webconfig, tessaro-gui) from the shipped pages and fixed data, Webconfig's with Playwright in docker"
 dir = "{{config_root}}"
 run = '''
 set -e
 # The fixtures are what the agent itself writes: the welcome page's
-# welcome.json, QR code included, and the debug screen's page.
+# welcome.json, QR code included, the debug screen's page, and the API's
+# answers for a made-up device (api/).
 (cd agent && UPDATE_SCREENSHOTS=1 cargo test -p tessaro-agent screenshot_fixture)
+# Webconfig is shot as it is built for the image.
+[ -d webconfig/node_modules ] || mise run webconfig:setup
+mise run webconfig:build
+# tessaro-gui draws itself, headless, from the same answers, into
+# build/screenshots, which shoot.mjs turns into JPEGs.
+(cd gui && CARGO_TARGET_DIR="$PWD/../build/gui-target" \
+    cargo test -p tessaro-gui screenshot -- --ignored)
 # The image's browser has to be the one playwright-core expects, so both
 # take the version pinned in package.json.
 version=$(node -p "require('./docs/screenshots/package.json').dependencies['playwright-core']")

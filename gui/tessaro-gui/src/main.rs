@@ -17,6 +17,8 @@ mod logs;
 mod mdi;
 mod messages;
 mod nodes_view;
+#[cfg(test)]
+mod screenshot;
 mod section;
 mod theme;
 mod vnc;
@@ -72,20 +74,25 @@ fn main() -> iced::Result {
             },
             ..window::Settings::default()
         })
-        .settings(iced::Settings {
-            fonts: vec![
-                include_bytes!("../fonts/Manrope-Regular.ttf")
-                    .as_slice()
-                    .into(),
-                include_bytes!("../fonts/Manrope-Bold.ttf")
-                    .as_slice()
-                    .into(),
-            ],
-            default_font: theme::FONT,
-            default_text_size: theme::TEXT.into(),
-            ..iced::Settings::default()
-        })
+        .settings(settings())
         .run()
+}
+
+/// The bundled font, as the default at the default size.
+fn settings() -> iced::Settings {
+    iced::Settings {
+        fonts: vec![
+            include_bytes!("../fonts/Manrope-Regular.ttf")
+                .as_slice()
+                .into(),
+            include_bytes!("../fonts/Manrope-Bold.ttf")
+                .as_slice()
+                .into(),
+        ],
+        default_font: theme::FONT,
+        default_text_size: theme::TEXT.into(),
+        ..iced::Settings::default()
+    }
 }
 
 /// Cmd + and Cmd -, in tenths.

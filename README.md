@@ -261,12 +261,22 @@ on the network in one list, a page per area, a file manager, printers,
 policies, a live journal, and a live VNC view of the screen. It shares the
 CLI's devices and tokens, so a device claimed in one is open in the other.
 
+<p align="center">
+  <img src="docs/images/gui-overview.jpg" width="49%" alt="tessaro-gui with a device window open on its Overview">
+  <img src="docs/images/gui-configure.jpg" width="49%" alt="tessaro-gui with the device's browser settings open">
+</p>
+
 ### Webconfig
 
 Every device serves its own management pages at `https://<device>:7400/`.
 Quick Setup gets a fresh device online from a phone, and the rest covers what
 the desktop app does, from any browser. `tessaro-ctl access webconfig` opens
 it signed in.
+
+<p align="center">
+  <img src="docs/images/webconfig-quick-setup.jpg" width="49%" alt="Webconfig's Quick Setup page">
+  <img src="docs/images/webconfig-overview.jpg" width="49%" alt="Webconfig's Overview page">
+</p>
 
 ## Build it yourself
 
