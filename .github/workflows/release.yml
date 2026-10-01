@@ -86,6 +86,12 @@ jobs:
             | select(.key == "qemux86-64" or .key == "genericx86-64" or .key == "raspberrypi3-64" or .key == "raspberrypi5")
             | select(.value == true) | .key]' <<<"$PICKED")
           [ "$machines" != "[]" ] || { echo "::error::pick at least one machine"; exit 1; }
+          # A release only follows a passed e2e, so fail now rather than
+          # after hours of builds that could never be released.
+          if [ "$(jq -r .release <<<"$PICKED")" = true ]; then
+            [ "$(jq -r .e2e <<<"$PICKED")" = true ] && jq -e 'index("qemux86-64")' <<<"$machines" >/dev/null \
+              || { echo "::error::a release needs e2e ticked and qemux86-64 picked"; exit 1; }
+          fi
           echo "machines=$machines" >> "$GITHUB_OUTPUT"
 
   build:
@@ -312,12 +318,12 @@ jobs:
 
   release:
     needs: [matrix, build, e2e, clients]
-    # always(), since e2e is skipped when unticked or without qemux86-64;
-    # anything else must have passed.
+    # always(), since e2e's own if uses it; a release needs e2e to have
+    # passed, never skipped (matrix refuses a release without e2e).
     if: >-
       always() && inputs.release
       && needs.build.result == 'success' && needs.clients.result == 'success'
-      && (needs.e2e.result == 'success' || needs.e2e.result == 'skipped')
+      && needs.e2e.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write

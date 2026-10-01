@@ -52,8 +52,10 @@ images and clients stay workflow artifacts.
   `tessaro-gui-<version>-<sha>-<platform>`, as `.tar.gz`, or `.zip` on
   Windows and for the macOS `Tessaro.app`, as `clients-<platform>`.
 * `release` runs only when asked and only when every job passed, e2e
-  included unless it was skipped. It tags the built commit `v<version>-<sha>` and attaches every
-  image, bmap and client archive.
+  included: a skipped e2e is no pass. It tags the built commit
+  `v<version>-<sha>` and attaches every image, bmap and client archive.
+  `matrix` fails up front when release is ticked without e2e or without
+  qemux86-64, so no run builds for hours toward a release it cannot make.
 
 **The self-hosted runner builds images and nothing else.** The clients
 take minutes on GitHub's runners and need none of the build host's cache,
