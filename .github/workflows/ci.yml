@@ -30,7 +30,7 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential pkg-config libssl-dev
       # Only the toolchains the job uses: python and bmaptool are for the
       # workstation tasks.
-      - uses: jdx/mise-action@v3
+      - uses: jdx/mise-action@v5
         with:
           install_args: rust
       # mise.toml points CARGO_TARGET_DIR at build/cargo-target.
@@ -39,8 +39,22 @@ jobs:
           workspaces: agent -> ../build/cargo-target
       - run: mise run agent:lint
       - run: mise run agent:test
+
+  # The release build in its own job, so it runs next to the agent's tests
+  # instead of after them.
+  ctl:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential pkg-config libssl-dev
+      - uses: jdx/mise-action@v5
+        with:
+          install_args: rust
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: agent -> ../build/cargo-target
       - run: mise run ctl:build
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: tessaro-ctl-linux-x86_64
           path: build/cargo-target/release/tessaro-ctl
@@ -53,7 +67,7 @@ jobs:
       # iced loads X11 and xkbcommon at runtime; the Wayland headers are for
       # wayland-sys, should it link at build time.
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential pkg-config libssl-dev libwayland-dev libxkbcommon-dev
-      - uses: jdx/mise-action@v3
+      - uses: jdx/mise-action@v5
         with:
           install_args: rust
       - uses: Swatinem/rust-cache@v2
@@ -62,7 +76,7 @@ jobs:
       - run: mise run gui:lint
       - run: mise run gui:test
       - run: mise run gui:build
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: tessaro-gui-linux-x86_64
           path: build/gui-target/release/tessaro-gui
@@ -72,10 +86,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: jdx/mise-action@v3
+      - uses: jdx/mise-action@v5
         with:
           install_args: node
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ~/.npm
           key: npm-${{ hashFiles('webconfig/package-lock.json') }}

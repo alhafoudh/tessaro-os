@@ -9,15 +9,18 @@ on a workstation, and changing a task changes CI with it.
 **Everything that builds without bitbake is checked on every push and pull
 request**, on GitHub's own runners so it never waits behind an image build:
 
-* `agent`: `agent:lint`, `agent:test`, and `ctl:build`, uploaded as the
-  `tessaro-ctl-linux-x86_64` artifact.
+* `agent`: `agent:lint` and `agent:test`.
+* `ctl`: `ctl:build`, uploaded as the `tessaro-ctl-linux-x86_64` artifact.
+  A job of its own so the release build runs next to the agent's tests, not
+  after them.
 * `gui`: `gui:lint`, `gui:test`, and `gui:build`, uploaded as
   `tessaro-gui-linux-x86_64`.
 * `webconfig`: `webconfig:setup`, `webconfig:lint`, `webconfig:test` (which
   includes `bitbake-lock.json` being current) and `webconfig:build`.
 
 `jdx/mise-action` installs only the toolchain a job needs from `mise.toml`,
-so CI runs the pinned Rust and Node. `Swatinem/rust-cache` caches the cargo
+so CI runs the pinned Rust and Node; `MISE_AUTO_INSTALL=false` stops
+`mise run` from installing the rest. `Swatinem/rust-cache` caches the cargo
 target dirs that `mise.toml` sets (`build/cargo-target`,
 `build/gui-target`). A newer push to the same ref cancels the older run.
 
