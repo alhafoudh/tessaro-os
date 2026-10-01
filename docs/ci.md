@@ -27,22 +27,53 @@ target dirs that `mise.toml` sets (`build/cargo-target`,
 `agent:integration` is not in CI: it runs the agent until Ctrl-C and asserts
 nothing.
 
-## By hand: `image.yml`
+## By hand: `release.yml`
 
-**Images are built only when someone starts the workflow**, from the Actions
-tab ("Run workflow"). Its inputs pick the machines, whether e2e runs on the
-qemu image, the arguments for `e2e:run` (`-o '--tag ~reboot'`), and whether
-the images become a GitHub release.
+**Images and releases are built only when someone starts the workflow**,
+from the Actions tab ("Run workflow"). Its inputs pick the machines, whether
+e2e runs on the qemu image, the arguments for `e2e:run` (`-o '--tag
+~reboot'`), and whether the run becomes a GitHub release. That last one
+starts ticked: untick it for a dev build.
 
-* `matrix` turns the picked machines into the build matrix.
+* `matrix` turns the picked machines into the build matrix and names the
+  run's version with `image:name` (`<version>-<sha>`), the one every image
+  and client archive carries.
 * `build` runs once per machine, one at a time, on the self-hosted runner:
   `image:name`, then `image:build`. It uploads the versioned
   `tessaro-os-<machine>-<version>-<sha>.wic.zst` and its `.wic.bmap` as the
   `image-<machine>` artifact. On qemux86-64 it then runs `e2e:setup` and
   `e2e:run` and uploads `build/e2e/` as `e2e-logs`.
-* `release` runs only when asked and only when every build, e2e included,
+* `clients` runs `ctl:build` and `gui:build` on GitHub's runners, one leg
+  per platform: linux-x86_64, linux-aarch64, macos-arm64 and
+  windows-x86_64. It uploads `tessaro-ctl-<version>-<sha>-<platform>` and
+  `tessaro-gui-<version>-<sha>-<platform>`, as `.tar.gz`, or `.zip` on
+  Windows and for the macOS `Tessaro.app`, as `clients-<platform>`.
+* `webconfig` runs `webconfig:setup` and `webconfig:build` and uploads
+  `tessaro-webconfig-<version>-<sha>.tar.gz` as `clients-webconfig`, for
+  serving it from elsewhere; the image builds its own copy through bitbake.
+* `release` runs only when asked and only when every job, e2e included,
   passed. It tags the built commit `v<version>-<sha>` and attaches every
-  image and bmap.
+  image, bmap and client archive.
+
+**The self-hosted runner builds images and nothing else.** The clients and
+Webconfig take minutes on GitHub's runners and need none of the build host's
+cache, so they run there, alongside the image builds, and never queue
+behind one. They skip lint and test: `ci.yml` ran those on the push.
+
+**The Linux clients are built on Ubuntu 22.04**, so they run on glibc 2.35
+and newer. They link the system's openssl (libssl3), and `tessaro-gui` loads
+X11 or Wayland and xkbcommon at runtime.
+
+**The macOS clients are signed ad hoc only**, the way `gui/package-macos.sh`
+signs `Tessaro.app`. A download carries the quarantine flag, so Gatekeeper
+refuses to open it until that is cleared:
+
+```sh
+xattr -dr com.apple.quarantine Tessaro.app tessaro-ctl
+```
+
+**On Windows the tasks run in Git Bash.** `MISE_WINDOWS_DEFAULT_INLINE_SHELL_ARGS`
+makes mise hand their sh bodies to `bash -c` instead of cmd.
 
 **e2e runs in the build job, not after it.** The suite boots runqemu out of
 the kas build tree that built the image (native qemu, OVMF, the
@@ -80,7 +111,7 @@ On the host it is a directory that is simply there.
   workstation build or e2e run on the host finishes first. A job cancelled
   mid-build can leave its kas container running; check `docker ps` before
   the next one.
-* **Never trigger `image.yml` from `pull_request`.** A self-hosted runner
+* **Never trigger `release.yml` from `pull_request`.** A self-hosted runner
   runs whatever the workflow checks out; `workflow_dispatch` keeps that to
   people with write access to the repository.
 

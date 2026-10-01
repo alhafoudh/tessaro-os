@@ -136,6 +136,11 @@ builds and has room for builds that run for hours. The same pipeline boots
 the qemu image and runs the end-to-end suite against it. How it all works is
 in [docs/ci.md](docs/ci.md).
 
+Every release also carries `tessaro-ctl` and `tessaro-gui` for Linux
+(x86_64, aarch64), macOS (Apple silicon) and Windows. The macOS ones are not
+notarized: clear the quarantine flag once with `xattr -dr
+com.apple.quarantine Tessaro.app tessaro-ctl`.
+
 ```sh
 bmaptool copy tessaro-os-raspberrypi5-<version>.wic.zst /dev/sdX   # first install
 tessaro-ctl update send tessaro-os-raspberrypi5-<version>.wic.zst  # every update after that, over the network

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Set up the self-hosted GitHub Actions runner that image.yml builds on, on
+# Set up the self-hosted GitHub Actions runner that release.yml builds images on, on
 # the build host, as a systemd service of the user who builds there.
 # Safe to run again: it skips what is done and refreshes the service's PATH.
 # How the runner is used, and why: docs/ci.md.

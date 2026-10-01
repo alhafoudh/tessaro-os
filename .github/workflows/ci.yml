@@ -1,6 +1,6 @@
 # Lint, test and build what does not need bitbake, on every push: the agent
 # workspace, tessaro-gui and Webconfig. On GitHub's runners, so it never
-# queues behind an image build. How it fits with image.yml: docs/ci.md.
+# queues behind an image build. How it fits with release.yml: docs/ci.md.
 
 name: ci
 

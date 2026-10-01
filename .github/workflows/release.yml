@@ -1,0 +1,320 @@
+# Build images by hand, run e2e on the qemu one, build tessaro-ctl,
+# tessaro-gui and Webconfig for every platform, and publish them all as a
+# release unless that is unticked. Only the image builds run on the
+# self-hosted runner on the build host, which uses the shared download and
+# sstate cache in place: it is far too big for a cache store. Everything else
+# runs on GitHub's runners. Only workflow_dispatch triggers this, so only
+# people with write access run code on that host - never add pull_request
+# here. See docs/ci.md.
+
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      qemux86-64:
+        description: qemux86-64 (development, QEMU)
+        type: boolean
+        default: true
+      genericx86-64:
+        description: genericx86-64 (x86_64 PCs)
+        type: boolean
+        default: false
+      raspberrypi3-64:
+        description: raspberrypi3-64 (Pi 3B / 3B+)
+        type: boolean
+        default: false
+      raspberrypi5:
+        description: raspberrypi5 (Pi 5)
+        type: boolean
+        default: false
+      e2e:
+        description: Run the e2e suite on the qemux86-64 image
+        type: boolean
+        default: true
+      e2e_args:
+        description: "Arguments for e2e:run, e.g. -o '--tag ~reboot'"
+        type: string
+        default: ""
+      release:
+        description: Publish the images and clients as a GitHub release
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+env:
+  # mise refuses an untrusted mise.toml; the checkout is this repo's own.
+  MISE_TRUSTED_CONFIG_PATHS: ${{ github.workspace }}
+
+jobs:
+  matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      machines: ${{ steps.pick.outputs.machines }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+      # image:name needs only git and sed, so no toolchain gets installed.
+      - uses: jdx/mise-action@v5
+        with:
+          install: false
+      # The version every image and client of this run is named with. A fresh
+      # checkout is never -dirty; the build host's can be, and build checks.
+      - id: version
+        env:
+          MISE_AUTO_INSTALL: "false"
+        run: |
+          name=$(TESSARO_MACHINE=qemux86-64 mise run --quiet image:name | tail -n 1)
+          version=${name#tessaro-os-qemux86-64-}
+          version=${version%.wic.zst}
+          echo "version: $version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - id: pick
+        env:
+          PICKED: ${{ toJSON(inputs) }}
+        run: |
+          machines=$(jq -c '[to_entries[]
+            | select(.key == "qemux86-64" or .key == "genericx86-64" or .key == "raspberrypi3-64" or .key == "raspberrypi5")
+            | select(.value == true) | .key]' <<<"$PICKED")
+          [ "$machines" != "[]" ] || { echo "::error::pick at least one machine"; exit 1; }
+          echo "machines=$machines" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: matrix
+    runs-on: [self-hosted, yocto]
+    timeout-minutes: 1440
+    strategy:
+      matrix:
+        machine: ${{ fromJSON(needs.matrix.outputs.machines) }}
+      # One build at a time: the legs share the cache and the host.
+      max-parallel: 1
+      fail-fast: false
+    env:
+      TESSARO_MACHINE: ${{ matrix.machine }}
+    steps:
+      # clean: false, or checkout's git clean -ffdx wipes the kas layer
+      # checkouts and build/, and every build starts from nothing.
+      - uses: actions/checkout@v5
+        with:
+          clean: false
+
+      # The same link a worktree gets (CLAUDE.md). /cache is gitignored, so
+      # it does not make the image -dirty.
+      - name: Link the shared cache
+        env:
+          TESSARO_CACHE_DIR: ${{ vars.TESSARO_CACHE_DIR }}
+        run: |
+          [ -n "$TESSARO_CACHE_DIR" ] || { echo "::error::set the TESSARO_CACHE_DIR repository variable"; exit 1; }
+          [ -d "$TESSARO_CACHE_DIR" ] || { echo "::error::$TESSARO_CACHE_DIR is not a directory"; exit 1; }
+          ln -sfn "$TESSARO_CACHE_DIR" cache
+          mkdir -p build
+
+      - name: Name the image
+        id: name
+        env:
+          RELEASE: ${{ inputs.release }}
+          EXPECTED: ${{ needs.matrix.outputs.version }}
+        run: |
+          name=$(mise run --quiet image:name | tail -n 1)
+          version=${name#"tessaro-os-$TESSARO_MACHINE-"}
+          version=${version%.wic.zst}
+          echo "image: $name"
+          case "$version" in
+            *-dirty)
+              [ "$RELEASE" != true ] || { echo "::error::the tree is dirty, a release must come from a clean checkout"; exit 1; }
+              echo "::warning::the tree is dirty, the image is named $name" ;;
+          esac
+          [ "${version%-dirty}" = "$EXPECTED" ] || { echo "::error::the image is $version but the run is $EXPECTED"; exit 1; }
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+
+      # One build at a time across every checkout on the host (CLAUDE.md),
+      # a workstation build or e2e run included.
+      - name: Wait for the host to be free
+        timeout-minutes: 360
+        run: |
+          while busy=$(pgrep -af 'kas-container|bitbake'); do
+            echo "waiting for:"
+            echo "$busy"
+            sleep 60
+          done
+
+      - name: Build
+        run: mise run image:build
+
+      - name: Collect the image
+        env:
+          NAME: ${{ steps.name.outputs.name }}
+        run: |
+          deploy="build/$TESSARO_MACHINE/tmp/deploy/images/$TESSARO_MACHINE"
+          mkdir -p build/artifacts
+          rm -f build/artifacts/*
+          cp "$deploy/$NAME" "$deploy/${NAME%.wic.zst}.wic.bmap" build/artifacts/
+          ls -l build/artifacts
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: image-${{ matrix.machine }}
+          path: build/artifacts/
+          compression-level: 0
+          retention-days: 14
+
+      # e2e boots the image out of the kas build tree that built it, not out
+      # of the .wic alone, so it runs here, in the same workspace.
+      - name: e2e
+        if: matrix.machine == 'qemux86-64' && inputs.e2e
+        env:
+          E2E_ARGS: ${{ inputs.e2e_args }}
+          # Ports away from the workstation's own VMs and dev:tunnel forwards.
+          E2E_WORKER_OFFSET: "10"
+          # Inside build/, so the gems never make the image -dirty.
+          BUNDLE_PATH: ${{ github.workspace }}/build/e2e-bundle
+        run: |
+          mise run e2e:setup
+          eval "set -- $E2E_ARGS"
+          mise run e2e:run -- "$@"
+
+      - uses: actions/upload-artifact@v7
+        if: always() && matrix.machine == 'qemux86-64' && inputs.e2e
+        with:
+          name: e2e-logs
+          path: build/e2e/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # The desktop clients, on GitHub's runners: the build host is kept for the
+  # image builds alone. No lint or test here, ci.yml ran them on the push.
+  clients:
+    needs: matrix
+    strategy:
+      matrix:
+        include:
+          # 22.04, so the Linux binaries run on glibc 2.35 and newer.
+          - os: ubuntu-22.04
+            platform: linux-x86_64
+          - os: ubuntu-22.04-arm
+            platform: linux-aarch64
+          - os: macos-latest
+            platform: macos-arm64
+          - os: windows-latest
+            platform: windows-x86_64
+      fail-fast: false
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        # Git Bash on Windows, so every step is the same script.
+        shell: bash
+    env:
+      # The tasks' bodies are sh; on Windows mise would hand them to cmd.
+      MISE_WINDOWS_DEFAULT_INLINE_SHELL_ARGS: bash -c
+      # Only the Rust install_args installed, as in ci.yml.
+      MISE_AUTO_INSTALL: "false"
+    steps:
+      - uses: actions/checkout@v5
+      # The packages ci.yml installs for its agent and gui jobs.
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential pkg-config libssl-dev libwayland-dev libxkbcommon-dev
+      - uses: jdx/mise-action@v5
+        with:
+          install_args: rust
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            agent -> ../build/cargo-target
+            gui -> ../build/gui-target
+      - run: mise run ctl:build
+      # On macOS this also makes Tessaro.app, signed ad hoc.
+      - run: mise run gui:build
+      - name: Pack
+        env:
+          VERSION: ${{ needs.matrix.outputs.version }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -e
+          ctl=tessaro-ctl-$VERSION-$PLATFORM
+          gui=tessaro-gui-$VERSION-$PLATFORM
+          out=$PWD/build/artifacts
+          mkdir -p "$out"
+          rm -f "$out"/*
+          cd build
+          case "$RUNNER_OS" in
+            Linux)
+              tar -czf "$out/$ctl.tar.gz" -C cargo-target/release tessaro-ctl
+              tar -czf "$out/$gui.tar.gz" -C gui-target/release tessaro-gui ;;
+            macOS)
+              tar -czf "$out/$ctl.tar.gz" -C cargo-target/release tessaro-ctl
+              ditto -c -k --keepParent gui-target/release/Tessaro.app "$out/$gui.zip" ;;
+            Windows)
+              7z a -tzip "$out/$ctl.zip" ./cargo-target/release/tessaro-ctl.exe
+              7z a -tzip "$out/$gui.zip" ./gui-target/release/tessaro-gui.exe ;;
+          esac
+          ls -l "$out"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: clients-${{ matrix.platform }}
+          path: build/artifacts/
+          compression-level: 0
+          retention-days: 14
+
+  # Webconfig on its own, for serving it from elsewhere. The image builds its
+  # own copy through bitbake.
+  webconfig:
+    needs: matrix
+    runs-on: ubuntu-latest
+    env:
+      # Only the Node install_args installed, as in ci.yml.
+      MISE_AUTO_INSTALL: "false"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: jdx/mise-action@v5
+        with:
+          install_args: node
+      - uses: actions/cache@v6
+        with:
+          path: ~/.npm
+          key: npm-${{ hashFiles('webconfig/package-lock.json') }}
+      - run: mise run webconfig:setup
+      - run: mise run webconfig:build
+      - name: Pack
+        env:
+          VERSION: ${{ needs.matrix.outputs.version }}
+        run: |
+          mkdir -p build/artifacts
+          tar -czf "build/artifacts/tessaro-webconfig-$VERSION.tar.gz" -C build webconfig
+          ls -l build/artifacts
+      - uses: actions/upload-artifact@v7
+        with:
+          name: clients-webconfig
+          path: build/artifacts/
+          compression-level: 0
+          retention-days: 14
+
+  release:
+    needs: [matrix, build, clients, webconfig]
+    if: inputs.release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: image-*
+          merge-multiple: true
+          path: dist
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: clients-*
+          merge-multiple: true
+          path: dist
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.matrix.outputs.version }}
+        run: |
+          ls -l dist
+          gh release create "v$VERSION" dist/* \
+            --target "$GITHUB_SHA" \
+            --title "Tessaro OS $VERSION" \
+            --generate-notes
