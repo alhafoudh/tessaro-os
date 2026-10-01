@@ -141,6 +141,7 @@ jobs:
           esac
           [ "${version%-dirty}" = "$EXPECTED" ] || { echo "::error::the image is $version but the run is $EXPECTED"; exit 1; }
           echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "base=${name%.wic.zst}" >> "$GITHUB_OUTPUT"
 
       # One build at a time across every checkout on the host (CLAUDE.md),
       # a workstation build or e2e run included.
@@ -166,11 +167,19 @@ jobs:
           cp "$deploy/$NAME" "$deploy/${NAME%.wic.zst}.wic.bmap" build/artifacts/
           ls -l build/artifacts
 
+      # archive: false uploads each file as it is, not zipped, so the image
+      # and its bmap download as two files. Each artifact is named after its
+      # file.
       - uses: actions/upload-artifact@v7
         with:
-          name: image-${{ matrix.machine }}
-          path: build/artifacts/
-          compression-level: 0
+          path: build/artifacts/${{ steps.name.outputs.name }}
+          archive: false
+          retention-days: 14
+
+      - uses: actions/upload-artifact@v7
+        with:
+          path: build/artifacts/${{ steps.name.outputs.base }}.wic.bmap
+          archive: false
           retention-days: 14
 
   # e2e boots the image out of the kas build tree that built it (native qemu,
@@ -330,7 +339,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v8
         with:
-          pattern: image-*
+          pattern: tessaro-os-*
           merge-multiple: true
           path: dist
       - uses: actions/download-artifact@v8

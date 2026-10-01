@@ -41,8 +41,8 @@ images and clients stay workflow artifacts.
   and client archive carries.
 * `build` runs once per machine, one at a time, on the self-hosted runner:
   `image:name`, then `image:build`. It uploads the versioned
-  `tessaro-os-<machine>-<version>-<sha>.wic.zst` and its `.wic.bmap` as the
-  `image-<machine>` artifact.
+  `tessaro-os-<machine>-<version>-<sha>.wic.zst` and its `.wic.bmap` as
+  separate, unzipped artifacts (`archive: false`), each named after its file.
 * `e2e` runs after every build leg, on the self-hosted runner, when e2e is
   ticked and qemux86-64 was built: `e2e:setup` and `e2e:run`, then
   `build/e2e/` uploaded as `e2e-logs`.
