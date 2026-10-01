@@ -1,6 +1,6 @@
 # Build images by hand, run e2e on the qemu one, build tessaro-ctl,
 # tessaro-gui and Webconfig for every platform, and publish them all as a
-# release unless that is unticked. Only the image builds run on the
+# release when that is ticked. Only the image builds run on the
 # self-hosted runner on the build host, which uses the shared download and
 # sstate cache in place: it is far too big for a cache store. Everything else
 # runs on GitHub's runners. Only workflow_dispatch triggers this, so only
@@ -39,7 +39,7 @@ on:
       release:
         description: Publish the images and clients as a GitHub release
         type: boolean
-        default: true
+        default: false
 
 permissions:
   contents: read

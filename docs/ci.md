@@ -33,7 +33,8 @@ nothing.
 from the Actions tab ("Run workflow"). Its inputs pick the machines, whether
 e2e runs on the qemu image, the arguments for `e2e:run` (`-o '--tag
 ~reboot'`), and whether the run becomes a GitHub release. That last one
-starts ticked: untick it for a dev build.
+starts unticked, so a run is a dev build unless it is ticked; without it the
+images and clients stay workflow artifacts.
 
 * `matrix` turns the picked machines into the build matrix and names the
   run's version with `image:name` (`<version>-<sha>`), the one every image
