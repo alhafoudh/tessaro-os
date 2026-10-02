@@ -240,9 +240,13 @@ table keeps its full width.
 with the actions on the page first and those on the selected row after them,
 then its tables. Anything that is a list is a table.
 
-Tables use `iced_table2`: drag a header divider to resize a column, and
+Tables use `iced_table` (MIT): drag a header divider to resize a column, and
 scroll horizontally when the columns exceed the window width. Dividers are
-always visible in the header; body rows have a continuous background. Click a
+always visible in the header; body rows have a continuous background. The
+crate styles a row by its index alone, so the selected row is painted by its
+own cells (`theme::table_selected`). Do not go back to the `iced_table2`
+fork for its `selected_row`: it is GPL-3.0, which would make the whole GUI
+GPL-3.0. Click a
 column title to cycle ascending, descending, then original order; an arrow
 marks the active sort. Text sorts case-insensitively with numbers in natural
 order, and formatted sizes use their underlying byte counts. Selection,

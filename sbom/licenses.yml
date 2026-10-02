@@ -65,11 +65,4 @@ ecosystems:
       - LicenseRef-hdparm
       - LicenseRef-BitstreamVera
 
-exceptions:
-  - ecosystem: cargo
-    name: iced_table2
-    license: GPL-3.0
-    reason: >-
-      Unresolved: tessaro-gui's table widget, linked into a binary released
-      under MIT. Listed so the gate can go in; replace the crate or settle the
-      GUI's license, then remove this entry.
+exceptions: []

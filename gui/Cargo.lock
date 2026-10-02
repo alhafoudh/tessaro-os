@@ -1683,10 +1683,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "iced_table2"
-version = "0.14.2"
+name = "iced_table"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "31f8023847802dc466bfd33f2605aba25447380d24b38d0b454e91b3551cbb6c"
+checksum = "43621fc05bb266ce5117bcbefd9bd79b69ddb3fcf6ba8a20a3ba46f1ef4e49a6"
 dependencies = [
  "iced_core",
  "iced_widget",
@@ -4357,7 +4357,7 @@ name = "tessaro-gui"
 version = "1.0.0"
 dependencies = [
  "iced",
- "iced_table2",
+ "iced_table",
  "iced_test",
  "native-tls",
  "ouroboros",

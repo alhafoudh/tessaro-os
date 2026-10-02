@@ -1,4 +1,4 @@
-//! Shared iced_table2 tables. Widths and sorting are saved per table and device;
+//! Shared iced_table tables. Widths and sorting are saved per table and device;
 //! cells retain their tooltips, double-click actions and right-click Copy.
 
 use std::cell::RefCell;
@@ -330,7 +330,7 @@ struct TableColumn<'a, M> {
     sort: Option<Sort>,
 }
 
-impl<'a, 'cell: 'a, M: Clone + 'cell> iced_table2::table::Column<'a, TableEvent<M>, Theme, Renderer>
+impl<'a, 'cell: 'a, M: Clone + 'cell> iced_table::table::Column<'a, TableEvent<M>, Theme, Renderer>
     for TableColumn<'cell, M>
 {
     type Row = ();
@@ -375,7 +375,7 @@ impl<'a, 'cell: 'a, M: Clone + 'cell> iced_table2::table::Column<'a, TableEvent<
     }
 
     fn cell(&'a self, _: usize, row: usize, _: &'a Self::Row) -> Element<'a, TableEvent<M>> {
-        // iced_table2 materializes each cell exactly once when converted to Element.
+        // iced_table materializes each cell exactly once when converted to Element.
         self.cells[row]
             .borrow_mut()
             .take()
@@ -394,7 +394,6 @@ struct Data<'a, M> {
     state: State,
     columns: Vec<TableColumn<'a, M>>,
     rows: Vec<()>,
-    selected: Option<usize>,
     on_change: Box<dyn Fn(Event) -> M + 'a>,
 }
 
@@ -430,13 +429,21 @@ fn frame<'a, M: Clone + 'a>(
         });
     }
     *state.order.borrow_mut() = rows.iter().map(|(at, _)| *at).collect();
-    let selected = rows.iter().position(|(at, _)| Some(*at) == selected);
     let mut columns = state.columns(columns);
     let row_count = rows.len();
-    for (_, cells) in rows {
+    for (at, cells) in rows {
         assert_eq!(cells.len(), columns.len(), "one cell per column");
+        // iced_table styles a row by its index alone, so the selected row's
+        // own cells carry the selection color.
+        let chosen = Some(at) == selected;
         for (column, cell) in columns.iter_mut().zip(cells) {
-            let cell = cell.content;
+            let mut cell = cell.content;
+            if chosen {
+                cell = container(cell)
+                    .width(Length::Fill)
+                    .style(theme::table_selected)
+                    .into();
+            }
             column
                 .cells
                 .push(RefCell::new(Some(cell.map(TableEvent::Cell))));
@@ -446,13 +453,12 @@ fn frame<'a, M: Clone + 'a>(
         columns,
         state,
         rows: vec![(); row_count],
-        selected,
         on_change: Box::new(on_change),
     };
     let table = OwnedTableBuilder {
         data,
         content_builder: |data| {
-            let mut table = iced_table2::table(
+            let table = iced_table::table(
                 data.state.header.clone(),
                 data.state.body.clone(),
                 &data.columns,
@@ -465,9 +471,6 @@ fn frame<'a, M: Clone + 'a>(
             // Header cells draw a permanent separator. Keep the crate's drag
             // hit area, without reserving divider strips in the body rows.
             .divider_width(0.0);
-            if let Some(selected) = data.selected {
-                table = table.selected_row(selected);
-            }
             let table: Element<'_, TableEvent<M>> = table.into();
             let table: Element<'_, TableEvent<M>> =
                 iced::widget::themer(Some(theme::table_theme()), table).into();

@@ -287,7 +287,7 @@ pub fn table_header(_: &Theme) -> container::Style {
     filled(CHROME)
 }
 
-/// iced_table2 paints the entire row, including the space below header dividers.
+/// iced_table paints the entire row, including the space below header dividers.
 /// Give it our table colors instead of painting separate cell backgrounds.
 pub fn table_theme() -> Theme {
     use iced::theme::palette::{Extended, Pair};
@@ -296,9 +296,13 @@ pub fn table_theme() -> Theme {
         extended.background.base = Pair::new(PANEL, TEXT_COLOR);
         extended.background.weak = Pair::new(STRIPE, TEXT_COLOR);
         extended.background.strong = Pair::new(CHROME, TEXT_COLOR);
-        extended.primary.weak = Pair::new(SELECTION, TEXT_COLOR);
         extended
     })
+}
+
+/// The selected row's cells: iced_table has no selected row of its own.
+pub fn table_selected(_: &Theme) -> container::Style {
+    filled(SELECTION)
 }
 
 /// The dialog title strip.
