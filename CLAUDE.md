@@ -48,6 +48,7 @@ same change as the behaviour it describes.
 | [docs/updates.md](docs/updates.md) | in-place updates, `--repartition`, growing `/data` |
 | [docs/e2e.md](docs/e2e.md) | the qemu RSpec suite: running it, lanes, ports, harness quirks |
 | [docs/ci.md](docs/ci.md) | GitHub Actions: the per-push checks, the manual image build with e2e and release, the self-hosted runner and its cache used in place |
+| [docs/sbom.md](docs/sbom.md) | the SBOM: what each component is read from (bitbake's SPDX, cargo, npm, vendored files), the bundle and license list a release carries, the license policy and its exceptions, what is not covered |
 | [docs/clients.md](docs/clients.md) | what `tessaro-ctl` and `tessaro-gui` share in `agent/client` and what each keeps, reporting without printing, tones, lines and facts, adding a command, the differences on purpose |
 | [docs/gui.md](docs/gui.md) | `tessaro-gui`: inner windows, keyboard, the node list, device pages per command group, workers and jobs, the VNC viewer |
 | [docs/webconfig.md](docs/webconfig.md) | Webconfig: browser sessions, tickets and the activity rule, the handover across restarts, opening it from ctl and the GUI, the pages, the describe port and its golden fixtures, serving and caching, the frontend and its codegen, the dev proxy, the bitbake build and `bitbake-lock.json` |
@@ -123,6 +124,9 @@ Use the mise tasks rather than calling `kas-container` directly:
 | `mise run webconfig:build` | Webconfig into `build/webconfig`, which `agent:integration` serves |
 | `mise run webconfig:test` / `webconfig:lint` | Its unit tests, the golden fixtures and `bitbake-lock.json`; tsc, ESLint and Prettier |
 | `mise run webconfig:lock` | `bitbake-lock.json` from `package-lock.json`, after any change to the dependencies |
+| `mise run sbom:build` | The `$TESSARO_MACHINE` image's SBOM bundle and license list into `build/sbom/`, from its built image |
+| `mise run sbom:check` | Every crate, npm package and vendored file against the license policy in `sbom/licenses.yml` |
+| `mise run sbom:test` | The SBOM tool's unit tests |
 | `mise run docs:screenshots` | The README's screenshots: the kiosk's pages and Webconfig (Playwright in docker) and `tessaro-gui` (headless), from the agent's own fixtures with fixed data; rerun after changing any page they show, `qr.rs` or the default debug template |
 | `mise run dev:tunnel` | Workstation: autossh VNC/SSH forwards to the build host |
 
@@ -330,6 +334,10 @@ recipe.
   webconfig:lock`): the recipe fetches only what that file lists. Keep
   Webconfig's tools on Node 22.11 (Vite 6, not 7): that is bitbake's
   `nodejs-native`.
+* **A new dependency whose license `sbom/licenses.yml` does not allow gets
+  an `exceptions` entry with its reason in the same change**, never a wider
+  allowlist; a third-party file copied into the repo gets its
+  `sbom/vendored.yml` entry ([docs/sbom.md](docs/sbom.md)).
 * **What a `tessaro-ctl` read returns reaches the page bridge in the same
   change**, when a bridge call mirrors that read (the call table in
   [docs/bridge.md](docs/bridge.md), `page_action` in `control/bridge.rs`):

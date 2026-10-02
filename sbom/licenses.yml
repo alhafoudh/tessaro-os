@@ -1,0 +1,75 @@
+# The license policy sbom:check and sbom:build judge every row against. See
+# docs/sbom.md, "The policy".
+#
+# Per ecosystem, either `allow` (every license an expression needs must match
+# one of these globs; an OR needs one branch, an AND every part) or `flag`
+# (an expression is fine unless it cannot avoid one of these), and the
+# `level` a miss reports at: an error fails the task, a warning is printed.
+#
+# A dependency whose license is not allowed gets an entry under `exceptions`
+# in the same change, with the reason it is acceptable. Do not widen `allow`
+# to let one package in.
+
+permissive: &permissive
+  - MIT
+  - MIT-0
+  - Apache-2.0
+  - Apache-2.0 WITH LLVM-exception
+  - BSD-2-Clause
+  - BSD-3-Clause
+  - ISC
+  - 0BSD
+  - Zlib
+  - BSL-1.0
+  - Unicode-3.0
+  - Unicode-DFS-2016
+  - Unlicense
+  - CC0-1.0
+  - CDLA-Permissive-2.0
+  - bzip2-1.0.6
+  - IJG
+  - NCSA
+
+ecosystems:
+  # Crates are linked into tessaro-agent, tessaro-ctl and tessaro-gui, which
+  # are MIT and ship as single binaries: only licenses that ask for no more
+  # than a notice.
+  cargo:
+    level: error
+    allow: *permissive
+  # What Webconfig's bundle carries, served by every device.
+  npm:
+    level: error
+    allow: *permissive
+  # Files kept in the repo (sbom/vendored.yml): the same, plus fonts.
+  vendored:
+    level: error
+    allow: [*permissive, OFL-1.1]
+  # The image's own packages are Yocto's to judge (INCOMPATIBLE_LICENSE);
+  # GPL and LGPL are expected there. What is flagged is worth a look before a
+  # release: GPLv3 and AGPL carry obligations a locked-down kiosk may not
+  # meet (Moonforge's kas/common/no-gplv3.yml is the build-time gate for
+  # that), and a LicenseRef is a license SPDX does not know, firmware blobs
+  # mostly. `known` are LicenseRefs read and found harmless.
+  yocto:
+    level: warning
+    flag:
+      - GPL-3.0-only
+      - GPL-3.0-or-later
+      - LGPL-3.0*
+      - AGPL-*
+      - LicenseRef-*
+    known:
+      - LicenseRef-PD
+      - LicenseRef-bzip2-1.0.4
+      - LicenseRef-hdparm
+      - LicenseRef-BitstreamVera
+
+exceptions:
+  - ecosystem: cargo
+    name: iced_table2
+    license: GPL-3.0
+    reason: >-
+      Unresolved: tessaro-gui's table widget, linked into a binary released
+      under MIT. Listed so the gate can go in; replace the crate or settle the
+      GUI's license, then remove this entry.

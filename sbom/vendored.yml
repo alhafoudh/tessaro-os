@@ -1,0 +1,17 @@
+# Third-party files kept in this repo, which no lock file lists. Add one here
+# in the same change that adds the file; sbom:check fails on an entry whose
+# path is gone. See docs/sbom.md.
+
+- component: tessaro-webconfig
+  name: Manrope
+  version: "4.505"
+  license: OFL-1.1
+  source: https://github.com/googlefonts/manrope
+  path: webconfig/src/fonts/OFL.txt
+
+- component: tessaro-gui
+  name: Manrope
+  version: "4.505"
+  license: OFL-1.1
+  source: https://github.com/googlefonts/manrope
+  path: gui/tessaro-gui/fonts/OFL.txt

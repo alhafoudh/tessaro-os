@@ -606,6 +606,24 @@ set --
 exec "$CARGO_TARGET_DIR/release/tessaro-ctl" --node "$node" update send "$@" "$image"
 '''
 
+# The SBOM and its license policy (docs/sbom.md). sbom/sbom.rb uses only
+# Ruby's standard library, cargo and npm, so the system ruby of a CI runner
+# or the build host does.
+[tasks."sbom:build"]
+description = "Write the $TESSARO_MACHINE image's SBOM bundle and license list into build/sbom/, from its built image"
+dir = "{{config_root}}"
+run = 'ruby sbom/sbom.rb build --machine "$TESSARO_MACHINE" --build-dir "$KAS_BUILD_DIR" --out "build/sbom/$TESSARO_MACHINE"'
+
+[tasks."sbom:check"]
+description = "Check the licenses of every crate, npm package and vendored file against sbom/licenses.yml"
+dir = "{{config_root}}"
+run = "ruby sbom/sbom.rb check"
+
+[tasks."sbom:test"]
+description = "Run the SBOM tool's unit tests"
+dir = "{{config_root}}/sbom"
+run = "ruby -Ilib -e 'Dir[\"test/*_test.rb\"].sort.each { require File.expand_path(_1) }'"
+
 [tasks."qemu:unpack"]
 description = "Decompress the built .wic so runqemu can boot it"
 dir = "{{config_root}}"

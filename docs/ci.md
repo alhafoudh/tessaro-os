@@ -17,6 +17,10 @@ request**, on GitHub's own runners so it never waits behind an image build:
   `tessaro-gui-linux-x86_64`.
 * `webconfig`: `webconfig:setup`, `webconfig:lint`, `webconfig:test` (which
   includes `bitbake-lock.json` being current) and `webconfig:build`.
+* `sbom`: `sbom:test` and `sbom:check`, the license policy over every crate,
+  npm package and vendored file ([sbom.md](sbom.md)). It builds nothing:
+  cargo and npm read the lock files, and the runner's own ruby runs the
+  tool.
 
 `jdx/mise-action` installs only the toolchain a job needs from `mise.toml`,
 so CI runs the pinned Rust and Node; `MISE_AUTO_INSTALL=false` stops
@@ -40,9 +44,12 @@ images and clients stay workflow artifacts.
   run's version with `image:name` (`<version>-<sha>`), the one every image
   and client archive carries.
 * `build` runs once per machine, one at a time, on the self-hosted runner:
-  `image:name`, then `image:build`. It uploads the versioned
-  `tessaro-os-<machine>-<version>-<sha>.wic.zst` and its `.wic.bmap` as
-  separate, unzipped artifacts (`archive: false`), each named after its file.
+  `image:name`, then `image:build`, then `sbom:build`, which fails the leg
+  on a license the policy does not allow. It uploads the versioned
+  `tessaro-os-<machine>-<version>-<sha>.wic.zst`, its `.wic.bmap`, its
+  `.sbom.tar.zst` and its `.licenses.csv` as separate, unzipped artifacts
+  (`archive: false`), each named after its file. The SBOM is made here
+  because it reads the SPDX the image build left in the tree.
 * `e2e` runs after every build leg, on the self-hosted runner, when e2e is
   ticked and qemux86-64 was built: `e2e:setup` and `e2e:run`, then
   `build/e2e/` uploaded as `e2e-logs`.
@@ -53,7 +60,8 @@ images and clients stay workflow artifacts.
   Windows and for the macOS `Tessaro.app`, as `clients-<platform>`.
 * `release` runs only when asked and only when every job passed, e2e
   included: a skipped e2e is no pass. It tags the built commit
-  `v<version>-<sha>` and attaches every image, bmap and client archive.
+  `v<version>-<sha>` and attaches every image, bmap, SBOM bundle, license
+  list and client archive.
   `matrix` fails up front when release is ticked without e2e or without
   qemux86-64, so no run builds for hours toward a release it cannot make.
 

@@ -98,3 +98,16 @@ jobs:
       # Includes bitbake-lock.json being current.
       - run: mise run webconfig:test
       - run: mise run webconfig:build
+
+  # The license policy over every crate, npm package and vendored file
+  # (docs/sbom.md). cargo metadata and npm sbom read the lock files, so
+  # nothing is built; the runner's own ruby runs the tool.
+  sbom:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: jdx/mise-action@v5
+        with:
+          install_args: rust node
+      - run: mise run sbom:test
+      - run: mise run sbom:check

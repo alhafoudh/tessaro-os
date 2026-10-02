@@ -171,9 +171,20 @@ jobs:
           cp "$deploy/$NAME" "$deploy/${NAME%.wic.zst}.wic.bmap" build/artifacts/
           ls -l build/artifacts
 
-      # archive: false uploads each file as it is, not zipped, so the image
-      # and its bmap download as two files. Each artifact is named after its
-      # file.
+      # The image's SBOM bundle and license list (docs/sbom.md), named after
+      # the image. Fails on a license sbom/licenses.yml does not allow.
+      - name: SBOM
+        env:
+          BASE: ${{ steps.name.outputs.base }}
+        run: |
+          rm -rf "build/sbom/$TESSARO_MACHINE"
+          mise run sbom:build
+          cp "build/sbom/$TESSARO_MACHINE/$BASE.sbom.tar.zst" "build/sbom/$TESSARO_MACHINE/$BASE.licenses.csv" build/artifacts/
+          ls -l build/artifacts
+
+      # archive: false uploads each file as it is, not zipped, so the image,
+      # its bmap and its SBOM files download one by one. Each artifact is
+      # named after its file.
       - uses: actions/upload-artifact@v7
         with:
           path: build/artifacts/${{ steps.name.outputs.name }}
@@ -183,6 +194,18 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           path: build/artifacts/${{ steps.name.outputs.base }}.wic.bmap
+          archive: false
+          retention-days: 14
+
+      - uses: actions/upload-artifact@v7
+        with:
+          path: build/artifacts/${{ steps.name.outputs.base }}.sbom.tar.zst
+          archive: false
+          retention-days: 14
+
+      - uses: actions/upload-artifact@v7
+        with:
+          path: build/artifacts/${{ steps.name.outputs.base }}.licenses.csv
           archive: false
           retention-days: 14
 

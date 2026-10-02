@@ -258,12 +258,27 @@ is in `build/e2e/`. Lanes, ports and the harness are explained in
 
 ## CI
 
-GitHub Actions lints and tests the agent, the desktop client and Webconfig
-on every push (`.github/workflows/ci.yml`). Releases are started by hand from
+GitHub Actions lints and tests the agent, the desktop client and Webconfig,
+and checks their dependencies' licenses, on every push (`.github/workflows/ci.yml`). Releases are started by hand from
 the Actions tab (`release.yml`): the images on a self-hosted runner on the
 build host, with e2e on the qemu image, and `tessaro-ctl` and `tessaro-gui`
 on GitHub's runners. The runner's setup is in
 [docs/ci.md](docs/ci.md).
+
+## SBOM and licenses
+
+Every release carries each image's bill of materials and a flat license
+list. To write them for a built image, or to check the licenses of the
+crates, npm packages and vendored files without one:
+
+```sh
+mise run sbom:build           # build/sbom/<machine>/<image>.sbom.tar.zst and .licenses.csv
+mise run sbom:check           # the license policy in sbom/licenses.yml, also on every push
+mise run sbom:test            # the tool's unit tests
+```
+
+What each part is read from and how the policy works is in
+[docs/sbom.md](docs/sbom.md).
 
 ## README screenshots
 
@@ -310,6 +325,7 @@ template, and commit the fixtures and the images together. It needs Docker.
 | `gui/` | `tessaro-gui`, the desktop client (a workspace of its own) |
 | `webconfig/` | Webconfig, the management pages the device serves to a browser |
 | `test/e2e/` | the end-to-end suite |
+| `sbom/` | the SBOM tool, its license policy and the list of vendored files |
 | `docs/` | how each subsystem works; `docs/screenshots/` renders the README's screenshot |
 | `mise.toml` | every task |
 
