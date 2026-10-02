@@ -121,6 +121,10 @@ module AgentE2E
     it "proxy: network proxy off stops the local proxy and takes it out of the browser's policy", :reconfigure do
       proxy("set http://127.0.0.1:#{UPSTREAM_PORT}")
       expect(guest.property("tessaro-proxy", "ActiveState")).to eq("active")
+      # Switching the proxy on restarted the browser. Until it answers CDP the
+      # agent may still restart it for silence, which would read as a restart
+      # caused by the next set.
+      journal.wait_for(/^navigated to #{Regexp.escape(KIOSK_URL)}$/, timeout: 60)
 
       # Another upstream keeps the same local proxy: only tinyproxy restarts.
       agent = guest.agent_pid
