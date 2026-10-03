@@ -1,6 +1,6 @@
 # Build images by hand, run e2e on the qemu one, build tessaro-ctl and
-# tessaro-gui for every platform, Try Tessaro (try.yml) when genericarm64 is
-# built, and publish them all as a release when that is ticked. Only the image builds run on the
+# tessaro-gui for every platform, Try Tessaro around the genericarm64 image
+# when try is ticked, and publish them all as a release when that is ticked. Only the image builds run on the
 # self-hosted runner on the build host, which uses the shared download and
 # sstate cache in place: it is far too big for a cache store. Everything else
 # runs on GitHub's runners. Only workflow_dispatch triggers this, so only
@@ -22,6 +22,10 @@ on:
         default: false
       genericarm64:
         description: genericarm64 (Arm64 UEFI, a VM on an Apple silicon Mac)
+        type: boolean
+        default: false
+      try:
+        description: Try Tessaro for macOS, around the genericarm64 image (needs genericarm64)
         type: boolean
         default: false
       raspberrypi3-64:
@@ -99,6 +103,12 @@ jobs:
           if [ "$(jq -r .release <<<"$PICKED")" = true ]; then
             [ "$(jq -r .e2e <<<"$PICKED")" = true ] && jq -e 'index("qemux86-64")' <<<"$machines" >/dev/null \
               || { echo "::error::a release needs e2e ticked and qemux86-64 picked"; exit 1; }
+          fi
+          # Try Tessaro is built around this run's genericarm64 image, so
+          # fail now rather than after hours of builds without it.
+          if [ "$(jq -r .try <<<"$PICKED")" = true ]; then
+            jq -e 'index("genericarm64")' <<<"$machines" >/dev/null \
+              || { echo "::error::Try Tessaro needs genericarm64 picked; untick try otherwise"; exit 1; }
           fi
           echo "machines=$machines" >> "$GITHUB_OUTPUT"
 
@@ -356,25 +366,87 @@ jobs:
           compression-level: 0
           retention-days: 14
 
-  # Try Tessaro, one package per platform, around the images this run
-  # built: try.yml, which also runs on its own from a published release's.
-  # It builds only the platforms whose machine is among this run's (macOS
-  # needs genericarm64), and nothing when none is.
+  # Try Tessaro, one leg per platform on GitHub's runners, around the image
+  # this run built for it: only when try is ticked (matrix makes sure the
+  # machines are picked), and after build, whose images it takes from this
+  # run's artifacts (a job cannot wait for one matrix leg, so it waits for
+  # them all). A platform is a row in the matrix and its packaging in
+  # try:build; macOS is the only one. Signed ad hoc, not notarized. See
+  # docs/try-tessaro.md.
   try:
     needs: [matrix, build]
-    uses: ./.github/workflows/try.yml
-    with:
-      machines: ${{ needs.matrix.outputs.machines }}
+    if: inputs.try
+    name: try (${{ matrix.platform }})
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            platform: macos-arm64
+            machine: genericarm64
+            package: dmg
+      fail-fast: false
+    runs-on: ${{ matrix.os }}
+    env:
+      # Only Rust installed (install_args), as in clients.
+      MISE_AUTO_INSTALL: "false"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: jdx/mise-action@v5
+        with:
+          install_args: rust
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.platform }}
+          workspaces: |
+            agent -> ../build/cargo-target
+            gui -> ../build/gui-target
+      # The QEMU the app bundles, relinked (gui/try-tessaro/bundle-qemu-macos.sh).
+      - if: runner.os == 'macOS'
+        run: brew install qemu
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: tessaro-os-${{ matrix.machine }}-*.wic.zst
+          merge-multiple: true
+          path: build/image
+      # try:build makes build/Try-Tessaro-<platform>.<package>.
+      - name: Build
+        env:
+          MACHINE: ${{ matrix.machine }}
+        run: mise run try:build build/image/tessaro-os-"$MACHINE"-*.wic.zst
+      # The bundled runtime's licenses, where its runtime.json exists
+      # (docs/sbom.md).
+      - run: ruby sbom/sbom.rb check --runtime build/gui-target/release/qemu-runtime/runtime.json
+      - name: Pack
+        id: pack
+        env:
+          VERSION: ${{ needs.matrix.outputs.version }}
+          PLATFORM: ${{ matrix.platform }}
+          PACKAGE: ${{ matrix.package }}
+        run: |
+          set -e
+          mkdir -p build/artifacts
+          name="try-tessaro-$VERSION-$PLATFORM.$PACKAGE"
+          mv "build/Try-Tessaro-$PLATFORM.$PACKAGE" "build/artifacts/$name"
+          echo "name=$name" >>"$GITHUB_OUTPUT"
+          ls -l build/artifacts
+      # Unzipped, as build uploads the images: the artifact is named after
+      # the file and downloads as the .dmg itself. release attaches it.
+      - uses: actions/upload-artifact@v7
+        with:
+          path: build/artifacts/${{ steps.pack.outputs.name }}
+          archive: false
+          retention-days: 14
 
   release:
     needs: [matrix, build, e2e, clients, try]
     # always(), since e2e's own if uses it; a release needs e2e to have
-    # passed, never skipped (matrix refuses a release without e2e). try
-    # passes with no legs when no platform's machine was built.
+    # passed, never skipped (matrix refuses a release without e2e). try is
+    # skipped when unticked.
     if: >-
       always() && inputs.release
       && needs.build.result == 'success' && needs.clients.result == 'success'
-      && needs.e2e.result == 'success' && needs.try.result == 'success'
+      && needs.e2e.result == 'success'
+      && (needs.try.result == 'success' || needs.try.result == 'skipped')
     runs-on: ubuntu-latest
     permissions:
       contents: write

@@ -58,38 +58,26 @@ images and clients stay workflow artifacts.
   windows-x86_64. It uploads `tessaro-ctl-<version>-<sha>-<platform>` and
   `tessaro-gui-<version>-<sha>-<platform>`, as `.tar.gz`, or `.zip` on
   Windows and for the macOS `Tessaro.app`, as `clients-<platform>`.
-* `try` is `try.yml` (below), given the run's machines: it builds Try
-  Tessaro for every platform whose machine this run built (macOS needs
-  genericarm64), around the images `build` uploaded, and passes with no
-  legs when there is none.
+* `try` builds Try Tessaro ([try-tessaro.md](try-tessaro.md)) when the try
+  box is ticked, which needs genericarm64 picked too (`matrix` fails up
+  front otherwise). It waits for `build`, all of it, since a job cannot
+  wait for one matrix leg, so the package carries this run's image. It is
+  a matrix, one leg per platform on GitHub's runners: each row names the
+  runner, the machine whose image it bundles and the package, and macOS
+  (`macos-arm64`, genericarm64, a DMG) is the only one; another platform is
+  a row there and its packaging in `try:build`. A leg runs `try:build`
+  around the image `build` uploaded (on macOS after `brew install qemu`),
+  checks the bundled runtime's licenses (`sbom.rb check --runtime`), and
+  uploads `try-tessaro-<version>-<sha>-<platform>.<package>` unzipped
+  (`archive: false`, as `build` uploads the images), so it downloads as the
+  `.dmg` itself. A run with release unticked is how to get a DMG without
+  publishing anything.
 * `release` runs only when asked and only when every job passed, e2e
-  included: a skipped e2e is no pass. It tags the built commit
-  `v<version>-<sha>` and attaches every image, bmap, SBOM bundle, license
-  list, client archive and Try Tessaro package.
+  included: a skipped e2e is no pass, while an unticked `try` is skipped.
+  It tags the built commit `v<version>-<sha>` and attaches every image,
+  bmap, SBOM bundle, license list, client archive and Try Tessaro package.
   `matrix` fails up front when release is ticked without e2e or without
   qemux86-64, so no run builds for hours toward a release it cannot make.
-
-## By hand or from a release: `try.yml`
-
-**Try Tessaro is a matrix, one leg per platform on GitHub's runners**
-([try-tessaro.md](try-tessaro.md)). The `targets` job holds the table:
-each platform's runner, the machine whose image it bundles and its package.
-macOS (`macos-arm64`, genericarm64, a DMG) is the only one; another
-platform is a row there and its packaging in `try:build`. A leg runs
-`try:build` around its image (on macOS after `brew install qemu`), checks
-the bundled runtime's licenses (`sbom.rb check --runtime`), and uploads
-`try-tessaro-<version>-<platform>.<package>`, named after the image it
-carries, unzipped (`archive: false`, as `build` uploads the images): the
-artifact is named after the file and downloads as the `.dmg` itself.
-**It never publishes anything; only `release.yml` makes a release.**
-
-* **Run by hand**, it is an intermediate build: this commit's launcher
-  around the images of a published release (the latest, or the tag given),
-  so a launcher change can be tried without building an image. Nothing
-  touches the build host.
-* **Called by `release.yml`** (`workflow_call` with `machines`), it keeps
-  the platforms whose machine that run built, takes the images its `build`
-  job uploaded, and `release` attaches the packages with everything else.
 
 **The self-hosted runner builds images and nothing else.** The clients
 take minutes on GitHub's runners and need none of the build host's cache,

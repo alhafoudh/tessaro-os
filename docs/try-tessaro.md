@@ -6,8 +6,8 @@ One window starts and stops the device, opens `tessaro-gui`, a terminal
 with `tessaro-ctl` ready and Webconfig, and offers things to try. The kiosk
 itself is QEMU's own window. The app is `gui/try-tessaro`; `mise run
 try:run` runs it from a checkout and `mise run try:build` makes the DMG,
-which the `try` workflow builds for every release, and by hand around a
-published release's image (**By hand or from a release: `try.yml`** in
+which the release workflow's `try` job builds around that run's
+genericarm64 image when try is ticked (**By hand: `release.yml`** in
 [ci.md](ci.md)).
 
 It is macOS on Apple silicon only. The code keeps the platform's parts
@@ -70,7 +70,7 @@ formula's license files into `qemu/LICENSES/<formula>/`, a `NOTICE` from
 `brew info` for a bottle that has none, and writes `runtime.json`
 (`brew info --json=v2` of every formula shipped). `ruby sbom/sbom.rb check
 --runtime <runtime.json>` judges those formulas under the `runtime` policy
-in `sbom/licenses.yml`; the `try` workflow runs it where the file exists (see
+in `sbom/licenses.yml`; the release workflow's `try` job runs it where the file exists (see
 [sbom.md](sbom.md)).
 
 ## The VM

@@ -92,7 +92,7 @@ on an error.
   ships unmodified as separate files in a desktop app, its license texts
   beside it ([try-tessaro.md](try-tessaro.md), "The QEMU runtime"). Only a
   Mac that packaged the app has its `runtime.json`, so plain `sbom:check`
-  leaves it out and the `try` workflow runs `ruby sbom/sbom.rb check
+  leaves it out and the release workflow's `try` job runs `ruby sbom/sbom.rb check
   --runtime` after `try:build`.
 * **`yocto` takes a list to flag**, and a miss is a warning. GPL and LGPL
   are expected in an image, and `INCOMPATIBLE_LICENSE` is the build-time
