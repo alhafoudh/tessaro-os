@@ -11,16 +11,22 @@
 </p>
 
 <p align="center">
+  <a href="#try-it-on-a-mac">Try it on a Mac</a> ·
   <a href="#features">Features</a> ·
   <a href="#peripherals-straight-from-the-page">Peripherals</a> ·
   <a href="#complete-chromium-policy-management">Policies</a> ·
   <a href="#tested-hardware">Hardware</a> ·
   <a href="#pre-built-images">Images</a> ·
-  <a href="#try-it-on-a-mac">Try it on a Mac</a> ·
   <a href="#quick-start">Quick start</a>
 </p>
 
 ![A fresh Tessaro device on its welcome page: its name, address, online state and a QR code that joins a phone to its setup hotspot](docs/images/welcome.jpg)
+
+> **No screen at hand? Try Tessaro on your Mac first.** Download **Try
+> Tessaro** from [Releases](https://github.com/alhafoudh/tessaro-os/releases),
+> drag it to Applications and press Start: a whole Tessaro device runs in a
+> window, with the desktop app, a terminal and Webconfig one click away.
+> [How →](#try-it-on-a-mac)
 
 Every screen you deploy is a promise: the menu is up, the check-in works, the
 dashboard is live. Tessaro keeps that promise without anyone standing next to
@@ -160,25 +166,31 @@ tessaro-ctl update send tessaro-os-raspberrypi5-<version>.wic.zst  # every updat
 
 ## Try it on a Mac
 
-No spare screen at hand? An Apple silicon Mac runs Tessaro in a virtual
-machine at native speed. **Try Tessaro**, the `try-tessaro-<version>-macos-arm64.dmg`
-on [Releases](https://github.com/alhafoudh/tessaro-os/releases), is all it
-takes: drag the app to Applications, clear the quarantine flag once (the
-app is signed ad hoc, not notarized), open it and press Start.
+No spare screen at hand? An Apple silicon Mac runs a whole Tessaro device in
+a virtual machine at native speed, with nothing to install or set up:
 
-```sh
-xattr -dr com.apple.quarantine "/Applications/Try Tessaro.app"
-```
+1. **Download** `try-tessaro-<version>-macos-arm64.dmg` from
+   [Releases](https://github.com/alhafoudh/tessaro-os/releases).
+2. **Drag** Try Tessaro to Applications. It is signed ad hoc, not
+   notarized, so clear its quarantine flag once:
 
-The kiosk opens in a window of its own; Try Tessaro's window opens
-`tessaro-gui`, a terminal with `tessaro-ctl` ready and Webconfig, and has
-things to try. The device keeps its settings between launches until Reset
-to factory, and is reachable from this Mac only, at `127.0.0.1:7401`. How it
-works is in [docs/try-tessaro.md](docs/try-tessaro.md).
+   ```sh
+   xattr -dr com.apple.quarantine "/Applications/Try Tessaro.app"
+   ```
 
-From a checkout, the same image boots with Homebrew's QEMU, with the device
-on the Mac's own network, where `tessaro-ctl`, `tessaro-gui` and Webconfig
-find it like any other:
+3. **Open it and press Start.**
+
+The kiosk opens in a window of its own. Try Tessaro's window opens
+`tessaro-gui`, a terminal with `tessaro-ctl` ready and Webconfig, and its
+Try it tab has things to do on the device, each with the `tessaro-ctl`
+command that does the same. The device keeps its settings between launches
+until Reset to factory, and is reachable from this Mac only, at
+`127.0.0.1:7401`. How it works is in
+[docs/try-tessaro.md](docs/try-tessaro.md).
+
+**For developers**, the same image also boots from a checkout with
+Homebrew's QEMU, with the device on the Mac's own network, where
+`tessaro-ctl`, `tessaro-gui` and Webconfig find it like any other:
 
 ```sh
 brew install qemu zstd mise
