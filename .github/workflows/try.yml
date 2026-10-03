@@ -1,0 +1,88 @@
+# Try Tessaro for Apple silicon, by hand: the app from this commit around
+# the genericarm64 image of a published release (the latest, or the tag
+# given), as a DMG ready to download. Signed ad hoc, not notarized. Runs on
+# GitHub's macOS runner alone: the image is the release's, so nothing is
+# built on the build host. See docs/try-tessaro.md and docs/ci.md.
+
+name: try
+
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: Release tag whose genericarm64 image goes in (empty for the latest)
+        type: string
+        default: ""
+      attach:
+        description: Attach the DMG to that release as well
+        type: boolean
+        default: false
+
+permissions:
+  # attach uploads to the release; only people with write access can run
+  # this, as with every workflow_dispatch here.
+  contents: write
+
+env:
+  MISE_TRUSTED_CONFIG_PATHS: ${{ github.workspace }}
+  # Only Rust installed (install_args), as in release.yml's clients.
+  MISE_AUTO_INSTALL: "false"
+  GH_TOKEN: ${{ github.token }}
+  GH_REPO: ${{ github.repository }}
+
+jobs:
+  try-tessaro:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: jdx/mise-action@v5
+        with:
+          install_args: rust
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            agent -> ../build/cargo-target
+            gui -> ../build/gui-target
+      # The QEMU the app bundles, relinked (gui/try-tessaro/bundle-qemu-macos.sh).
+      - run: brew install qemu
+
+      - name: Fetch the image
+        id: image
+        env:
+          TAG: ${{ inputs.release }}
+        run: |
+          set -e
+          [ -n "$TAG" ] || TAG=$(gh release view --json tagName --jq .tagName)
+          gh release download "$TAG" --pattern 'tessaro-os-genericarm64-*.wic.zst' --dir build/image
+          image=$(ls build/image/tessaro-os-genericarm64-*.wic.zst)
+          version=${image##*/tessaro-os-genericarm64-}
+          version=${version%.wic.zst}
+          echo "tag=$TAG" >>"$GITHUB_OUTPUT"
+          echo "path=$image" >>"$GITHUB_OUTPUT"
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+
+      - run: mise run try:build "${{ steps.image.outputs.path }}"
+      # The runtime's licenses, where its runtime.json exists (docs/sbom.md).
+      - run: ruby sbom/sbom.rb check --runtime build/gui-target/release/qemu-runtime/runtime.json
+
+      - name: Pack
+        id: pack
+        env:
+          VERSION: ${{ steps.image.outputs.version }}
+        run: |
+          set -e
+          mkdir -p build/artifacts
+          dmg="build/artifacts/try-tessaro-$VERSION-macos-arm64.dmg"
+          mv build/Try-Tessaro-macos-arm64.dmg "$dmg"
+          echo "dmg=$dmg" >>"$GITHUB_OUTPUT"
+          ls -l build/artifacts
+      - uses: actions/upload-artifact@v7
+        with:
+          name: try-tessaro-macos-arm64
+          path: build/artifacts/
+          compression-level: 0
+          retention-days: 14
+
+      - name: Attach to the release
+        if: inputs.attach
+        run: gh release upload "${{ steps.image.outputs.tag }}" "${{ steps.pack.outputs.dmg }}" --clobber

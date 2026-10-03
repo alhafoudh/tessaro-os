@@ -5,8 +5,9 @@ someone who wants to see Tessaro before they have a screen to put it on.**
 One window starts and stops the device, opens `tessaro-gui`, a terminal
 with `tessaro-ctl` ready and Webconfig, and offers things to try. The kiosk
 itself is QEMU's own window. The app is `gui/try-tessaro`; `mise run
-try:run` runs it from a checkout and `mise run try:build` makes the DMG a
-release carries.
+try:run` runs it from a checkout and `mise run try:build` makes the DMG,
+which the `try` workflow builds around a published release's image (**By
+hand: `try.yml`** in [ci.md](ci.md)).
 
 It is macOS on Apple silicon only. The code keeps the platform's parts
 (the QEMU command line, the control socket, the terminal) in a few places so
@@ -28,6 +29,18 @@ no Homebrew, no mise and no checkout:
 `gui/try-tessaro/package-macos.sh` assembles it and signs it ad hoc, like
 `Tessaro.app`. It is not notarized: a downloaded copy needs its quarantine
 flag cleared once (README, **Try it on a Mac**).
+
+**The DMG opens on the welcome page's look**: the app on the left, a link
+to Applications on the right, big icons and an arrow between them over
+`dmg/background.tiff` (`dmg/background.svg` at 1x and 2x, made by
+`dmg/generate.sh`). **dmgbuild lays it out** (`dmg/settings.py`), pinned and
+installed by `try:build` into `build/dmgbuild-venv`: it writes Finder's
+`.DS_Store` itself, so the layout needs no Finder and no AppleScript and
+comes out the same on a headless CI runner. It also sizes the image from
+the files' full size; `hdiutil create -srcfolder` alone counts blocks on
+disk, and the sparse UEFI firmware then runs it out of room. The icon labels
+are Finder's own: dark text in light mode, light in dark mode, so on this
+dark background they read best in dark mode.
 
 ## The QEMU runtime
 
@@ -56,7 +69,7 @@ formula's license files into `qemu/LICENSES/<formula>/`, a `NOTICE` from
 `brew info` for a bottle that has none, and writes `runtime.json`
 (`brew info --json=v2` of every formula shipped). `ruby sbom/sbom.rb check
 --runtime <runtime.json>` judges those formulas under the `runtime` policy
-in `sbom/licenses.yml`; the release job runs it where the file exists (see
+in `sbom/licenses.yml`; the `try` workflow runs it where the file exists (see
 [sbom.md](sbom.md)).
 
 ## The VM

@@ -58,19 +58,28 @@ images and clients stay workflow artifacts.
   windows-x86_64. It uploads `tessaro-ctl-<version>-<sha>-<platform>` and
   `tessaro-gui-<version>-<sha>-<platform>`, as `.tar.gz`, or `.zip` on
   Windows and for the macOS `Tessaro.app`, as `clients-<platform>`.
-* `try-tessaro` runs when genericarm64 was built, on a macOS runner:
-  `brew install qemu`, then `try:build` with that run's genericarm64
-  image, then the license check of the bundled QEMU runtime
-  (`sbom.rb check --runtime`). It uploads
-  `try-tessaro-<version>-<sha>-macos-arm64.dmg` as `try-tessaro-macos-arm64`
-  ([try-tessaro.md](try-tessaro.md)).
 * `release` runs only when asked and only when every job passed, e2e
-  included: a skipped e2e is no pass, while `try-tessaro` may be skipped
-  when genericarm64 was not built. It tags the built commit
+  included: a skipped e2e is no pass. It tags the built commit
   `v<version>-<sha>` and attaches every image, bmap, SBOM bundle, license
-  list, client archive and the Try Tessaro DMG.
+  list and client archive.
   `matrix` fails up front when release is ticked without e2e or without
   qemux86-64, so no run builds for hours toward a release it cannot make.
+
+## By hand: `try.yml`
+
+**Try Tessaro is built on its own, around a published release's image**
+([try-tessaro.md](try-tessaro.md)). It needs no image build, so it never
+touches the build host: one job on GitHub's macOS runner downloads the
+release's `tessaro-os-genericarm64-<version>.wic.zst` (the latest release,
+or the tag given), runs `brew install qemu` and `try:build`, checks the
+bundled QEMU runtime's licenses (`sbom.rb check --runtime`), and uploads
+`try-tessaro-<version>-macos-arm64.dmg` as `try-tessaro-macos-arm64`.
+Ticking attach also uploads the DMG to that release. The app is this
+commit's and the image is the release's, so a launcher change ships
+without a new image, and the DMG is named after the image it carries. A
+release made by `release.yml` gets its DMG by running this afterwards with
+attach ticked: a release created with the workflow's token starts no other
+workflow, so it cannot follow on its own.
 
 **The self-hosted runner builds images and nothing else.** The clients
 take minutes on GitHub's runners and need none of the build host's cache,

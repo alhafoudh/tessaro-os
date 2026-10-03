@@ -304,15 +304,20 @@ cargo build --release -p tessaro-gui -p try-tessaro
 gui_app=$(sh package-macos.sh "$CARGO_TARGET_DIR/release/tessaro-gui")
 app=$(sh try-tessaro/package-macos.sh "$CARGO_TARGET_DIR/release/try-tessaro" \
     "{{config_root}}/build/cargo-target/release/tessaro-ctl" "$gui_app" "$image")
-# The DMG opens on the app beside a link to /Applications, to drag it over.
-staging="$CARGO_TARGET_DIR/try-tessaro-dmg"
-rm -rf "$staging"
-mkdir -p "$staging"
-/bin/cp -cR "$app" "$staging/"
-ln -s /Applications "$staging/Applications"
+# The DMG opens on the app beside a link to /Applications, over the welcome
+# page's background (try-tessaro/dmg/), laid out by dmgbuild, pinned, in a
+# venv of its own under build/: it writes Finder's .DS_Store without Finder,
+# so it runs the same on a headless runner, and sizes the image from the
+# files' full size (the UEFI firmware is sparse; hdiutil's own estimate
+# counts blocks on disk and runs out of room).
+venv="{{config_root}}/build/dmgbuild-venv"
+[ -x "$venv/bin/dmgbuild" ] || {
+    python3 -m venv "$venv"
+    "$venv/bin/pip" install --quiet dmgbuild==1.6.7
+}
 dmg="{{config_root}}/build/Try-Tessaro-macos-arm64.dmg"
-hdiutil create -quiet -ov -volname "Try Tessaro" -srcfolder "$staging" -format UDZO "$dmg"
-rm -rf "$staging"
+"$venv/bin/dmgbuild" -s try-tessaro/dmg/settings.py -D here="$PWD/try-tessaro/dmg" \
+    -D app="$app" "Try Tessaro" "$dmg" >&2
 echo "$dmg"
 '''
 
