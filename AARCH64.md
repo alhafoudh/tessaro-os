@@ -109,20 +109,24 @@ genericarm64`, and `tessaro-ctl screen screenshot` shows the welcome page.
 ```sh
 # build host
 mise run image:build:arm64                       # the image plus U-Boot for QEMU
-TESSARO_MACHINE=genericarm64 mise run qemu:vnc   # VNC 127.0.0.1:5901, password "tessaro"
-TESSARO_MACHINE=genericarm64 mise run qemu:run   # serial console only
+mise run qemu:vnc:arm64                          # VNC 127.0.0.1:5901, password "tessaro"
+mise run qemu:run:arm64                          # serial console only
 
 # Mac (Apple Silicon)
 brew install qemu
 TESSARO_MACHINE=genericarm64 mise run image:pull # into the repo root
-TESSARO_MACHINE=genericarm64 mise run qemu:run   # HVF, a Cocoa window, CoreAudio
+mise run qemu:run:arm64                          # HVF, a Cocoa window, CoreAudio, vmnet (sudo)
+mise run ctl:run -- nodes list                   # finds it by mDNS, as NAME or NAME.local
+mise run qemu:run:arm64 --no-vmnet               # slirp instead, no sudo
 mise run ctl:run -- -n 127.0.0.1:7401 device status
 open https://127.0.0.1:7401                      # Webconfig
 ```
 
 Both go through `scripts/qemu-arm64.sh`: the serial console on the terminal
-(Ctrl-a x quits), `-snapshot` so the image stays as pulled, SSH on
-`127.0.0.1:2222` and the API and Webconfig on `127.0.0.1:7401`. On the Mac
+(Ctrl-a x quits) and `-snapshot` so the image stays as pulled. The build
+host and `--no-vmnet` use slirp, with SSH on `127.0.0.1:2222` and the API
+and Webconfig on `127.0.0.1:7401`; the Mac's default is vmnet (Peripherals,
+the network row). On the Mac
 the firmware is Homebrew's `edk2-aarch64-code.fd`; on Linux it is the U-Boot
 `image:build:arm64` builds, because Yocto has no aarch64 edk2 without
 meta-arm.
@@ -134,7 +138,7 @@ meta-arm.
 | Display | `virtio-gpu-gl` with VirGL, on QEMU's Cocoa display with `gl=on`. Homebrew's QEMU is built without VirGL, which is why try-omarchy builds its own. **Biggest risk:** `kas/machine/qemux86-64.yml` notes the kiosk renders nothing without VirGL (Chromium's unprivileged renderer cannot allocate dumb buffers on `kms_swrast`). |
 | Audio | QEMU's `coreaudio` audiodev plus `intel-hda` or `virtio-sound`, with the matching kernel modules in the image (see the `MACHINE_EXTRA_RRECOMMENDS` for sound in `kas/machine/qemux86-64.yml`). |
 | Webcam | QEMU emulates no camera (see **Testing in qemu** in `docs/camera.md`). Reuse `test/usbcam/usbcam.rb`, the USB/IP UVC camera, with ffmpeg's `-f avfoundation` as its source instead of a clip: the guest gets a real USB camera and the image needs no change beyond the usbip bits already on qemux86-64. Passing through the Mac's built-in camera does not work. |
-| Network, Webconfig, ctl | slirp `hostfwd` in `scripts/qemu-arm64.sh`, the same ports as qemu:run on qemux86-64: `127.0.0.1:7401` to the guest's 7400 (API and Webconfig), `127.0.0.1:2222` to 22. 7401 because `dev:tunnel` holds 7400 for the device on the desk. |
+| Network, Webconfig, ctl | slirp `hostfwd` in `scripts/qemu-arm64.sh`, the same ports as qemu:run on qemux86-64: `127.0.0.1:7401` to the guest's 7400 (API and Webconfig), `127.0.0.1:2222` to 22. 7401 because `dev:tunnel` holds 7400 for the device on the desk. **On a Mac the default is `TESSARO_QEMU_NET=vmnet-shared`, for mDNS** (`--no-vmnet` for slirp): macOS's shared NAT network in place of slirp (`bridge100`, an address from the Mac's DHCP), where `nodes list` and `NAME.local` find the guest; slirp carries no multicast. It needs root, so QEMU runs under sudo, and the forwards go with slirp. One NIC, not slirp plus vmnet: the managed ethernet profile binds no interface, so it would come up on only one of them. |
 | ctl and gui | `cargo build --release` for `aarch64-apple-darwin` (`mise run ctl:build`, `mise run gui:build` on the Mac). |
 
 ## Plan

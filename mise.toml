@@ -738,6 +738,34 @@ kas-container --runtime-args "$KVM_RUNTIME $GPU_RUNTIME --network=host" shell $K
     -c "runqemu $WIC ovmf slirp snapshot $KVM_OPT $GPU_OPT serialstdio qemuparams='-object secret,id=vncpw,data=tessaro -vnc 127.0.0.1:1,password-secret=vncpw'"
 '''
 
+# On a Mac the guest is on macOS's shared vmnet network, where mDNS reaches it
+# (QEMU runs under sudo); --no-vmnet is scripts/qemu-arm64.sh's
+# TESSARO_QEMU_NET=user, slirp with the 127.0.0.1 forwards. Linux has only
+# slirp.
+[tasks."qemu:run:arm64"]
+description = "Boot the genericarm64 image (pulled on a Mac, under HVF in a window), serial console on this terminal"
+dir = "{{config_root}}"
+raw = true
+usage = '''
+flag "--no-vmnet" help="macOS: slirp with the 127.0.0.1:7401 and :2222 forwards, no sudo, in place of vmnet and mDNS"
+'''
+run = '''
+[ "{{ usage.no_vmnet | default(value='false') }}" = "true" ] && export TESSARO_QEMU_NET=user
+TESSARO_MACHINE=genericarm64 exec mise run qemu:run
+'''
+
+[tasks."qemu:vnc:arm64"]
+description = "Boot the genericarm64 image with a VNC display on localhost:5901"
+dir = "{{config_root}}"
+raw = true
+usage = '''
+flag "--no-vmnet" help="macOS: slirp with the 127.0.0.1:7401 and :2222 forwards, no sudo, in place of vmnet and mDNS"
+'''
+run = '''
+[ "{{ usage.no_vmnet | default(value='false') }}" = "true" ] && export TESSARO_QEMU_NET=user
+TESSARO_MACHINE=genericarm64 exec mise run qemu:vnc
+'''
+
 # A fake USB webcam for the qemu VM: test/usbcam/usbcam.rb serves a UVC camera
 # over USB/IP on this host, playing a clip (looped) or ffmpeg's test pattern,
 # and the guest attaches it through vhci-hcd, reaching this host as 10.0.2.2.

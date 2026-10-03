@@ -14,11 +14,19 @@
 # sound. The image is the one `mise run image:pull` fetched into the repo
 # root, unpacked by qemu:unpack.
 #
-# Both: the serial console on this terminal (Ctrl-a x quits), -snapshot so the
-# .wic stays as built, and the forwards qemu:run has on qemux86-64:
-# 127.0.0.1:2222 to SSH and 127.0.0.1:7401 to the API, Webconfig included
-# (https://127.0.0.1:7401). vnc mode puts the screen on 127.0.0.1:5901, with
+# Both: the serial console on this terminal (Ctrl-a x quits) and -snapshot so
+# the .wic stays as built. vnc mode puts the screen on 127.0.0.1:5901, with
 # the password "tessaro".
+#
+# The network is TESSARO_QEMU_NET, vmnet-shared on macOS and user on Linux
+# unless set:
+# * vmnet-shared (macOS only): the guest on macOS's shared NAT network
+#   (bridge100, an address from the Mac's DHCP), so mDNS works between the
+#   Mac and the guest and `nodes list` finds it. vmnet needs root, so QEMU
+#   runs under sudo.
+# * user: slirp, which carries no multicast, with the forwards qemu:run has
+#   on qemux86-64: 127.0.0.1:2222 to SSH and 127.0.0.1:7401 to the API,
+#   Webconfig included (https://127.0.0.1:7401).
 set -eu
 
 mode=${1:-window}
@@ -27,12 +35,29 @@ case "$mode" in
     *) echo "usage: $0 window|vnc" >&2; exit 64 ;;
 esac
 
+if [ "$(uname -s)" = Darwin ]; then
+    net=${TESSARO_QEMU_NET:-vmnet-shared}
+else
+    net=${TESSARO_QEMU_NET:-user}
+fi
+case "$net" in
+    user) netdev=user,id=net0,hostfwd=tcp:127.0.0.1:2222-:22,hostfwd=tcp:127.0.0.1:7401-:7400 ;;
+    vmnet-shared)
+        [ "$(uname -s)" = Darwin ] || {
+            echo "TESSARO_QEMU_NET=vmnet-shared needs macOS" >&2
+            exit 64
+        }
+        netdev=vmnet-shared,id=net0
+        ;;
+    *) echo "TESSARO_QEMU_NET must be user or vmnet-shared" >&2; exit 64 ;;
+esac
+
 set -- \
     -machine virt -smp 4 -m 4096 \
     -snapshot \
     -device qemu-xhci -device usb-kbd -device usb-tablet \
     -device intel-hda \
-    -netdev user,id=net0,hostfwd=tcp:127.0.0.1:2222-:22,hostfwd=tcp:127.0.0.1:7401-:7400 \
+    -netdev "$netdev" \
     -device virtio-net-pci,netdev=net0 \
     -serial mon:stdio
 if [ "$mode" = vnc ]; then
@@ -58,7 +83,9 @@ if [ "$(uname -s)" = Darwin ]; then
         gpu=virtio-gpu-pci display=cocoa
     fi
     [ "$mode" = vnc ] && display=none
-    exec qemu-system-aarch64 "$@" \
+    sudo=
+    [ "$net" = vmnet-shared ] && sudo=sudo
+    exec $sudo "$(command -v qemu-system-aarch64)" "$@" \
         -accel hvf -cpu host \
         -bios "$(brew --prefix qemu)/share/qemu/edk2-aarch64-code.fd" \
         -drive "file=$image,format=raw,if=virtio" \
