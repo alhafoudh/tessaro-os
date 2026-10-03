@@ -1,6 +1,6 @@
 # Build images by hand, run e2e on the qemu one, build tessaro-ctl and
-# tessaro-gui for every platform, and publish them all as a release when
-# that is ticked. Try Tessaro is try.yml's, from a published release. Only the image builds run on the
+# tessaro-gui for every platform, Try Tessaro (try.yml) when genericarm64 is
+# built, and publish them all as a release when that is ticked. Only the image builds run on the
 # self-hosted runner on the build host, which uses the shared download and
 # sstate cache in place: it is far too big for a cache store. Everything else
 # runs on GitHub's runners. Only workflow_dispatch triggers this, so only
@@ -356,14 +356,26 @@ jobs:
           compression-level: 0
           retention-days: 14
 
+  # Try Tessaro's DMG, around the genericarm64 image this run built: try.yml,
+  # which also runs on its own from a published release's image. Only when
+  # genericarm64 is ticked.
+  try:
+    needs: [matrix, build]
+    if: inputs.genericarm64
+    uses: ./.github/workflows/try.yml
+    with:
+      from_run: true
+
   release:
-    needs: [matrix, build, e2e, clients]
+    needs: [matrix, build, e2e, clients, try]
     # always(), since e2e's own if uses it; a release needs e2e to have
-    # passed, never skipped (matrix refuses a release without e2e).
+    # passed, never skipped (matrix refuses a release without e2e). try is
+    # skipped when genericarm64 was not built.
     if: >-
       always() && inputs.release
       && needs.build.result == 'success' && needs.clients.result == 'success'
       && needs.e2e.result == 'success'
+      && (needs.try.result == 'success' || needs.try.result == 'skipped')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -376,6 +388,11 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           pattern: clients-*
+          merge-multiple: true
+          path: dist
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: try-tessaro-*
           merge-multiple: true
           path: dist
       - name: Publish

@@ -6,8 +6,9 @@ One window starts and stops the device, opens `tessaro-gui`, a terminal
 with `tessaro-ctl` ready and Webconfig, and offers things to try. The kiosk
 itself is QEMU's own window. The app is `gui/try-tessaro`; `mise run
 try:run` runs it from a checkout and `mise run try:build` makes the DMG,
-which the `try` workflow builds around a published release's image (**By
-hand: `try.yml`** in [ci.md](ci.md)).
+which the `try` workflow builds for every release, and by hand around a
+published release's image (**By hand or from a release: `try.yml`** in
+[ci.md](ci.md)).
 
 It is macOS on Apple silicon only. The code keeps the platform's parts
 (the QEMU command line, the control socket, the terminal) in a few places so

@@ -58,28 +58,34 @@ images and clients stay workflow artifacts.
   windows-x86_64. It uploads `tessaro-ctl-<version>-<sha>-<platform>` and
   `tessaro-gui-<version>-<sha>-<platform>`, as `.tar.gz`, or `.zip` on
   Windows and for the macOS `Tessaro.app`, as `clients-<platform>`.
+* `try` runs when genericarm64 was built: `try.yml` (below) with
+  `from_run`, around the image the `build` job just uploaded, leaving the
+  Try Tessaro DMG as `try-tessaro-macos-arm64`.
 * `release` runs only when asked and only when every job passed, e2e
-  included: a skipped e2e is no pass. It tags the built commit
-  `v<version>-<sha>` and attaches every image, bmap, SBOM bundle, license
-  list and client archive.
+  included: a skipped e2e is no pass, while `try` may be skipped when
+  genericarm64 was not built. It tags the built commit `v<version>-<sha>`
+  and attaches every image, bmap, SBOM bundle, license list, client archive
+  and the Try Tessaro DMG.
   `matrix` fails up front when release is ticked without e2e or without
   qemux86-64, so no run builds for hours toward a release it cannot make.
 
-## By hand: `try.yml`
+## By hand or from a release: `try.yml`
 
-**Try Tessaro is built on its own, around a published release's image**
-([try-tessaro.md](try-tessaro.md)). It needs no image build, so it never
-touches the build host: one job on GitHub's macOS runner downloads the
-release's `tessaro-os-genericarm64-<version>.wic.zst` (the latest release,
-or the tag given), runs `brew install qemu` and `try:build`, checks the
-bundled QEMU runtime's licenses (`sbom.rb check --runtime`), and uploads
-`try-tessaro-<version>-macos-arm64.dmg` as `try-tessaro-macos-arm64`.
-Ticking attach also uploads the DMG to that release. The app is this
-commit's and the image is the release's, so a launcher change ships
-without a new image, and the DMG is named after the image it carries. A
-release made by `release.yml` gets its DMG by running this afterwards with
-attach ticked: a release created with the workflow's token starts no other
-workflow, so it cannot follow on its own.
+**Try Tessaro's DMG is one job on GitHub's macOS runner**
+([try-tessaro.md](try-tessaro.md)): `brew install qemu`, `try:build`
+around a genericarm64 image, the bundled QEMU runtime's license check
+(`sbom.rb check --runtime`), and the DMG uploaded as the artifact
+`try-tessaro-macos-arm64`, named `try-tessaro-<version>-macos-arm64.dmg`
+after the image it carries. **It never publishes anything; only
+`release.yml` makes a release.**
+
+* **Run by hand**, it is an intermediate build: this commit's launcher
+  around the image of a published release (the latest, or the tag given),
+  so a launcher change can be tried as a DMG without building an image.
+  Nothing touches the build host.
+* **Called by `release.yml`** (`workflow_call` with `from_run`), it takes
+  the image that run's `build` job uploaded, and `release` attaches the
+  DMG with everything else.
 
 **The self-hosted runner builds images and nothing else.** The clients
 take minutes on GitHub's runners and need none of the build host's cache,
