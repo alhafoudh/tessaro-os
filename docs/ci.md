@@ -45,11 +45,14 @@ images and clients stay workflow artifacts.
   and client archive carries.
 * `build` runs once per machine, one at a time, on the self-hosted runner:
   `image:name`, then `image:build`, then `sbom:build`, which fails the leg
-  on a license the policy does not allow. It uploads the versioned
+  on a license the policy does not allow, then `sources:collect`, which
+  copies the image's copyleft sources into the store on the host and fails
+  when one has no archive. It uploads the versioned
   `tessaro-os-<machine>-<version>-<sha>.wic.zst`, its `.wic.bmap`, its
-  `.sbom.tar.zst` and its `.licenses.csv` as separate, unzipped artifacts
-  (`archive: false`), each named after its file. The SBOM is made here
-  because it reads the SPDX the image build left in the tree.
+  `.sbom.tar.zst`, its `.licenses.csv` and its `.sources.txt` as separate,
+  unzipped artifacts (`archive: false`), each named after its file. Both
+  run here because they read what the image build left in the tree; the
+  sources themselves stay in the store ([sbom.md](sbom.md), "Sources").
 * `e2e` runs after every build leg, on the self-hosted runner, when e2e is
   ticked and qemux86-64 was built: `e2e:setup` and `e2e:run`, then
   `build/e2e/` uploaded as `e2e-logs`.
@@ -148,6 +151,9 @@ On the host it is a directory that is simply there.
   gitignored, so the link does not make the image `-dirty`. The runner runs
   as the user who builds on the host, so both write it with the same
   permissions.
+* **The images' copyleft sources go to `/srv/tessaro/sources`**, a store
+  shared the same way, which `sources:collect` reads from
+  `TESSARO_SOURCES_DIR`, another repository variable.
 * **One build at a time.** The matrix has `max-parallel: 1`, and each job
   waits while `pgrep -af 'kas-container|bitbake'` finds anything, so a
   workstation build or e2e run on the host finishes first. A job cancelled
@@ -165,7 +171,7 @@ done and refreshes the service's `PATH`.
 
 ```sh
 .github/setup-runner.sh --repo OWNER/NAME --token TOKEN \
-    [--work /big/disk/runner-work] [--cache /path/to/cache]
+    [--work /big/disk/runner-work] [--cache /path/to/cache] [--sources /path/to/sources]
 .github/setup-runner.sh --repo OWNER/NAME --remove --token TOKEN
 ```
 
@@ -186,8 +192,10 @@ self-hosted runner" (for `--remove`, the runner's "Remove" button); with the
    those tools. The systemd service does not read the login shell's profile,
    and without them every job fails on a missing `mise`.
 5. **Installs and starts the service** as that user (`svc.sh`).
-6. **Sets the `TESSARO_CACHE_DIR` variable** through `gh`, or prints what to
-   set by hand. The default is `/srv/tessaro/cache` (`--cache`).
+6. **Sets the `TESSARO_CACHE_DIR` and `TESSARO_SOURCES_DIR` variables**
+   through `gh`, or prints what to set by hand. The defaults are
+   `/srv/tessaro/cache` (`--cache`) and `/srv/tessaro/sources`
+   (`--sources`), which it creates.
 
 A new build host gets the shared cache first, as the user who builds there:
 

@@ -4,8 +4,8 @@ dnsmasq drop-in and nginx on port 80 answer its captive portal probes with a \
 redirect to https://10.42.0.1:7400/, where the agent serves Webconfig \
 (tessaro-webconfig), so the sign-in sheet opens by itself. See \
 docs/quick-setup.md."
-LICENSE = "MIT"
-LIC_FILES_CHKSUM = "file://${COMMON_LICENSE_DIR}/MIT;md5=0835ade698e0bcf8506ecda2f7b4f302"
+LICENSE = "Apache-2.0"
+LIC_FILES_CHKSUM = "file://${COMMON_LICENSE_DIR}/Apache-2.0;md5=89aea4e17d99a7cacdbeed46a0096b10"
 
 SRC_URI = " \
     file://20-tessaro-portal.conf \

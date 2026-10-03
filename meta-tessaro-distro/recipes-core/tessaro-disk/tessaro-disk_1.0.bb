@@ -4,8 +4,8 @@ DESCRIPTION = "A helper that finds a partition by filesystem label on the disk \
 (OVERLAYFS_ETC_DEVICE in kas/common/tessaro.yml), and a udev rule that links \
 those partitions as /dev/disk/tessaro/<label>. tessaro-disk-boot mounts the \
 Raspberry Pi boot partition from that link (docs/build.md, Pi storage boot)."
-LICENSE = "MIT"
-LIC_FILES_CHKSUM = "file://${COMMON_LICENSE_DIR}/MIT;md5=0835ade698e0bcf8506ecda2f7b4f302"
+LICENSE = "Apache-2.0"
+LIC_FILES_CHKSUM = "file://${COMMON_LICENSE_DIR}/Apache-2.0;md5=89aea4e17d99a7cacdbeed46a0096b10"
 
 inherit systemd
 

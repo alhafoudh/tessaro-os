@@ -363,6 +363,13 @@ Rust service, supervises the browser over the DevTools protocol and is the
 device's control plane, keeping its state in SQLite. `tessaro-ctl`,
 `tessaro-gui` and Webconfig all speak the same HTTP API over pinned TLS.
 
+## License
+
+Tessaro is licensed under the [Apache License 2.0](LICENSE); [NOTICE](NOTICE)
+names the files that keep their own licenses. The images also contain
+third-party packages under their own licenses, listed in each image's SBOM
+([docs/sbom.md](docs/sbom.md)).
+
 ## More
 
 - [DEVELOPMENT.md](DEVELOPMENT.md): building, QEMU, flashing, tests and CI.

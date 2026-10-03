@@ -29,5 +29,5 @@ edition = "2021"
 # Chromium pin (meta-lts-mixins-rust in kas/repo/meta-chromium.yml), not chosen
 # here - see the comment on the mixin.
 rust-version = "1.95"
-license = "MIT"
+license = "Apache-2.0"
 publish = false

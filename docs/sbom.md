@@ -82,8 +82,8 @@ their content, so the same dependencies give the same document;
 on an error.
 
 * **`cargo`, `npm` and `vendored` take an allowlist**, and a miss is an
-  error. The binaries and the bundle are MIT and ship as one file each, so
-  only licenses that ask for no more than a notice are on it (`vendored`
+  error. The binaries and the bundle are Apache-2.0 and ship as one file
+  each, so only licenses that ask for no more than a notice are on it (`vendored`
   adds `OFL-1.1` for fonts). An expression passes when one branch of each
   `OR` and every part of each `AND` is allowed (`license.rb`); a missing or
   unreadable license fails.
@@ -106,13 +106,52 @@ on an error.
   the package and the exact expression, so a later change of license is
   judged again. Widening `allow` for one package is the wrong fix.
 
-## Distributing images
+## Sources
 
-**An SBOM lists licenses; it does not meet them.** Shipping an image to
-someone else brings the GPL and LGPL obligation to offer the corresponding
-source. Bitbake's `archiver` class (`INHERIT += "archiver"`,
-`ARCHIVER_MODE[src] = "original"`) collects it per recipe into
-`tmp/deploy/sources/`; it is not enabled.
+**Every image's GPL, LGPL and AGPL packages have their complete source kept
+on the build host**, because distributing an image obliges us to offer it:
+the upstream tarball, every patch applied to it and the recipe that builds
+it, not a diff. A link to upstream is not enough either: GPL-2.0, the
+kernel's, does not allow it for commercial distribution.
+
+* **Bitbake's `archiver` collects them**, set in `tessaro.conf`:
+  `ARCHIVER_MODE[src] = "original"` (tarball plus patch series),
+  `ARCHIVER_MODE[recipe] = "1"`, target recipes only, licenses matching
+  `copyleft_filter`'s default `GPL* LGPL* AGPL*`. They land in
+  `tmp/deploy/sources/<TARGET_SYS>/<PF>/`, and `do_deploy_archives` is
+  sstate-backed, so they are also in the sstate cache once per architecture.
+* **`mise run sources:collect` copies the image's ones into the store**,
+  `$TESSARO_SOURCES_DIR` (default `/srv/tessaro/sources`, next to the shared
+  cache). Which recipes count comes from the image's SPDX and the
+  initramfs's (it ships inside the kernel), the same walk as the license
+  list, so stale archives of older builds and recipes the image does not
+  install stay out. It fails when an installed copyleft recipe has no
+  archive.
+* **The store keeps each file once** (`sources.rb`): `files/<name>`, and a
+  file of the same name with other content under
+  `files/<TARGET_SYS>/<PF>/`. Releases and machines share it, so a release
+  only adds what changed; Chromium's tarball alone is several GB.
+* **A git source whose bare clone is gone from `cache/downloads/git2/`
+  is archived as nothing**, without a warning from bitbake: `do_ar_original`
+  only copies a clone that exists, and a shallow `gitshallow_*` tarball does
+  not count. `sources:collect` warns about every copyleft recipe it found
+  only the recipe of; restore the clone with `git clone --bare --mirror
+  <url> cache/downloads/git2/<name>`, then
+  `bitbake -f -c ar_original <recipe>` and `-c deploy_archives`.
+  `WHOLE_IN_IMAGE` in `sources.rb` names the recipes whose only source is a
+  file the image carries as it is.
+* **Recipes that build from another recipe's tree** (`libgcc` from
+  `gcc-source`, `glibc-locale` from `glibc`, `usbip-tools` from the kernel)
+  take that recipe's archive too (`SHARED` in `sources.rb`).
+* **Each image gets `<image>.sources.txt`** in `build/sbom/<machine>/`:
+  every source file's sha256, size, path in the store and recipe. The
+  release carries it, so what belongs to a release stays known after the
+  build tree is gone.
+
+**The sources are not published yet.** Before images are distributed to
+anyone, the store has to be reachable from where the images are (a
+download next to the release, or a bucket the release links to); a GitHub
+release takes files of at most 2 GB, which Chromium's tarball exceeds.
 
 ## Tasks
 
@@ -122,4 +161,7 @@ source. Bitbake's `archiver` class (`INHERIT += "archiver"`,
 * `mise run sbom:check`: the policy over crates, npm packages and vendored
   files, no image needed. `ci.yml` runs it on every push. It walks the
   agent unfiltered, so it covers every machine's target at once.
+* `mise run sources:collect`: the image's copyleft sources into the store
+  and `<image>.sources.txt`, from its built image. The release workflow runs
+  it after `sbom:build`.
 * `mise run sbom:test`: the tool's unit tests, in `sbom/test/`.

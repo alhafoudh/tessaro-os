@@ -4,8 +4,8 @@ the offline page for the Tessaro web kiosk. The browser itself is Chromium, from
 meta-browser's meta-chromium layer; the agent is the Rust program in agent/ at the root \
 of this repo, built here as a native binary. This recipe owns the way both are launched \
 and supervised."
-LICENSE = "MIT"
-LIC_FILES_CHKSUM = "file://${COMMON_LICENSE_DIR}/MIT;md5=0835ade698e0bcf8506ecda2f7b4f302"
+LICENSE = "Apache-2.0"
+LIC_FILES_CHKSUM = "file://${COMMON_LICENSE_DIR}/Apache-2.0;md5=89aea4e17d99a7cacdbeed46a0096b10"
 
 # cargo brings do_configure/do_compile and installs the binary from
 # ${B}/target; everything else this recipe ships is added by do_install:append

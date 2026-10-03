@@ -196,9 +196,21 @@ jobs:
           cp "build/sbom/$TESSARO_MACHINE/$BASE.sbom.tar.zst" "build/sbom/$TESSARO_MACHINE/$BASE.licenses.csv" build/artifacts/
           ls -l build/artifacts
 
+      # The image's GPL, LGPL and AGPL sources into the store on this host,
+      # and the list of them, which goes with the release (docs/sbom.md,
+      # "Sources"). Fails when a copyleft package has no archived source.
+      - name: Sources
+        env:
+          BASE: ${{ steps.name.outputs.base }}
+          TESSARO_SOURCES_DIR: ${{ vars.TESSARO_SOURCES_DIR }}
+        run: |
+          [ -n "$TESSARO_SOURCES_DIR" ] || { echo "::error::set the TESSARO_SOURCES_DIR repository variable"; exit 1; }
+          mise run sources:collect
+          cp "build/sbom/$TESSARO_MACHINE/$BASE.sources.txt" build/artifacts/
+
       # archive: false uploads each file as it is, not zipped, so the image,
-      # its bmap and its SBOM files download one by one. Each artifact is
-      # named after its file.
+      # its bmap, its SBOM files and its sources list download one by one.
+      # Each artifact is named after its file.
       - uses: actions/upload-artifact@v7
         with:
           path: build/artifacts/${{ steps.name.outputs.name }}
@@ -220,6 +232,12 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           path: build/artifacts/${{ steps.name.outputs.base }}.licenses.csv
+          archive: false
+          retention-days: 14
+
+      - uses: actions/upload-artifact@v7
+        with:
+          path: build/artifacts/${{ steps.name.outputs.base }}.sources.txt
           archive: false
           retention-days: 14
 

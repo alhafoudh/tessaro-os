@@ -5,7 +5,7 @@
 # How the runner is used, and why: docs/ci.md.
 #
 #   .github/setup-runner.sh --repo OWNER/NAME [--token TOKEN] [--name NAME]
-#                           [--dir DIR] [--work DIR] [--cache DIR]
+#                           [--dir DIR] [--work DIR] [--cache DIR] [--sources DIR]
 #   .github/setup-runner.sh --repo OWNER/NAME --remove [--token TOKEN]
 #
 # The token is the one GitHub shows under Settings, Actions, Runners, "New
@@ -21,6 +21,9 @@ work=""
 # The host's shared cache, which the checkouts' cache/ links to too, so CI
 # and workstation builds share downloads and sstate (docs/ci.md).
 cache=/srv/tessaro/cache
+# The store of the images' GPL, LGPL and AGPL sources, shared like the cache
+# (docs/sbom.md, "Sources").
+sources=/srv/tessaro/sources
 remove=0
 
 while [ $# -gt 0 ]; do
@@ -31,6 +34,7 @@ while [ $# -gt 0 ]; do
         --dir) dir="$2"; shift 2 ;;
         --work) work="$2"; shift 2 ;;
         --cache) cache="$2"; shift 2 ;;
+        --sources) sources="$2"; shift 2 ;;
         --remove) remove=1; shift ;;
         -h|--help) sed -n '2,15p' "$0"; exit 0 ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
@@ -76,6 +80,8 @@ done
 docker info >/dev/null 2>&1 || die "docker does not answer for $(id -un)"
 [ -d "$cache" ] || die "$cache does not exist: pass --cache with the shared download and sstate cache"
 cache="$(cd "$cache" && pwd -P)"
+mkdir -p "$sources" || die "cannot create $sources: pass --sources with a directory this user can write"
+sources="$(cd "$sources" && pwd -P)"
 
 if [ ! -x "$dir/config.sh" ]; then
     say "Downloading the runner into $dir"
@@ -128,13 +134,17 @@ else
 fi
 sudo ./svc.sh status | head -n 5 || true
 
-say "Repository variable TESSARO_CACHE_DIR"
-if command -v gh >/dev/null && gh variable set TESSARO_CACHE_DIR --repo "$repo" --body "$cache" 2>/dev/null; then
-    echo "set to $cache"
-else
-    echo "Set it by hand: Settings, Secrets and variables, Actions, Variables,"
-    echo "  TESSARO_CACHE_DIR = $cache"
-fi
+for var in TESSARO_CACHE_DIR:"$cache" TESSARO_SOURCES_DIR:"$sources"; do
+    key=${var%%:*}
+    value=${var#*:}
+    say "Repository variable $key"
+    if command -v gh >/dev/null && gh variable set "$key" --repo "$repo" --body "$value" 2>/dev/null; then
+        echo "set to $value"
+    else
+        echo "Set it by hand: Settings, Secrets and variables, Actions, Variables,"
+        echo "  $key = $value"
+    fi
+done
 
 echo
 echo "Done. The runner shows as Idle under Settings, Actions, Runners."

@@ -690,6 +690,13 @@ description = "Check the licenses of every crate, npm package and vendored file 
 dir = "{{config_root}}"
 run = "ruby sbom/sbom.rb check"
 
+# The store is shared by every checkout and build on the host, like cache/;
+# the release workflow sets TESSARO_SOURCES_DIR from a repository variable.
+[tasks."sources:collect"]
+description = "Copy the $TESSARO_MACHINE image's GPL, LGPL and AGPL sources into the store on this host and list them in build/sbom/"
+dir = "{{config_root}}"
+run = 'ruby sbom/sbom.rb sources --machine "$TESSARO_MACHINE" --build-dir "$KAS_BUILD_DIR" --store "${TESSARO_SOURCES_DIR:-/srv/tessaro/sources}" --out "build/sbom/$TESSARO_MACHINE"'
+
 [tasks."sbom:test"]
 description = "Run the SBOM tool's unit tests"
 dir = "{{config_root}}/sbom"

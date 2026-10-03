@@ -32,7 +32,7 @@ permissive: &permissive
 
 ecosystems:
   # Crates are linked into tessaro-agent, tessaro-ctl and tessaro-gui, which
-  # are MIT and ship as single binaries: only licenses that ask for no more
+  # are Apache-2.0 and ship as single binaries: only licenses that ask for no more
   # than a notice.
   cargo:
     level: error

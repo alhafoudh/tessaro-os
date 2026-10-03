@@ -3,8 +3,8 @@ DESCRIPTION = "Units that run PipeWire, WirePlumber and pipewire-pulse as the \
 weston user, with their sockets in /run/tessaro-audio, and the WirePlumber \
 configuration that leaves every choice to the audio.* settings tessaro-agent \
 applies. PipeWire and WirePlumber themselves come from meta-multimedia."
-LICENSE = "MIT"
-LIC_FILES_CHKSUM = "file://${COMMON_LICENSE_DIR}/MIT;md5=0835ade698e0bcf8506ecda2f7b4f302"
+LICENSE = "Apache-2.0"
+LIC_FILES_CHKSUM = "file://${COMMON_LICENSE_DIR}/Apache-2.0;md5=89aea4e17d99a7cacdbeed46a0096b10"
 
 inherit systemd
 

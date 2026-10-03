@@ -1,0 +1,53 @@
+Tessaro
+Copyright 2026 Ahmed Al Hafoudh
+
+This product is licensed under the Apache License, Version 2.0 (see
+LICENSE), except for the files named below, which keep their own licenses.
+
+The images built from this repository contain third-party packages under
+their own licenses; the list for each image is in its SBOM (docs/sbom.md).
+
+-------------------------------------------------------------------------------
+
+Moonforge
+
+The disk layouts in meta-tessaro-distro/wic/ and other files in
+meta-tessaro-distro adapted from meta-moonforge are derived from Moonforge
+(https://moonforgelinux.org/), under the MIT License:
+
+  Copyright (c) 2025 Igalia, S.L.
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in
+  all copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.
+
+-------------------------------------------------------------------------------
+
+psplash colours
+
+meta-tessaro-distro/recipes-core/psplash/files/psplash-colors.h replaces
+upstream psplash's file of the same name and is under the GNU General Public
+License, version 2 or later (GPL-2.0-or-later), like psplash.
+
+-------------------------------------------------------------------------------
+
+Manrope
+
+The Manrope font files in webconfig/src/fonts/ and gui/tessaro-gui/fonts/ are
+Copyright 2018 The Manrope Project Authors
+(https://github.com/googlefonts/manrope), under the SIL Open Font License,
+Version 1.1; the license text is OFL.txt next to them.

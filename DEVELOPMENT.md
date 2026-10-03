@@ -307,6 +307,7 @@ crates, npm packages and vendored files without one:
 ```sh
 mise run sbom:build           # build/sbom/<machine>/<image>.sbom.tar.zst and .licenses.csv
 mise run sbom:check           # the license policy in sbom/licenses.yml, also on every push
+mise run sources:collect      # the image's GPL/LGPL/AGPL sources into /srv/tessaro/sources
 mise run sbom:test            # the tool's unit tests
 ```
 

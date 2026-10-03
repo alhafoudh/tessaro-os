@@ -132,6 +132,7 @@ Use the mise tasks rather than calling `kas-container` directly:
 | `mise run sbom:build` | The `$TESSARO_MACHINE` image's SBOM bundle and license list into `build/sbom/`, from its built image |
 | `mise run sbom:check` | Every crate, npm package and vendored file against the license policy in `sbom/licenses.yml` |
 | `mise run sbom:test` | The SBOM tool's unit tests |
+| `mise run sources:collect` | The `$TESSARO_MACHINE` image's GPL, LGPL and AGPL sources into the store on the build host (`$TESSARO_SOURCES_DIR`), listed in `build/sbom/` |
 | `mise run docs:screenshots` | The README's screenshots: the kiosk's pages and Webconfig (Playwright in docker) and `tessaro-gui` (headless), from the agent's own fixtures with fixed data; rerun after changing any page they show, `qr.rs` or the default debug template |
 | `mise run dev:tunnel` | Workstation: autossh VNC/SSH forwards to the build host |
 

@@ -3,9 +3,9 @@ DESCRIPTION = "Webconfig: Quick Setup and everything tessaro-ctl and tessaro-gui
 manage, as a React app the agent serves with its API on port 7400. Built here \
 from webconfig/ in the repo, offline, with the Node the Chromium build already \
 has. See docs/webconfig.md."
-LICENSE = "MIT & OFL-1.1"
+LICENSE = "Apache-2.0 & OFL-1.1"
 LIC_FILES_CHKSUM = " \
-    file://${COMMON_LICENSE_DIR}/MIT;md5=0835ade698e0bcf8506ecda2f7b4f302 \
+    file://${COMMON_LICENSE_DIR}/Apache-2.0;md5=89aea4e17d99a7cacdbeed46a0096b10 \
     file://src/fonts/OFL.txt;md5=a216ac8723e9b95b204d3bc619ebcabd \
 "
 

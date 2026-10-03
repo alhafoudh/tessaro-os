@@ -1,4 +1,4 @@
-project('weston-tessaro-power', 'c', version: '1.0', license: 'MIT')
+project('weston-tessaro-power', 'c', version: '1.0', license: 'Apache-2.0')
 
 # weston.pc is the plugin API (weston.h, wet_module_init); libweston is
 # found through it. A module is loaded by name from Weston's module dir.

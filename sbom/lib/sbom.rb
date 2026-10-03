@@ -9,6 +9,7 @@ require_relative "sbom/license"
 require_relative "sbom/npm"
 require_relative "sbom/policy"
 require_relative "sbom/runtime"
+require_relative "sbom/sources"
 require_relative "sbom/spdx"
 require_relative "sbom/vendored"
 require_relative "sbom/yocto"
@@ -99,6 +100,34 @@ module Sbom
       puts "wrote #{archive}", "wrote #{File.join(out, "#{base}.licenses.csv")}"
       ok
     end
+  end
+
+  # The image's copyleft sources, the initramfs's included (it ships inside
+  # the kernel), copied into store, and <image>.sources.txt into out: each
+  # file's sha256, size, path in the store and recipe. False when a copyleft
+  # recipe the image installs has no archive.
+  def sources(machine:, build_dir:, store:, out:)
+    deploy = File.join(build_dir, "tmp", "deploy", "images", machine)
+    tarball = image_spdx(deploy, machine)
+    base = File.basename(tarball, ".spdx.tar.zst")
+    initramfs = File.join(deploy, "tessaro-initramfs-#{machine}.spdx.tar.zst")
+    rows = [tarball, (File.realpath(initramfs) if File.exist?(initramfs))].compact.flat_map do |spdx|
+      Dir.mktmpdir("sources") do |tmp|
+        Yocto.extract(spdx, tmp)
+        Yocto.new(tmp, image: "#{File.basename(spdx, '.spdx.tar.zst')}.spdx.json").rows
+      end
+    end
+
+    entries, missing, thin = Sources.new(File.join(build_dir, "tmp", "deploy", "sources"), rows, store: store).collect
+    FileUtils.mkdir_p(out)
+    list = File.join(out, "#{base}.sources.txt")
+    File.write(list, Sources.list(entries))
+    size = entries.sum(&:size)
+    puts "#{entries.size} files, #{(size / 1e9).round(2)} GB, in #{store}"
+    missing.each { puts "error: no archived source for #{_1}" }
+    thin.each { puts "warning: only the recipe of #{_1} was archived, check its source" }
+    puts "wrote #{list}"
+    missing.empty?
   end
 
   # The versioned tarball the image's stable .rootfs.spdx.tar.zst link points
