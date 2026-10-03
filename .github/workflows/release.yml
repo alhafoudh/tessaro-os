@@ -356,26 +356,25 @@ jobs:
           compression-level: 0
           retention-days: 14
 
-  # Try Tessaro's DMG, around the genericarm64 image this run built: try.yml,
-  # which also runs on its own from a published release's image. Only when
-  # genericarm64 is ticked.
+  # Try Tessaro, one package per platform, around the images this run
+  # built: try.yml, which also runs on its own from a published release's.
+  # It builds only the platforms whose machine is among this run's (macOS
+  # needs genericarm64), and nothing when none is.
   try:
     needs: [matrix, build]
-    if: inputs.genericarm64
     uses: ./.github/workflows/try.yml
     with:
-      from_run: true
+      machines: ${{ needs.matrix.outputs.machines }}
 
   release:
     needs: [matrix, build, e2e, clients, try]
     # always(), since e2e's own if uses it; a release needs e2e to have
-    # passed, never skipped (matrix refuses a release without e2e). try is
-    # skipped when genericarm64 was not built.
+    # passed, never skipped (matrix refuses a release without e2e). try
+    # passes with no legs when no platform's machine was built.
     if: >-
       always() && inputs.release
       && needs.build.result == 'success' && needs.clients.result == 'success'
-      && needs.e2e.result == 'success'
-      && (needs.try.result == 'success' || needs.try.result == 'skipped')
+      && needs.e2e.result == 'success' && needs.try.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write

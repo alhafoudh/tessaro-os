@@ -1,13 +1,13 @@
-# Try Tessaro for Apple silicon: the app from this commit around a
-# genericarm64 image, as a DMG ready to download. Signed ad hoc, not
-# notarized. Runs on GitHub's macOS runner alone. See docs/try-tessaro.md
-# and docs/ci.md.
+# Try Tessaro: the app from this commit around a Tessaro image, one leg
+# per platform it ships on, each package left as an artifact. Signed ad
+# hoc, not notarized. Runs on GitHub's runners alone. See
+# docs/try-tessaro.md and docs/ci.md.
 #
-# By hand it takes the image of a published release (the latest, or the
-# tag given) and leaves the DMG as this run's artifact. release.yml calls
-# it with from_run, the image its own build job just uploaded, and
-# publishes the DMG with everything else: only release.yml publishes a
-# release.
+# By hand it takes the images of a published release (the latest, or the
+# tag given): an intermediate build of the launcher. release.yml calls it
+# with the machines its run built, takes the images its build job
+# uploaded, and publishes the packages with everything else. This
+# workflow never publishes anything: only release.yml makes a release.
 
 name: try
 
@@ -15,18 +15,18 @@ on:
   workflow_dispatch:
     inputs:
       release:
-        description: Release tag whose genericarm64 image goes in (empty for the latest)
+        description: Release tag whose images go in (empty for the latest)
         type: string
         default: ""
   workflow_call:
     inputs:
-      from_run:
-        description: Take the image from this run's artifacts, as release.yml's build uploads it
-        type: boolean
-        default: false
+      machines:
+        description: The machines the calling run built, as JSON; their images come from its artifacts
+        type: string
+        required: true
 
 permissions:
-  # Reading a release's image is all it does with the repo.
+  # Reading a release's images is all it does with the repo.
   contents: read
 
 env:
@@ -37,8 +37,38 @@ env:
   GH_REPO: ${{ github.repository }}
 
 jobs:
+  # The platforms Try Tessaro ships on: the runner, the image it bundles
+  # and what its package is. Called from release.yml, only those whose
+  # machine that run built.
+  targets:
+    runs-on: ubuntu-latest
+    outputs:
+      include: ${{ steps.pick.outputs.include }}
+    steps:
+      - id: pick
+        env:
+          BUILT: ${{ inputs.machines }}
+        run: |
+          set -e
+          targets='[
+            {"os": "macos-latest", "platform": "macos-arm64", "machine": "genericarm64", "package": "dmg"}
+          ]'
+          if [ -n "$BUILT" ]; then
+            targets=$(jq --argjson built "$BUILT" '[.[] | select(.machine as $m | $built | index($m))]' <<<"$targets")
+          fi
+          include=$(jq -c . <<<"$targets")
+          echo "include: $include"
+          echo "include=$include" >>"$GITHUB_OUTPUT"
+
   try-tessaro:
-    runs-on: macos-latest
+    needs: targets
+    if: needs.targets.outputs.include != '[]'
+    name: try-tessaro (${{ matrix.platform }})
+    strategy:
+      matrix:
+        include: ${{ fromJSON(needs.targets.outputs.include) }}
+      fail-fast: false
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
       - uses: jdx/mise-action@v5
@@ -46,54 +76,64 @@ jobs:
           install_args: rust
       - uses: Swatinem/rust-cache@v2
         with:
+          key: ${{ matrix.platform }}
           workspaces: |
             agent -> ../build/cargo-target
             gui -> ../build/gui-target
       # The QEMU the app bundles, relinked (gui/try-tessaro/bundle-qemu-macos.sh).
-      - run: brew install qemu
+      - if: runner.os == 'macOS'
+        run: brew install qemu
 
-      # The image: this run's own (release.yml), or a published release's.
-      - if: inputs.from_run
+      # The image: the calling run's own (release.yml), or a published
+      # release's.
+      - if: inputs.machines
         uses: actions/download-artifact@v8
         with:
-          pattern: tessaro-os-genericarm64-*.wic.zst
+          pattern: tessaro-os-${{ matrix.machine }}-*.wic.zst
           merge-multiple: true
           path: build/image
-      - if: ${{ !inputs.from_run }}
+      - if: ${{ !inputs.machines }}
         name: Fetch the release's image
         env:
           TAG: ${{ inputs.release }}
+          MACHINE: ${{ matrix.machine }}
         run: |
           set -e
           [ -n "$TAG" ] || TAG=$(gh release view --json tagName --jq .tagName)
-          gh release download "$TAG" --pattern 'tessaro-os-genericarm64-*.wic.zst' --dir build/image
+          gh release download "$TAG" --pattern "tessaro-os-$MACHINE-*.wic.zst" --dir build/image
       - name: Name the image
         id: image
+        env:
+          MACHINE: ${{ matrix.machine }}
         run: |
           set -e
-          image=$(ls build/image/tessaro-os-genericarm64-*.wic.zst)
-          version=${image##*/tessaro-os-genericarm64-}
+          image=$(ls build/image/tessaro-os-"$MACHINE"-*.wic.zst)
+          version=${image##*/tessaro-os-"$MACHINE"-}
           version=${version%.wic.zst}
           echo "path=$image" >>"$GITHUB_OUTPUT"
           echo "version=$version" >>"$GITHUB_OUTPUT"
 
+      # try:build makes build/Try-Tessaro-<platform>.<package>.
       - run: mise run try:build "${{ steps.image.outputs.path }}"
-      # The runtime's licenses, where its runtime.json exists (docs/sbom.md).
+      # The bundled runtime's licenses, where its runtime.json exists
+      # (docs/sbom.md).
       - run: ruby sbom/sbom.rb check --runtime build/gui-target/release/qemu-runtime/runtime.json
 
       - name: Pack
         env:
           VERSION: ${{ steps.image.outputs.version }}
+          PLATFORM: ${{ matrix.platform }}
+          PACKAGE: ${{ matrix.package }}
         run: |
           set -e
           mkdir -p build/artifacts
-          mv build/Try-Tessaro-macos-arm64.dmg "build/artifacts/try-tessaro-$VERSION-macos-arm64.dmg"
+          mv "build/Try-Tessaro-$PLATFORM.$PACKAGE" "build/artifacts/try-tessaro-$VERSION-$PLATFORM.$PACKAGE"
           ls -l build/artifacts
-      # The DMG stays an artifact; release.yml publishes every try-tessaro-*
+      # Left as an artifact; release.yml publishes every try-tessaro-*
       # artifact of its run.
       - uses: actions/upload-artifact@v7
         with:
-          name: try-tessaro-macos-arm64
+          name: try-tessaro-${{ matrix.platform }}
           path: build/artifacts/
           compression-level: 0
           retention-days: 14
