@@ -120,6 +120,7 @@ jobs:
       - run: ruby sbom/sbom.rb check --runtime build/gui-target/release/qemu-runtime/runtime.json
 
       - name: Pack
+        id: pack
         env:
           VERSION: ${{ steps.image.outputs.version }}
           PLATFORM: ${{ matrix.platform }}
@@ -127,13 +128,16 @@ jobs:
         run: |
           set -e
           mkdir -p build/artifacts
-          mv "build/Try-Tessaro-$PLATFORM.$PACKAGE" "build/artifacts/try-tessaro-$VERSION-$PLATFORM.$PACKAGE"
+          name="try-tessaro-$VERSION-$PLATFORM.$PACKAGE"
+          mv "build/Try-Tessaro-$PLATFORM.$PACKAGE" "build/artifacts/$name"
+          echo "name=$name" >>"$GITHUB_OUTPUT"
           ls -l build/artifacts
       # Left as an artifact; release.yml publishes every try-tessaro-*
-      # artifact of its run.
+      # artifact of its run. archive: false uploads the package as it is,
+      # not zipped, so it downloads as the .dmg itself, and the artifact is
+      # named after its file, as release.yml's images are.
       - uses: actions/upload-artifact@v7
         with:
-          name: try-tessaro-${{ matrix.platform }}
-          path: build/artifacts/
-          compression-level: 0
+          path: build/artifacts/${{ steps.pack.outputs.name }}
+          archive: false
           retention-days: 14

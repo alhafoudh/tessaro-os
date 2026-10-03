@@ -79,8 +79,9 @@ platform is a row there and its packaging in `try:build`. A leg runs
 `try:build` around its image (on macOS after `brew install qemu`), checks
 the bundled runtime's licenses (`sbom.rb check --runtime`), and uploads
 `try-tessaro-<version>-<platform>.<package>`, named after the image it
-carries, as the artifact `try-tessaro-<platform>`. **It never publishes
-anything; only `release.yml` makes a release.**
+carries, unzipped (`archive: false`, as `build` uploads the images): the
+artifact is named after the file and downloads as the `.dmg` itself.
+**It never publishes anything; only `release.yml` makes a release.**
 
 * **Run by hand**, it is an intermediate build: this commit's launcher
   around the images of a published release (the latest, or the tag given),
