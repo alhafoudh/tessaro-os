@@ -125,7 +125,9 @@ node list when no window is open or the list was clicked last:
 A key a widget took - Esc leaving a text field, Enter submitting one - is
 left to it; the zoom always works.
 
-**One dark look, in the welcome page's colours** (`theme.rs`), so the
+**One dark look, in the welcome page's colours** (`theme.rs` in
+`gui/tessaro-style`, the crate the GUI shares with Try Tessaro along with
+`icon.rs` and the fonts; `main.rs` imports both as `theme` and `icon`), so the
 client and the kiosk's own screen read as one product. The page's CSS
 variables in `tessaro-selftest/files/index.html` are the source: its
 near-black background is the desk, its blue and purple glows are the
@@ -134,7 +136,7 @@ GUI's. The page's translucent cards and lines become solid colours, since
 iced draws no gradients or blending behind them. There is no light
 variant and no following the system theme. Every colour and style is a
 named constant or function there, so windows cannot drift apart. The UI font is Manrope, bundled in
-`gui/tessaro-gui/fonts/` (SIL OFL, `OFL.txt` beside it) as static Regular
+`gui/tessaro-style/fonts/` (SIL OFL, `OFL.txt` beside it) as static Regular
 and Bold files, so the GUI reads the same on every OS; iced alone would take
 whatever sans the host has. Monospace text (`Font::MONOSPACE`) is left to
 the host.

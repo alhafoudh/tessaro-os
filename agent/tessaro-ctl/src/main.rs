@@ -1277,17 +1277,7 @@ impl Change {
 
 /// `KEY=VALUE ...` set and applied, with no revision check: what the
 /// shorthand commands (`browser maintenance on`, `audio volume 40`) are.
-pub(crate) fn set(
-    session: &mut Session,
-    values: BTreeMap<String, String>,
-) -> Result<Applied, String> {
-    session.send::<api::config::Set>(api::SetConfig {
-        values,
-        if_revision: None,
-        apply: true,
-        verify: Default::default(),
-    })
-}
+pub(crate) use tessaro_client::config::set;
 
 /// A screen mode `on|off` switches: its flag, and the one setting `on` may
 /// change in the same step.

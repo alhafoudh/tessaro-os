@@ -156,10 +156,9 @@ meta-arm.
    `tessaro-ctl -n 127.0.0.1:7401 ...`, open Webconfig in the browser.
 5. **Mac:** the webcam over usbcam.rb with an AVFoundation source
    (`usbcam:run` is still qemux86-64 only).
-6. If all of that holds up, decide the package: a `.utm` bundle plus the
-   macOS binaries may already be enough. A custom Swift launcher that bundles
-   its own QEMU (try-omarchy's route) is a large job and only worth it after
-   the UTM test.
+6. The package is Try Tessaro, a Rust/iced launcher that bundles Homebrew's
+   QEMU relinked, with software rendering and slirp: see
+   [docs/try-tessaro.md](docs/try-tessaro.md).
 
 ## Open questions
 

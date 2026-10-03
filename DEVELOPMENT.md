@@ -217,6 +217,23 @@ On macOS, the release build also creates
 
 How it works is in [docs/gui.md](docs/gui.md).
 
+## Try Tessaro
+
+Try Tessaro, in the same workspace (`gui/try-tessaro`), is the Mac app that
+runs a device in a VM for someone trying Tessaro. It bundles Homebrew's
+QEMU, so a Mac building it needs `brew install qemu`, and a genericarm64
+image, the one `image:pull` fetched unless another is named.
+
+```sh
+mise run try:run                      # package and open it, from this checkout
+mise run try:run IMAGE.wic.zst        # with another genericarm64 image
+mise run try:build                    # release app and build/Try-Tessaro-macos-arm64.dmg
+```
+
+Its device lives in `~/Library/Application Support/Try Tessaro/`; delete
+that folder for a first launch from scratch. How it works is in
+[docs/try-tessaro.md](docs/try-tessaro.md).
+
 ## Webconfig
 
 Webconfig is the device's management pages in a browser, a React app in

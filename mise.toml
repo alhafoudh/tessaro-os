@@ -257,6 +257,65 @@ else
 fi
 '''
 
+# Try Tessaro, the macOS launcher in gui/try-tessaro: the app bundles QEMU
+# (Homebrew's, relinked), tessaro-ctl, Tessaro.app and a genericarm64 image,
+# so packaging needs all of them (docs/try-tessaro.md).
+[tasks."try:run"]
+description = "Run Try Tessaro, the macOS launcher, from this checkout with a genericarm64 image"
+dir = "{{config_root}}/gui"
+env = { CARGO_TARGET_DIR = "{{config_root}}/build/gui-target" }
+usage = '''
+arg "[image]" help="a genericarm64 .wic.zst to bundle (default: the one image:pull fetched)"
+'''
+run = '''
+set -e
+[ "$(uname -s)" = Darwin ] || { echo "Try Tessaro runs on macOS" >&2; exit 1; }
+image={{ usage.image | default(value="") | quote }}
+[ -n "$image" ] || image="{{config_root}}/tessaro-os-genericarm64.rootfs.wic.zst"
+case "$image" in /*) ;; *) image="$MISE_ORIGINAL_CWD/$image" ;; esac
+CARGO_TARGET_DIR="{{config_root}}/build/cargo-target" \
+    cargo build --release --manifest-path ../agent/Cargo.toml -p tessaro-ctl
+cargo build -p tessaro-gui -p try-tessaro
+gui_app=$(sh package-macos.sh "$CARGO_TARGET_DIR/debug/tessaro-gui")
+app=$(sh try-tessaro/package-macos.sh "$CARGO_TARGET_DIR/debug/try-tessaro" \
+    "{{config_root}}/build/cargo-target/release/tessaro-ctl" "$gui_app" "$image")
+# Through Launch Services, as gui:run does: the window comes to the front.
+if tty -s; then out=$(tty); else out=/dev/null; fi
+trap 'pkill -f "$app/Contents/MacOS/try-tessaro" || true' INT TERM
+open -n -W --stdout "$out" --stderr "$out" "$app"
+'''
+
+[tasks."try:build"]
+description = "Build Try Tessaro.app and its DMG for this Mac, release, with a genericarm64 image"
+dir = "{{config_root}}/gui"
+env = { CARGO_TARGET_DIR = "{{config_root}}/build/gui-target" }
+usage = '''
+arg "[image]" help="a genericarm64 .wic.zst to bundle (default: the one image:pull fetched)"
+'''
+run = '''
+set -e
+[ "$(uname -s)" = Darwin ] || { echo "Try Tessaro builds on macOS" >&2; exit 1; }
+image={{ usage.image | default(value="") | quote }}
+[ -n "$image" ] || image="{{config_root}}/tessaro-os-genericarm64.rootfs.wic.zst"
+case "$image" in /*) ;; *) image="$MISE_ORIGINAL_CWD/$image" ;; esac
+CARGO_TARGET_DIR="{{config_root}}/build/cargo-target" \
+    cargo build --release --manifest-path ../agent/Cargo.toml -p tessaro-ctl
+cargo build --release -p tessaro-gui -p try-tessaro
+gui_app=$(sh package-macos.sh "$CARGO_TARGET_DIR/release/tessaro-gui")
+app=$(sh try-tessaro/package-macos.sh "$CARGO_TARGET_DIR/release/try-tessaro" \
+    "{{config_root}}/build/cargo-target/release/tessaro-ctl" "$gui_app" "$image")
+# The DMG opens on the app beside a link to /Applications, to drag it over.
+staging="$CARGO_TARGET_DIR/try-tessaro-dmg"
+rm -rf "$staging"
+mkdir -p "$staging"
+/bin/cp -cR "$app" "$staging/"
+ln -s /Applications "$staging/Applications"
+dmg="{{config_root}}/build/Try-Tessaro-macos-arm64.dmg"
+hdiutil create -quiet -ov -volname "Try Tessaro" -srcfolder "$staging" -format UDZO "$dmg"
+rm -rf "$staging"
+echo "$dmg"
+'''
+
 [tasks."gui:test"]
 description = "Run the unit tests of tessaro-gui"
 dir = "{{config_root}}/gui"

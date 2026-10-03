@@ -161,9 +161,24 @@ tessaro-ctl update send tessaro-os-raspberrypi5-<version>.wic.zst  # every updat
 ## Try it on a Mac
 
 No spare screen at hand? An Apple silicon Mac runs Tessaro in a virtual
-machine at native speed: the kiosk in a window, sound through the Mac, and
-the device on the Mac's own network, where `tessaro-ctl`, `tessaro-gui` and
-Webconfig find it like any other.
+machine at native speed. **Try Tessaro**, the `try-tessaro-<version>-macos-arm64.dmg`
+on [Releases](https://github.com/alhafoudh/tessaro-os/releases), is all it
+takes: drag the app to Applications, clear the quarantine flag once (the
+app is signed ad hoc, not notarized), open it and press Start.
+
+```sh
+xattr -dr com.apple.quarantine "/Applications/Try Tessaro.app"
+```
+
+The kiosk opens in a window of its own; Try Tessaro's window opens
+`tessaro-gui`, a terminal with `tessaro-ctl` ready and Webconfig, and has
+things to try. The device keeps its settings between launches until Reset
+to factory, and is reachable from this Mac only, at `127.0.0.1:7401`. How it
+works is in [docs/try-tessaro.md](docs/try-tessaro.md).
+
+From a checkout, the same image boots with Homebrew's QEMU, with the device
+on the Mac's own network, where `tessaro-ctl`, `tessaro-gui` and Webconfig
+find it like any other:
 
 ```sh
 brew install qemu zstd mise

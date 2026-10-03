@@ -8,6 +8,7 @@ require_relative "sbom/inventory"
 require_relative "sbom/license"
 require_relative "sbom/npm"
 require_relative "sbom/policy"
+require_relative "sbom/runtime"
 require_relative "sbom/spdx"
 require_relative "sbom/vendored"
 require_relative "sbom/yocto"
@@ -31,17 +32,21 @@ module Sbom
   # Everything outside the image's own packages: the agent's crates as the
   # image builds them (for target, or every platform without one), the
   # clients' crates for every platform they ship on, Webconfig's npm
-  # packages and the vendored files. Returns [rows, {file name => SPDX doc}].
-  def components(root, target: nil)
+  # packages and the vendored files, plus Try Tessaro's QEMU runtime when
+  # its runtime.json is named. Returns [rows, {file name => SPDX doc}].
+  def components(root, target: nil, runtime: nil)
+    gui = File.join(root, "gui")
     parts = {
       "cargo-tessaro-kiosk.spdx.json" =>
         Cargo.collect(File.join(root, "agent"), component: "tessaro-kiosk", target: target),
       "cargo-tessaro-ctl.spdx.json" =>
         Cargo.collect(File.join(root, "agent"), component: "tessaro-ctl", roots: ["tessaro-ctl"]),
-      "cargo-tessaro-gui.spdx.json" => Cargo.collect(File.join(root, "gui"), component: "tessaro-gui"),
+      "cargo-tessaro-gui.spdx.json" => Cargo.collect(gui, component: "tessaro-gui", roots: ["tessaro-gui"]),
+      "cargo-try-tessaro.spdx.json" => Cargo.collect(gui, component: "try-tessaro", roots: ["try-tessaro"]),
       "npm-tessaro-webconfig.spdx.json" => Npm.collect(File.join(root, "webconfig"), component: "tessaro-webconfig")
     }
     rows = parts.values.flat_map(&:rows) + Vendored.rows(File.join(root, "sbom", "vendored.yml"), root: root)
+    rows += Runtime.rows(runtime) if runtime
     [rows, parts.transform_values(&:document)]
   end
 
@@ -61,8 +66,8 @@ module Sbom
     errors.zero?
   end
 
-  def check(root)
-    rows, = components(root)
+  def check(root, runtime: nil)
+    rows, = components(root, runtime: runtime)
     report(rows, policy(root).findings(rows))
   end
 

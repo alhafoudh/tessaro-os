@@ -16,6 +16,7 @@ pub mod actions;
 pub mod camera;
 pub mod certs;
 pub mod clock;
+pub mod config;
 pub mod connect;
 pub mod describe;
 pub mod devtools;

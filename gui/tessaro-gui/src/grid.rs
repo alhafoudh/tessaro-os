@@ -808,12 +808,7 @@ fn natural_cmp(mut a: &str, mut b: &str) -> Compare {
     a.len().cmp(&b.len())
 }
 
-pub fn bold() -> iced::Font {
-    iced::Font {
-        weight: iced::font::Weight::Bold,
-        ..theme::FONT
-    }
-}
+pub use crate::theme::bold;
 
 #[cfg(test)]
 mod tests {

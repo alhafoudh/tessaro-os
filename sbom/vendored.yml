@@ -14,4 +14,11 @@
   version: "4.505"
   license: OFL-1.1
   source: https://github.com/googlefonts/manrope
-  path: gui/tessaro-gui/fonts/OFL.txt
+  path: gui/tessaro-style/fonts/OFL.txt
+
+- component: try-tessaro
+  name: Manrope
+  version: "4.505"
+  license: OFL-1.1
+  source: https://github.com/googlefonts/manrope
+  path: gui/tessaro-style/fonts/OFL.txt

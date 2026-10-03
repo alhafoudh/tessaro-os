@@ -5,7 +5,7 @@
 # types.
 [workspace]
 resolver = "2"
-members = ["tessaro-gui"]
+members = ["tessaro-gui", "tessaro-style", "try-tessaro"]
 
 [workspace.package]
 version = "1.0.0"

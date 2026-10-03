@@ -1,6 +1,6 @@
 # Build images by hand, run e2e on the qemu one, build tessaro-ctl and
-# tessaro-gui for every platform, and publish them all as a
-# release when that is ticked. Only the image builds run on the
+# tessaro-gui for every platform, Try Tessaro when genericarm64 is built,
+# and publish them all as a release when that is ticked. Only the image builds run on the
 # self-hosted runner on the build host, which uses the shared download and
 # sstate cache in place: it is far too big for a cache store. Everything else
 # runs on GitHub's runners. Only workflow_dispatch triggers this, so only
@@ -356,14 +356,59 @@ jobs:
           compression-level: 0
           retention-days: 14
 
+  # Try Tessaro.app for Apple silicon, with the genericarm64 image this run
+  # built in it: only when that machine is ticked. Homebrew's qemu goes into
+  # the bundle (gui/try-tessaro/bundle-qemu-macos.sh), so the runtime's
+  # licenses are checked here, where its runtime.json exists. See
+  # docs/try-tessaro.md.
+  try-tessaro:
+    needs: [matrix, build]
+    if: inputs.genericarm64
+    runs-on: macos-latest
+    env:
+      MISE_AUTO_INSTALL: "false"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: jdx/mise-action@v5
+        with:
+          install_args: rust
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            agent -> ../build/cargo-target
+            gui -> ../build/gui-target
+      - run: brew install qemu
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: tessaro-os-genericarm64-*.wic.zst
+          merge-multiple: true
+          path: build/image
+      - run: mise run try:build build/image/tessaro-os-genericarm64-*.wic.zst
+      - run: ruby sbom/sbom.rb check --runtime build/gui-target/release/qemu-runtime/runtime.json
+      - name: Pack
+        env:
+          VERSION: ${{ needs.matrix.outputs.version }}
+        run: |
+          set -e
+          mkdir -p build/artifacts
+          mv build/Try-Tessaro-macos-arm64.dmg "build/artifacts/try-tessaro-$VERSION-macos-arm64.dmg"
+          ls -l build/artifacts
+      - uses: actions/upload-artifact@v7
+        with:
+          name: try-tessaro-macos-arm64
+          path: build/artifacts/
+          compression-level: 0
+          retention-days: 14
+
   release:
-    needs: [matrix, build, e2e, clients]
+    needs: [matrix, build, e2e, clients, try-tessaro]
     # always(), since e2e's own if uses it; a release needs e2e to have
     # passed, never skipped (matrix refuses a release without e2e).
     if: >-
       always() && inputs.release
       && needs.build.result == 'success' && needs.clients.result == 'success'
       && needs.e2e.result == 'success'
+      && (needs.try-tessaro.result == 'success' || needs.try-tessaro.result == 'skipped')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -376,6 +421,11 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           pattern: clients-*
+          merge-multiple: true
+          path: dist
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: try-tessaro-*
           merge-multiple: true
           path: dist
       - name: Publish

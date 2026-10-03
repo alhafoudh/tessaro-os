@@ -10,12 +10,20 @@ use iced::widget::{button, container, text, text_editor};
 use iced::{border, Border, Color, Element, Font, Theme};
 use tessaro_client::text::{Line, Tone};
 
-/// Manrope, bundled in `fonts/` and loaded in `main.rs`, so the GUI reads the
-/// same on every OS instead of taking whatever sans the host has. Monospace
-/// text keeps `Font::MONOSPACE`, the host's.
+/// Manrope, bundled in `fonts/` and loaded by `settings()` in `lib.rs`, so
+/// the apps read the same on every OS instead of taking whatever sans the
+/// host has. Monospace text keeps `Font::MONOSPACE`, the host's.
 pub const FONT: Font = Font::with_name("Manrope");
 
-/// The size of ordinary text; `default_text_size` in `main.rs`.
+/// `FONT` in bold.
+pub fn bold() -> Font {
+    Font {
+        weight: iced::font::Weight::Bold,
+        ..FONT
+    }
+}
+
+/// The size of ordinary text; `default_text_size` in `settings()`.
 pub const TEXT: f32 = 13.0;
 /// Cells, toolbars, the status bar.
 pub const SMALL: f32 = 12.0;
@@ -47,10 +55,10 @@ pub const MUTED: Color = rgb(0x8e_9b_b0);
 /// The page's `--accent`.
 pub const PRIMARY: Color = rgb(0x5c_c8_ff);
 /// The page's `--accent-2`: the window with the keyboard.
-const ACCENT: Color = rgb(0x9d_8c_ff);
-const SUCCESS: Color = rgb(0x5f_e0_a6);
-const WARNING: Color = rgb(0xff_c6_6b);
-const DANGER: Color = rgb(0xff_7a_7a);
+pub const ACCENT: Color = rgb(0x9d_8c_ff);
+pub const SUCCESS: Color = rgb(0x5f_e0_a6);
+pub const WARNING: Color = rgb(0xff_c6_6b);
+pub const DANGER: Color = rgb(0xff_7a_7a);
 /// Who wrote a journal line, as the ctl's cyan.
 const SOURCE: Color = PRIMARY;
 /// The selected table row and section list entry: the page's purple glow
@@ -144,7 +152,7 @@ fn line(color: Color) -> Border {
 }
 
 /// Buttons in the chrome: light text on a blue that lifts on hover.
-fn chrome_button(_: &Theme, status: button::Status) -> button::Style {
+pub fn chrome_button(_: &Theme, status: button::Status) -> button::Style {
     let (background, text_color) = match status {
         button::Status::Active => (BUTTON, BUTTON_TEXT),
         button::Status::Hovered => (BUTTON_HOVER, TEXT_COLOR),
@@ -166,7 +174,7 @@ fn chrome_button(_: &Theme, status: button::Status) -> button::Style {
 }
 
 /// The button Enter presses.
-fn primary_button(_: &Theme, status: button::Status) -> button::Style {
+pub fn primary_button(_: &Theme, status: button::Status) -> button::Style {
     let background = match status {
         button::Status::Active => PRIMARY,
         button::Status::Hovered => rgb(0x80_d4_ff),
@@ -187,7 +195,7 @@ fn primary_button(_: &Theme, status: button::Status) -> button::Style {
 
 /// Keeping a change that otherwise reverts on its own. Dark text, as on the
 /// primary button: the page's green is too light for white.
-fn success_button(_: &Theme, status: button::Status) -> button::Style {
+pub fn success_button(_: &Theme, status: button::Status) -> button::Style {
     let background = match status {
         button::Status::Active | button::Status::Disabled => SUCCESS,
         button::Status::Hovered => rgb(0x86_e9_bd),

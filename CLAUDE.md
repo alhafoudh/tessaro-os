@@ -51,6 +51,7 @@ same change as the behaviour it describes.
 | [docs/sbom.md](docs/sbom.md) | the SBOM: what each component is read from (bitbake's SPDX, cargo, npm, vendored files), the bundle and license list a release carries, the license policy and its exceptions, what is not covered |
 | [docs/clients.md](docs/clients.md) | what `tessaro-ctl` and `tessaro-gui` share in `agent/client` and what each keeps, reporting without printing, tones, lines and facts, adding a command, the differences on purpose |
 | [docs/gui.md](docs/gui.md) | `tessaro-gui`: inner windows, keyboard, the node list, device pages per command group, workers and jobs, the VNC viewer |
+| [docs/try-tessaro.md](docs/try-tessaro.md) | Try Tessaro, the Mac app with a device in a VM: what the bundle carries, the relinked QEMU runtime and its licenses, the command line, the disk overlay and reset, ports, the client store entry, the activities |
 | [docs/webconfig.md](docs/webconfig.md) | Webconfig: browser sessions, tickets and the activity rule, the handover across restarts, opening it from ctl and the GUI, the pages, the describe port and its golden fixtures, serving and caching, the frontend and its codegen, the dev proxy, the bitbake build and `bitbake-lock.json` |
 | [docs/printing.md](docs/printing.md) | the device's CUPS and why it is set up that way, the `printers` table and the reconcile, driverless and raw printers, `printer.enable` and `window.print()`, the default printer, discovery, supplies, sizes, which printers work |
 | [docs/quick-setup.md](docs/quick-setup.md) | the welcome page's QR code, captive portal detection, nginx's redirect to Quick Setup on the API's port, what the page uses, the online indicator |
@@ -119,7 +120,9 @@ Use the mise tasks rather than calling `kas-container` directly:
 | `mise run ctl:run -- ARGS` | Run that `tessaro-ctl`, rebuilt first if its source changed |
 | `mise run gui:run` | Run `tessaro-gui`, the desktop client, from this checkout |
 | `mise run gui:build` | Release `tessaro-gui` for this host |
-| `mise run gui:test` / `gui:lint` | Its unit tests; `cargo fmt --check` plus clippy |
+| `mise run gui:test` / `gui:lint` | The `gui/` workspace's unit tests (tessaro-gui, Try Tessaro); `cargo fmt --check` plus clippy |
+| `mise run try:run -- [IMAGE]` | macOS: package and open Try Tessaro with a genericarm64 image (default: the pulled one) |
+| `mise run try:build -- [IMAGE]` | macOS: `Try Tessaro.app` and its DMG, release, into `build/` |
 | `mise run webconfig:setup` | `npm ci` for Webconfig |
 | `mise run webconfig:gen` | Webconfig's API types from `agent/protocol/openapi.json` |
 | `mise run webconfig:run` | Webconfig's dev server, the API proxied to `TESSARO_WEBCONFIG_TARGET` (default the qemu forward) |
@@ -312,7 +315,8 @@ recipe.
   decision is passed in (`Trust::Pin`) or handed back (`update::Sent`),
   progress goes to a `report::Report`, and text comes back as
   `text::Line`/`Fact` spans with a `Tone`, never as painted strings: the
-  ctl paints tones with `style.rs`, the GUI with `theme.rs`. Terminal output
+  ctl paints tones with `style.rs`, the GUI with `theme.rs`
+  (`gui/tessaro-style`, shared with Try Tessaro). Terminal output
   stays in `tessaro-ctl`.
 * **`gui/` is its own workspace and never joins `agent/`**: the recipe builds
   every member of that one into the image. It reaches `protocol` and `client`

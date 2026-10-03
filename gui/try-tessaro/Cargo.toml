@@ -1,0 +1,25 @@
+[package]
+name = "try-tessaro"
+description = "Try Tessaro: a Tessaro device in a VM on this computer, started and explored from one window"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "try-tessaro"
+path = "src/main.rs"
+
+[dependencies]
+protocol = { path = "../../agent/protocol" }
+tessaro-client = { path = "../../agent/client" }
+tessaro-style = { path = "../tessaro-style" }
+# The bundled .wic.zst unpacked, pure Rust, the decoder the device's updater
+# uses (agent/update is Linux-only, so not that crate itself).
+ruzstd = "0.9"
+serde = { version = "1", features = ["derive"] }
+# settings.json and state.json, and QMP's JSON lines.
+serde_json = "1"
+# `image` shows the logo and screenshots.
+iced = { version = "0.14", features = ["image"] }

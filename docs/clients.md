@@ -34,7 +34,12 @@ there is one copy, and both clients call it.
 * `agent/tessaro-ctl` - clap, `--json`, prompts at the keyboard, painting
   the text for a terminal (`style.rs`, `progress.rs`).
 * `gui/tessaro-gui` - iced: pages, tables, forms and dialogs, jobs on their
-  own connections, painting the text with the theme (`theme.rs`).
+  own connections, painting the text with the theme (`theme.rs` in
+  `gui/tessaro-style`).
+* `gui/try-tessaro` - the Mac app that runs a device in a VM
+  ([try-tessaro.md](try-tessaro.md)). Not a third client of the commands:
+  its sample activities call `agent/client` like the other two, and say
+  the `tessaro-ctl` command that does the same.
 
 ## Nothing in the client prints or asks
 

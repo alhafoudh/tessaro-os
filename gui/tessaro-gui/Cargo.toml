@@ -14,6 +14,8 @@ path = "src/main.rs"
 [dependencies]
 protocol = { path = "../../agent/protocol" }
 tessaro-client = { path = "../../agent/client" }
+# The palette, styles, fonts and icons, shared with Try Tessaro.
+tessaro-style = { path = "../tessaro-style" }
 serde = { version = "1", features = ["derive"] }
 # The prefs' values: the zoom and where each kind of window was left.
 serde_json = "1"

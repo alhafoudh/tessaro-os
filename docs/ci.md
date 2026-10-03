@@ -58,10 +58,17 @@ images and clients stay workflow artifacts.
   windows-x86_64. It uploads `tessaro-ctl-<version>-<sha>-<platform>` and
   `tessaro-gui-<version>-<sha>-<platform>`, as `.tar.gz`, or `.zip` on
   Windows and for the macOS `Tessaro.app`, as `clients-<platform>`.
+* `try-tessaro` runs when genericarm64 was built, on a macOS runner:
+  `brew install qemu`, then `try:build` with that run's genericarm64
+  image, then the license check of the bundled QEMU runtime
+  (`sbom.rb check --runtime`). It uploads
+  `try-tessaro-<version>-<sha>-macos-arm64.dmg` as `try-tessaro-macos-arm64`
+  ([try-tessaro.md](try-tessaro.md)).
 * `release` runs only when asked and only when every job passed, e2e
-  included: a skipped e2e is no pass. It tags the built commit
+  included: a skipped e2e is no pass, while `try-tessaro` may be skipped
+  when genericarm64 was not built. It tags the built commit
   `v<version>-<sha>` and attaches every image, bmap, SBOM bundle, license
-  list and client archive.
+  list, client archive and the Try Tessaro DMG.
   `matrix` fails up front when release is ticked without e2e or without
   qemux86-64, so no run builds for hours toward a release it cannot make.
 
@@ -84,7 +91,7 @@ signs `Tessaro.app`. A download carries the quarantine flag, so Gatekeeper
 refuses to open it until that is cleared:
 
 ```sh
-xattr -dr com.apple.quarantine Tessaro.app tessaro-ctl
+xattr -dr com.apple.quarantine Tessaro.app tessaro-ctl "Try Tessaro.app"
 ```
 
 **On Windows the tasks run in Git Bash.** `MISE_WINDOWS_DEFAULT_INLINE_SHELL_ARGS`
