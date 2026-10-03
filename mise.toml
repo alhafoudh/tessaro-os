@@ -22,7 +22,7 @@ node = "22.11.0"
 #
 #   TESSARO_MACHINE=raspberrypi3-64 mise run image:build
 #
-# or use the image:build:qemu / :x86 / :rpi3 / :rpi4 / :rpi5 wrappers. Valid values
+# or use the image:build:qemu / :x86 / :arm64 / :rpi3 / :rpi4 / :rpi5 wrappers. Valid values
 # are the basenames in kas/machine/.
 machine = "{{ env.TESSARO_MACHINE | default(value='qemux86-64') }}"
 
@@ -342,12 +342,14 @@ description = "Build the image for $TESSARO_MACHINE (default qemux86-64)"
 dir = "{{config_root}}"
 run = '''
 # OVMF is the UEFI firmware runqemu boots the image with, so it is built for
-# the QEMU target only. Real hardware brings its own.
-if [ "$TESSARO_MACHINE" = "qemux86-64" ]; then
-    set -- --target moonforge-image-base --target ovmf
-else
-    set -- --target moonforge-image-base
-fi
+# the QEMU target only. Real hardware brings its own. genericarm64 gets
+# U-Boot's qemu_arm64 build instead (UBOOT_MACHINE in genericarm64.conf),
+# which qemu:run boots it with on Linux; a Mac uses Homebrew's edk2.
+case "$TESSARO_MACHINE" in
+    qemux86-64) set -- --target moonforge-image-base --target ovmf ;;
+    genericarm64) set -- --target moonforge-image-base --target u-boot ;;
+    *) set -- --target moonforge-image-base ;;
+esac
 kas-container build "$@" $KAS_CONFIG
 '''
 
@@ -360,6 +362,11 @@ run = "TESSARO_MACHINE=qemux86-64 mise run image:build"
 description = "Build the genericx86-64 image (real x86_64 hardware)"
 dir = "{{config_root}}"
 run = "TESSARO_MACHINE=genericx86-64 mise run image:build"
+
+[tasks."image:build:arm64"]
+description = "Build the genericarm64 image (UEFI Arm64: QEMU, a Mac under HVF, SystemReady boards)"
+dir = "{{config_root}}"
+run = "TESSARO_MACHINE=genericarm64 mise run image:build"
 
 [tasks."image:build:rpi3"]
 description = "Build the raspberrypi3-64 image (Pi 3B / 3B+, SD or USB storage)"
@@ -625,24 +632,33 @@ dir = "{{config_root}}/sbom"
 run = "ruby -Ilib -e 'Dir[\"test/*_test.rb\"].sort.each { require File.expand_path(_1) }'"
 
 [tasks."qemu:unpack"]
-description = "Decompress the built .wic so runqemu can boot it"
+description = "Decompress the built .wic (or, on a Mac, the pulled one) so QEMU can boot it"
 dir = "{{config_root}}"
 run = '''
-cd "$KAS_BUILD_DIR"
-if [ -f "$WIC.zst" ] && [ ! "$WIC" -nt "$WIC.zst" ]; then
-    zstd -dcf "$WIC.zst" > "$WIC"
+# A Mac builds nothing: it boots what `mise run image:pull` put in the repo
+# root (scripts/qemu-arm64.sh).
+if [ "$(uname -s)" = "Darwin" ]; then
+    image=$(basename "$WIC")
+else
+    cd "$KAS_BUILD_DIR"
+    image=$WIC
 fi
-[ -f "$WIC" ] || { echo "$WIC not found - run 'mise run image:build' first" >&2; exit 1; }
+if [ -f "$image.zst" ] && [ ! "$image" -nt "$image.zst" ]; then
+    zstd -dcf "$image.zst" > "$image"
+fi
+[ -f "$image" ] || { echo "$image not found - run 'mise run image:build' (or image:pull) first" >&2; exit 1; }
 '''
 
 [tasks."qemu:run"]
-description = "Boot the qemux86-64 image in QEMU with the serial console on this terminal"
+description = "Boot the qemux86-64 or genericarm64 image in QEMU with the serial console on this terminal"
 dir = "{{config_root}}"
 depends = ["qemu:unpack"]
 raw = true
 run = '''
+# genericarm64 boots on Linux and on a Mac (HVF, a window and CoreAudio).
+[ "$TESSARO_MACHINE" = "genericarm64" ] && exec sh scripts/qemu-arm64.sh window
 [ "$TESSARO_MACHINE" = "qemux86-64" ] || {
-    echo "qemu:run only works for qemux86-64, not $TESSARO_MACHINE" >&2
+    echo "qemu:run only works for qemux86-64 and genericarm64, not $TESSARO_MACHINE" >&2
     exit 1
 }
 # /dev/kvm is root:kvm 0660. The kas entrypoint drops to the "builder" user
@@ -678,13 +694,14 @@ kas-container --runtime-args "$KVM_RUNTIME $GPU_RUNTIME --network=host" shell $K
 '''
 
 [tasks."qemu:vnc"]
-description = "Boot the qemux86-64 image in QEMU with a VNC display on localhost:5901"
+description = "Boot the qemux86-64 or genericarm64 image in QEMU with a VNC display on localhost:5901"
 dir = "{{config_root}}"
 depends = ["qemu:unpack"]
 raw = true
 run = '''
+[ "$TESSARO_MACHINE" = "genericarm64" ] && exec sh scripts/qemu-arm64.sh vnc
 [ "$TESSARO_MACHINE" = "qemux86-64" ] || {
-    echo "qemu:vnc only works for qemux86-64, not $TESSARO_MACHINE" >&2
+    echo "qemu:vnc only works for qemux86-64 and genericarm64, not $TESSARO_MACHINE" >&2
     exit 1
 }
 # /dev/kvm is root:kvm 0660. The kas entrypoint drops to the "builder" user

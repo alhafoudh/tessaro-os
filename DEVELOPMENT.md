@@ -25,6 +25,7 @@ workstation, and test the agent. How each subsystem works is in
 mise run image:build        # the image for $TESSARO_MACHINE (plus OVMF on qemu)
 mise run image:build:qemu   # qemux86-64      - development, boots under QEMU
 mise run image:build:x86    # genericx86-64   - x86_64 PCs and mini PCs, UEFI
+mise run image:build:arm64  # genericarm64    - Arm64 UEFI, boots under QEMU here or on a Mac
 mise run image:build:rpi3   # raspberrypi3-64 - Pi 3B / 3B+, SD or USB storage
 mise run image:build:rpi4   # raspberrypi4-64 - Pi 4B / 400 / CM4, SD or USB storage
 mise run image:build:rpi5   # raspberrypi5    - Pi 5, SD / USB / NVMe storage

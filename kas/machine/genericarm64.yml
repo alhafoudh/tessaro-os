@@ -1,0 +1,48 @@
+# genericarm64: Arm64 machines that boot through UEFI - QEMU's virt machine,
+# a Mac running it under Hypervisor.framework (UTM or a bundled QEMU, see
+# AARCH64.md), and SystemReady boards. The machine comes from meta-yocto-bsp
+# and keeps linux-yocto, installing every module it builds.
+header:
+  version: 16
+  includes:
+    - kas/common/tessaro.yml
+    - kas/repo/meta-yocto.yml
+
+local_conf_header:
+  25_tessaro-machine: |
+    # meta-yocto-bsp's genericarm64.wks.in has no /data partition, which
+    # overlayfs-etc needs; ours is the genericx86-64 layout with its own
+    # identifiers.
+    WKS_FILE = "tessaro-image-base-genericarm64.wks.in"
+    # The Pi 3's tune instead of genericarm64's armv8a-crc, so most target
+    # packages are the cortexa53 ones the Pi 3 build already has in sstate.
+    # Chromium is not among them: mesa, systemd, wayland and others below it
+    # differ by machine (MACHINE_FEATURES, the rpi overrides), so it builds
+    # once for this machine. Cortex-A53
+    # code is plain ARMv8.0 plus CRC, which every Apple Silicon core and any
+    # SystemReady board runs. The machine conf sets DEFAULTTUNE with a hard
+    # `=` after local.conf, so only an override beats it.
+    #
+    # The rest is oe-core's armv8a/tune-cortexa53.inc without its `require`
+    # of arch-armv8a.inc: genericarm64.conf requires that itself, and a
+    # second inclusion appends its variables twice (ARMPKGSFX_THUMB,
+    # TUNE_CCARGS_MFPU), which changes every target task's signature. These
+    # lines come before the machine conf, as they do on the Pi 3.
+    DEFAULTTUNE:genericarm64 = "cortexa53"
+    TUNEVALID[cortexa53] = "Enable Cortex-A53 specific processor optimizations"
+    TUNE_CCARGS .= "${@bb.utils.contains('TUNE_FEATURES', 'cortexa53', ' -mcpu=cortex-a53', '', d)}"
+    AVAILTUNES:append = " cortexa53"
+    ARMPKGARCH:tune-cortexa53 = "cortexa53"
+    TUNE_FEATURES:tune-cortexa53 = "aarch64 crc cortexa53"
+    PACKAGE_EXTRA_ARCHS:tune-cortexa53 = "${PACKAGE_EXTRA_ARCHS:tune-armv8a-crc} cortexa53"
+    BASE_LIB:tune-cortexa53 = "lib64"
+    # qemu:vnc puts a password on the display, which needs DES from a crypto
+    # library QEMU is built without by default; as in qemux86-64.yml, only
+    # the host's QEMU changes (scripts/qemu-arm64.sh).
+    PACKAGECONFIG:append:pn-qemu-system-native = " nettle"
+
+# Both keys belong in the entry point of the config chain: an include cannot
+# set them, because meta-moonforge-distro.yml sets distro too and wins by
+# order. See the note in kas/common/tessaro.yml.
+distro: tessaro
+machine: genericarm64

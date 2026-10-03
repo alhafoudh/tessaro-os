@@ -5,9 +5,11 @@
 # The wireless fragment comes after tessaro-devices.cfg, so its =m for btusb
 # wins over the =y there. It is genericx86-64 only: qemux86-64 has no wireless
 # NIC and installs no module set. qemux86-64 gets USB/IP's client instead, for
-# the test camera the host serves (tessaro-qemu-usbip.cfg).
+# the test camera the host serves (tessaro-qemu-usbip.cfg). genericarm64 gets
+# V4L2, the VM sound cards and USB/IP, which its BSP config leaves out
+# (tessaro-genericarm64.cfg).
 #
-# linux-yocto is the kernel on qemux86-64 and genericx86-64. raspberrypi3-64
+# linux-yocto is the kernel on qemux86-64, genericx86-64 and genericarm64. raspberrypi3-64
 # builds linux-raspberrypi instead, which this bbappend does not touch - check
 # meta-raspberrypi's defconfig with
 #
@@ -29,3 +31,4 @@ FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
 SRC_URI += "file://tessaro-devices.cfg"
 SRC_URI:append:genericx86-64 = " file://tessaro-x86-wireless.cfg"
 SRC_URI:append:qemux86-64 = " file://tessaro-qemu-usbip.cfg"
+SRC_URI:append:genericarm64 = " file://tessaro-genericarm64.cfg"

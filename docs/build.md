@@ -300,6 +300,7 @@ kiosk.
 | --- | --- | --- |
 | `qemux86-64` | development, boots through `mise run qemu:vnc` | builds and boots; the e2e suite runs on it |
 | `genericx86-64` | shipping x86_64 hardware (UEFI), Intel or AMD GPU | tested on a Dell OptiPlex 7050; other PCs untested |
+| `genericarm64` | Arm64 under UEFI: a Mac under HVF, `mise run qemu:vnc` | boots and shows the kiosk in QEMU on the x86 build host (TCG, U-Boot); not yet run on a Mac (AARCH64.md) |
 | `raspberrypi3-64` | Raspberry Pi 3B / 3B+, SD or USB | tested on a Pi 3 Model B+ |
 | `raspberrypi4-64` | Raspberry Pi 4B / 400 / CM4, SD or USB | not yet tested on hardware |
 | `raspberrypi5` | Raspberry Pi 5, SD / USB / NVMe | tested on a Pi 5 |

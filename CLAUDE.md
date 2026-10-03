@@ -91,6 +91,7 @@ Use the mise tasks rather than calling `kas-container` directly:
 | `mise run image:build` | Build the image for `$TESSARO_MACHINE` (plus OVMF on qemu) |
 | `mise run image:build:qemu` | Same, forced to `qemux86-64` |
 | `mise run image:build:x86` | Same, forced to `genericx86-64` |
+| `mise run image:build:arm64` | Same, forced to `genericarm64` (plus U-Boot for QEMU) |
 | `mise run image:build:rpi3` | Same, forced to `raspberrypi3-64` (Pi 3B / 3B+) |
 | `mise run image:build:rpi4` | Same, forced to `raspberrypi4-64` (Pi 4B / 400 / CM4) |
 | `mise run image:build:rpi5` | Same, forced to `raspberrypi5` (Pi 5) |
@@ -148,7 +149,8 @@ repo, docs, comments and error messages included.
 anything else takes it from the environment (`TESSARO_MACHINE=raspberrypi3-64
 mise run image:shell`). Valid values are the basenames in `kas/machine/`. Each
 machine gets its own TOPDIR under `build/<machine>/`; `cache/` (`DL_DIR` +
-`SSTATE_DIR`) is shared. `qemu:*` and `e2e:*` are qemux86-64 only.
+`SSTATE_DIR`) is shared. `qemu:*` boots qemux86-64 and genericarm64, the
+latter on a Mac too (`scripts/qemu-arm64.sh`); `e2e:*` is qemux86-64 only.
 
 For Yocto work on a single recipe, go through the kas shell:
 
