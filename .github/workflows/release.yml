@@ -20,6 +20,10 @@ on:
         description: genericx86-64 (x86_64 PCs)
         type: boolean
         default: false
+      genericarm64:
+        description: genericarm64 (Arm64 UEFI, a VM on an Apple silicon Mac)
+        type: boolean
+        default: false
       raspberrypi3-64:
         description: raspberrypi3-64 (Pi 3B / 3B+)
         type: boolean
@@ -87,7 +91,7 @@ jobs:
           PICKED: ${{ toJSON(inputs) }}
         run: |
           machines=$(jq -c '[to_entries[]
-            | select(.key == "qemux86-64" or .key == "genericx86-64" or .key == "raspberrypi3-64" or .key == "raspberrypi4-64" or .key == "raspberrypi5")
+            | select(.key == "qemux86-64" or .key == "genericx86-64" or .key == "genericarm64" or .key == "raspberrypi3-64" or .key == "raspberrypi4-64" or .key == "raspberrypi5")
             | select(.value == true) | .key]' <<<"$PICKED")
           [ "$machines" != "[]" ] || { echo "::error::pick at least one machine"; exit 1; }
           # A release only follows a passed e2e, so fail now rather than

@@ -16,6 +16,7 @@
   <a href="#complete-chromium-policy-management">Policies</a> ·
   <a href="#tested-hardware">Hardware</a> ·
   <a href="#pre-built-images">Images</a> ·
+  <a href="#try-it-on-a-mac">Try it on a Mac</a> ·
   <a href="#quick-start">Quick start</a>
 </p>
 
@@ -128,6 +129,7 @@ The browser restarts only when the merged result actually changes. More in
 | arm64 | Raspberry Pi 4 (SD or USB) | `raspberrypi4-64` | ⏳ testing pending |
 | arm64 | Raspberry Pi 5 (SD, USB or NVMe) | `raspberrypi5` | ✅ tested |
 | x86_64 | Other UEFI PCs and mini PCs | `genericx86-64` | 🧪 more to come, community testing appreciated |
+| arm64 | Apple silicon Mac, in a VM | `genericarm64` | ✅ [try it on a Mac](#try-it-on-a-mac) |
 | x86_64 | QEMU | `qemux86-64` | 🛠️ development and end-to-end tests |
 
 Every machine runs the same software. On the Pi 3, plan around its 1 GB of
@@ -155,6 +157,29 @@ com.apple.quarantine Tessaro.app tessaro-ctl`.
 bmaptool copy tessaro-os-raspberrypi5-<version>.wic.zst /dev/sdX   # first install
 tessaro-ctl update send tessaro-os-raspberrypi5-<version>.wic.zst  # every update after that, over the network
 ```
+
+## Try it on a Mac
+
+No spare screen at hand? An Apple silicon Mac runs Tessaro in a virtual
+machine at native speed: the kiosk in a window, sound through the Mac, and
+the device on the Mac's own network, where `tessaro-ctl`, `tessaro-gui` and
+Webconfig find it like any other.
+
+```sh
+brew install qemu zstd mise
+git clone https://github.com/alhafoudh/tessaro-os.git && cd tessaro-os
+mise trust
+export MISE_AUTO_INSTALL=false   # booting needs none of the build toolchains
+mise run qemu:run:arm64 ~/Downloads/tessaro-os-genericarm64-<version>.wic.zst
+```
+
+The image is `genericarm64` from
+[Releases](https://github.com/alhafoudh/tessaro-os/releases), next to the
+macOS `tessaro-ctl` and `Tessaro.app`. It asks for your password once,
+because macOS's VM networking needs root; `--no-vmnet` runs without it, with
+the device on `127.0.0.1:7401` instead. Then carry on with the
+[quick start](#quick-start) from step 2. The VM starts fresh on every boot,
+so a claim and settings last until you close it.
 
 ## Quick start
 
@@ -294,7 +319,7 @@ it signed in.
 git clone git@github.com:alhafoudh/tessaro-os.git   # or https://github.com/alhafoudh/tessaro-os.git
 cd tessaro-os
 mise trust && mise install
-mise run image:build:rpi5     # or image:build:rpi3, image:build:rpi4, image:build:x86, image:build:qemu
+mise run image:build:rpi5     # or image:build:rpi3, image:build:rpi4, image:build:x86, image:build:arm64, image:build:qemu
 ```
 
 You need Linux with Docker, [kas](https://kas.readthedocs.io/) and

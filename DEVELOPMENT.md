@@ -93,6 +93,21 @@ It needs ffmpeg on this host, and runs until Ctrl-C, which unplugs the
 camera again. How it works is in [docs/camera.md](docs/camera.md), "Testing
 in qemu".
 
+### genericarm64, on the build host or a Mac
+
+```sh
+mise run qemu:run:arm64              # the build host: TCG, slow; a Mac: HVF, a window
+mise run qemu:vnc:arm64              # VNC on localhost:5901, as qemu:vnc
+mise run qemu:run:arm64 IMAGE.wic.zst   # a Mac: a downloaded release image
+mise run qemu:run:arm64 --no-vmnet   # a Mac: slirp and the 127.0.0.1 forwards, no sudo
+```
+
+On a Mac it boots the image `TESSARO_MACHINE=genericarm64 mise run
+image:pull` fetched, with Homebrew's `qemu` and its edk2 firmware, under
+Hypervisor.framework. The guest is on macOS's shared vmnet network, so
+`tessaro-ctl nodes list` finds it by mDNS; vmnet needs root, so QEMU runs
+under sudo. Everything is in `scripts/qemu-arm64.sh`.
+
 ## From a workstation
 
 The build host is usually a remote x86 machine; the device is on your

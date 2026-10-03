@@ -106,7 +106,7 @@ Use the mise tasks rather than calling `kas-container` directly:
 | `mise run qemu:unpack` | Decompress the `.wic` for runqemu |
 | `mise run qemu:run` | Boot in QEMU, serial console on the terminal |
 | `mise run qemu:vnc` | Boot in QEMU with VNC on localhost:5901 |
-| `mise run qemu:run:arm64` / `qemu:vnc:arm64` | Same, forced to `genericarm64`; on a Mac on vmnet for mDNS, `--no-vmnet` for the 127.0.0.1 forwards |
+| `mise run qemu:run:arm64` / `qemu:vnc:arm64` | Same, forced to `genericarm64`; on a Mac on vmnet for mDNS, `--no-vmnet` for the 127.0.0.1 forwards, `[IMAGE]` for a release image |
 | `mise run usbcam:run -- [CLIP] --attach` | A fake USB webcam looping CLIP (or a test pattern) over USB/IP, attached to that VM |
 | `mise run usbcam:test` | The fake webcam's unit tests |
 | `mise run agent:test` | `cargo test` for the whole agent workspace |

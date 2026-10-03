@@ -636,9 +636,11 @@ description = "Decompress the built .wic (or, on a Mac, the pulled one) so QEMU 
 dir = "{{config_root}}"
 run = '''
 # A Mac builds nothing: it boots what `mise run image:pull` put in the repo
-# root (scripts/qemu-arm64.sh).
+# root, or the file TESSARO_QEMU_IMAGE names, a release's .wic.zst say
+# (scripts/qemu-arm64.sh).
 if [ "$(uname -s)" = "Darwin" ]; then
-    image=$(basename "$WIC")
+    image=${TESSARO_QEMU_IMAGE:-$(basename "$WIC")}
+    image=${image%.zst}
 else
     cd "$KAS_BUILD_DIR"
     image=$WIC
@@ -741,16 +743,23 @@ kas-container --runtime-args "$KVM_RUNTIME $GPU_RUNTIME --network=host" shell $K
 # On a Mac the guest is on macOS's shared vmnet network, where mDNS reaches it
 # (QEMU runs under sudo); --no-vmnet is scripts/qemu-arm64.sh's
 # TESSARO_QEMU_NET=user, slirp with the 127.0.0.1 forwards. Linux has only
-# slirp.
+# slirp. IMAGE is its TESSARO_QEMU_IMAGE: a Mac boots a downloaded release
+# image without the build host.
 [tasks."qemu:run:arm64"]
-description = "Boot the genericarm64 image (pulled on a Mac, under HVF in a window), serial console on this terminal"
+description = "Boot the genericarm64 image (on a Mac under HVF in a window, pulled or downloaded), serial console on this terminal"
 dir = "{{config_root}}"
 raw = true
 usage = '''
+arg "[image]" help="macOS: a genericarm64 .wic.zst or .wic to boot, a release's say (default: the one image:pull fetched)"
 flag "--no-vmnet" help="macOS: slirp with the 127.0.0.1:7401 and :2222 forwards, no sudo, in place of vmnet and mDNS"
 '''
 run = '''
 [ "{{ usage.no_vmnet | default(value='false') }}" = "true" ] && export TESSARO_QEMU_NET=user
+image={{ usage.image | default(value="") | quote }}
+if [ -n "$image" ]; then
+    case "$image" in /*) ;; *) image="$MISE_ORIGINAL_CWD/$image" ;; esac
+    export TESSARO_QEMU_IMAGE="$image"
+fi
 TESSARO_MACHINE=genericarm64 exec mise run qemu:run
 '''
 
@@ -759,10 +768,16 @@ description = "Boot the genericarm64 image with a VNC display on localhost:5901"
 dir = "{{config_root}}"
 raw = true
 usage = '''
+arg "[image]" help="macOS: a genericarm64 .wic.zst or .wic to boot, a release's say (default: the one image:pull fetched)"
 flag "--no-vmnet" help="macOS: slirp with the 127.0.0.1:7401 and :2222 forwards, no sudo, in place of vmnet and mDNS"
 '''
 run = '''
 [ "{{ usage.no_vmnet | default(value='false') }}" = "true" ] && export TESSARO_QEMU_NET=user
+image={{ usage.image | default(value="") | quote }}
+if [ -n "$image" ]; then
+    case "$image" in /*) ;; *) image="$MISE_ORIGINAL_CWD/$image" ;; esac
+    export TESSARO_QEMU_IMAGE="$image"
+fi
 TESSARO_MACHINE=genericarm64 exec mise run qemu:vnc
 '''
 

@@ -12,7 +12,8 @@
 # macOS on Apple Silicon: Homebrew's qemu (`brew install qemu`), on
 # Hypervisor.framework, with the edk2 firmware it ships and CoreAudio for
 # sound. The image is the one `mise run image:pull` fetched into the repo
-# root, unpacked by qemu:unpack.
+# root, or the file TESSARO_QEMU_IMAGE names (a release's .wic.zst, say),
+# unpacked next to it by qemu:unpack.
 #
 # Both: the serial console on this terminal (Ctrl-a x quits) and -snapshot so
 # the .wic stays as built. vnc mode puts the screen on 127.0.0.1:5901, with
@@ -69,9 +70,10 @@ if [ "$(uname -s)" = Darwin ]; then
         echo "needs qemu: brew install qemu" >&2
         exit 1
     }
-    image=$(basename "$WIC")
+    image=${TESSARO_QEMU_IMAGE:-$(basename "$WIC")}
+    image=${image%.zst}
     [ -f "$image" ] || {
-        echo "$image not found - run 'mise run image:pull' and 'mise run qemu:unpack' first" >&2
+        echo "$image not found - run 'mise run image:pull' (or name a release image) and 'mise run qemu:unpack' first" >&2
         exit 1
     }
     # Homebrew's qemu is built without virglrenderer, so the guest gets a
