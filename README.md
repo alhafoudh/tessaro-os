@@ -167,7 +167,8 @@ tessaro-ctl update send tessaro-os-raspberrypi5-<version>.wic.zst  # every updat
 ## Try it on a Mac
 
 No spare screen at hand? An Apple silicon Mac runs a whole Tessaro device in
-a virtual machine at native speed, with nothing to install or set up:
+a virtual machine, with nothing to install or set up. The VM has no GPU, so
+pages render in software and run slower than on a real device:
 
 1. **Download** `try-tessaro-<version>-macos-arm64.dmg` from
    [Releases](https://github.com/alhafoudh/tessaro-os/releases).

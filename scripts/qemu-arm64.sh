@@ -1,6 +1,6 @@
 #!/bin/sh
 # Boots the genericarm64 image: what `mise run qemu:run` and `qemu:vnc` run
-# for that machine, on Linux and on macOS alike (AARCH64.md).
+# for that machine, on Linux and on macOS alike (docs/build.md).
 #
 #   scripts/qemu-arm64.sh window|vnc
 #
@@ -77,8 +77,8 @@ if [ "$(uname -s)" = Darwin ]; then
         exit 1
     }
     # Homebrew's qemu is built without virglrenderer, so the guest gets a
-    # plain virtio-gpu unless this QEMU has the GL device: a kiosk that
-    # needs GPU rendering may stay blank on it (AARCH64.md, Peripherals).
+    # plain virtio-gpu unless this QEMU has the GL device, and the kiosk
+    # renders in software (docs/try-tessaro.md).
     if qemu-system-aarch64 -device help | grep -q '"virtio-gpu-gl-pci"'; then
         gpu=virtio-gpu-gl-pci display=cocoa,gl=es
     else

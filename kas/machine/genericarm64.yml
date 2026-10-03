@@ -1,6 +1,6 @@
 # genericarm64: Arm64 machines that boot through UEFI - QEMU's virt machine,
-# a Mac running it under Hypervisor.framework (UTM or a bundled QEMU, see
-# AARCH64.md), and SystemReady boards. The machine comes from meta-yocto-bsp
+# a Mac running it under Hypervisor.framework (Try Tessaro, see
+# docs/try-tessaro.md), and SystemReady boards. The machine comes from meta-yocto-bsp
 # and keeps linux-yocto, installing every module it builds.
 header:
   version: 16
