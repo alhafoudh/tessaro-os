@@ -66,17 +66,10 @@ const STREAM_LIMIT: Duration = Duration::from_secs(300);
 const LOG_MAX: usize = 2000;
 
 /// Left out of `tessaro.config`: who may manage the device and how to reach
-/// it, the device's name (and the hotspot named after it), the public
-/// address, which costs a request and is `network.publicIp()` instead, and
-/// the URL filters, which a page has no business probing for a way around.
-const HIDDEN: &[&str] = &[
-    "access.",
-    keys::NAME,
-    "network.wifi.hotspot_ssid",
-    keys::PUBLIC_IP,
-    keys::URL_ALLOW,
-    keys::URL_BLOCK,
-];
+/// it, the public address, which costs a request and is
+/// `network.publicIp()` instead, and the URL filters, which a page has no
+/// business probing for a way around.
+const HIDDEN: &[&str] = &["access.", keys::PUBLIC_IP, keys::URL_ALLOW, keys::URL_BLOCK];
 
 /// The calls `config` mode answers; `actions` answers every call.
 const READS: &[&str] = &[
@@ -1037,9 +1030,10 @@ fn page_printers(list: &protocol::PrinterList) -> Value {
 }
 
 /// `tessaro.device.status()`: what `device status` shows, without the
-/// node's name, fingerprint and claim.
+/// node's fingerprint and claim.
 fn page_status(status: &protocol::Status) -> Value {
     json!({
+        "name": status.node.name,
         "os": status.os,
         "imageVersion": status.image_version,
         "version": status.node.version,
@@ -1105,7 +1099,8 @@ mod tests {
         assert_eq!(status["hardware"]["vendor"], "QEMU");
         assert_eq!(status["memory"]["total"], 4_000_000u64 * 1024);
         assert!(status.get("cpuPercent").is_some());
-        for hidden in ["name", "fingerprint", "claimed", "node"] {
+        assert!(status.get("name").is_some());
+        for hidden in ["fingerprint", "claimed", "node"] {
             assert!(status.get(hidden).is_none(), "{hidden} reached the page");
         }
     }

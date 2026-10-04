@@ -58,9 +58,8 @@ await tessaro.device.status();
   read-only `network.*`, `storage.*` and `device.id`. It is a frozen object of
   plain strings, so `JSON.stringify(tessaro.config)` always works.
 * **Left out on purpose** (`HIDDEN` in `bridge.rs`): `access.*` (who may manage
-  the device and where it listens), `device.name` and
-  `network.wifi.hotspot_ssid`, which is named after it, and
-  `network.public_ip`, which costs a request to Cloudflare and is
+  the device and where it listens), and `network.public_ip`, which costs a
+  request to Cloudflare and is
   `tessaro.network.publicIp()` instead. `browser.block` and `browser.allow`
   too, for the same reason as the browser policies below: a page must not
   read its own restrictions.
@@ -78,7 +77,7 @@ answers everything:
 | Call | Mode | Does what `tessaro-ctl` does with |
 | --- | --- | --- |
 | `log(level, message)` | config | the journal, as `page (level): message`; `debug` only with `agent.debug` |
-| `device.status()` | config | `device status`, without the node's name, fingerprint and claim: the hardware and its serial, memory and `cpuPercent` included |
+| `device.status()` | config | `device status`, without the node's fingerprint and claim: its `name`, the hardware and its serial, memory and `cpuPercent` included |
 | `network.status()` | config | `network show`, without the public address |
 | `audio.status()` | config | `audio show` |
 | `printer.list()` | config | `printer list`, without each printer's URI |
