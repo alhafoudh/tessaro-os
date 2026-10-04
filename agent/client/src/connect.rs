@@ -3,7 +3,10 @@
 //! `--node` takes the local socket (nothing, or `local`), an IP, `ip:port`,
 //! a name, `name.local`, or a DNS host name. A bare name or `.local` goes to
 //! the address last seen for it first, and to an mDNS scan only when nothing
-//! answers there or a different device does (`open_named`).
+//! answers there or a different device does (`open_named`). A bare name no
+//! known device has may be the start of one known device's name or id, and
+//! stands for that device; the start of several is an error, and an exact
+//! name always wins, so `lobby` still reaches `lobby` beside `lobby-2`.
 //!
 //! Over TCP the certificate is never *verified* - every device is
 //! self-signed - it is **pinned**: its SHA-256 is compared with the one stored
@@ -124,12 +127,29 @@ pub fn resolve(node: Option<&str>, nodes: &Nodes) -> Result<Target, String> {
         .strip_suffix(".local")
         .or((!host.contains('.')).then_some(host));
     if let Some(name) = mdns_name {
+        let mut known = nodes.by_name(name).cloned();
+        let mut name = name.to_string();
+        if known.is_none() && host == name {
+            match nodes.by_prefix(&name)[..] {
+                [] => {}
+                [only] => {
+                    name = only.name.clone();
+                    known = Some(only.clone());
+                }
+                ref several => {
+                    let names = several
+                        .iter()
+                        .map(|node| node.name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    return Err(format!(
+                        "{host}: more than one known device starts with that: {names}"
+                    ));
+                }
+            }
+        }
         // Resolved when opened: the cached address first, then a scan.
-        return Ok(Target::Named {
-            name: name.to_string(),
-            port,
-            known: nodes.by_name(name).cloned(),
-        });
+        return Ok(Target::Named { name, port, known });
     }
 
     let address = (host, port.unwrap_or(protocol::DEFAULT_PORT))
@@ -924,5 +944,69 @@ fn refusal(reply: &Reply) -> String {
     match serde_json::from_slice::<ApiError>(&reply.body) {
         Ok(refused) => refused.error,
         Err(_) => format!("the device answered HTTP {}", reply.status),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn known(names: &[(&str, &str)]) -> Nodes {
+        let mut nodes = Nodes::default();
+        for (id, name) in names {
+            nodes.put(Node {
+                id: id.to_string(),
+                name: name.to_string(),
+                address: "10.0.0.5:7400".to_string(),
+                fingerprint: "f".repeat(64),
+                token: None,
+            });
+        }
+        nodes
+    }
+
+    /// The name and known id `node` is resolved to.
+    fn named(node: &str, nodes: &Nodes) -> Result<(String, Option<u16>, Option<String>), String> {
+        match resolve(Some(node), nodes)? {
+            Target::Named { name, port, known } => Ok((name, port, known.map(|node| node.id))),
+            other => panic!("{node}: not a name: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_start_of_one_known_name_or_id_stands_for_that_device() {
+        let nodes = known(&[("1a2b", "lobby-east"), ("9f8e", "cafe")]);
+
+        let east = ("lobby-east".to_string(), None, Some("1a2b".to_string()));
+        assert_eq!(named("lob", &nodes).unwrap(), east);
+        assert_eq!(named("1a", &nodes).unwrap(), east);
+        assert_eq!(
+            named("caf:7401", &nodes).unwrap(),
+            ("cafe".to_string(), Some(7401), Some("9f8e".to_string()))
+        );
+    }
+
+    #[test]
+    fn an_exact_name_wins_and_several_starts_are_refused() {
+        let nodes = known(&[("1a", "lobby"), ("2b", "lobby-2")]);
+
+        assert_eq!(named("lobby", &nodes).unwrap().2.as_deref(), Some("1a"));
+        let err = named("lob", &nodes).unwrap_err();
+        assert!(err.contains("lobby, lobby-2"), "{err}");
+    }
+
+    #[test]
+    fn no_known_start_falls_back_to_the_name_itself() {
+        let nodes = known(&[("1a", "lobby")]);
+
+        assert_eq!(
+            named("cafe", &nodes).unwrap(),
+            ("cafe".to_string(), None, None)
+        );
+        // `.local` is a name to look for on the network, never a start.
+        assert_eq!(
+            named("lob.local", &nodes).unwrap(),
+            ("lob".to_string(), None, None)
+        );
     }
 }

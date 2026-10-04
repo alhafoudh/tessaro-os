@@ -155,6 +155,14 @@ impl Nodes {
         self.nodes.iter().find(|node| node.name == name)
     }
 
+    /// Every node whose name or id starts with `start`, once each.
+    pub fn by_prefix(&self, start: &str) -> Vec<&Node> {
+        self.nodes
+            .iter()
+            .filter(|node| node.name.starts_with(start) || node.id.starts_with(start))
+            .collect()
+    }
+
     pub fn by_address(&self, address: &str) -> Option<&Node> {
         self.nodes.iter().find(|node| node.address == address)
     }
@@ -246,6 +254,25 @@ mod tests {
         assert_eq!(nodes.nodes.len(), 1);
         assert_eq!(nodes.by_id("a").unwrap().address, "10.0.0.9:7400");
         assert!(nodes.by_address("10.0.0.5:7400").is_none());
+    }
+
+    #[test]
+    fn a_prefix_matches_a_name_or_an_id_once() {
+        let mut nodes = Nodes::default();
+        nodes.put(node("a1", "10.0.0.5:7400"));
+        nodes.put(node("b2", "10.0.0.6:7400"));
+        let ids = |start| {
+            nodes
+                .by_prefix(start)
+                .iter()
+                .map(|n| n.id.clone())
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(ids("name-"), ["a1", "b2"]);
+        assert_eq!(ids("name-b"), ["b2"]);
+        assert_eq!(ids("a"), ["a1"]);
+        assert!(ids("c").is_empty());
     }
 
     #[test]
