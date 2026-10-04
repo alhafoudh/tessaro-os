@@ -85,7 +85,10 @@ images and clients stay workflow artifacts.
   It tags the built commit `v<version>-<sha>` and attaches every image,
   bmap, SBOM bundle, license list, client archive and Try Tessaro package.
   `matrix` fails up front when release is ticked without e2e or without
-  qemux86-64, so no run builds for hours toward a release it cannot make.
+  qemux86-64, or when a release of the same version (the part before the
+  sha) already exists, so no run builds for hours toward a release it
+  cannot make. Every release therefore needs a new `DISTRO_VERSION` in
+  `meta-tessaro-distro/conf/distro/tessaro.conf`.
 
 **The self-hosted runner builds images and nothing else.** The clients
 take minutes on GitHub's runners and need none of the build host's cache,

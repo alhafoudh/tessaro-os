@@ -93,6 +93,9 @@ jobs:
       - id: pick
         env:
           PICKED: ${{ toJSON(inputs) }}
+          VERSION: ${{ steps.version.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           machines=$(jq -c '[to_entries[]
             | select(.key == "qemux86-64" or .key == "genericx86-64" or .key == "genericarm64" or .key == "raspberrypi3-64" or .key == "raspberrypi4-64" or .key == "raspberrypi5")
@@ -103,6 +106,14 @@ jobs:
           if [ "$(jq -r .release <<<"$PICKED")" = true ]; then
             [ "$(jq -r .e2e <<<"$PICKED")" = true ] && jq -e 'index("qemux86-64")' <<<"$machines" >/dev/null \
               || { echo "::error::a release needs e2e ticked and qemux86-64 picked"; exit 1; }
+            # Every release needs a new semver; the sha after it only says
+            # which commit. Drafts and prereleases count too.
+            semver=${VERSION%%-*}
+            pattern="^v${semver//./\\.}(-.*)?$"
+            if gh release list --limit 1000 --json tagName -q '.[].tagName' | grep -qE "$pattern"; then
+              echo "::error::a release of $semver already exists; bump DISTRO_VERSION in meta-tessaro-distro/conf/distro/tessaro.conf"
+              exit 1
+            fi
           fi
           # Try Tessaro is built around this run's genericarm64 image, so
           # fail now rather than after hours of builds without it.
