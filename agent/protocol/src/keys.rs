@@ -102,6 +102,10 @@ pub enum Kind {
     Features,
     /// Web origins (`scheme://host[:port]`), space or comma separated.
     Origins,
+    /// Chromium URL filter patterns (`example.com`, `https://*`,
+    /// `[*.]example.com/menu`), space or comma separated, at most
+    /// `MAX_URL_PATTERNS`. Chromium parses them; see `URLBlocklist`.
+    UrlPatterns,
     /// Weston output scale: empty or `auto`, `none`, or 1 to 4.
     Scale,
     /// Output mode: `preferred`, or `WIDTHxHEIGHT`.
@@ -186,6 +190,10 @@ impl Kind {
             Kind::Args => "Chromium command-line flags, space separated".to_string(),
             Kind::Features => "Chromium feature names, comma separated, no spaces".to_string(),
             Kind::Origins => "origins (scheme://host[:port]), space or comma separated".to_string(),
+            Kind::UrlPatterns => {
+                "Chromium URL patterns (example.com, [*.]example.com/menu, *), space or comma separated, or empty"
+                    .to_string()
+            }
             Kind::Scale => "auto, none, or 1 to 4".to_string(),
             Kind::Resolution => {
                 "preferred, or WIDTHxHEIGHT from `tessaro-ctl screen modes`".to_string()
@@ -348,6 +356,10 @@ pub static KEYS: &[Key] = &[
         "Show Chromium's FPS counter in the corner of the screen (--show-fps-counter)."),
     key("browser.device_origins", "KIOSK_DEVICE_ORIGINS", Kind::Origins, BROWSER,
         "Origins granted WebSerial and WebHID besides the kiosk and self-test origins."),
+    key(URL_BLOCK, "KIOSK_URL_BLOCK", Kind::UrlPatterns, BROWSER,
+        "Sites the browser refuses, as Chromium URL patterns; * blocks every site not in browser.allow. The kiosk's own pages are always allowed."),
+    key(URL_ALLOW, "KIOSK_URL_ALLOW", Kind::UrlPatterns, BROWSER,
+        "Exceptions to browser.block: the more specific pattern wins, and allow wins a tie. Does nothing without a block."),
     key("screen.scale", "KIOSK_SCALE", Kind::Scale, WESTON,
         "Weston output scale: auto (2 above 3400px wide), none, or 1-4."),
     Key {
@@ -534,6 +546,8 @@ pub const DEBUG_TEMPLATE: &str = "browser.debug.template";
 pub const ZOOM: &str = "browser.zoom";
 pub const INJECT_SCRIPT: &str = "browser.inject.script";
 pub const BRIDGE_MODE: &str = "browser.bridge.mode";
+pub const URL_ALLOW: &str = "browser.allow";
+pub const URL_BLOCK: &str = "browser.block";
 pub const OSK: &str = "screen.osk";
 pub const INPUT_MOUSE: &str = "screen.input.mouse";
 pub const INPUT_KEYBOARD: &str = "screen.input.keyboard";
@@ -572,6 +586,8 @@ pub const DEFAULT_TIMEZONE: &str = "UTC";
 
 /// browser.bridge.mode, from nothing to everything: each mode includes the
 /// one before it.
+/// Chromium's limit on the entries of `URLBlocklist` and `URLAllowlist`.
+pub const MAX_URL_PATTERNS: usize = 1000;
 pub const BRIDGE_MODES: &[&str] = &["off", "config", "actions"];
 
 /// The kinds of output audio.output names instead of one output. Besides
@@ -886,6 +902,21 @@ pub fn validate(key: &Key, value: &str) -> Result<String, String> {
                 }
             }
             Ok(origins.join(" "))
+        }
+        Kind::UrlPatterns => {
+            let mut patterns: Vec<&str> = Vec::new();
+            for pattern in value.split(|ch: char| ch == ',' || ch.is_whitespace()) {
+                if !pattern.is_empty() && !patterns.contains(&pattern) {
+                    patterns.push(pattern);
+                }
+            }
+            if patterns.len() > MAX_URL_PATTERNS {
+                return fail(&format!(
+                    "Chromium takes at most {MAX_URL_PATTERNS} patterns, this has {}",
+                    patterns.len()
+                ));
+            }
+            Ok(patterns.join(" "))
         }
         Kind::Scale => match value.to_ascii_lowercase().as_str() {
             "" | "auto" => Ok(String::new()),
@@ -1572,6 +1603,20 @@ mod tests {
         assert!(check("browser.device_origins", "https://a.test/path").is_err());
         assert!(check("browser.device_origins", "file:///x").is_err());
         assert_eq!(check("browser.device_origins", "").unwrap(), "");
+    }
+
+    #[test]
+    fn url_patterns_are_deduplicated_and_capped_at_chromiums_limit() {
+        assert_eq!(
+            check(URL_BLOCK, "*, [*.]example.com/menu  https://*:8443 *").unwrap(),
+            "* [*.]example.com/menu https://*:8443"
+        );
+        assert_eq!(check(URL_ALLOW, " , ").unwrap(), "");
+        let many = (0..=MAX_URL_PATTERNS)
+            .map(|n| format!("site{n}.test"))
+            .collect::<Vec<_>>()
+            .join(",");
+        assert!(check(URL_ALLOW, &many).is_err());
     }
 
     #[test]

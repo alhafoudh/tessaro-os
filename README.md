@@ -101,6 +101,7 @@ Chromium's enterprise policies are the most powerful way to shape a browser,
 and Tessaro puts all of them in your hands.
 
 - 🔐 **Locked down out of the box**: nothing pops over your page, no sign-in, no sync, no background traffic.
+- 🚧 **Only the sites you allow**, with two settings: `tessaro-ctl config set browser.block='*' browser.allow=menu.example.com`. The device's own pages always stay reachable.
 - 🔄 **Kept in step for you**: device grants, proxy and certificates follow your settings, with no hand-editing.
 - 📚 **Any [Chromium policy](https://chromeenterprise.google/policies/) you need**, as named documents with comments, in a clear priority order.
 - ✅ **Checked before they land**: a typo or a conflict with what the device manages is refused, with the line.
@@ -108,17 +109,18 @@ and Tessaro puts all of them in your hands.
 - 🖱️ **Edited where you work**: the CLI, the desktop app or Webconfig, with Move up and Move down.
 
 ```jsonc
-// lockdown.json: comments and trailing commas are fine
+// kiosk.json: comments and trailing commas are fine
 {
-  "URLBlocklist": ["*"],
-  "URLAllowlist": ["https://menu.example.com"],
+  "DownloadRestrictions": 3, // no downloads
+  "AutoplayAllowed": true,   // videos start with sound
+  "TranslateEnabled": false,
 }
 ```
 
 ```sh
-tessaro-ctl browser policies set lockdown lockdown.json   # or `edit lockdown` in $EDITOR
-tessaro-ctl browser policies show                          # what Chromium reads, and from where
-tessaro-ctl browser policies move lockdown 1               # the top one wins
+tessaro-ctl browser policies set kiosk kiosk.json   # or `edit kiosk` in $EDITOR
+tessaro-ctl browser policies show                    # what Chromium reads, and from where
+tessaro-ctl browser policies move kiosk 1            # the top one wins
 ```
 
 The browser restarts only when the merged result actually changes. More in

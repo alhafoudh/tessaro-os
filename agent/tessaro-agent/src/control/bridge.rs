@@ -66,13 +66,16 @@ const STREAM_LIMIT: Duration = Duration::from_secs(300);
 const LOG_MAX: usize = 2000;
 
 /// Left out of `tessaro.config`: who may manage the device and how to reach
-/// it, the device's name (and the hotspot named after it), and the public
-/// address, which costs a request and is `network.publicIp()` instead.
+/// it, the device's name (and the hotspot named after it), the public
+/// address, which costs a request and is `network.publicIp()` instead, and
+/// the URL filters, which a page has no business probing for a way around.
 const HIDDEN: &[&str] = &[
     "access.",
     keys::NAME,
     "network.wifi.hotspot_ssid",
     keys::PUBLIC_IP,
+    keys::URL_ALLOW,
+    keys::URL_BLOCK,
 ];
 
 /// The calls `config` mode answers; `actions` answers every call.

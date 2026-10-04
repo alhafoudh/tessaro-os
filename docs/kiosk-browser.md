@@ -109,8 +109,10 @@ Things to know:
   itself. A syntax error drops the **whole file** with one `SYSLOG(WARNING)`,
   so confirm on `chrome://policy` after editing. The agent renders it
   (`render.rs`), `CACertificates` in it is `tessaro-ctl network certs`
-  (see **Certificates** in [networking.md](networking.md)), and anything
-  else is added with `tessaro-ctl browser policies` (see **Policies** below).
+  (see **Certificates** in [networking.md](networking.md)), the URL filter
+  lists take `browser.block` and `browser.allow` (see **URL filters**
+  below), and anything else is added with `tessaro-ctl browser policies`
+  (see **Policies** below).
 * **Printing is off in the policy until `printer.enable`**, which sets
   `PrintingEnabled` and `PrintPreviewUseSystemDefaultPrinter`, and adds
   `--kiosk-printing`. Chromium's own printing still does not print: it
@@ -236,6 +238,45 @@ word.
   (`render::effective`, read back from the rendered file).
 * **Stored through an unclaim, gone with a factory reset**, like the
   certificates.
+
+## URL filters
+
+**`browser.block` and `browser.allow` are Chromium's `URLBlocklist` and
+`URLAllowlist`, as settings**, so restricting where the kiosk goes needs no
+policy document. Chromium does the matching; the device only renders the
+lists (`render::policy`). Patterns are Chromium's URL filter format
+(`example.com`, `[*.]example.com/menu`, `https://*`, `*`), up to its limit
+of `MAX_URL_PATTERNS` each (`keys.rs`).
+
+* **Chromium decides which one is in effect, not the device**: the most
+  specific pattern wins (the longest host, then the longest path), and allow
+  wins a tie. An allow list on its own does nothing, because everything not
+  blocked is already allowed: "only these sites" is `browser.block=*` plus
+  `browser.allow`. A blocked page is Chromium's own "blocked by your
+  administrator" page (`ERR_BLOCKED_BY_ADMINISTRATOR`), not a navigation home.
+* **The settings add to the lists, they do not own them.** A browser policy
+  document may still set `URLBlocklist` or `URLAllowlist`: the settings'
+  patterns are appended to what the image or the winning document sets,
+  each pattern once. Taking the keys over (`managed`) would refuse every
+  document that already uses them and drop the stored ones from the render.
+* **While anything is blocked, the device's own pages are allowed**
+  (`render::own_pages`): the kiosk origin, the self-test origin (the welcome
+  page and the file store), the maintenance and offline pages, and the
+  directory of the shipped offline page and the debug screen
+  (`file:///run/tessaro-kiosk/`). This holds for a document's block too, so no
+  filter can shut the kiosk out of the pages the agent puts on screen. They
+  are allowed in and out of maintenance mode alike, so toggling it never
+  changes the policy, which would restart the browser. A `data:` page has no
+  pattern to allow.
+* **Origin enforcement still runs on top** (`browser.enforce_origin`, see
+  above): it already brings the top page back to the kiosk origin, so the
+  filters matter for what it lets through - a new window, iframes and
+  subresources, or a site that hands visitors to another host with
+  enforcement off.
+* **A change restarts the browser**, as for any key Chromium reads at start.
+  `tessaro-ctl browser policies show` lists a list no document or image sets
+  as the device's.
+* **The page cannot read them** (see [bridge.md](bridge.md)).
 
 ## Remote DevTools
 

@@ -104,6 +104,18 @@
       "source": "default"
     },
     {
+      "key": "browser.block",
+      "env": "KIOSK_URL_BLOCK",
+      "value": null,
+      "source": "default"
+    },
+    {
+      "key": "browser.allow",
+      "env": "KIOSK_URL_ALLOW",
+      "value": null,
+      "source": "default"
+    },
+    {
       "key": "screen.scale",
       "env": "KIOSK_SCALE",
       "value": "",

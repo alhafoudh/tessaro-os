@@ -267,6 +267,36 @@
     }
   },
   {
+    "name": "browser.block",
+    "env": "KIOSK_URL_BLOCK",
+    "applies": [
+      "browser"
+    ],
+    "guarded": false,
+    "doc": "Sites the browser refuses, as Chromium URL patterns; * blocks every site not in browser.allow. The kiosk's own pages are always allowed.",
+    "values": "Chromium URL patterns (example.com, [*.]example.com/menu, *), space or comma separated, or empty",
+    "default": null,
+    "value": null,
+    "input": {
+      "kind": "text"
+    }
+  },
+  {
+    "name": "browser.allow",
+    "env": "KIOSK_URL_ALLOW",
+    "applies": [
+      "browser"
+    ],
+    "guarded": false,
+    "doc": "Exceptions to browser.block: the more specific pattern wins, and allow wins a tie. Does nothing without a block.",
+    "values": "Chromium URL patterns (example.com, [*.]example.com/menu, *), space or comma separated, or empty",
+    "default": null,
+    "value": null,
+    "input": {
+      "kind": "text"
+    }
+  },
+  {
     "name": "screen.scale",
     "env": "KIOSK_SCALE",
     "applies": [

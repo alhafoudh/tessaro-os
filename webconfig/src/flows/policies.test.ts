@@ -49,7 +49,7 @@ describe("a browser policy as agent/protocol/src/policy.rs checks it", () => {
     const file = join(__dirname, "../../../agent/protocol/src/policy-template.jsonc");
     expect(TEMPLATE).toBe(readFileSync(file, "utf8"));
     expect(check(TEMPLATE)).toEqual({
-      keys: ["DownloadRestrictions", "PasswordManagerEnabled", "SpellcheckEnabled", "URLAllowlist", "URLBlocklist"],
+      keys: ["DownloadRestrictions", "PasswordManagerEnabled", "SpellcheckEnabled"],
     });
   });
 

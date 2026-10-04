@@ -12,13 +12,8 @@ export const POLICY_NAME_MAX = 32;
 export const TEMPLATE = `// A browser policy: Chromium policies by name, merged over the image's.
 // Every policy is listed at https://chromeenterprise.google/policies/
 // Comments and trailing commas are fine. Check the result on chrome://policy.
+// Which sites open is a setting: browser.block and browser.allow.
 {
-  // Only these sites open; everything else is blocked.
-  "URLBlocklist": ["*"],
-  "URLAllowlist": [
-    "https://shop.example.com",
-  ],
-
   "SpellcheckEnabled": false,
   "PasswordManagerEnabled": false,
   "DownloadRestrictions": 3, // block every download
@@ -165,7 +160,7 @@ export function check(text: string): { keys: string[] } | { error: PolicyError }
         error: {
           line: 0,
           column: 0,
-          message: `${JSON.stringify(key)} is not a Chromium policy name (letters and digits, like URLBlocklist)`,
+          message: `${JSON.stringify(key)} is not a Chromium policy name (letters and digits, like DownloadRestrictions)`,
         },
       };
     }

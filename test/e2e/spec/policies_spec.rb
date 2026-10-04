@@ -19,20 +19,20 @@ module AgentE2E
       guest.run("tessaro-ctl browser policies #{args} 2>&1", allow_failure: allow_failure)
     end
 
-    # What Chromium makes of BLOCKED_URL: its net error, nil once it loads.
+    # What Chromium makes of `url`: its net error, nil once it loads.
     # Nothing while the browser is coming back up.
-    def navigate_error
-      cdp.command("Page.navigate", url: BLOCKED_URL)["errorText"]
+    def navigate_error(url = BLOCKED_URL)
+      cdp.command("Page.navigate", url: url)["errorText"]
     rescue Failure, SystemCallError, IOError
       :down
     end
 
-    def wait_for_navigation(expected, timeout:, what:)
+    def wait_for_navigation(expected, timeout:, what:, url: BLOCKED_URL)
       step "wait up to #{timeout}s for Chromium to #{what}"
       deadline = Time.now + timeout
       seen = nil
       quietly do
-        until (seen = navigate_error) == expected
+        until (seen = navigate_error(url)) == expected
           raise Failure, "Chromium did not #{what}: #{seen.inspect}" if Time.now > deadline
 
           sleep 2
@@ -97,6 +97,24 @@ module AgentE2E
     ensure
       policies("remove first", allow_failure: true)
       policies("remove second", allow_failure: true)
+    end
+
+    it "policies: browser.block shuts every site but the kiosk's own pages, " \
+       "and browser.allow lets one back in" do
+      guest.run("tessaro-ctl config set 'browser.block=*'")
+      rendered = guest.run("cat #{POLICIES_POLICY}")
+      expect(rendered).to include('"URLBlocklist"').and include('"http://127.0.0.1"')
+      wait_for_navigation("net::ERR_BLOCKED_BY_ADMINISTRATOR", timeout: 60, what: "block every site")
+      expect(navigate_error("http://127.0.0.1/")).to be_nil, "the welcome page was blocked too"
+      expect(policies("show")).to match(/^device\s+URLBlocklist \["\*"\]$/)
+
+      guest.run("tessaro-ctl config set browser.allow=blocked.invalid")
+      wait_for_navigation("net::ERR_NAME_NOT_RESOLVED", timeout: 60, what: "let the allowed host through")
+
+      guest.run("tessaro-ctl config unset browser.block browser.allow")
+      expect(guest.run("cat #{POLICIES_POLICY}")).not_to include("URLBlocklist")
+    ensure
+      guest.run("tessaro-ctl config unset browser.block browser.allow", allow_failure: true)
     end
 
     it "policies: a key the device sets, a mistake and a stale revision are refused" do

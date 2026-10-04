@@ -35,7 +35,8 @@ use std::path::Path;
 
 pub use protocol::policy::strict_json;
 use protocol::policy::{
-    EffectiveEntry, PolicySource, CA_POLICY, ORIGIN_POLICIES, PRINT_POLICIES, PROXY_POLICIES,
+    EffectiveEntry, PolicySource, ALLOW_POLICY, BLOCK_POLICY, CA_POLICY, ORIGIN_POLICIES,
+    PRINT_POLICIES, PROXY_POLICIES,
 };
 use serde_json::{Map, Value};
 
@@ -167,6 +168,83 @@ pub fn device_origins(effective: &state::Effective, selftest_origin: &str) -> Ve
     origins
 }
 
+/// browser.block and browser.allow, and the device's own pages, for
+/// `policy` to merge into `URLBlocklist` and `URLAllowlist`.
+#[derive(Debug, Default)]
+pub struct UrlLists {
+    pub block: Vec<String>,
+    pub allow: Vec<String>,
+    /// Allowed whenever anything is blocked (`own_pages`).
+    pub own: Vec<String>,
+}
+
+impl UrlLists {
+    pub fn new(effective: &state::Effective, selftest_origin: &str) -> Self {
+        let list = |env: &str| -> Vec<String> {
+            effective
+                .get(env)
+                .unwrap_or_default()
+                .split_whitespace()
+                .map(str::to_string)
+                .collect()
+        };
+        Self {
+            block: list("KIOSK_URL_BLOCK"),
+            allow: list("KIOSK_URL_ALLOW"),
+            own: own_pages(effective, selftest_origin),
+        }
+    }
+}
+
+/// The pages a URL block must never shut out, as URL patterns: the kiosk's
+/// origin, the self-test's (the welcome page and the file store), the
+/// maintenance and offline pages, and the directory the agent writes the
+/// shipped offline page and the debug screen to. Maintenance mode or not,
+/// so toggling it never changes the policy. A `data:` URL has no pattern.
+pub fn own_pages(effective: &state::Effective, selftest_origin: &str) -> Vec<String> {
+    let offline_dir = effective
+        .get("KIOSK_OFFLINE_DIR")
+        .unwrap_or_else(|| "/run/tessaro-kiosk".to_string());
+    let urls = [
+        effective.kiosk_url(),
+        Some(selftest_origin.to_string()),
+        effective.maintenance_url(),
+        effective.get("KIOSK_OFFLINE_URL"),
+        Some(format!("file://{}/", offline_dir.trim_end_matches('/'))),
+    ];
+    let mut patterns: Vec<String> = Vec::new();
+    for url in urls.into_iter().flatten() {
+        let pattern = match protocol::keys::origin_of(&url) {
+            Some(origin) => origin.to_string(),
+            None if url.starts_with("file://") => url,
+            None => continue,
+        };
+        if !patterns.contains(&pattern) {
+            patterns.push(pattern);
+        }
+    }
+    patterns
+}
+
+/// `list` in `document`, as strings, with `extra` appended; entries already
+/// there are kept once. Left out while it would be empty.
+fn extend_list(document: &mut Map<String, Value>, list: &str, extra: &[String]) {
+    let mut entries: Vec<Value> = match document.remove(list) {
+        Some(Value::Array(entries)) => entries,
+        Some(other) => vec![other],
+        None => Vec::new(),
+    };
+    for pattern in extra {
+        let pattern = Value::String(pattern.clone());
+        if !entries.contains(&pattern) {
+            entries.push(pattern);
+        }
+    }
+    if !entries.is_empty() {
+        document.insert(list.to_string(), Value::Array(entries));
+    }
+}
+
 /// The Chromium policy: the image's `base`, then each browser policy in
 /// `user` from the lowest priority up, so position 1 wins a key two of them
 /// set, then the device's own entries, which no document may carry:
@@ -185,6 +263,11 @@ pub fn device_origins(effective: &state::Effective, selftest_origin: &str) -> Ve
 /// * printer.enable (`PRINT_POLICIES`): whether the page prints, and that
 ///   print preview starts on the CUPS default printer rather than the last
 ///   one used, which is where `--kiosk-printing` prints.
+///
+/// The URL filter lists are shared instead: browser.block and browser.allow
+/// are appended to whatever `URLBlocklist`/`URLAllowlist` the image or a
+/// document sets, and while anything is blocked the device's own pages
+/// (`own_pages`) are allowed too, so no block shuts the kiosk out of them.
 pub fn policy(
     base: &str,
     user: &[policies::Checked],
@@ -192,6 +275,7 @@ pub fn policy(
     proxy: Option<SocketAddr>,
     certs: &[String],
     printing: bool,
+    urls: &UrlLists,
 ) -> Result<String, String> {
     let mut document: Map<String, Value> = serde_json::from_str(&strict_json(base))
         .map_err(|err| format!("the base policy: {err}"))?;
@@ -201,6 +285,11 @@ pub fn policy(
         for (key, value) in &doc.entries {
             document.insert(key.clone(), value.clone());
         }
+    }
+    extend_list(&mut document, BLOCK_POLICY, &urls.block);
+    extend_list(&mut document, ALLOW_POLICY, &urls.allow);
+    if document.contains_key(BLOCK_POLICY) {
+        extend_list(&mut document, ALLOW_POLICY, &urls.own);
     }
     for name in ORIGIN_POLICIES {
         document.insert(
@@ -236,7 +325,8 @@ pub fn policy(
          // which carries the documentation for every entry. Do not edit: the\n\
          // device-API origins follow browser.url and browser.device_origins, set\n\
          // with tessaro-ctl, CACertificates `tessaro-ctl network certs`,\n\
-         // PrintingEnabled printer.enable, and everything else can be added\n\
+         // PrintingEnabled printer.enable, URLBlocklist and URLAllowlist take\n\
+         // browser.block and browser.allow, and everything else can be added\n\
          // with `tessaro-ctl browser policies`.\n\
          // Check the result on chrome://policy.\n\
          {body}\n"
@@ -245,7 +335,8 @@ pub fn policy(
 
 /// The policy Chromium reads, as rendered, each entry with where it comes
 /// from: the device for its own keys, else the highest-priority document
-/// that sets it, else the image.
+/// that sets it, else the image - or the device, for a URL list the image
+/// does not set. A list both set is attributed to the document or image.
 pub fn effective(paths: &Paths, db: &Db) -> Result<Vec<EffectiveEntry>, String> {
     let rendered = match std::fs::read_to_string(&paths.policy) {
         Ok(text) => text,
@@ -260,6 +351,7 @@ pub fn effective(paths: &Paths, db: &Db) -> Result<Vec<EffectiveEntry>, String> 
     let document: Map<String, Value> = serde_json::from_str(&strict_json(&rendered))
         .map_err(|err| format!("{}: {err}", paths.policy.display()))?;
     let docs = policies::load_checked(db)?.checked;
+    let base = base_keys(paths)?;
 
     Ok(document
         .into_iter()
@@ -270,6 +362,10 @@ pub fn effective(paths: &Paths, db: &Db) -> Result<Vec<EffectiveEntry>, String> 
                 PolicySource::Policy {
                     name: doc.name.clone(),
                 }
+            } else if [BLOCK_POLICY, ALLOW_POLICY].contains(&key.as_str()) && !base.contains(&key) {
+                // Neither a document nor the image: browser.block or
+                // browser.allow, or the own pages a block brings along.
+                PolicySource::Device
             } else {
                 PolicySource::Image
             };
@@ -637,7 +733,8 @@ fn render_policy(paths: &Paths, effective: &state::Effective, log: &Log) -> Resu
         ));
     }
     let printing = effective.get("KIOSK_PRINTING").as_deref() == Some("1");
-    let body = policy(&base, &user, &origins, proxy, &certs, printing)?;
+    let urls = UrlLists::new(effective, &paths.selftest_origin);
+    let body = policy(&base, &user, &origins, proxy, &certs, printing, &urls)?;
     write(&paths.policy, &body)
 }
 
@@ -804,6 +901,7 @@ mod tests {
             None,
             &[],
             false,
+            &UrlLists::default(),
         )
         .unwrap();
         let parsed: Value = serde_json::from_str(&strict_json(&body)).unwrap();
@@ -837,13 +935,14 @@ mod tests {
     #[test]
     fn a_proxy_points_chromium_at_the_local_one_and_off_takes_it_out() {
         let listen: SocketAddr = "127.0.0.1:3128".parse().unwrap();
-        let on = policy("{}", &[], &[], Some(listen), &[], false).unwrap();
+        let none = UrlLists::default();
+        let on = policy("{}", &[], &[], Some(listen), &[], false, &none).unwrap();
         let parsed: Value = serde_json::from_str(&strict_json(&on)).unwrap();
         assert_eq!(parsed["ProxyMode"], "fixed_servers");
         assert_eq!(parsed["ProxyServer"], "http://127.0.0.1:3128");
         assert_eq!(parsed["ProxyBypassList"], "<-loopback>");
 
-        let off = policy(&strict_json(&on), &[], &[], None, &[], false).unwrap();
+        let off = policy(&strict_json(&on), &[], &[], None, &[], false, &none).unwrap();
         let parsed: Value = serde_json::from_str(&strict_json(&off)).unwrap();
         assert!(parsed.get("ProxyMode").is_none());
         assert!(parsed.get("ProxyServer").is_none());
@@ -858,6 +957,7 @@ mod tests {
             None,
             &["MIIB".to_string(), "MIIC".to_string()],
             false,
+            &UrlLists::default(),
         )
         .unwrap();
         let parsed: Value = serde_json::from_str(&strict_json(&on)).unwrap();
@@ -866,7 +966,16 @@ mod tests {
             serde_json::json!(["MIIB", "MIIC"])
         );
 
-        let off = policy(&strict_json(&on), &[], &[], None, &[], false).unwrap();
+        let off = policy(
+            &strict_json(&on),
+            &[],
+            &[],
+            None,
+            &[],
+            false,
+            &UrlLists::default(),
+        )
+        .unwrap();
         let parsed: Value = serde_json::from_str(&strict_json(&off)).unwrap();
         assert!(parsed.get("CACertificates").is_none());
     }
@@ -898,6 +1007,7 @@ mod tests {
             Some(listen),
             &[],
             true,
+            &UrlLists::default(),
         )
         .unwrap();
         let parsed: Value = serde_json::from_str(&strict_json(&body)).unwrap();
@@ -911,6 +1021,136 @@ mod tests {
             parsed["SerialAllowAllPortsForUrls"],
             serde_json::json!(["https://k.test"])
         );
+    }
+
+    fn lists(block: &[&str], allow: &[&str]) -> UrlLists {
+        let owned = |list: &[&str]| list.iter().map(|item| item.to_string()).collect();
+        UrlLists {
+            block: owned(block),
+            allow: owned(allow),
+            own: owned(&["https://k.test", "file:///run/tessaro-kiosk/"]),
+        }
+    }
+
+    fn url_lists(body: &str) -> (Value, Value) {
+        let parsed: Value = serde_json::from_str(&strict_json(body)).unwrap();
+        (
+            parsed["URLBlocklist"].clone(),
+            parsed["URLAllowlist"].clone(),
+        )
+    }
+
+    #[test]
+    fn a_url_block_lets_the_kiosks_own_pages_through() {
+        let body = policy(
+            "{}",
+            &[],
+            &[],
+            None,
+            &[],
+            false,
+            &lists(&["*"], &["menu.test"]),
+        )
+        .unwrap();
+        assert_eq!(
+            url_lists(&body),
+            (
+                serde_json::json!(["*"]),
+                serde_json::json!(["menu.test", "https://k.test", "file:///run/tessaro-kiosk/"])
+            )
+        );
+        assert!(body.contains("browser.block"), "{body}");
+
+        // Nothing blocked: an allow list alone, and none of the own pages.
+        let body = policy(
+            "{}",
+            &[],
+            &[],
+            None,
+            &[],
+            false,
+            &lists(&[], &["menu.test"]),
+        )
+        .unwrap();
+        assert_eq!(
+            url_lists(&body),
+            (Value::Null, serde_json::json!(["menu.test"]))
+        );
+        let body = policy("{}", &[], &[], None, &[], false, &lists(&[], &[])).unwrap();
+        assert_eq!(url_lists(&body), (Value::Null, Value::Null));
+    }
+
+    #[test]
+    fn url_settings_add_to_a_documents_lists() {
+        let user = [doc(
+            "a",
+            1,
+            r#"{"URLBlocklist": ["*"], "URLAllowlist": ["https://k.test", "shop.test"]}"#,
+        )];
+        let body = policy(
+            "{}",
+            &user,
+            &[],
+            None,
+            &[],
+            false,
+            &lists(&["ads.test", "*"], &["menu.test"]),
+        )
+        .unwrap();
+        assert_eq!(
+            url_lists(&body),
+            (
+                serde_json::json!(["*", "ads.test"]),
+                serde_json::json!([
+                    "https://k.test",
+                    "shop.test",
+                    "menu.test",
+                    "file:///run/tessaro-kiosk/"
+                ])
+            )
+        );
+
+        // A document's block alone brings the own pages along too.
+        let body = policy("{}", &user[..], &[], None, &[], false, &lists(&[], &[])).unwrap();
+        assert_eq!(
+            url_lists(&body).1,
+            serde_json::json!(["https://k.test", "shop.test", "file:///run/tessaro-kiosk/"])
+        );
+    }
+
+    #[test]
+    fn the_own_pages_follow_the_settings_maintenance_or_not() {
+        let log = Log::buffered(true);
+        let defaults: HashMap<String, String> = [
+            (
+                "KIOSK_URL".to_string(),
+                "https://{data.shop}.test/a".to_string(),
+            ),
+            (
+                "KIOSK_MAINTENANCE_URL".to_string(),
+                "http://127.0.0.1/maintenance.html".to_string(),
+            ),
+        ]
+        .into();
+        let set = settings(&[
+            ("data.shop", "north"),
+            ("browser.offline_url", "https://status.test/down"),
+            ("browser.block", "*"),
+        ]);
+        let effective = state::Effective::new(&defaults, &set, &log);
+        let expected = [
+            "https://north.test",
+            "http://127.0.0.1",
+            "https://status.test",
+            "file:///run/tessaro-kiosk/",
+        ];
+        assert_eq!(own_pages(&effective, "http://127.0.0.1"), expected);
+        assert_eq!(UrlLists::new(&effective, "http://127.0.0.1").block, ["*"]);
+
+        let mut set = set;
+        set.insert("browser.maintenance.enable".to_string(), "1".to_string());
+        let effective = state::Effective::new(&defaults, &set, &log);
+        assert_eq!(own_pages(&effective, "http://127.0.0.1"), expected);
     }
 
     #[test]
@@ -1016,18 +1256,36 @@ mod tests {
             .all(|entry| entry.key != "SpellcheckEnabled"));
         // printer.enable's entries are the device's, whatever it is set to.
         assert_eq!(source("PrintingEnabled"), Some(PolicySource::Device));
+
+        // A URL list no document or image sets is the device's.
+        let block = settings(&[("browser.block", "*")]);
+        assert!(all(&paths, &env, &block, &log).unwrap().policy_changed);
+        let sources: Vec<(String, PolicySource)> = effective(&paths, &db)
+            .unwrap()
+            .into_iter()
+            .filter(|entry| entry.key.starts_with("URL"))
+            .map(|entry| (entry.key, entry.source))
+            .collect();
+        assert_eq!(
+            sources,
+            [
+                ("URLBlocklist".to_string(), PolicySource::Device),
+                ("URLAllowlist".to_string(), PolicySource::Device)
+            ]
+        );
     }
 
     #[test]
     fn printer_enable_lets_the_page_print_to_the_default_printer() {
-        let on = policy("{}", &[], &[], None, &[], true).unwrap();
+        let none = UrlLists::default();
+        let on = policy("{}", &[], &[], None, &[], true, &none).unwrap();
         let parsed: Value = serde_json::from_str(&strict_json(&on)).unwrap();
         assert_eq!(parsed["PrintingEnabled"], Value::Bool(true));
         assert_eq!(
             parsed["PrintPreviewUseSystemDefaultPrinter"],
             Value::Bool(true)
         );
-        let off = policy(&strict_json(&on), &[], &[], None, &[], false).unwrap();
+        let off = policy(&strict_json(&on), &[], &[], None, &[], false, &none).unwrap();
         let parsed: Value = serde_json::from_str(&strict_json(&off)).unwrap();
         assert_eq!(parsed["PrintingEnabled"], Value::Bool(false));
 

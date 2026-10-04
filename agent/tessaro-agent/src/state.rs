@@ -356,6 +356,13 @@ impl<'a> Effective<'a> {
     pub fn kiosk_url(&self) -> Option<String> {
         self.raw("KIOSK_URL").map(|template| self.expand(&template))
     }
+
+    /// browser.maintenance.url expanded, maintenance mode or not, for the
+    /// pages a URL block must never shut out (`render::own_pages`).
+    pub fn maintenance_url(&self) -> Option<String> {
+        self.raw("KIOSK_MAINTENANCE_URL")
+            .map(|template| self.expand(&template))
+    }
 }
 
 impl Env for Effective<'_> {

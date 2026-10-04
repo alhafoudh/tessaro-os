@@ -43,6 +43,11 @@ pub const CA_POLICY: &str = "CACertificates";
 /// the CUPS default printer, which is where `--kiosk-printing` prints.
 pub const PRINT_POLICIES: &[&str] = &["PrintingEnabled", "PrintPreviewUseSystemDefaultPrinter"];
 
+/// The URL filter lists. A document may set them; browser.block and
+/// browser.allow are appended to what it sets, not put in its place.
+pub const BLOCK_POLICY: &str = "URLBlocklist";
+pub const ALLOW_POLICY: &str = "URLAllowlist";
+
 /// What "new policy" starts from in every client.
 pub const TEMPLATE: &str = include_str!("policy-template.jsonc");
 
@@ -164,7 +169,7 @@ pub fn check(text: &str) -> Result<Map<String, Value>, PolicyError> {
             && key.chars().all(|ch| ch.is_ascii_alphanumeric());
         if !named {
             return Err(PolicyError::whole(format!(
-                "{key:?} is not a Chromium policy name (letters and digits, like URLBlocklist)"
+                "{key:?} is not a Chromium policy name (letters and digits, like DownloadRestrictions)"
             )));
         }
         if let Some(command) = managed(key) {
@@ -407,7 +412,8 @@ mod tests {
     #[test]
     fn the_template_passes() {
         let entries = check(TEMPLATE).unwrap();
-        assert!(entries.contains_key("URLBlocklist"));
+        assert!(entries.contains_key("DownloadRestrictions"));
+        assert!(!entries.contains_key("URLBlocklist"));
     }
 
     #[test]

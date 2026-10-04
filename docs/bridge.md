@@ -61,7 +61,9 @@ await tessaro.device.status();
   the device and where it listens), `device.name` and
   `network.wifi.hotspot_ssid`, which is named after it, and
   `network.public_ip`, which costs a request to Cloudflare and is
-  `tessaro.network.publicIp()` instead.
+  `tessaro.network.publicIp()` instead. `browser.block` and `browser.allow`
+  too, for the same reason as the browser policies below: a page must not
+  read its own restrictions.
 * **It follows the device without a reload.** The snapshot is built again
   after every settings change (`converge` pokes the bridge) and every 15s for
   what moves on its own, an address from DHCP or free space. When it changed,
