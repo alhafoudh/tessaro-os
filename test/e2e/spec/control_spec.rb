@@ -523,7 +523,9 @@ module AgentE2E
       expect(page_value.call("'network.ip' in tessaro.config")).to eq(true)
       name = page_value.call("tessaro.config['device.name']")
       expect(name).to match(/\A[a-z0-9-]+\z/)
-      expect(guest.run("tessaro-ctl config get device.name")).to include(name)
+      # The name in use: `config get` shows only a saved one, and this lane
+      # keeps the name derived from the node id.
+      expect(guest.run("tessaro-ctl device status")).to include(name)
       expect(page_value.call("typeof tessaro.browser")).to eq("undefined")
       status = guest.run("tessaro-ctl browser eval 'tessaro.device.status().then((s) => s.kioskUrl)'")
       expect(status).to include(KIOSK_URL)
@@ -579,7 +581,8 @@ module AgentE2E
     end
 
     # qemu has a USB keyboard and a USB tablet, no touchscreen: touch is
-    # checked on the Pi by hand.
+    # checked on the Pi by hand. udev calls the tablet ID_INPUT_MOUSE: an
+    # absolute pointer with mouse buttons and no pen.
     it "input: screen.input.keyboard and .mouse have libinput ignore qemu's keyboard and tablet and restart " \
        "Weston; unset uses them again", :reconfigure do
       devices = lambda do
@@ -590,7 +593,7 @@ module AgentE2E
       weston_started = -> { guest.run("systemctl show -p ActiveEnterTimestampMonotonic --value weston.service").strip }
 
       expect(ignored.call("ID_INPUT_KEYBOARD")).not_to be_empty, "qemu's USB keyboard is missing"
-      expect(ignored.call("ID_INPUT_TABLET")).not_to be_empty, "qemu's USB tablet is missing"
+      expect(ignored.call("ID_INPUT_MOUSE")).not_to be_empty, "qemu's USB tablet is missing"
       before = weston_started.call
 
       guest.run("tessaro-ctl config set screen.input.keyboard=0 screen.input.mouse=0")
@@ -600,12 +603,12 @@ module AgentE2E
       expect(weston_started.call).not_to eq(before), "Weston did not restart"
       expect(guest.run("cat /run/udev/rules.d/69-tessaro-input.rules")).to include("LIBINPUT_IGNORE_DEVICE")
       expect(ignored.call("ID_INPUT_KEYBOARD")).to all(eq("1"))
-      expect(ignored.call("ID_INPUT_TABLET")).to all(eq("1"))
+      expect(ignored.call("ID_INPUT_MOUSE")).to all(eq("1"))
 
       guest.run("tessaro-ctl config unset screen.input.keyboard screen.input.mouse")
       expect(guest.run("test -e /run/udev/rules.d/69-tessaro-input.rules && echo present || echo gone")).to include("gone")
       expect(ignored.call("ID_INPUT_KEYBOARD")).to all(be_nil)
-      expect(ignored.call("ID_INPUT_TABLET")).to all(be_nil)
+      expect(ignored.call("ID_INPUT_MOUSE")).to all(be_nil)
     ensure
       guest.run("tessaro-ctl config unset screen.input.keyboard screen.input.mouse", allow_failure: true)
       pause 5, "let Weston settle"

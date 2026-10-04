@@ -112,7 +112,8 @@ module AgentE2E
       wait_for_navigation("net::ERR_NAME_NOT_RESOLVED", timeout: 60, what: "let the allowed host through")
 
       guest.run("tessaro-ctl config unset browser.block browser.allow")
-      expect(guest.run("cat #{POLICIES_POLICY}")).not_to include("URLBlocklist")
+      # Quoted: the file's header comment names URLBlocklist either way.
+      expect(guest.run("cat #{POLICIES_POLICY}")).not_to include('"URLBlocklist"')
     ensure
       guest.run("tessaro-ctl config unset browser.block browser.allow", allow_failure: true)
     end

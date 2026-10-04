@@ -264,7 +264,8 @@ on the ignored kinds, matched on the `ID_INPUT_*` properties udev's
 with that property (`evdev_device_create`, `src/evdev.c`).
 
 * **The kinds**: mouse is `ID_INPUT_MOUSE`, `_TOUCHPAD`, `_POINTINGSTICK`,
-  `_TRACKBALL` and `_TABLET` (pens, and qemu's usb-tablet); keyboard is
+  `_TRACKBALL` and `_TABLET` (pens; qemu's usb-tablet has no pen and is
+  `ID_INPUT_MOUSE`); keyboard is
   `ID_INPUT_KEYBOARD`, which barcode scanners and RFID readers have too;
   touch is `ID_INPUT_TOUCHSCREEN`. A power button or a lid switch has only
   `ID_INPUT_KEY` and stays.
