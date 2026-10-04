@@ -17,7 +17,7 @@
 #
 #   mise run e2e:run                             every lane, E2E_JOBS (3) VMs at a time
 #   E2E_JOBS=1 mise run e2e:run                  one VM at a time
-#   mise run e2e:one -- spec/agent_spec.rb -e dns    one lane or case
+#   mise run e2e:one -- spec/agent_browser_spec.rb -e dns    one lane or case
 #   E2E_VERBOSE=1 / 2                            each step on stdout / plus the journal
 #   E2E_KEEP=1, E2E_REUSE=1                      leave the VM up / run against it
 #

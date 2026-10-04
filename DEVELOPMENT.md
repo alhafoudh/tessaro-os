@@ -281,9 +281,9 @@ Running part of it, and watching it:
 E2E_JOBS=1 mise run e2e:run                             # one VM at a time
 mise run e2e:run -- -o '--tag ~reboot'                  # leave out the image updates
 mise run e2e:one -- spec/network_spec.rb                # one lane, plain rspec
-mise run e2e:one -- spec/agent_spec.rb -e 'dns:'        # one case, by its name
-mise run e2e:one -- --only-failures                     # what failed last time
-E2E_VERBOSE=1 mise run e2e:one -- spec/agent_spec.rb    # each step as it happens
+mise run e2e:one -- spec/agent_browser_spec.rb -e 'dns:'  # one case, by its name
+mise run e2e:one -- --only-failures                       # what failed last time
+E2E_VERBOSE=1 mise run e2e:one -- spec/agent_browser_spec.rb  # each step as it happens
 ```
 
 `e2e:one` paths are relative to `test/e2e`. `E2E_VERBOSE=2` adds every

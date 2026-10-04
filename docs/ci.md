@@ -133,6 +133,11 @@ on a run with several machines e2e starts after the last one.
   qemu build fails here instead of testing an older image.
 * `E2E_WORKER_OFFSET=10` moves its ports away from a workstation's own VMs
   and `dev:tunnel`'s forwards on the same host. Its gems go under `build/`.
+* **`e2e` runs 8 VMs at a time (`E2E_JOBS`), so the longest lane sets its
+  wall time.** parallel_tests hands out whole files and each file boots its
+  own VM, so a lane that outgrows the others is split into files at a case
+  boundary its order allows (`agent_browser` and `agent_systemd` are one
+  such split). The job log's per-case timestamps show which lane that is.
 
 **A release comes only from a clean tree.** `build` fails up front when
 `release` is set and `image:name` ends in `-dirty`, since that name would

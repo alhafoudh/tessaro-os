@@ -304,6 +304,8 @@ jobs:
         timeout-minutes: 30
         env:
           E2E_ARGS: ${{ inputs.e2e_args }}
+          # VMs at a time; the build host has the cores and memory for them.
+          E2E_JOBS: "8"
           # Ports away from the workstation's own VMs and dev:tunnel forwards.
           E2E_WORKER_OFFSET: "10"
           # Inside build/, so the gems never make the image -dirty.
