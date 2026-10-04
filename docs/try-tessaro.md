@@ -108,7 +108,9 @@ binaries under MIT and BSD and stay out of it.
 `scripts/qemu-arm64.sh` is the same machine for `qemu:run:arm64`; change
 both together. What differs from the script:
 
-* **slirp only, no vmnet.** The API and Webconfig are forwarded on
+* **slirp only, no vmnet.** The QEMU is built with vmnet all the same
+  (`--enable-vmnet` in `build-qemu-gpu.sh`), because the script prefers it
+  and defaults to vmnet. The API and Webconfig are forwarded on
   `127.0.0.1:7401`, SSH on `127.0.0.1:2222`, so nothing needs root and
   nothing asks for a password. The cost: the device is reachable from this
   computer only, mDNS does not find it, and the welcome page shows the
@@ -123,7 +125,7 @@ both together. What differs from the script:
   than 1920 x 1080 pixels (iced's monitor size in points times the scale
   factor): QEMU's window shows the device pixel for pixel, so a bigger one
   would not fit. `settings.json` keeps a size only once the user picked
-  one.
+  one. The script always asks for Full HD.
 * **QEMU's window is never `zoom-to-fit`.** That option makes the Cocoa
   window resizable, and a resizable window hands its own size to the guest
   as the preferred mode (`virtio_gpu_ui_info` in

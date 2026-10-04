@@ -4,9 +4,10 @@
 //! a name, `name.local`, or a DNS host name. A bare name or `.local` goes to
 //! the address last seen for it first, and to an mDNS scan only when nothing
 //! answers there or a different device does (`open_named`). A bare name no
-//! known device has may be the start of one known device's name or id, and
-//! stands for that device; the start of several is an error, and an exact
-//! name always wins, so `lobby` still reaches `lobby` beside `lobby-2`.
+//! known device has may be the start of the name or id of one device, known
+//! or found on the network, and stands for that device (`pick`); the start of
+//! several is an error, and an exact name always wins, so `lobby` still
+//! reaches `lobby` beside `lobby-2`. Such a name always costs a scan.
 //!
 //! Over TCP the certificate is never *verified* - every device is
 //! self-signed - it is **pinned**: its SHA-256 is compared with the one stored
@@ -70,6 +71,9 @@ pub enum Target {
         name: String,
         port: Option<u16>,
         known: Option<Node>,
+        /// A bare name no known device has: it may be the start of the name
+        /// or id of a device known or found on the network (`pick`).
+        start: bool,
     },
 }
 
@@ -127,29 +131,17 @@ pub fn resolve(node: Option<&str>, nodes: &Nodes) -> Result<Target, String> {
         .strip_suffix(".local")
         .or((!host.contains('.')).then_some(host));
     if let Some(name) = mdns_name {
-        let mut known = nodes.by_name(name).cloned();
-        let mut name = name.to_string();
-        if known.is_none() && host == name {
-            match nodes.by_prefix(&name)[..] {
-                [] => {}
-                [only] => {
-                    name = only.name.clone();
-                    known = Some(only.clone());
-                }
-                ref several => {
-                    let names = several
-                        .iter()
-                        .map(|node| node.name.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    return Err(format!(
-                        "{host}: more than one known device starts with that: {names}"
-                    ));
-                }
-            }
-        }
+        let known = nodes.by_name(name).cloned();
+        // A bare name no known device has may be a start, matched when
+        // opened, against the scan too (`pick`).
+        let start = known.is_none() && host == name;
         // Resolved when opened: the cached address first, then a scan.
-        return Ok(Target::Named { name, port, known });
+        return Ok(Target::Named {
+            name: name.to_string(),
+            port,
+            known,
+            start,
+        });
     }
 
     let address = (host, port.unwrap_or(protocol::DEFAULT_PORT))
@@ -338,8 +330,31 @@ pub fn open(
             CONNECT,
         )
         .map_err(Failure::message),
-        Target::Named { name, port, known } => {
-            open_named(name, *port, known.as_ref(), nodes, trust, client)
+        Target::Named {
+            name,
+            port,
+            known,
+            start: false,
+        } => open_named(name, *port, known.as_ref(), None, nodes, trust, client),
+        Target::Named {
+            name,
+            port,
+            start: true,
+            ..
+        } => {
+            // Matched against every device on the network as well as the
+            // known ones, so the scan comes first.
+            let found = browse(BROWSE);
+            let (name, known) = pick(name, nodes, &found)?;
+            open_named(
+                &name,
+                *port,
+                known.as_ref(),
+                Some(found),
+                nodes,
+                trust,
+                client,
+            )
         }
     }
 }
@@ -520,10 +535,14 @@ fn open_remote(
 ///   warn, then scan: the device most likely moved and its old address went
 ///   to someone else. The scan result is held to the pin as strictly.
 /// * Nothing answers there: scan, quietly.
+///
+/// `scanned` is a scan already made (`pick` needed one), used instead of a
+/// second.
 fn open_named(
     name: &str,
     port: Option<u16>,
     known: Option<&Node>,
+    scanned: Option<Vec<Found>>,
     nodes: &Nodes,
     trust: &mut Trust,
     client: &str,
@@ -561,7 +580,8 @@ fn open_named(
         }
     }
 
-    let found = browse(BROWSE).into_iter().find(|found| {
+    let scanned = scanned.unwrap_or_else(|| browse(BROWSE));
+    let found = scanned.into_iter().find(|found| {
         found.name == name
             || known.is_some_and(|node| found.id.as_deref() == Some(node.id.as_str()))
     });
@@ -588,6 +608,55 @@ fn open_named(
             ),
             None => format!("{name}: not found on the network (mDNS) and not a known node"),
         }),
+    }
+}
+
+/// What a bare name no known device has stands for, among the known devices
+/// and those `found` on the network together: a device found with that very
+/// name, else the one device whose name or id starts with it. A device both
+/// known and found is one device. The start of several is an error; the
+/// start of none is the name itself, for `open_named` to report. Hands back
+/// the device's name and its known entry, if it has one.
+fn pick(start: &str, nodes: &Nodes, found: &[Found]) -> Result<(String, Option<Node>), String> {
+    let known_as = |found: &Found| found.id.as_deref().and_then(|id| nodes.by_id(id)).cloned();
+    if let Some(exact) = found.iter().find(|found| found.name == start) {
+        return Ok((exact.name.clone(), known_as(exact)));
+    }
+
+    let mut devices: Vec<(String, Option<Node>)> = nodes
+        .by_prefix(start)
+        .into_iter()
+        .map(|node| (node.name.clone(), Some(node.clone())))
+        .collect();
+    for seen in found {
+        let known = known_as(seen);
+        let listed = devices.iter().any(|(name, node)| {
+            *name == seen.name
+                || node
+                    .as_ref()
+                    .zip(known.as_ref())
+                    .is_some_and(|(a, b)| a.id == b.id)
+        });
+        let starts = seen.name.starts_with(start)
+            || seen.id.as_deref().is_some_and(|id| id.starts_with(start));
+        if starts && !listed {
+            devices.push((seen.name.clone(), known));
+        }
+    }
+
+    match &devices[..] {
+        [] => Ok((start.to_string(), None)),
+        [only] => Ok(only.clone()),
+        several => {
+            let names = several
+                .iter()
+                .map(|(name, _)| name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            Err(format!(
+                "{start}: more than one device starts with that: {names}"
+            ))
+        }
     }
 }
 
@@ -965,48 +1034,108 @@ mod tests {
         nodes
     }
 
-    /// The name and known id `node` is resolved to.
-    fn named(node: &str, nodes: &Nodes) -> Result<(String, Option<u16>, Option<String>), String> {
-        match resolve(Some(node), nodes)? {
-            Target::Named { name, port, known } => Ok((name, port, known.map(|node| node.id))),
+    fn seen(id: Option<&str>, name: &str) -> Found {
+        Found {
+            name: name.to_string(),
+            address: "10.0.0.9:7400".parse().unwrap(),
+            id: id.map(str::to_string),
+            fingerprint: None,
+            claimed: Some(false),
+        }
+    }
+
+    /// The name, port, known id and start flag `node` is resolved to.
+    fn named(node: &str, nodes: &Nodes) -> (String, Option<u16>, Option<String>, bool) {
+        match resolve(Some(node), nodes).unwrap() {
+            Target::Named {
+                name,
+                port,
+                known,
+                start,
+            } => (name, port, known.map(|node| node.id), start),
             other => panic!("{node}: not a name: {other:?}"),
         }
     }
 
-    #[test]
-    fn the_start_of_one_known_name_or_id_stands_for_that_device() {
-        let nodes = known(&[("1a2b", "lobby-east"), ("9f8e", "cafe")]);
-
-        let east = ("lobby-east".to_string(), None, Some("1a2b".to_string()));
-        assert_eq!(named("lob", &nodes).unwrap(), east);
-        assert_eq!(named("1a", &nodes).unwrap(), east);
-        assert_eq!(
-            named("caf:7401", &nodes).unwrap(),
-            ("cafe".to_string(), Some(7401), Some("9f8e".to_string()))
-        );
+    /// The name and known id `start` picks.
+    fn picked(
+        start: &str,
+        nodes: &Nodes,
+        found: &[Found],
+    ) -> Result<(String, Option<String>), String> {
+        pick(start, nodes, found).map(|(name, known)| (name, known.map(|node| node.id)))
     }
 
     #[test]
-    fn an_exact_name_wins_and_several_starts_are_refused() {
-        let nodes = known(&[("1a", "lobby"), ("2b", "lobby-2")]);
-
-        assert_eq!(named("lobby", &nodes).unwrap().2.as_deref(), Some("1a"));
-        let err = named("lob", &nodes).unwrap_err();
-        assert!(err.contains("lobby, lobby-2"), "{err}");
-    }
-
-    #[test]
-    fn no_known_start_falls_back_to_the_name_itself() {
+    fn only_a_bare_name_no_known_device_has_may_be_a_start() {
         let nodes = known(&[("1a", "lobby")]);
 
+        // An exact known name goes straight to its cached address.
         assert_eq!(
-            named("cafe", &nodes).unwrap(),
-            ("cafe".to_string(), None, None)
+            named("lobby", &nodes),
+            ("lobby".to_string(), None, Some("1a".to_string()), false)
+        );
+        assert_eq!(
+            named("lob:7401", &nodes),
+            ("lob".to_string(), Some(7401), None, true)
         );
         // `.local` is a name to look for on the network, never a start.
         assert_eq!(
-            named("lob.local", &nodes).unwrap(),
-            ("lob".to_string(), None, None)
+            named("lob.local", &nodes),
+            ("lob".to_string(), None, None, false)
+        );
+    }
+
+    #[test]
+    fn the_start_of_one_known_or_found_name_or_id_stands_for_that_device() {
+        let nodes = known(&[("1a2b", "lobby-east")]);
+        let found = [seen(Some("f1d5"), "fond-ember-81bf")];
+
+        let east = ("lobby-east".to_string(), Some("1a2b".to_string()));
+        assert_eq!(picked("lob", &nodes, &found).unwrap(), east);
+        assert_eq!(picked("1a", &nodes, &found).unwrap(), east);
+        let fond = ("fond-ember-81bf".to_string(), None);
+        assert_eq!(picked("fond", &nodes, &found).unwrap(), fond);
+        assert_eq!(picked("f1", &nodes, &found).unwrap(), fond);
+    }
+
+    #[test]
+    fn known_and_found_are_matched_together() {
+        let nodes = known(&[("1a", "lobby-east")]);
+        let found = [seen(Some("2b"), "lobby-west")];
+
+        let err = picked("lob", &nodes, &found).unwrap_err();
+        assert!(err.contains("lobby-east, lobby-west"), "{err}");
+    }
+
+    #[test]
+    fn a_device_both_known_and_found_counts_once() {
+        // Found under a new name: it is still the known device.
+        let nodes = known(&[("1a", "lobby")]);
+        let found = [seen(Some("1a"), "lobby-renamed"), seen(None, "cafe")];
+
+        assert_eq!(
+            picked("lob", &nodes, &found).unwrap(),
+            ("lobby".to_string(), Some("1a".to_string()))
+        );
+        assert_eq!(
+            picked("lobby-r", &nodes, &found).unwrap(),
+            ("lobby-renamed".to_string(), Some("1a".to_string()))
+        );
+    }
+
+    #[test]
+    fn an_exact_found_name_wins_and_no_start_is_the_name_itself() {
+        let nodes = known(&[("2b", "lobby-2")]);
+        let found = [seen(Some("1a"), "lobby")];
+
+        assert_eq!(
+            picked("lobby", &nodes, &found).unwrap(),
+            ("lobby".to_string(), None)
+        );
+        assert_eq!(
+            picked("cafe", &nodes, &found).unwrap(),
+            ("cafe".to_string(), None)
         );
     }
 }

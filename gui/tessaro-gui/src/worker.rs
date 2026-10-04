@@ -163,6 +163,7 @@ pub fn connect(node: &Node) -> Result<(Session, Vec<String>), String> {
             name: known.name.clone(),
             port: None,
             known: Some(known),
+            start: false,
         },
         None => Target::Remote {
             address: node

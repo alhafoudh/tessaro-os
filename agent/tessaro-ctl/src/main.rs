@@ -140,7 +140,7 @@ const HELP_STYLES: Styles = Styles::styled()
 )]
 struct Cli {
     /// The device: IP, ip:port, NAME, NAME.local, a host name, or `local`.
-    /// NAME may be the start of one known device's name or id.
+    /// NAME may be the start of the name or id of one device, known or on the network.
     /// Without it, the local socket on the device itself.
     #[arg(long, short = 'n', global = true, env = "TESSARO_NODE")]
     node: Option<String>,

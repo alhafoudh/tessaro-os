@@ -20,7 +20,8 @@
 #
 # Both: the serial console on this terminal (Ctrl-a x quits) and -snapshot so
 # the .wic stays as built. vnc mode puts the screen on 127.0.0.1:5901, with
-# the password "tessaro".
+# the password "tessaro". The screen is Full HD: the GPU's xres/yres are its
+# preferred mode, which Weston takes (docs/try-tessaro.md, "The VM").
 #
 # The network is TESSARO_QEMU_NET, vmnet-shared on macOS and user on Linux
 # unless set:
@@ -104,7 +105,7 @@ if [ "$(uname -s)" = Darwin ]; then
         -accel hvf -cpu host \
         -bios "$firmware" \
         -drive "file=$image,format=raw,if=virtio" \
-        -device "$gpu" -display "$display" \
+        -device "$gpu,xres=1920,yres=1080" -display "$display" \
         -audiodev coreaudio,id=snd0 -device hda-duplex,audiodev=snd0
 fi
 
@@ -140,5 +141,5 @@ exec "$bindir/qemu-system-aarch64" "$@" \
     -accel tcg,thread=multi -cpu max,pauth-impdef=on \
     -bios "$deploy/u-boot.bin" \
     -drive "file=$WIC,format=raw,if=virtio" \
-    -device "$gpu" -display "$display" \
+    -device "$gpu,xres=1920,yres=1080" -display "$display" \
     -audiodev none,id=snd0 -device hda-duplex,audiodev=snd0

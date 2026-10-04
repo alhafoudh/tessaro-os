@@ -186,7 +186,7 @@ mkdir "$qemu/build"
         --enable-system --enable-tools \
         --enable-hvf --disable-tcg \
         --enable-cocoa --enable-opengl --enable-virglrenderer \
-        --enable-pixman --enable-slirp --enable-fdt=system \
+        --enable-pixman --enable-slirp --enable-vmnet --enable-fdt=system \
         --enable-coreaudio --audio-drv-list=coreaudio \
         --disable-docs --disable-debug-info --disable-werror --disable-download \
         --extra-cflags="-I$(brew --prefix)/include" \

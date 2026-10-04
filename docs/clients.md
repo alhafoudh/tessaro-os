@@ -42,11 +42,15 @@ there is one copy, and both clients call it.
   the `tessaro-ctl` command that does the same.
 
 **A device is named the same way everywhere, by `connect::resolve`.** A
-bare name no known device has may be the start of one known device's name
-or id, and stands for it, the way `docker` takes the start of a container
-id; the start of several is an error that lists them, and an exact name
-always wins (`lobby` beside `lobby-2`). `NAME.local` is always a name to
-look for on the network.
+bare name no known device has may be the start of the name or id of one
+device, and stands for it, the way `docker` takes the start of a container
+id. The devices it is matched against are the known ones and those an mDNS
+scan finds, together, with a device that is both counted once by its id
+(`connect::pick`), so an unclaimed device just switched on is reached by
+the start of its name too. The start of several is an error that lists
+them, and an exact name always wins (`lobby` beside `lobby-2`). Such a
+name always costs a scan; an exact known name goes to its last address
+first. `NAME.local` is always a name to look for on the network.
 
 ## Nothing in the client prints or asks
 

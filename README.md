@@ -237,8 +237,8 @@ so a claim and settings last until you close it.
 No laptop at hand? Join the device's hotspot with a phone, scan the QR code on
 screen, and Quick Setup opens by itself.
 
-Once it is claimed, the start of its name is enough (`-n golden`), as long as
-no other device you know starts the same way.
+The start of its name is enough (`-n golden`), as long as no other device you
+know or that answers on the network starts the same way.
 
 Set `TESSARO_NODE=golden-thistle-5731` and the `-n` can go; the tour below
 leaves it out.
