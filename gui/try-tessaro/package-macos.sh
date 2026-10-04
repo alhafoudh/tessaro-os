@@ -1,7 +1,7 @@
 #!/bin/sh
 # Package an already-built try-tessaro as "Try Tessaro.app" beside it:
-# the launcher, the QEMU runtime (bundle-qemu-macos.sh, rebuilt when
-# Homebrew's qemu changes), tessaro-ctl, Tessaro.app and the image. stdout
+# the launcher, the QEMU runtime (build-qemu-gpu.sh and bundle-qemu-macos.sh,
+# remade when their pins change), tessaro-ctl, Tessaro.app and the image. stdout
 # is the app path.
 set -eu
 [ "$(uname -s)" = Darwin ] || { echo "macOS is required" >&2; exit 1; }
@@ -23,12 +23,15 @@ output_dir=$(CDPATH= cd -- "$(dirname "$binary")" && pwd)
 version=$(sed -n 's/^version = "\([^"]*\)"$/\1/p' "$gui_dir/Cargo.toml")
 [ -n "$version" ] || { echo "Missing GUI workspace version" >&2; exit 1; }
 
-# The runtime is slow to make and changes only with Homebrew's qemu.
+# QEMU is built once into build/qemu-gpu (build-qemu-gpu.sh does nothing
+# while its pins hold), and the runtime made from it only when that build
+# changed.
+gpu="$(dirname "$gui_dir")/build/qemu-gpu"
+sh "$here/build-qemu-gpu.sh" "$gpu"
 runtime="$output_dir/qemu-runtime"
-qemu_version=$("$(brew --prefix qemu)/bin/qemu-system-aarch64" --version | head -n 1)
-if [ "$(cat "$runtime/.qemu-version" 2>/dev/null)" != "$qemu_version" ]; then
-    sh "$here/bundle-qemu-macos.sh" "$runtime"
-    printf '%s\n' "$qemu_version" >"$runtime/.qemu-version"
+if [ "$(cat "$runtime/.qemu-version" 2>/dev/null)" != "$(cat "$gpu/.stamp")" ]; then
+    sh "$here/bundle-qemu-macos.sh" "$runtime" "$gpu"
+    cp "$gpu/.stamp" "$runtime/.qemu-version"
 fi
 
 app="$output_dir/Try Tessaro.app"

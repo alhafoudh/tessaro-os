@@ -1,22 +1,29 @@
 #!/bin/sh
-# Copy Homebrew's QEMU into OUT_DIR as a self-contained runtime for Try
-# Tessaro: bin/ with qemu-system-aarch64 and qemu-img, lib/ with every
-# non-system dylib they load (relinked to @executable_path/../lib),
-# share/qemu/ with the UEFI firmware only, LICENSES/ per Homebrew formula,
-# and runtime.json, `brew info --json=v2` of every formula shipped, which
-# the SBOM reads (docs/try-tessaro.md, "The QEMU runtime").
+# Copy the QEMU build-qemu-gpu.sh made in GPU_DIR into OUT_DIR as a
+# self-contained runtime for Try Tessaro: bin/ with qemu-system-aarch64 and
+# qemu-img, lib/ with every non-system dylib they load (relinked to
+# @executable_path/../lib), share/qemu/ with the UEFI firmware only,
+# LICENSES/ per component, and runtime.json, `brew info --json=v2` of every
+# Homebrew formula shipped plus what GPU_DIR built, which the SBOM reads
+# (docs/try-tessaro.md, "The QEMU runtime").
 set -eu
 [ "$(uname -s)" = Darwin ] || { echo "macOS is required" >&2; exit 1; }
-out=${1:?usage: bundle-qemu-macos.sh OUT_DIR}
+usage="usage: bundle-qemu-macos.sh OUT_DIR GPU_DIR"
+out=${1:?$usage}
+gpu=${2:?$usage}
 here=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
-prefix=$(brew --prefix qemu)
-[ -x "$prefix/bin/qemu-system-aarch64" ] || { echo "needs qemu: brew install qemu" >&2; exit 1; }
+prefix="$gpu/install"
+[ -x "$prefix/bin/qemu-system-aarch64" ] || { echo "no QEMU in $prefix: run build-qemu-gpu.sh" >&2; exit 1; }
 
 rm -rf "$out"
 mkdir -p "$out/bin" "$out/lib" "$out/share/qemu" "$out/LICENSES"
 cp "$prefix/bin/qemu-system-aarch64" "$prefix/bin/qemu-img" "$out/bin/"
 cp "$prefix/share/qemu/edk2-aarch64-code.fd" "$prefix/share/qemu/edk2-licenses.txt" "$out/share/qemu/"
 chmod u+w "$out"/bin/*
+# libepoxy opens ANGLE's EGL and GLES by name, so nothing links them: they
+# go beside it by hand, and the walk below relinks them like the rest.
+cp "$gpu/deps/angle/lib/libEGL.dylib" "$gpu/deps/angle/lib/libGLESv2.dylib" "$out/lib/"
+chmod u+w "$out"/lib/*
 
 # The dylibs a Mach-O file loads that macOS does not carry: the name the
 # load command uses (a symlink's, libzstd.1.dylib) and the file it is.
@@ -34,8 +41,8 @@ deps() {
 }
 
 # Breadth first until no new dylib turns up.
-queue="$out/bin/qemu-system-aarch64 $out/bin/qemu-img"
-seen=" "
+queue="$out/bin/qemu-system-aarch64 $out/bin/qemu-img $out/lib/libEGL.dylib $out/lib/libGLESv2.dylib"
+seen=" libEGL.dylib libGLESv2.dylib "
 while [ -n "$queue" ]; do
     next=
     for file in $queue; do
@@ -71,11 +78,23 @@ leaks=$(for file in "$out"/bin/* "$out"/lib/*.dylib; do
 done | grep -v -e '^/usr/lib/' -e '^/System/' -e '^@executable_path/' || true)
 [ -z "$leaks" ] || { echo "still linked outside the bundle:" >&2; echo "$leaks" >&2; exit 1; }
 
-# The formula each dylib came from: /opt/homebrew/Cellar/<formula>/<version>/.
+# The formula each Homebrew dylib came from:
+# /opt/homebrew/Cellar/<formula>/<version>/. What GPU_DIR built or fetched
+# is in its components.json, in the same shape, and its licenses/.
 formulas=$(sed -n 's|.*/Cellar/\([^/]*\)/.*|\1|p' "$out/.sources" | sort -u)
 rm "$out/.sources"
-brew info --json=v2 --formula qemu $formulas >"$out/runtime.json"
-for formula in qemu $formulas; do
+if [ -n "$formulas" ]; then
+    brew info --json=v2 --formula $formulas >"$out/.brew.json"
+else
+    echo '{"formulae": []}' >"$out/.brew.json"
+fi
+ruby -rjson -e '
+  merged = ARGV.flat_map { |path| JSON.parse(File.read(path)).fetch("formulae") }
+  puts JSON.pretty_generate("formulae" => merged)
+' "$gpu/components.json" "$out/.brew.json" >"$out/runtime.json"
+rm "$out/.brew.json"
+cp -R "$gpu/licenses/." "$out/LICENSES/"
+for formula in $formulas; do
     cellar=$(brew --prefix "$formula")
     mkdir -p "$out/LICENSES/$formula"
     find -L "$cellar" -maxdepth 1 -type f \( -iname 'COPYING*' -o -iname 'LICENSE*' -o -iname 'LICENCE*' \) \
@@ -86,10 +105,11 @@ for formula in qemu $formulas; do
         brew info --formula "$formula" | grep -E '^(==> |https?://|License:)' >"$out/LICENSES/$formula/NOTICE"
     fi
 done
-cp "$out/share/qemu/edk2-licenses.txt" "$out/LICENSES/qemu/"
 
 # Relinking broke the signatures: dylibs ad hoc, QEMU with the hypervisor
-# entitlement HVF needs, which an ad hoc signature can carry.
+# entitlement HVF needs, which an ad hoc signature can carry. QEMU's install
+# gave it an icon in a resource fork, which codesign refuses to sign over.
+xattr -c "$out"/bin/*
 codesign --force --sign - "$out"/lib/*.dylib "$out/bin/qemu-img" >&2
 codesign --force --sign - --entitlements "$here/qemu-hvf.entitlements" "$out/bin/qemu-system-aarch64" >&2
 "$out/bin/qemu-system-aarch64" --version | head -n 1 >&2

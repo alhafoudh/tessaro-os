@@ -64,9 +64,10 @@ ecosystems:
       - LicenseRef-bzip2-1.0.4
       - LicenseRef-hdparm
       - LicenseRef-BitstreamVera
-  # Try Tessaro's QEMU runtime (sbom.rb check --runtime): Homebrew's qemu and
-  # the dylibs it loads, shipped unmodified as separate files in a desktop
-  # app, with their license texts in the bundle's qemu/LICENSES/. GPL and
+  # Try Tessaro's QEMU runtime (sbom.rb check --runtime): QEMU built with
+  # VirGL from pinned sources and the dylibs it loads, shipped as separate
+  # files in a desktop app, with their license texts in the bundle's
+  # qemu/LICENSES/. GPL and
   # LGPL are what QEMU is; GPLv3's installation-information terms are about
   # locked-down devices, not a Mac app the user can replace any file of.
   # Anything else still has to be read before it ships.

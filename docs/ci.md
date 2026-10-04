@@ -69,7 +69,9 @@ images and clients stay workflow artifacts.
   runner, the machine whose image it bundles and the package, and macOS
   (`macos-arm64`, genericarm64, a DMG) is the only one; another platform is
   a row there and its packaging in `try:build`. A leg runs `try:build`
-  around the image `build` uploaded (on macOS after `brew install qemu`),
+  around the image `build` uploaded (on macOS after `brew install glib
+  pixman libslirp dtc pkgconf`, with `build/qemu-gpu` cached under the hash
+  of `build-qemu-gpu.sh`, so QEMU is rebuilt only when a pin moved),
   checks the bundled runtime's licenses (`sbom.rb check --runtime`), and
   uploads `try-tessaro-<version>-<sha>-<platform>.<package>` unzipped
   (`archive: false`, as `build` uploads the images), so it downloads as the

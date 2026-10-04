@@ -22,7 +22,7 @@ no Homebrew, no mise and no checkout:
 | Path in `Contents/` | What |
 | --- | --- |
 | `MacOS/try-tessaro` | The launcher (iced, `gui/try-tessaro/src/`) |
-| `Resources/qemu/` | The QEMU runtime (below) |
+| `Resources/qemu/` | The QEMU runtime, with VirGL (below) |
 | `Resources/bin/tessaro-ctl` | For the terminal |
 | `Helpers/Tessaro.app` | `tessaro-gui`, as a release ships it |
 | `Resources/image/*.wic.zst` | The genericarm64 image the device is made from |
@@ -45,33 +45,56 @@ dark background they read best in dark mode.
 
 ## The QEMU runtime
 
-**The app bundles Homebrew's QEMU, relinked, rather than building its own.**
-`bundle-qemu-macos.sh` copies `qemu-system-aarch64` and `qemu-img`, walks
-`otool -L` to every non-system dylib they load, copies each under the name
-its load command uses and rewrites every load command to
-`@executable_path/../lib/`. It then fails if anything still points outside
-the bundle or the system. Relinking breaks the signatures, so the dylibs are
-signed ad hoc again and QEMU with `qemu-hvf.entitlements`
+**The device draws on the Mac's GPU: the app bundles a QEMU built with
+VirGL**, because Homebrew's has no OpenGL and no virglrenderer and leaves
+the kiosk in software. `build-qemu-gpu.sh` is Try Omarchy's GPU recipe
+(github.com/omacom/try-omarchy, `macos/build-qemu-gpu-runtime.sh`) and
+nothing else of theirs: QEMU 11.1.1 with their Cocoa OpenGL patch (upstream
+`ui/cocoa.m` has no GL at all), their fence-polling and refresh fixes,
+virglrenderer 1.3.0 with the `startergo/homebrew-virglrenderer` patch set
+and their native OpenGL patch, and startergo's libepoxy and ANGLE bottles.
+Every download is pinned by sha256 in the script, the patches are fetched
+at a pinned commit rather than kept here, and glib, pixman, libslirp and dtc
+are Homebrew's. It builds into `build/qemu-gpu/` and does nothing while
+`.stamp` holds the script's hash, so a pin change is what rebuilds it.
+
+**GL is macOS's own OpenGL (`-display cocoa,gl=on`), never ANGLE's GLES on
+Metal (`gl=es`).** Through ANGLE, VirGL offers the guest desktop GL 2.1
+only; Chromium's GLES 3 context (`--use-angle=gles-egl`) then fails with
+`EGL_BAD_ATTRIBUTE` and the kiosk quietly renders in software. On native GL,
+with the virglrenderer patches, the guest's Mesa virgl driver offers GLES
+3.0 and Chromium composites, rasterizes and runs WebGL on the GPU. Video
+decoding stays in software. Try Omarchy measured this
+(`docs/performance.md` there). The launcher picks `virtio-gpu-gl-pci` when
+the bundled QEMU lists it and **Graphics on this computer's GPU** is on in
+the settings (`Settings::accelerated`, on by default); off is the plain
+`virtio-gpu-pci` and software, for a Mac whose GL path misbehaves.
+
+**`bundle-qemu-macos.sh` makes that build self-contained.** It copies
+`qemu-system-aarch64` and `qemu-img`, walks `otool -L` to every non-system
+dylib they load, copies each under the name its load command uses and
+rewrites every load command to `@executable_path/../lib/`. ANGLE's
+`libEGL.dylib` and `libGLESv2.dylib` are copied by hand: libepoxy opens them
+by name, so nothing links them. It then fails if anything still points
+outside the bundle or the system. Relinking breaks the signatures, so the
+dylibs are signed ad hoc again and QEMU with `qemu-hvf.entitlements`
 (`com.apple.security.hypervisor`), which HVF needs and an ad hoc signature
 can carry. `share/qemu/` holds only the UEFI firmware: the command line
 names it, and `romfile=` keeps QEMU from looking for a network ROM.
-`package-macos.sh` keeps the runtime beside the build and remakes it only
-when Homebrew's `qemu --version` changes.
+`package-macos.sh` runs both and remakes the runtime only when the build's
+stamp changed.
 
-**Homebrew's QEMU has no VirGL, so the kiosk renders in software.** It works
-and is smooth enough for pages and settings; video and heavy animation are
-slower than on a device. A QEMU with VirGL and ANGLE, as try-omarchy builds,
-is what would change that. The launcher already picks `virtio-gpu-gl-pci`
-with `gl=es` when the bundled QEMU lists it, as `scripts/qemu-arm64.sh`
-does.
-
-**Its licenses are in the bundle and in the SBOM.** The script copies each
-formula's license files into `qemu/LICENSES/<formula>/`, a `NOTICE` from
-`brew info` for a bottle that has none, and writes `runtime.json`
-(`brew info --json=v2` of every formula shipped). `ruby sbom/sbom.rb check
---runtime <runtime.json>` judges those formulas under the `runtime` policy
-in `sbom/licenses.yml`; the release workflow's `try` job runs it where the file exists (see
-[sbom.md](sbom.md)).
+**Its licenses are in the bundle and in the SBOM.** The bundle script copies
+each Homebrew formula's license files into `qemu/LICENSES/<formula>/`, a
+`NOTICE` from `brew info` for a bottle that has none, and the license texts
+`build-qemu-gpu.sh` gathered for QEMU, virglrenderer, libepoxy and ANGLE.
+`runtime.json` is `brew info --json=v2` of every formula shipped plus the
+build's `components.json`, the same shape for those four. `ruby
+sbom/sbom.rb check --runtime <runtime.json>` judges them under the
+`runtime` policy in `sbom/licenses.yml`; the release workflow's `try` job
+runs it where the file exists (see [sbom.md](sbom.md)). QEMU is GPL and
+carries patches: its corresponding source is the pinned 11.1.1 release
+tarball and the patches `build-qemu-gpu.sh` names.
 
 ## The VM
 

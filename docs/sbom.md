@@ -22,7 +22,7 @@ are not in the image at all. So each part is read from its own lock file.
 | `tessaro-ctl` | `cargo` | `cargo metadata` on `agent/`, from the `tessaro-ctl` member only, every platform |
 | `tessaro-gui` | `cargo` | `cargo metadata` on `gui/`, from the `tessaro-gui` member only, every platform |
 | `try-tessaro` | `cargo` | `cargo metadata` on `gui/`, from the `try-tessaro` member only, every platform |
-| `try-tessaro` | `runtime` | the bundled QEMU's `runtime.json`, `brew info --json=v2` of every formula it ships (`runtime.rb`), with `check --runtime` only |
+| `try-tessaro` | `runtime` | the bundled QEMU's `runtime.json`, `brew info --json=v2` of every Homebrew formula it ships plus what `build-qemu-gpu.sh` built or fetched, in the same shape (`runtime.rb`), with `check --runtime` only |
 | `tessaro-webconfig` | `npm` | `npm sbom --omit dev --package-lock-only` in `webconfig/` (`npm.rb`) |
 | any | `vendored` | `sbom/vendored.yml`, files kept in the repo (the Manrope fonts) |
 
@@ -88,9 +88,10 @@ on an error.
   `OR` and every part of each `AND` is allowed (`license.rb`); a missing or
   unreadable license fails.
 * **`runtime` takes an allowlist that includes GPL and LGPL**, and a miss
-  is an error. It judges the QEMU Try Tessaro bundles, which is GPL and
-  ships unmodified as separate files in a desktop app, its license texts
-  beside it ([try-tessaro.md](try-tessaro.md), "The QEMU runtime"). Only a
+  is an error. It judges the QEMU Try Tessaro bundles, which is GPL, patched
+  and built from pinned sources, and ships as separate files in a desktop
+  app, its license texts beside it ([try-tessaro.md](try-tessaro.md), "The
+  QEMU runtime"). Only a
   Mac that packaged the app has its `runtime.json`, so plain `sbom:check`
   leaves it out and the release workflow's `try` job runs `ruby sbom/sbom.rb check
   --runtime` after `try:build`.

@@ -24,8 +24,9 @@ pub struct Launch {
     pub ports: Ports,
     pub cpus: usize,
     pub memory_mb: u64,
-    /// The bundled QEMU has VirGL (`virtio-gpu-gl-pci`). The stock one does
-    /// not, and the kiosk renders in software.
+    /// The device draws on the GPU: the bundled QEMU has VirGL
+    /// (`virtio-gpu-gl-pci`) and the settings did not turn it off. Without
+    /// it the kiosk renders in software.
     pub gl: bool,
 }
 
@@ -45,7 +46,12 @@ pub fn args(launch: &Launch) -> Vec<OsString> {
     // keeps the size the firmware's screen gave it, so the kiosk came up at
     // 640 x 360 whatever `xres`/`yres` said. A fixed window is the guest's
     // size, so the two agree.
-    let display = if launch.gl { "cocoa,gl=es" } else { "cocoa" };
+    //
+    // GL is macOS's own OpenGL (`gl=on`), never ANGLE's GLES on Metal
+    // (`gl=es`): through ANGLE VirGL offers the guest desktop GL 2.1 only,
+    // Chromium's GLES 3 context fails and the kiosk falls back to software
+    // (docs/try-tessaro.md, "The QEMU runtime").
+    let display = if launch.gl { "cocoa,gl=on" } else { "cocoa" };
     let mut args: Vec<OsString> = Vec::new();
     let mut push = |items: &[&str]| args.extend(items.iter().map(OsString::from));
     push(&["-name", NAME]);
@@ -214,7 +220,7 @@ mod tests {
         launch.gl = true;
         let line = line(&launch);
         assert!(line.contains("-device virtio-gpu-gl-pci,"));
-        assert!(line.contains("-display cocoa,gl=es"));
+        assert!(line.contains("-display cocoa,gl=on"));
     }
 
     #[test]

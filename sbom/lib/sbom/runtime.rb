@@ -5,10 +5,11 @@ require_relative "inventory"
 require_relative "license"
 
 module Sbom
-  # The QEMU runtime Try Tessaro bundles: Homebrew's qemu and every formula
-  # whose dylibs it loads, as gui/try-tessaro/bundle-qemu-macos.sh records
-  # them in runtime.json (`brew info --json=v2`). Only a Mac that packaged
-  # the app has that file, so it is read when it is named.
+  # The QEMU runtime Try Tessaro bundles: what build-qemu-gpu.sh built or
+  # fetched and every Homebrew formula whose dylibs it loads, as
+  # gui/try-tessaro/bundle-qemu-macos.sh records them in runtime.json (`brew
+  # info --json=v2`, and the same shape for the rest). Only a Mac that
+  # packaged the app has that file, so it is read when it is named.
   module Runtime
     module_function
 

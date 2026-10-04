@@ -9,9 +9,12 @@
 # firmware is the U-Boot image:build builds for genericarm64; its EFI loader
 # starts systemd-boot from the ESP.
 #
-# macOS on Apple Silicon: Homebrew's qemu (`brew install qemu`), on
-# Hypervisor.framework, with the edk2 firmware it ships and CoreAudio for
-# sound. The image is the one `mise run image:pull` fetched into the repo
+# macOS on Apple Silicon: the QEMU Try Tessaro bundles, with VirGL, when
+# gui/try-tessaro/build-qemu-gpu.sh has built it into build/qemu-gpu (any
+# try:build or try:run does), else Homebrew's qemu (`brew install qemu`),
+# which renders in software; on Hypervisor.framework, with the edk2 firmware
+# that QEMU ships and CoreAudio for sound. The image is the one
+# `mise run image:pull` fetched into the repo
 # root, or the file TESSARO_QEMU_IMAGE names (a release's .wic.zst, say),
 # unpacked next to it by qemu:unpack.
 #
@@ -66,10 +69,18 @@ if [ "$mode" = vnc ]; then
 fi
 
 if [ "$(uname -s)" = Darwin ]; then
-    command -v qemu-system-aarch64 >/dev/null || {
-        echo "needs qemu: brew install qemu" >&2
-        exit 1
-    }
+    gpu_build="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)/build/qemu-gpu/install"
+    if [ -x "$gpu_build/bin/qemu-system-aarch64" ]; then
+        qemu=$gpu_build/bin/qemu-system-aarch64
+        firmware=$gpu_build/share/qemu/edk2-aarch64-code.fd
+    else
+        command -v qemu-system-aarch64 >/dev/null || {
+            echo "needs qemu: mise run try:build, or brew install qemu" >&2
+            exit 1
+        }
+        qemu=$(command -v qemu-system-aarch64)
+        firmware="$(brew --prefix qemu)/share/qemu/edk2-aarch64-code.fd"
+    fi
     image=${TESSARO_QEMU_IMAGE:-$(basename "$WIC")}
     image=${image%.zst}
     [ -f "$image" ] || {
@@ -77,19 +88,21 @@ if [ "$(uname -s)" = Darwin ]; then
         exit 1
     }
     # Homebrew's qemu is built without virglrenderer, so the guest gets a
-    # plain virtio-gpu unless this QEMU has the GL device, and the kiosk
-    # renders in software (docs/try-tessaro.md).
-    if qemu-system-aarch64 -device help | grep -q '"virtio-gpu-gl-pci"'; then
-        gpu=virtio-gpu-gl-pci display=cocoa,gl=es
+    # plain virtio-gpu and renders in software unless this QEMU has the GL
+    # device. GL is macOS's own OpenGL (gl=on), not ANGLE's GLES (gl=es),
+    # which leaves Chromium in software (docs/try-tessaro.md, "The QEMU
+    # runtime").
+    if "$qemu" -device help | grep -q '"virtio-gpu-gl-pci"'; then
+        gpu=virtio-gpu-gl-pci display=cocoa,gl=on
     else
         gpu=virtio-gpu-pci display=cocoa
     fi
     [ "$mode" = vnc ] && display=none
     sudo=
     [ "$net" = vmnet-shared ] && sudo=sudo
-    exec $sudo "$(command -v qemu-system-aarch64)" "$@" \
+    exec $sudo "$qemu" "$@" \
         -accel hvf -cpu host \
-        -bios "$(brew --prefix qemu)/share/qemu/edk2-aarch64-code.fd" \
+        -bios "$firmware" \
         -drive "file=$image,format=raw,if=virtio" \
         -device "$gpu" -display "$display" \
         -audiodev coreaudio,id=snd0 -device hda-duplex,audiodev=snd0

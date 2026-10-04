@@ -220,9 +220,12 @@ How it works is in [docs/gui.md](docs/gui.md).
 ## Try Tessaro
 
 Try Tessaro, in the same workspace (`gui/try-tessaro`), is the Mac app that
-runs a device in a VM for someone trying Tessaro. It bundles Homebrew's
-QEMU, so a Mac building it needs `brew install qemu`, and a genericarm64
-image, the one `image:pull` fetched unless another is named.
+runs a device in a VM for someone trying Tessaro. It bundles a QEMU built
+with VirGL from pinned sources (`gui/try-tessaro/build-qemu-gpu.sh`, once,
+into `build/qemu-gpu/`), so a Mac building it needs `brew install glib
+pixman libslirp dtc pkgconf`, and a genericarm64 image, the one
+`image:pull` fetched unless another is named. `qemu:run:arm64` uses that
+QEMU too once it is built.
 
 ```sh
 mise run try:run                      # package and open it, from this checkout

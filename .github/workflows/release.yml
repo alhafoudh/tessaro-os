@@ -418,9 +418,17 @@ jobs:
           workspaces: |
             agent -> ../build/cargo-target
             gui -> ../build/gui-target
-      # The QEMU the app bundles, relinked (gui/try-tessaro/bundle-qemu-macos.sh).
+      # The QEMU the app bundles, built with VirGL from pinned sources
+      # (gui/try-tessaro/build-qemu-gpu.sh) on these Homebrew libraries, and
+      # kept between runs: every pin is in that script, so its hash is the
+      # key and a release rebuilds QEMU only when a pin moved.
       - if: runner.os == 'macOS'
-        run: brew install qemu
+        run: brew install glib pixman libslirp dtc pkgconf
+      - if: runner.os == 'macOS'
+        uses: actions/cache@v6
+        with:
+          path: build/qemu-gpu
+          key: qemu-gpu-${{ matrix.platform }}-${{ hashFiles('gui/try-tessaro/build-qemu-gpu.sh') }}
       - uses: actions/download-artifact@v8
         with:
           pattern: tessaro-os-${{ matrix.machine }}-*.wic.zst

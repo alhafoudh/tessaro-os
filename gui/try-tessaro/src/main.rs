@@ -162,6 +162,7 @@ enum Message {
     Tab(Tab),
     Sound(bool),
     Microphone(bool),
+    Accelerated(bool),
     OpenGui,
     OpenTerminal,
     OpenWebconfig,
@@ -344,6 +345,10 @@ impl App {
             }
             Message::Microphone(on) => {
                 self.settings.microphone = on;
+                self.save_settings();
+            }
+            Message::Accelerated(on) => {
+                self.settings.accelerated = on;
                 self.save_settings();
             }
             Message::OpenGui => {
@@ -758,6 +763,11 @@ impl App {
                 .text_size(TEXT)
                 .size(22)
                 .on_toggle_maybe((stopped && self.settings.sound).then_some(Message::Microphone)),
+            toggler(self.settings.accelerated)
+                .label("Graphics on this computer's GPU")
+                .text_size(TEXT)
+                .size(22)
+                .on_toggle_maybe(stopped.then_some(Message::Accelerated)),
             text(if stopped {
                 "Applied when the device starts."
             } else {

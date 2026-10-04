@@ -56,13 +56,16 @@ impl Running {
             ports,
             cpus,
             memory_mb,
-            gl: has_gl(&qemu),
+            gl: settings.accelerated && has_gl(&qemu),
         };
         let log_path = dir.join(QEMU_LOG);
         let log =
             File::create(&log_path).map_err(|err| format!("{}: {err}", log_path.display()))?;
         let child = Command::new(&qemu)
             .args(qemu::args(&launch))
+            // The virglrenderer patches log at debug by default, into
+            // qemu.log for as long as the device runs.
+            .env("VIRGL_LOG_LEVEL", "warning")
             .stdin(Stdio::null())
             .stdout(log.try_clone().map_err(|err| err.to_string())?)
             .stderr(log)

@@ -73,6 +73,10 @@ pub struct Settings {
     /// This computer's microphone as the device's input. Off by default:
     /// on, macOS asks for access on the first start.
     pub microphone: bool,
+    /// The device draws on this computer's GPU, through VirGL, when the
+    /// bundled QEMU has it. Off is software rendering, for a Mac whose GL
+    /// path misbehaves.
+    pub accelerated: bool,
 }
 
 impl Default for Settings {
@@ -81,6 +85,7 @@ impl Default for Settings {
             resolution: None,
             sound: true,
             microphone: false,
+            accelerated: true,
         }
     }
 }
@@ -121,6 +126,7 @@ mod tests {
             resolution: Some(Resolution::Portrait),
             sound: false,
             microphone: true,
+            accelerated: false,
         };
         settings.save(&dir).unwrap();
         assert_eq!(Settings::load(&dir), settings);
@@ -144,6 +150,13 @@ mod tests {
         assert_eq!(settings.resolution_on(retina), Resolution::FullHd);
         settings.resolution = Some(Resolution::Xga);
         assert_eq!(settings.resolution_on(retina), Resolution::Xga);
+    }
+
+    #[test]
+    fn a_file_from_before_acceleration_turns_it_on() {
+        let settings: Settings =
+            serde_json::from_str(r#"{"resolution":"hd","sound":true,"microphone":false}"#).unwrap();
+        assert!(settings.accelerated);
     }
 
     #[test]
