@@ -92,9 +92,15 @@ each Homebrew formula's license files into `qemu/LICENSES/<formula>/`, a
 build's `components.json`, the same shape for those four. `ruby
 sbom/sbom.rb check --runtime <runtime.json>` judges them under the
 `runtime` policy in `sbom/licenses.yml`; the release workflow's `try` job
-runs it where the file exists (see [sbom.md](sbom.md)). QEMU is GPL and
-carries patches: its corresponding source is the pinned 11.1.1 release
-tarball and the patches `build-qemu-gpu.sh` names.
+runs it where the file exists (see [sbom.md](sbom.md)).
+
+**A release carries the QEMU's source beside the DMG**, because QEMU is GPL
+and the bundled one is patched. `qemu-source.sh` packs
+`try-tessaro-<version>-<platform>-qemu-source.tar` from what
+`build-qemu-gpu.sh` downloaded: the QEMU and virglrenderer release tarballs,
+the virglrenderer patch set, Try Omarchy's patches and `build-qemu-gpu.sh`
+itself, which says how they go together. The libepoxy and ANGLE bottles are
+binaries under MIT and BSD and stay out of it.
 
 ## The VM
 

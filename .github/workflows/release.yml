@@ -454,12 +454,22 @@ jobs:
           name="try-tessaro-$VERSION-$PLATFORM.$PACKAGE"
           mv "build/Try-Tessaro-$PLATFORM.$PACKAGE" "build/artifacts/$name"
           echo "name=$name" >>"$GITHUB_OUTPUT"
+          # The bundled QEMU is GPL and patched: its source goes beside it
+          # (gui/try-tessaro/qemu-source.sh).
+          source="try-tessaro-$VERSION-$PLATFORM-qemu-source.tar"
+          sh gui/try-tessaro/qemu-source.sh "build/artifacts/$source" build/qemu-gpu
+          echo "source=$source" >>"$GITHUB_OUTPUT"
           ls -l build/artifacts
       # Unzipped, as build uploads the images: the artifact is named after
       # the file and downloads as the .dmg itself. release attaches it.
       - uses: actions/upload-artifact@v7
         with:
           path: build/artifacts/${{ steps.pack.outputs.name }}
+          archive: false
+          retention-days: 14
+      - uses: actions/upload-artifact@v7
+        with:
+          path: build/artifacts/${{ steps.pack.outputs.source }}
           archive: false
           retention-days: 14
 

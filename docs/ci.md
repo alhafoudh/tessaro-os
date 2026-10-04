@@ -75,8 +75,11 @@ images and clients stay workflow artifacts.
   checks the bundled runtime's licenses (`sbom.rb check --runtime`), and
   uploads `try-tessaro-<version>-<sha>-<platform>.<package>` unzipped
   (`archive: false`, as `build` uploads the images), so it downloads as the
-  `.dmg` itself. A run with release unticked is how to get a DMG without
-  publishing anything.
+  `.dmg` itself, and beside it the bundled QEMU's source,
+  `try-tessaro-<version>-<platform>-qemu-source.tar` (`qemu-source.sh`, see
+  **The QEMU runtime** in [try-tessaro.md](try-tessaro.md)), which
+  `release` attaches with it. A run with release unticked is how to get a
+  DMG without publishing anything.
 * `release` runs only when asked and only when every job passed, e2e
   included: a skipped e2e is no pass, while an unticked `try` is skipped.
   It tags the built commit `v<version>-<sha>` and attaches every image,
