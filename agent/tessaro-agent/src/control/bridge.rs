@@ -67,9 +67,32 @@ const LOG_MAX: usize = 2000;
 
 /// Left out of `tessaro.config`: who may manage the device and how to reach
 /// it, the public address, which costs a request and is
-/// `network.publicIp()` instead, and the URL filters, which a page has no
-/// business probing for a way around.
-const HIDDEN: &[&str] = &["access.", keys::PUBLIC_IP, keys::URL_ALLOW, keys::URL_BLOCK];
+/// `network.publicIp()` instead, the URL filters, which a page has no
+/// business probing for a way around, the proxy URL, which holds its
+/// password, and how the page is locked down - the agent's tuning,
+/// Chromium's switches, the device origins and the VNC mirror - which every
+/// script on the origin would read.
+const HIDDEN: &[&str] = &[
+    "access.",
+    keys::PUBLIC_IP,
+    keys::URL_ALLOW,
+    keys::URL_BLOCK,
+    keys::PROXY_URL,
+    "agent.",
+    "browser.args_extra",
+    "browser.enable_features",
+    "browser.disable_features",
+    "browser.device_origins",
+    "browser.enforce_origin",
+    "screen.vnc",
+];
+
+/// Is `name` one of `HIDDEN`, or under one of its prefixes?
+fn hidden(name: &str) -> bool {
+    HIDDEN
+        .iter()
+        .any(|hidden| name == *hidden || (hidden.ends_with('.') && name.starts_with(hidden)))
+}
 
 /// The calls `config` mode answers; `actions` answers every call.
 const READS: &[&str] = &[
@@ -78,6 +101,7 @@ const READS: &[&str] = &[
     "network.status",
     "audio.status",
     "printer.list",
+    "printer.jobs",
     "scripts.list",
 ];
 
@@ -375,11 +399,6 @@ impl Control {
             return BTreeMap::new();
         };
         let live = self.live().await;
-        let hidden = |name: &str| {
-            HIDDEN.iter().any(|hidden| {
-                name == *hidden || (hidden.ends_with('.') && name.starts_with(hidden))
-            })
-        };
         keys::KEYS
             .iter()
             .filter(|key| self.paths.offers(key))
@@ -575,6 +594,13 @@ impl Control {
                 self.set_one(&caller, keys::AUDIO_VOLUME, percent.to_string(), true)
                     .await
             }
+            "audio.inputVolume" => {
+                let Some(percent) = arg(0).as_u64() else {
+                    return plain(Err("inputVolume takes a whole number, 0 to 100".to_string()));
+                };
+                self.set_one(&caller, keys::AUDIO_INPUT_VOLUME, percent.to_string(), true)
+                    .await
+            }
             "audio.mute" => {
                 let Some(on) = arg(0).as_bool() else {
                     return plain(Err("mute takes true or false".to_string()));
@@ -643,6 +669,24 @@ impl Control {
                 plain(self.files.list(&path, false).await.and_then(to_value))
             }
             "printer.list" => plain(self.printer_list().await.map(|list| page_printers(&list))),
+            "printer.jobs" => {
+                let printer = arg(0).as_str().map(str::to_string);
+                plain(self.printer_jobs(printer).await.and_then(to_value))
+            }
+            "printer.cancel" => {
+                let Some(job) = arg(0).as_str().map(str::to_string) else {
+                    return plain(Err(
+                        "cancel takes a job, as printer.jobs() names it".to_string()
+                    ));
+                };
+                if !self.printing_enabled().await {
+                    return plain(Err(
+                        "printing is off; `tessaro-ctl config set printer.enable=1` turns it on"
+                            .to_string(),
+                    ));
+                }
+                plain(self.printer_cancel(&caller, job).await.and_then(to_value))
+            }
             // window.print(), taken over: the page as the browser prints it,
             // to the default printer. Chromium's own printing needs GTK,
             // which this build has none of (docs/printing.md).
@@ -1030,7 +1074,9 @@ fn page_printers(list: &protocol::PrinterList) -> Value {
 }
 
 /// `tessaro.device.status()`: what `device status` shows, without the
-/// node's fingerprint and claim.
+/// node's fingerprint and claim, whether remote DevTools is open (it tells
+/// a page it can be driven) and the settings revision (the `tessaro:config`
+/// event says when they change).
 fn page_status(status: &protocol::Status) -> Value {
     json!({
         "name": status.node.name,
@@ -1040,9 +1086,22 @@ fn page_status(status: &protocol::Status) -> Value {
         "machine": status.node.machine,
         "kioskUrl": status.kiosk_url,
         "currentUrl": status.current_url,
+        "browserAnswering": status.browser_answering,
         "maintenance": status.maintenance,
         "debugScreen": status.debug_screen,
         "screenOn": status.screen_on,
+        "pending": status.pending.as_ref().map(|pending| json!({
+            "key": pending.key,
+            "value": pending.value,
+            "previous": pending.previous,
+            "secondsLeft": pending.seconds_left,
+        })),
+        "bridge": status.bridge.as_ref().map(|bridge| json!({
+            "mode": bridge.mode,
+            "script": bridge.script,
+            "scriptProblem": bridge.script_problem,
+        })),
+        "time": status.time,
         "units": status.units,
         "data": status.data,
         "hardware": status.hardware,
@@ -1099,9 +1158,41 @@ mod tests {
         assert_eq!(status["hardware"]["vendor"], "QEMU");
         assert_eq!(status["memory"]["total"], 4_000_000u64 * 1024);
         assert!(status.get("cpuPercent").is_some());
-        assert!(status.get("name").is_some());
-        for hidden in ["fingerprint", "claimed", "node"] {
+        for shown in ["name", "time", "pending", "bridge", "browserAnswering"] {
+            assert!(
+                status.get(shown).is_some(),
+                "{shown} did not reach the page"
+            );
+        }
+        for hidden in ["fingerprint", "claimed", "node", "devtools", "revision"] {
             assert!(status.get(hidden).is_none(), "{hidden} reached the page");
+        }
+    }
+
+    #[test]
+    fn the_page_reads_no_secret_and_not_how_it_is_locked_down() {
+        for name in [
+            "access.listen",
+            "browser.allow",
+            "network.public_ip",
+            "network.proxy.url",
+            "agent.debug",
+            "browser.args_extra",
+            "browser.device_origins",
+            "screen.vnc",
+        ] {
+            assert!(hidden(name), "{name} reaches tessaro.config");
+        }
+        for name in [
+            "network.ip",
+            "network.proxy.bypass",
+            "data.table",
+            "audio.volume",
+            "browser.zoom",
+            "device.name",
+            "network.wifi.hotspot_ssid",
+        ] {
+            assert!(!hidden(name), "{name} is missing from tessaro.config");
         }
     }
 
@@ -1202,5 +1293,8 @@ mod tests {
             "a request, like publicIp"
         );
         assert!(!READS.contains(&"browser.reload"));
+        assert!(READS.contains(&"printer.jobs"));
+        assert!(!READS.contains(&"printer.cancel"));
+        assert!(!READS.contains(&"audio.inputVolume"));
     }
 }

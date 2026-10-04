@@ -62,7 +62,13 @@ await tessaro.device.status();
   request to Cloudflare and is
   `tessaro.network.publicIp()` instead. `browser.block` and `browser.allow`
   too, for the same reason as the browser policies below: a page must not
-  read its own restrictions.
+  read its own restrictions. `network.proxy.url` holds the proxy's password
+  as typed (see **Proxy** in [networking.md](networking.md)). `agent.*`, the
+  Chromium switches (`browser.args_extra`, `browser.enable_features`,
+  `browser.disable_features`), `browser.device_origins`,
+  `browser.enforce_origin` and `screen.vnc` say how the page is locked down
+  and how the device can be reached, and every script on the kiosk origin
+  reads `tessaro.config`.
 * **It follows the device without a reload.** The snapshot is built again
   after every settings change (`converge` pokes the bridge) and every 15s for
   what moves on its own, an address from DHCP or free space. When it changed,
@@ -77,10 +83,11 @@ answers everything:
 | Call | Mode | Does what `tessaro-ctl` does with |
 | --- | --- | --- |
 | `log(level, message)` | config | the journal, as `page (level): message`; `debug` only with `agent.debug` |
-| `device.status()` | config | `device status`, without the node's fingerprint and claim: its `name`, the hardware and its serial, memory and `cpuPercent` included |
+| `device.status()` | config | `device status`, without the node's fingerprint and claim, whether remote DevTools is open (it tells a page it can be driven) and the settings revision (`tessaro:config` says when they change): its `name`, the hardware and its serial, memory, `cpuPercent`, the clock (`time`), a mode on probation (`pending`) and why the injected script is not in the page (`bridge.scriptProblem`) included |
 | `network.status()` | config | `network show`, without the public address |
 | `audio.status()` | config | `audio show` |
 | `printer.list()` | config | `printer list`, without each printer's URI |
+| `printer.jobs(printer)` | config | `printer jobs`: every printer's, or the one named |
 | `scripts.list()` | config | `script list`, only the scripts with `--bridge`, without their bodies: name, description, concurrency, runs going, the last run |
 | `network.publicIp()` | actions | `config get network.public_ip`: asked now |
 | `network.online()` | actions | the same lookup, resolved as `true` or `false` |
@@ -91,12 +98,14 @@ answers everything:
 | `browser.maintenance(on, url)` | actions | `browser maintenance on --url` / `off` |
 | `device.reboot()` | actions | `device reboot` |
 | `audio.volume(percent)`, `audio.mute(on)` | actions | `audio volume`, `audio mute` |
+| `audio.inputVolume(percent)` | actions | `audio input-volume` |
 | `keyboard.show(selector)`, `keyboard.hide()` | actions | `screen keyboard show --selector` / `hide` |
 | `screen.off()`, `screen.on()` | actions | `screen power off` / `on` |
 | `network.ping(host)` | actions | `network ping`: every event, in order |
 | `network.speedTest()` | actions | `network speedtest`: every event, in order |
 | `files.list(path)` | actions | `files list` |
 | `printer.print({ data, path, printer, copies, media, title })` | actions | `printer print`: `data` a string, `Blob`, `ArrayBuffer` or bytes; `path` a file in the store; no `printer` is the default one |
+| `printer.cancel(job)` | actions | `printer cancel`, of a job `printer.jobs()` names |
 | `data.set(name, value)`, `data.unset(name)` | actions | `config set data.NAME=...` / `unset` |
 | `scripts.run(name)` | actions | `script run`, of a script with `--bridge` only: resolves when the run ends with `{run, trigger, started, finished, result, status, succeeded, output, truncated}` (times in seconds since the epoch), whether it succeeded or not |
 
@@ -119,6 +128,30 @@ mirror from the page. Nor is `screen.input.*`, which the page reads in
 is the operator's lockout of the people in front of the screen, which the
 page must not lift, and each change restarts Weston and the browser
 (**Input devices** in docs/display.md).
+
+The other commands no call mirrors are the operator's too:
+
+* **`time`**: the page has `Date` and `device.status().time`; the clock and
+  the timezone are set for the device, not for one page.
+* **`schedule`, `script logs` and the rest of `script`**: when root scripts
+  run and what they printed before is the operator's; the page gets the
+  output of the runs it starts.
+* **`storage`**: the page reads `storage.*` in `tessaro.config`, and
+  `storage grow` repartitions the disk.
+* **`screen modes`, `confirm` and `screenshot`**: a wrong mode leaves the
+  screen black, and a screenshot would show the page what else is on it.
+* **`browser navigate`, `zoom`, `debug`, `devtools` and `eval`**: the page
+  moves itself with `location`; the rest are tools to look at the page from
+  outside.
+* **`network wifi`, `profiles`, `interfaces`, `proxy` and `certs`**: the
+  link is the operator's, and a page that changed it could cut itself off.
+* **`files upload`, `download`, `sync`, `move` and `rm`**: the page reads
+  the store over `/files/` and does not change the operator's files.
+* **`audio output`, `input` and `test`**: which device plays and records is
+  the operator's; the page sets the volume it plays and records at.
+* **`device logs`, `ping` and `restart`** of anything but the browser: the
+  journal carries every caller's actions, and the agent's restart is the
+  operator's.
 
 * **`data.set` leaves the page alone when no template uses the key.** A `data.*` is
   read by the templates and by this bridge only, so a value no template names
@@ -146,6 +179,10 @@ page must not lift, and each change restarts Weston and the browser
   [printing.md](printing.md)).
 * **`printer.list()` leaves out where each printer is**: a URI can carry a
   print server's user and password, and the page needs only the names.
+* **`printer.cancel()` needs `printer.enable` too**, and cancels any job
+  waiting, the operator's included: a page that may print may also take
+  back what is stuck in front of its own document. `printer.jobs()` is a
+  read and answers with printing off, like `printer.list()`.
 * **The page runs only the scripts the operator marked for it, and at most
   `SCRIPT_BURST` runs per `SCRIPT_WINDOW`** (`control/bridge.rs`). Each run
   is a root shell, so which ones is the operator's `script create|set

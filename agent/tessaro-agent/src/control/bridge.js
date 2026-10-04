@@ -92,7 +92,10 @@
     device: { status: () => call("device.status") },
     network: { status: () => call("network.status") },
     audio: { status: () => call("audio.status") },
-    printer: { list: () => call("printer.list") },
+    printer: {
+      list: () => call("printer.list"),
+      jobs: (printer) => call("printer.jobs", printer),
+    },
     scripts: { list: () => call("scripts.list") },
   };
 
@@ -123,6 +126,7 @@
     Object.assign(api.audio, {
       volume: (percent) => call("audio.volume", percent),
       mute: (on) => call("audio.mute", on),
+      inputVolume: (percent) => call("audio.inputVolume", percent),
     });
     api.browser = {
       reload: () => call("browser.reload"),
@@ -146,6 +150,7 @@
         const sent = data === undefined || data === null ? rest : { ...rest, data: await base64(data) };
         return call("printer.print", sent);
       },
+      cancel: (job) => call("printer.cancel", job),
     });
     api.data = {
       set: (name, value) => call("data.set", name, value),

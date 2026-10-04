@@ -119,8 +119,9 @@ its script takes `window.print()` over.
   GTK, and taking them out is a full Chromium rebuild.
 
 * **The page bridge prints to any printer by name.** `tessaro.printer.print()`
-  in `actions` mode, refused while `printer.enable` is off, and
-  `tessaro.printer.list()` in `config` mode; see [bridge.md](bridge.md) for
+  and `tessaro.printer.cancel()` in `actions` mode, refused while
+  `printer.enable` is off, and `tessaro.printer.list()` and
+  `tessaro.printer.jobs()` in `config` mode; see [bridge.md](bridge.md) for
   the calls and their limits.
 
 ## Sizes

@@ -518,14 +518,21 @@ module AgentE2E
       guest.run("tessaro-ctl browser bridge config")
       journal.wait_for(/^page bridge: (now )?config, injecting inject\.js$/, timeout: 30)
       wait_value.call("tessaro.config['data.e2e_table']", "12", 30)
-      expect(page_value.call("['network.public_ip', 'access.listen'].some((k) => k in tessaro.config)"))
-        .to eq(false)
+      hidden = %w[network.public_ip access.listen network.proxy.url agent.debug screen.vnc]
+      expect(page_value.call("#{hidden.to_json}.some((k) => k in tessaro.config)")).to eq(false)
+      expect(page_value.call("'network.ip' in tessaro.config")).to eq(true)
       name = page_value.call("tessaro.config['device.name']")
       expect(name).to match(/\A[a-z0-9-]+\z/)
       expect(guest.run("tessaro-ctl config get device.name")).to include(name)
       expect(page_value.call("typeof tessaro.browser")).to eq("undefined")
       status = guest.run("tessaro-ctl browser eval 'tessaro.device.status().then((s) => s.kioskUrl)'")
       expect(status).to include(KIOSK_URL)
+      clock = guest.run("tessaro-ctl browser eval 'tessaro.device.status().then((s) => " \
+                        "[\"timezone\" in s.time, \"devtools\" in s].join())'")
+      expect(clock).to include("true,false")
+      expect(guest.run("tessaro-ctl browser eval 'tessaro.printer.jobs().then(Array.isArray)'")).to include("true")
+      guest.run("tessaro-ctl browser eval 'tessaro.log(\"info\", \"e2e bridge log\")'")
+      journal.wait_for(/^page \(info\): e2e bridge log$/, timeout: 30)
 
       guest.run("tessaro-ctl browser bridge actions")
       journal.wait_for(/^page bridge: (now )?actions, injecting inject\.js$/, timeout: 30)
@@ -538,8 +545,24 @@ module AgentE2E
       guest.run("tessaro-ctl browser eval 'tessaro.data.set(\"e2e_note\", \"kept\")'")
       expect(guest.run("tessaro-ctl config get data.e2e_note")).to include("kept")
       wait_value.call("tessaro.config['data.e2e_note']", "kept", 30)
+
+      guest.run("tessaro-ctl browser eval 'tessaro.audio.inputVolume(40)'")
+      expect(guest.run("tessaro-ctl config get audio.input_volume")).to include("40")
+      # Printing is off on this lane: cancel is refused before any job is looked up.
+      cancel = guest.run("tessaro-ctl browser eval 'tessaro.printer.cancel(\"none-1\").then(() => \"cancelled\", (e) => e.message)'")
+      expect(cancel).to include("printing is off")
+      online = guest.run("tessaro-ctl browser eval 'tessaro.network.online().then((up) => typeof up)'")
+      expect(online).to include("boolean")
+      files = guest.run("tessaro-ctl browser eval 'tessaro.files.list(\"\").then((l) => JSON.stringify(l).includes(\"inject.js\"))'")
+      expect(files).to include("true")
+      guest.run("tessaro-ctl browser eval 'tessaro.screen.off()'")
+      expect(guest.run("tessaro-ctl screen power")).to include("the screen is off")
+      guest.run("tessaro-ctl browser eval 'tessaro.screen.on()'")
+      expect(guest.run("tessaro-ctl screen power")).to include("the screen is on")
     ensure
-      guest.run("tessaro-ctl config unset browser.inject.script browser.bridge.mode data.e2e_table data.e2e_note; " \
+      guest.run("tessaro-ctl screen power on", allow_failure: true)
+      guest.run("tessaro-ctl config unset browser.inject.script browser.bridge.mode data.e2e_table data.e2e_note " \
+                "audio.input_volume; " \
                 "tessaro-ctl files rm -y inject.js; rm -f /tmp/inject.js",
                 allow_failure: true)
     end

@@ -26,6 +26,8 @@
 <button onclick="run('device.status', () => tessaro.device.status())">device.status</button>
 <button onclick="run('network.status', () => tessaro.network.status())">network.status</button>
 <button onclick="run('audio.status', () => tessaro.audio.status())">audio.status</button>
+<button onclick="run('printer.list', () => tessaro.printer.list())">printer.list</button>
+<button onclick="run('printer.jobs', () => tessaro.printer.jobs())">printer.jobs</button>
 
 <h2>actions: network</h2>
 <input id="host" value="1.1.1.1">
@@ -39,6 +41,13 @@
 <button onclick="run('audio.volume', () => tessaro.audio.volume(Number(val('volume'))))">volume</button>
 <button onclick="run('audio.mute on', () => tessaro.audio.mute(true))">mute</button>
 <button onclick="run('audio.mute off', () => tessaro.audio.mute(false))">unmute</button>
+<br>
+<input id="inputVolume" type="number" min="0" max="100" value="50">
+<button onclick="run('audio.inputVolume', () => tessaro.audio.inputVolume(Number(val('inputVolume'))))">inputVolume</button>
+
+<h2>actions: printer</h2>
+<input id="job" placeholder="job, from printer.jobs">
+<button onclick="run('printer.cancel', () => tessaro.printer.cancel(val('job')))">printer.cancel</button>
 
 <h2>actions: keyboard and screen</h2>
 <input id="kbd" placeholder="type here">
