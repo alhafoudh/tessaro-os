@@ -4,7 +4,7 @@ GitHub Actions, in `.github/workflows/`. Each workflow calls the mise tasks
 rather than repeating what they run, so a job does what the same task does
 on a workstation, and changing a task changes CI with it.
 
-## Every push: `ci.yml`
+## Every push and pull request: `ci.yml`
 
 **Everything that builds without bitbake is checked on every push and pull
 request**, on GitHub's own runners so it never waits behind an image build:
@@ -31,18 +31,18 @@ target dirs that `mise.toml` sets (`build/cargo-target`,
 `agent:integration` is not in CI: it runs the agent until Ctrl-C and asserts
 nothing.
 
-## By hand: `release.yml`
+## The image jobs: `image.yml`
 
-**Images and releases are built only when someone starts the workflow**,
-from the Actions tab ("Run workflow"). Its inputs pick the machines, whether
-e2e runs on the qemu image, the arguments for `e2e:run` (`-o '--tag
-~reboot'`), and whether the run becomes a GitHub release. That last one
-starts unticked, so a run is a dev build unless it is ticked; without it the
-images and clients stay workflow artifacts.
+**Images are built and tested only in a run someone starts by hand**, and
+both workflows that do it, `release.yml` and `e2e.yml`, call `image.yml`
+(`workflow_call`) for those jobs, so building and testing an image is
+written once. Its inputs are the machines (a JSON array), whether e2e runs,
+the arguments for `e2e:run` and whether the images are for a release. Its
+jobs show up inside the caller's run, as `image / build (<machine>)` and
+`image / e2e`.
 
-* `matrix` turns the picked machines into the build matrix and names the
-  run's version with `image:name` (`<version>-<sha>`), the one every image
-  and client archive carries.
+* `version` names the run's version with `image:name` (`<version>-<sha>`),
+  the one every image carries.
 * `build` runs once per machine, one at a time, on the self-hosted runner:
   `image:name`, then `image:build`, then `sbom:build`, which fails the leg
   on a license the policy does not allow, then `sources:collect`, which
@@ -54,17 +54,49 @@ images and clients stay workflow artifacts.
   run here because they read what the image build left in the tree; the
   sources themselves stay in the store ([sbom.md](sbom.md), "Sources").
 * `e2e` runs after every build leg, on the self-hosted runner, when e2e is
-  ticked and qemux86-64 was built: `e2e:setup` and `e2e:run`, then
+  asked for and qemux86-64 was built: `e2e:setup` and `e2e:run`, then
   `build/e2e/` uploaded as `e2e-logs`.
+
+**`image.yml` has no concurrency of its own; the job that calls it does.**
+Both callers put that job in the `beef-yocto` group (**e2e is a job of its
+own** below). The group cannot sit at the top of `image.yml` as well: a
+called workflow in the same group as its caller waits for itself forever.
+
+## By hand: `e2e.yml`
+
+**The qemu image of a branch, built and tested, without clients or a
+release**, from the Actions tab: pick the branch in "Use workflow from" (a
+pull request's branch is tested this way) and, optionally, the arguments for
+`e2e:run`. It calls `image.yml` with qemux86-64 and e2e. Pull requests do
+not run it on their own, and a fork's branch cannot be picked: the jobs run
+on the build host (**Never trigger the image workflows from
+`pull_request`** below). It shows in the Actions tab once it is on the
+default branch; from then on any branch can be picked.
+
+## By hand: `release.yml`
+
+**Releases are built only when someone starts the workflow**, from the
+Actions tab ("Run workflow"). Its inputs pick the machines, whether e2e
+runs on the qemu image, the arguments for `e2e:run` (`-o '--tag
+~reboot'`), and whether the run becomes a GitHub release. That last one
+starts unticked, so a run is a dev build unless it is ticked; without it the
+images and clients stay workflow artifacts.
+
+* `pick` turns the picked machines into the JSON array for `image.yml` and
+  names the run's version the way `image.yml`'s `version` does: the clients
+  need it before `image.yml` has finished, the only point its outputs
+  exist.
+* `image` calls `image.yml` with the picked machines and e2e.
 * `clients` runs `ctl:build` and `gui:build` on GitHub's runners, one leg
   per platform: linux-x86_64, linux-aarch64, macos-arm64 and
   windows-x86_64. It uploads `tessaro-ctl-<version>-<sha>-<platform>` and
   `tessaro-gui-<version>-<sha>-<platform>`, as `.tar.gz`, or `.zip` on
   Windows and for the macOS `Tessaro.app`, as `clients-<platform>`.
 * `try` builds Try Tessaro ([try-tessaro.md](try-tessaro.md)) when the try
-  box is ticked, which needs genericarm64 picked too (`matrix` fails up
-  front otherwise). It waits for `build`, all of it, since a job cannot
-  wait for one matrix leg, so the package carries this run's image. It is
+  box is ticked, which needs genericarm64 picked too (`pick` fails up
+  front otherwise). It waits for `image`, all of it, since a job cannot
+  wait for one build leg, so the package carries this run's image. A
+  failed e2e or another machine's failed leg does not stop it. It is
   a matrix, one leg per platform on GitHub's runners: each row names the
   runner, the machine whose image it bundles and the package, and macOS
   (`macos-arm64`, genericarm64, a DMG) is the only one; another platform is
@@ -81,10 +113,11 @@ images and clients stay workflow artifacts.
   `release` attaches with it. A run with release unticked is how to get a
   DMG without publishing anything.
 * `release` runs only when asked and only when every job passed, e2e
-  included: a skipped e2e is no pass, while an unticked `try` is skipped.
+  included, while an unticked `try` is skipped. A skipped e2e would let
+  `image` pass, so `pick` refuses a release without e2e ticked.
   It tags the built commit `v<version>-<sha>` and attaches every image,
   bmap, SBOM bundle, license list, client archive and Try Tessaro package.
-  `matrix` fails up front when release is ticked without e2e or without
+  `pick` fails up front when release is ticked without e2e or without
   qemux86-64, or when a release of the same version (the part before the
   sha) already exists, so no run builds for hours toward a release it
   cannot make. Every release therefore needs a new `DISTRO_VERSION` in
@@ -123,10 +156,11 @@ tree is still there; a failed e2e is re-run on its own ("Re-run failed
 jobs") without building again. `needs: build` waits for every build leg, so
 on a run with several machines e2e starts after the last one.
 
-* **The workflow has one concurrency group, `beef-yocto`**, so no other run
-  builds into the workspace between `build` and `e2e`. A run started while
-  one is going waits; GitHub keeps only one run waiting and cancels an older
-  waiting one.
+* **The job that calls `image.yml` is in the `beef-yocto` concurrency
+  group, in `release.yml` and `e2e.yml` alike**, so no other run builds
+  into the workspace between `build` and `e2e`. A run started while one is
+  going waits; GitHub keeps only one run waiting in the group and cancels an
+  older waiting one, whichever of the workflows it came from.
 * **`e2e` first checks the tree holds this run's image**: `image:name` must
   be this run's version, and the deploy directory's
   `tessaro-os-qemux86-64.rootfs.wic.zst` must point at that name. A failed
@@ -172,9 +206,12 @@ On the host it is a directory that is simply there.
   workstation build or e2e run on the host finishes first. A job cancelled
   mid-build can leave its kas container running; check `docker ps` before
   the next one.
-* **Never trigger `release.yml` from `pull_request`.** A self-hosted runner
-  runs whatever the workflow checks out; `workflow_dispatch` keeps that to
-  people with write access to the repository.
+* **Never trigger the image workflows from `pull_request`**: not
+  `release.yml`, not `e2e.yml`, and never call `image.yml` from a workflow
+  that `pull_request` triggers. The repository is public and a self-hosted
+  runner runs whatever the workflow checks out, a fork's pull request
+  included; `workflow_dispatch` keeps that to people with write access to
+  the repository.
 
 ### Setting it up
 

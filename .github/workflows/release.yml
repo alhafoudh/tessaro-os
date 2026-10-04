@@ -1,11 +1,10 @@
 # Build images by hand, run e2e on the qemu one, build tessaro-ctl and
 # tessaro-gui for every platform, Try Tessaro around the genericarm64 image
-# when try is ticked, and publish them all as a release when that is ticked. Only the image builds run on the
-# self-hosted runner on the build host, which uses the shared download and
-# sstate cache in place: it is far too big for a cache store. Everything else
-# runs on GitHub's runners. Only workflow_dispatch triggers this, so only
-# people with write access run code on that host - never add pull_request
-# here. See docs/ci.md.
+# when try is ticked, and publish them all as a release when that is ticked.
+# The images and e2e are image.yml's jobs, on the self-hosted runner on the
+# build host; everything else runs on GitHub's runners. Only
+# workflow_dispatch triggers this, so only people with write access run code
+# on that host - never add pull_request here. See docs/ci.md.
 
 name: release
 
@@ -56,19 +55,12 @@ on:
 permissions:
   contents: read
 
-# One run at a time: e2e boots the image the build left in the runner's
-# workspace, so no other run may build in between. A run started while one
-# is going waits for it.
-concurrency:
-  group: beef-yocto
-  cancel-in-progress: false
-
 env:
   # mise refuses an untrusted mise.toml; the checkout is this repo's own.
   MISE_TRUSTED_CONFIG_PATHS: ${{ github.workspace }}
 
 jobs:
-  matrix:
+  pick:
     runs-on: ubuntu-latest
     outputs:
       machines: ${{ steps.pick.outputs.machines }}
@@ -79,7 +71,9 @@ jobs:
       - uses: jdx/mise-action@v5
         with:
           install: false
-      # The version every image and client of this run is named with. A fresh
+      # The version every image and client of this run is named with, the
+      # same as image.yml's version job computes: the clients need it before
+      # image.yml's outputs exist, which is only once it has finished. A fresh
       # checkout is never -dirty; the build host's can be, and build checks.
       - id: version
         env:
@@ -123,210 +117,26 @@ jobs:
           fi
           echo "machines=$machines" >> "$GITHUB_OUTPUT"
 
-  build:
-    needs: matrix
-    runs-on: [self-hosted, yocto]
-    timeout-minutes: 1440
-    strategy:
-      matrix:
-        machine: ${{ fromJSON(needs.matrix.outputs.machines) }}
-      # One build at a time: the legs share the cache and the host.
-      max-parallel: 1
-      fail-fast: false
-    env:
-      TESSARO_MACHINE: ${{ matrix.machine }}
-    steps:
-      # clean: false, or checkout's git clean -ffdx wipes the kas layer
-      # checkouts and build/, and every build starts from nothing.
-      - uses: actions/checkout@v5
-        with:
-          clean: false
-
-      # The same link a worktree gets (CLAUDE.md). /cache is gitignored, so
-      # it does not make the image -dirty.
-      - name: Link the shared cache
-        env:
-          TESSARO_CACHE_DIR: ${{ vars.TESSARO_CACHE_DIR }}
-        run: |
-          [ -n "$TESSARO_CACHE_DIR" ] || { echo "::error::set the TESSARO_CACHE_DIR repository variable"; exit 1; }
-          [ -d "$TESSARO_CACHE_DIR" ] || { echo "::error::$TESSARO_CACHE_DIR is not a directory"; exit 1; }
-          ln -sfn "$TESSARO_CACHE_DIR" cache
-          mkdir -p build
-
-      - name: Name the image
-        id: name
-        env:
-          RELEASE: ${{ inputs.release }}
-          EXPECTED: ${{ needs.matrix.outputs.version }}
-        run: |
-          name=$(mise run --quiet image:name | tail -n 1)
-          version=${name#"tessaro-os-$TESSARO_MACHINE-"}
-          version=${version%.wic.zst}
-          echo "image: $name"
-          case "$version" in
-            *-dirty)
-              [ "$RELEASE" != true ] || { echo "::error::the tree is dirty, a release must come from a clean checkout"; exit 1; }
-              echo "::warning::the tree is dirty, the image is named $name" ;;
-          esac
-          [ "${version%-dirty}" = "$EXPECTED" ] || { echo "::error::the image is $version but the run is $EXPECTED"; exit 1; }
-          echo "name=$name" >> "$GITHUB_OUTPUT"
-          echo "base=${name%.wic.zst}" >> "$GITHUB_OUTPUT"
-
-      # One build at a time across every checkout on the host (CLAUDE.md),
-      # a workstation build or e2e run included.
-      - name: Wait for the host to be free
-        timeout-minutes: 360
-        run: |
-          while busy=$(pgrep -af 'kas-container|bitbake'); do
-            echo "waiting for:"
-            echo "$busy"
-            sleep 60
-          done
-
-      - name: Build
-        run: mise run image:build
-
-      - name: Collect the image
-        env:
-          NAME: ${{ steps.name.outputs.name }}
-        run: |
-          deploy="build/$TESSARO_MACHINE/tmp/deploy/images/$TESSARO_MACHINE"
-          mkdir -p build/artifacts
-          rm -f build/artifacts/*
-          cp "$deploy/$NAME" "$deploy/${NAME%.wic.zst}.wic.bmap" build/artifacts/
-          ls -l build/artifacts
-
-      # The image's SBOM bundle and license list (docs/sbom.md), named after
-      # the image. Fails on a license sbom/licenses.yml does not allow.
-      - name: SBOM
-        env:
-          BASE: ${{ steps.name.outputs.base }}
-        run: |
-          rm -rf "build/sbom/$TESSARO_MACHINE"
-          mise run sbom:build
-          cp "build/sbom/$TESSARO_MACHINE/$BASE.sbom.tar.zst" "build/sbom/$TESSARO_MACHINE/$BASE.licenses.csv" build/artifacts/
-          ls -l build/artifacts
-
-      # The image's GPL, LGPL and AGPL sources into the store on this host,
-      # and the list of them, which goes with the release (docs/sbom.md,
-      # "Sources"). Fails when a copyleft package has no archived source.
-      - name: Sources
-        env:
-          BASE: ${{ steps.name.outputs.base }}
-          TESSARO_SOURCES_DIR: ${{ vars.TESSARO_SOURCES_DIR }}
-        run: |
-          [ -n "$TESSARO_SOURCES_DIR" ] || { echo "::error::set the TESSARO_SOURCES_DIR repository variable"; exit 1; }
-          mise run sources:collect
-          cp "build/sbom/$TESSARO_MACHINE/$BASE.sources.txt" build/artifacts/
-
-      # archive: false uploads each file as it is, not zipped, so the image,
-      # its bmap, its SBOM files and its sources list download one by one.
-      # Each artifact is named after its file.
-      - uses: actions/upload-artifact@v7
-        with:
-          path: build/artifacts/${{ steps.name.outputs.name }}
-          archive: false
-          retention-days: 14
-
-      - uses: actions/upload-artifact@v7
-        with:
-          path: build/artifacts/${{ steps.name.outputs.base }}.wic.bmap
-          archive: false
-          retention-days: 14
-
-      - uses: actions/upload-artifact@v7
-        with:
-          path: build/artifacts/${{ steps.name.outputs.base }}.sbom.tar.zst
-          archive: false
-          retention-days: 14
-
-      - uses: actions/upload-artifact@v7
-        with:
-          path: build/artifacts/${{ steps.name.outputs.base }}.licenses.csv
-          archive: false
-          retention-days: 14
-
-      - uses: actions/upload-artifact@v7
-        with:
-          path: build/artifacts/${{ steps.name.outputs.base }}.sources.txt
-          archive: false
-          retention-days: 14
-
-  # e2e boots the image out of the kas build tree that built it (native qemu,
-  # OVMF, qemuboot.conf), not out of the .wic alone, so it runs on the build
-  # host in the same workspace, which build left in place. A job of its own,
-  # so it can be re-run without the build. It waits for every build leg.
-  e2e:
-    needs: [matrix, build]
-    # A failed Pi leg does not keep the qemu image from its test; the check
-    # below fails if the qemu build is not the one in the tree.
-    if: >-
-      always() && inputs.e2e && needs.matrix.result == 'success'
-      && needs.build.result != 'cancelled'
-      && contains(fromJSON(needs.matrix.outputs.machines), 'qemux86-64')
-    runs-on: [self-hosted, yocto]
-    # The wait for the host below, plus the suite's 30.
-    timeout-minutes: 400
-    env:
-      TESSARO_MACHINE: qemux86-64
-    steps:
-      # clean: false, so the build tree build left stays.
-      - uses: actions/checkout@v5
-        with:
-          clean: false
-
-      # The tree's latest image must be this commit's, or the suite would
-      # test something else than what build uploaded.
-      - name: Check the image is this run's
-        env:
-          EXPECTED: ${{ needs.matrix.outputs.version }}
-        run: |
-          name=$(mise run --quiet image:name | tail -n 1)
-          version=${name#tessaro-os-qemux86-64-}
-          version=${version%.wic.zst}
-          [ "${version%-dirty}" = "$EXPECTED" ] || { echo "::error::the checkout is $version but the run is $EXPECTED"; exit 1; }
-          latest=$(readlink build/qemux86-64/tmp/deploy/images/qemux86-64/tessaro-os-qemux86-64.rootfs.wic.zst || true)
-          [ "$latest" = "$name" ] || { echo "::error::the tree's latest image is ${latest:-missing}, not $name"; exit 1; }
-          echo "testing $name"
-
-      # One build or e2e run at a time across every checkout on the host
-      # (CLAUDE.md).
-      - name: Wait for the host to be free
-        timeout-minutes: 360
-        run: |
-          while busy=$(pgrep -af 'kas-container|bitbake'); do
-            echo "waiting for:"
-            echo "$busy"
-            sleep 60
-          done
-
-      - name: e2e
-        timeout-minutes: 30
-        env:
-          E2E_ARGS: ${{ inputs.e2e_args }}
-          # VMs at a time; the build host has the cores and memory for them.
-          E2E_JOBS: "8"
-          # Ports away from the workstation's own VMs and dev:tunnel forwards.
-          E2E_WORKER_OFFSET: "10"
-          # Inside build/, so the gems never make the image -dirty.
-          BUNDLE_PATH: ${{ github.workspace }}/build/e2e-bundle
-        run: |
-          mise run e2e:setup
-          eval "set -- $E2E_ARGS"
-          mise run e2e:run -- "$@"
-
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: e2e-logs
-          path: build/e2e/
-          if-no-files-found: ignore
-          retention-days: 14
+  # The picked images and e2e on the qemu one, on the build host.
+  image:
+    needs: pick
+    uses: ./.github/workflows/image.yml
+    # One run at a time, e2e.yml's included: e2e boots the image the build
+    # left in the runner's workspace, so no other run may build in between.
+    # A run started while one is going waits for it.
+    concurrency:
+      group: beef-yocto
+      cancel-in-progress: false
+    with:
+      machines: ${{ needs.pick.outputs.machines }}
+      e2e: ${{ inputs.e2e }}
+      e2e_args: ${{ inputs.e2e_args }}
+      release: ${{ inputs.release }}
 
   # The desktop clients, on GitHub's runners: the build host is kept for the
   # image builds alone. No lint or test here, ci.yml ran them on the push.
   clients:
-    needs: matrix
+    needs: pick
     strategy:
       matrix:
         include:
@@ -368,7 +178,7 @@ jobs:
       - run: mise run gui:build
       - name: Pack
         env:
-          VERSION: ${{ needs.matrix.outputs.version }}
+          VERSION: ${{ needs.pick.outputs.version }}
           PLATFORM: ${{ matrix.platform }}
         run: |
           set -e
@@ -398,15 +208,19 @@ jobs:
           retention-days: 14
 
   # Try Tessaro, one leg per platform on GitHub's runners, around the image
-  # this run built for it: only when try is ticked (matrix makes sure the
-  # machines are picked), and after build, whose images it takes from this
-  # run's artifacts (a job cannot wait for one matrix leg, so it waits for
-  # them all). A platform is a row in the matrix and its packaging in
+  # this run built for it: only when try is ticked (pick makes sure the
+  # machines are picked), and after image, whose images it takes from this
+  # run's artifacts (a job cannot wait for one build leg, so it waits for
+  # them all, e2e included). A failed e2e or another machine's failed leg
+  # does not keep it from running; a missing genericarm64 image fails the
+  # download. A platform is a row in the matrix and its packaging in
   # try:build; macOS is the only one. Signed ad hoc, not notarized. See
   # docs/try-tessaro.md.
   try:
-    needs: [matrix, build]
-    if: inputs.try
+    needs: [pick, image]
+    if: >-
+      always() && inputs.try && needs.pick.result == 'success'
+      && needs.image.result != 'cancelled'
     name: try (${{ matrix.platform }})
     strategy:
       matrix:
@@ -458,7 +272,7 @@ jobs:
       - name: Pack
         id: pack
         env:
-          VERSION: ${{ needs.matrix.outputs.version }}
+          VERSION: ${{ needs.pick.outputs.version }}
           PLATFORM: ${{ matrix.platform }}
           PACKAGE: ${{ matrix.package }}
         run: |
@@ -473,7 +287,7 @@ jobs:
           sh gui/try-tessaro/qemu-source.sh "build/artifacts/$source" build/qemu-gpu
           echo "source=$source" >>"$GITHUB_OUTPUT"
           ls -l build/artifacts
-      # Unzipped, as build uploads the images: the artifact is named after
+      # Unzipped, as image.yml uploads the images: the artifact is named after
       # the file and downloads as the .dmg itself. release attaches it.
       - uses: actions/upload-artifact@v7
         with:
@@ -487,14 +301,13 @@ jobs:
           retention-days: 14
 
   release:
-    needs: [matrix, build, e2e, clients, try]
-    # always(), since e2e's own if uses it; a release needs e2e to have
-    # passed, never skipped (matrix refuses a release without e2e). try is
-    # skipped when unticked.
+    needs: [pick, image, clients, try]
+    # always(), or the skipped try would skip it. image succeeds only with
+    # every build leg and e2e passed, and pick refuses a release without e2e
+    # ticked, so e2e cannot have been skipped. try is skipped when unticked.
     if: >-
       always() && inputs.release
-      && needs.build.result == 'success' && needs.clients.result == 'success'
-      && needs.e2e.result == 'success'
+      && needs.image.result == 'success' && needs.clients.result == 'success'
       && (needs.try.result == 'success' || needs.try.result == 'skipped')
     runs-on: ubuntu-latest
     permissions:
@@ -519,7 +332,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          VERSION: ${{ needs.matrix.outputs.version }}
+          VERSION: ${{ needs.pick.outputs.version }}
         run: |
           ls -l dist
           gh release create "v$VERSION" dist/* \

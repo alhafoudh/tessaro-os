@@ -298,8 +298,10 @@ GitHub Actions lints and tests the agent, the desktop client and Webconfig,
 and checks their dependencies' licenses, on every push (`.github/workflows/ci.yml`). Releases are started by hand from
 the Actions tab (`release.yml`): the images on a self-hosted runner on the
 build host, with e2e on the qemu image, and `tessaro-ctl` and `tessaro-gui`
-on GitHub's runners. The runner's setup is in
-[docs/ci.md](docs/ci.md).
+on GitHub's runners. To test a branch before merging it, a pull request's
+included, start `e2e.yml` from the Actions tab on that branch: it builds
+the qemu image and runs e2e on it, nothing else. Pull requests do not run
+it on their own. The runner's setup is in [docs/ci.md](docs/ci.md).
 
 ## SBOM and licenses
 

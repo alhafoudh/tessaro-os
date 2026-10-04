@@ -47,7 +47,7 @@ same change as the behaviour it describes.
 | [docs/networking.md](docs/networking.md) | NetworkManager, the managed profiles and their transactions, hotspot, ping, speed test, the proxy (local tinyproxy, what goes through it), extra certificate authorities |
 | [docs/updates.md](docs/updates.md) | in-place updates, `--repartition`, growing `/data` |
 | [docs/e2e.md](docs/e2e.md) | the qemu RSpec suite: running it, lanes, ports, harness quirks |
-| [docs/ci.md](docs/ci.md) | GitHub Actions: the per-push checks, the manual image build with e2e and release, the Try Tessaro DMG built around the run's genericarm64 image, the self-hosted runner and its cache used in place |
+| [docs/ci.md](docs/ci.md) | GitHub Actions: the per-push checks, the image jobs shared by the manual e2e run and the manual image build with release, the Try Tessaro DMG built around the run's genericarm64 image, the self-hosted runner and its cache used in place |
 | [docs/sbom.md](docs/sbom.md) | the SBOM: what each component is read from (bitbake's SPDX, cargo, npm, vendored files), the bundle and license list a release carries, the license policy and its exceptions, what is not covered |
 | [docs/clients.md](docs/clients.md) | what `tessaro-ctl` and `tessaro-gui` share in `agent/client` and what each keeps, reporting without printing, tones, lines and facts, adding a command, the differences on purpose |
 | [docs/gui.md](docs/gui.md) | `tessaro-gui`: inner windows, keyboard, the node list, device pages per command group, workers and jobs, the VNC viewer |

@@ -1,0 +1,264 @@
+# Build images on the self-hosted runner on the build host and run e2e on the
+# qemu one. Called by release.yml and e2e.yml, both started by hand; the
+# caller sets the beef-yocto concurrency on the job that calls this. The
+# runner uses the shared download and sstate cache in place: it is far too
+# big for a cache store. Only workflow_dispatch callers, so only people with
+# write access run code on that host - never call this from a workflow that
+# pull_request triggers. See docs/ci.md.
+
+name: image
+
+on:
+  workflow_call:
+    inputs:
+      machines:
+        description: JSON array of the machines to build, e.g. '["qemux86-64"]'
+        type: string
+        required: true
+      e2e:
+        description: Run the e2e suite on the qemux86-64 image
+        type: boolean
+        default: false
+      e2e_args:
+        description: Arguments for e2e:run
+        type: string
+        default: ""
+      release:
+        description: The images are for a release, so the tree must be clean
+        type: boolean
+        default: false
+    outputs:
+      version:
+        description: The version every image of this run is named with
+        value: ${{ jobs.version.outputs.version }}
+
+permissions:
+  contents: read
+
+env:
+  # mise refuses an untrusted mise.toml; the checkout is this repo's own.
+  MISE_TRUSTED_CONFIG_PATHS: ${{ github.workspace }}
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+      # image:name needs only git and sed, so no toolchain gets installed.
+      - uses: jdx/mise-action@v5
+        with:
+          install: false
+      # The version every image of this run is named with, the same as
+      # release.yml's pick computes for the clients. A fresh checkout is never
+      # -dirty; the build host's can be, and build checks.
+      - id: version
+        env:
+          MISE_AUTO_INSTALL: "false"
+        run: |
+          name=$(TESSARO_MACHINE=qemux86-64 mise run --quiet image:name | tail -n 1)
+          version=${name#tessaro-os-qemux86-64-}
+          version=${version%.wic.zst}
+          echo "version: $version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: version
+    runs-on: [self-hosted, yocto]
+    timeout-minutes: 1440
+    strategy:
+      matrix:
+        machine: ${{ fromJSON(inputs.machines) }}
+      # One build at a time: the legs share the cache and the host.
+      max-parallel: 1
+      fail-fast: false
+    env:
+      TESSARO_MACHINE: ${{ matrix.machine }}
+    steps:
+      # clean: false, or checkout's git clean -ffdx wipes the kas layer
+      # checkouts and build/, and every build starts from nothing.
+      - uses: actions/checkout@v5
+        with:
+          clean: false
+
+      # The same link a worktree gets (CLAUDE.md). /cache is gitignored, so
+      # it does not make the image -dirty.
+      - name: Link the shared cache
+        env:
+          TESSARO_CACHE_DIR: ${{ vars.TESSARO_CACHE_DIR }}
+        run: |
+          [ -n "$TESSARO_CACHE_DIR" ] || { echo "::error::set the TESSARO_CACHE_DIR repository variable"; exit 1; }
+          [ -d "$TESSARO_CACHE_DIR" ] || { echo "::error::$TESSARO_CACHE_DIR is not a directory"; exit 1; }
+          ln -sfn "$TESSARO_CACHE_DIR" cache
+          mkdir -p build
+
+      - name: Name the image
+        id: name
+        env:
+          RELEASE: ${{ inputs.release }}
+          EXPECTED: ${{ needs.version.outputs.version }}
+        run: |
+          name=$(mise run --quiet image:name | tail -n 1)
+          version=${name#"tessaro-os-$TESSARO_MACHINE-"}
+          version=${version%.wic.zst}
+          echo "image: $name"
+          case "$version" in
+            *-dirty)
+              [ "$RELEASE" != true ] || { echo "::error::the tree is dirty, a release must come from a clean checkout"; exit 1; }
+              echo "::warning::the tree is dirty, the image is named $name" ;;
+          esac
+          [ "${version%-dirty}" = "$EXPECTED" ] || { echo "::error::the image is $version but the run is $EXPECTED"; exit 1; }
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "base=${name%.wic.zst}" >> "$GITHUB_OUTPUT"
+
+      # One build at a time across every checkout on the host (CLAUDE.md),
+      # a workstation build or e2e run included.
+      - name: Wait for the host to be free
+        timeout-minutes: 360
+        run: |
+          while busy=$(pgrep -af 'kas-container|bitbake'); do
+            echo "waiting for:"
+            echo "$busy"
+            sleep 60
+          done
+
+      - name: Build
+        run: mise run image:build
+
+      - name: Collect the image
+        env:
+          NAME: ${{ steps.name.outputs.name }}
+        run: |
+          deploy="build/$TESSARO_MACHINE/tmp/deploy/images/$TESSARO_MACHINE"
+          mkdir -p build/artifacts
+          rm -f build/artifacts/*
+          cp "$deploy/$NAME" "$deploy/${NAME%.wic.zst}.wic.bmap" build/artifacts/
+          ls -l build/artifacts
+
+      # The image's SBOM bundle and license list (docs/sbom.md), named after
+      # the image. Fails on a license sbom/licenses.yml does not allow.
+      - name: SBOM
+        env:
+          BASE: ${{ steps.name.outputs.base }}
+        run: |
+          rm -rf "build/sbom/$TESSARO_MACHINE"
+          mise run sbom:build
+          cp "build/sbom/$TESSARO_MACHINE/$BASE.sbom.tar.zst" "build/sbom/$TESSARO_MACHINE/$BASE.licenses.csv" build/artifacts/
+          ls -l build/artifacts
+
+      # The image's GPL, LGPL and AGPL sources into the store on this host,
+      # and the list of them, which goes with the release (docs/sbom.md,
+      # "Sources"). Fails when a copyleft package has no archived source.
+      - name: Sources
+        env:
+          BASE: ${{ steps.name.outputs.base }}
+          TESSARO_SOURCES_DIR: ${{ vars.TESSARO_SOURCES_DIR }}
+        run: |
+          [ -n "$TESSARO_SOURCES_DIR" ] || { echo "::error::set the TESSARO_SOURCES_DIR repository variable"; exit 1; }
+          mise run sources:collect
+          cp "build/sbom/$TESSARO_MACHINE/$BASE.sources.txt" build/artifacts/
+
+      # archive: false uploads each file as it is, not zipped, so the image,
+      # its bmap, its SBOM files and its sources list download one by one.
+      # Each artifact is named after its file.
+      - uses: actions/upload-artifact@v7
+        with:
+          path: build/artifacts/${{ steps.name.outputs.name }}
+          archive: false
+          retention-days: 14
+
+      - uses: actions/upload-artifact@v7
+        with:
+          path: build/artifacts/${{ steps.name.outputs.base }}.wic.bmap
+          archive: false
+          retention-days: 14
+
+      - uses: actions/upload-artifact@v7
+        with:
+          path: build/artifacts/${{ steps.name.outputs.base }}.sbom.tar.zst
+          archive: false
+          retention-days: 14
+
+      - uses: actions/upload-artifact@v7
+        with:
+          path: build/artifacts/${{ steps.name.outputs.base }}.licenses.csv
+          archive: false
+          retention-days: 14
+
+      - uses: actions/upload-artifact@v7
+        with:
+          path: build/artifacts/${{ steps.name.outputs.base }}.sources.txt
+          archive: false
+          retention-days: 14
+
+  # e2e boots the image out of the kas build tree that built it (native qemu,
+  # OVMF, qemuboot.conf), not out of the .wic alone, so it runs on the build
+  # host in the same workspace, which build left in place. A job of its own,
+  # so it can be re-run without the build. It waits for every build leg.
+  e2e:
+    needs: [version, build]
+    # A failed Pi leg does not keep the qemu image from its test; the check
+    # below fails if the qemu build is not the one in the tree.
+    if: >-
+      always() && inputs.e2e && needs.version.result == 'success'
+      && needs.build.result != 'cancelled'
+      && contains(fromJSON(inputs.machines), 'qemux86-64')
+    runs-on: [self-hosted, yocto]
+    # The wait for the host below, plus the suite's 30.
+    timeout-minutes: 400
+    env:
+      TESSARO_MACHINE: qemux86-64
+    steps:
+      # clean: false, so the build tree build left stays.
+      - uses: actions/checkout@v5
+        with:
+          clean: false
+
+      # The tree's latest image must be this commit's, or the suite would
+      # test something else than what build uploaded.
+      - name: Check the image is this run's
+        env:
+          EXPECTED: ${{ needs.version.outputs.version }}
+        run: |
+          name=$(mise run --quiet image:name | tail -n 1)
+          version=${name#tessaro-os-qemux86-64-}
+          version=${version%.wic.zst}
+          [ "${version%-dirty}" = "$EXPECTED" ] || { echo "::error::the checkout is $version but the run is $EXPECTED"; exit 1; }
+          latest=$(readlink build/qemux86-64/tmp/deploy/images/qemux86-64/tessaro-os-qemux86-64.rootfs.wic.zst || true)
+          [ "$latest" = "$name" ] || { echo "::error::the tree's latest image is ${latest:-missing}, not $name"; exit 1; }
+          echo "testing $name"
+
+      # One build or e2e run at a time across every checkout on the host
+      # (CLAUDE.md).
+      - name: Wait for the host to be free
+        timeout-minutes: 360
+        run: |
+          while busy=$(pgrep -af 'kas-container|bitbake'); do
+            echo "waiting for:"
+            echo "$busy"
+            sleep 60
+          done
+
+      - name: e2e
+        timeout-minutes: 30
+        env:
+          E2E_ARGS: ${{ inputs.e2e_args }}
+          # VMs at a time; the build host has the cores and memory for them.
+          E2E_JOBS: "8"
+          # Ports away from the workstation's own VMs and dev:tunnel forwards.
+          E2E_WORKER_OFFSET: "10"
+          # Inside build/, so the gems never make the image -dirty.
+          BUNDLE_PATH: ${{ github.workspace }}/build/e2e-bundle
+        run: |
+          mise run e2e:setup
+          eval "set -- $E2E_ARGS"
+          mise run e2e:run -- "$@"
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: e2e-logs
+          path: build/e2e/
+          if-no-files-found: ignore
+          retention-days: 14

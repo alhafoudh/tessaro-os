@@ -1,0 +1,31 @@
+# Build the qemux86-64 image of a branch by hand and run e2e on it, without
+# the clients or a release: pick the branch (a pull request's included) in
+# "Use workflow from". image.yml's jobs, on the self-hosted runner on the
+# build host. Only workflow_dispatch triggers this, so only people with write
+# access run code on that host - never add pull_request here. See docs/ci.md.
+
+name: e2e
+
+on:
+  workflow_dispatch:
+    inputs:
+      e2e_args:
+        description: "Arguments for e2e:run, e.g. -o '--tag ~reboot'"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  image:
+    uses: ./.github/workflows/image.yml
+    # The same group as release.yml's image job: one run on the build host
+    # at a time, so no other run builds between this build and its e2e.
+    concurrency:
+      group: beef-yocto
+      cancel-in-progress: false
+    with:
+      machines: '["qemux86-64"]'
+      e2e: true
+      e2e_args: ${{ inputs.e2e_args }}
