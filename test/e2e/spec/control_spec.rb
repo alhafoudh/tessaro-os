@@ -551,5 +551,38 @@ module AgentE2E
     ensure
       guest.run("tessaro-ctl screen power on", allow_failure: true)
     end
+
+    # qemu has a USB keyboard and a USB tablet, no touchscreen: touch is
+    # checked on the Pi by hand.
+    it "input: screen.input.keyboard and .mouse have libinput ignore qemu's keyboard and tablet and restart " \
+       "Weston; unset uses them again", :reconfigure do
+      devices = lambda do
+        guest.run("for n in /dev/input/event*; do udevadm info --query=property --name=$n; echo; done")
+             .split("\n\n").map { |block| block.lines.to_h { _1.strip.split("=", 2) } }
+      end
+      ignored = ->(property) { devices.call.select { _1[property] == "1" }.map { _1["LIBINPUT_IGNORE_DEVICE"] } }
+      weston_started = -> { guest.run("systemctl show -p ActiveEnterTimestampMonotonic --value weston.service").strip }
+
+      expect(ignored.call("ID_INPUT_KEYBOARD")).not_to be_empty, "qemu's USB keyboard is missing"
+      expect(ignored.call("ID_INPUT_TABLET")).not_to be_empty, "qemu's USB tablet is missing"
+      before = weston_started.call
+
+      guest.run("tessaro-ctl config set screen.input.keyboard=0 screen.input.mouse=0")
+      step "wait up to 60s for Weston to restart"
+      deadline = Time.now + 60
+      sleep 2 until quietly { weston_started.call } != before || Time.now > deadline
+      expect(weston_started.call).not_to eq(before), "Weston did not restart"
+      expect(guest.run("cat /run/udev/rules.d/69-tessaro-input.rules")).to include("LIBINPUT_IGNORE_DEVICE")
+      expect(ignored.call("ID_INPUT_KEYBOARD")).to all(eq("1"))
+      expect(ignored.call("ID_INPUT_TABLET")).to all(eq("1"))
+
+      guest.run("tessaro-ctl config unset screen.input.keyboard screen.input.mouse")
+      expect(guest.run("test -e /run/udev/rules.d/69-tessaro-input.rules && echo present || echo gone")).to include("gone")
+      expect(ignored.call("ID_INPUT_KEYBOARD")).to all(be_nil)
+      expect(ignored.call("ID_INPUT_TABLET")).to all(be_nil)
+    ensure
+      guest.run("tessaro-ctl config unset screen.input.keyboard screen.input.mouse", allow_failure: true)
+      pause 5, "let Weston settle"
+    end
   end
 end

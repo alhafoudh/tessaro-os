@@ -122,6 +122,24 @@
       "source": "default"
     },
     {
+      "key": "screen.input.mouse",
+      "env": "KIOSK_INPUT_MOUSE",
+      "value": "1",
+      "source": "default"
+    },
+    {
+      "key": "screen.input.keyboard",
+      "env": "KIOSK_INPUT_KEYBOARD",
+      "value": "1",
+      "source": "default"
+    },
+    {
+      "key": "screen.input.touch",
+      "env": "KIOSK_INPUT_TOUCH",
+      "value": "1",
+      "source": "default"
+    },
+    {
       "key": "screen.vnc",
       "env": "KIOSK_VNC",
       "value": "on",

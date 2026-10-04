@@ -317,6 +317,51 @@
     }
   },
   {
+    "name": "screen.input.mouse",
+    "env": "KIOSK_INPUT_MOUSE",
+    "applies": [
+      "weston"
+    ],
+    "guarded": false,
+    "doc": "Use mice, touchpads and pen tablets; 0 ignores them, and no cursor is drawn. A touch panel that reports itself as a mouse is ignored too.",
+    "values": "1 or 0 (on/off, true/false, yes/no)",
+    "default": "1",
+    "value": null,
+    "input": {
+      "kind": "flag"
+    }
+  },
+  {
+    "name": "screen.input.keyboard",
+    "env": "KIOSK_INPUT_KEYBOARD",
+    "applies": [
+      "weston"
+    ],
+    "guarded": false,
+    "doc": "Use keyboards, barcode scanners included; 0 ignores them, and screen.osk=auto shows the on-screen keyboard as if none were plugged in.",
+    "values": "1 or 0 (on/off, true/false, yes/no)",
+    "default": "1",
+    "value": null,
+    "input": {
+      "kind": "flag"
+    }
+  },
+  {
+    "name": "screen.input.touch",
+    "env": "KIOSK_INPUT_TOUCH",
+    "applies": [
+      "weston"
+    ],
+    "guarded": false,
+    "doc": "Use touchscreens; 0 ignores them. Remote management and the VNC mirror keep working.",
+    "values": "1 or 0 (on/off, true/false, yes/no)",
+    "default": "1",
+    "value": null,
+    "input": {
+      "kind": "flag"
+    }
+  },
+  {
     "name": "screen.vnc",
     "env": "KIOSK_VNC",
     "applies": [

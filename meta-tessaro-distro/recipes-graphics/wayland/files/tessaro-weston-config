@@ -115,6 +115,12 @@ case $vnc in
         ;;
 esac
 
+# screen.input.keyboard=0: tessaro-agent's udev rule has libinput ignore
+# every keyboard, so none counts as attached below.
+keyboard_input=$(read_key "$DEFAULTS" KIOSK_INPUT_KEYBOARD)
+o=$(read_key "$OVERRIDE" KIOSK_INPUT_KEYBOARD)
+[ -n "$o" ] && keyboard_input=$o
+
 # Is a keyboard someone can actually type on attached right now?
 #
 # Both filters are needed:
@@ -142,7 +148,13 @@ esac
 # ends up reporting no keyboard, which shows the on-screen one. That is the
 # safe direction: a superfluous keyboard on a screen is a nuisance, a
 # touch-only device with no way to type is a brick.
+#
+# An ignored keyboard types nothing, so with screen.input.keyboard=0 there is
+# none: auto shows the on-screen keyboard, and one plugged in changes nothing
+# here, so the hotplug check restarts nothing for it.
 hw_keyboard_present() {
+    [ "$keyboard_input" = 0 ] && return 1
+
     for dev in "$INPUT_ROOT"/input*; do
         [ -r "$dev/id/bustype" ] || continue
         case $(cat "$dev/id/bustype") in
@@ -187,6 +199,17 @@ elif grep -q '^[[:space:]]*\[core\][[:space:]]*$' "$OUT"; then
     sed -i '/^[[:space:]]*\[core\][[:space:]]*$/a require-outputs=none' "$OUT"
 else
     printf '\n[core]\nrequire-outputs=none\n' >> "$OUT"
+fi
+
+# And keep running with no input device. [core] require-input defaults to
+# true, and then libweston's libinput backend refuses to start when it finds
+# no device (udev_input_enable, libweston/libinput-seat.c). screen.input.*
+# can have libinput ignore every device there is, and a signage board may
+# have none plugged in at all. A value set by hand in the base wins.
+if grep -q '^[[:space:]]*require-input[[:space:]]*=' "$OUT"; then
+    :
+else
+    sed -i '/^[[:space:]]*\[core\][[:space:]]*$/a require-input=false' "$OUT"
 fi
 
 # Which connectors were connected when this ran, as a comment Weston ignores.

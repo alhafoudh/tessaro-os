@@ -113,7 +113,11 @@ with the names `camera list` shows, and `camera.*` is the operator's, like
 any setting outside `data.*`. Nor is `camera snapshot`: a page that wants a
 camera's picture opens a mirror with `getUserMedia` and draws a frame
 itself, and a snapshot is how the operator sees a camera without taking a
-mirror from the page.
+mirror from the page. Nor is `screen.input.*`, which the page reads in
+`tessaro.config` but cannot set: ignoring the touchscreen or the keyboard
+is the operator's lockout of the people in front of the screen, which the
+page must not lift, and each change restarts Weston and the browser
+(**Input devices** in docs/display.md).
 
 * **`data.set` leaves the page alone when no template uses the key.** A `data.*` is
   read by the templates and by this bridge only, so a value no template names

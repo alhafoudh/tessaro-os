@@ -22,6 +22,9 @@
 //! * `/run/tessaro-camera/camera.env`: camera.format and camera.size for the
 //!   camera mirrors, `tessaro-camera@.service`, which every running mirror
 //!   restarts to read.
+//! * `/run/udev/rules.d/69-tessaro-input.rules`: the input devices
+//!   screen.input.* ignores, which libinput, and so Weston, never opens.
+//!   Replayed through udev when it changes; absent while every kind is used.
 //!
 //! Values need no quoting in the env file: the registry has already refused
 //! every character systemd's parser would treat specially.
@@ -298,6 +301,8 @@ pub struct Rendered {
     pub proxy_changed: bool,
     /// What the camera mirrors capture changed.
     pub camera_changed: bool,
+    /// The input devices Weston ignores changed.
+    pub input_changed: bool,
 }
 
 /// Render every file from `settings` over the image `defaults`.
@@ -326,6 +331,7 @@ pub fn all(
     };
     let proxy_changed = render_proxy(paths, &effective, log)?;
     let camera_changed = render_camera(paths, &effective)?;
+    let input_changed = render_input(paths, &effective, log)?;
 
     Ok(Rendered {
         env_changed,
@@ -333,6 +339,7 @@ pub fn all(
         firmware_changed,
         proxy_changed,
         camera_changed,
+        input_changed,
     })
 }
 
@@ -358,6 +365,96 @@ fn render_camera(paths: &Paths, effective: &state::Effective) -> Result<bool, St
     let path = &paths.camera_env;
     store::replace_if_changed(path, body.as_bytes(), 0o644)
         .map_err(|err| format!("{}: {err}", path.display()))
+}
+
+/// The udev properties of each kind screen.input.* ignores, as udev's
+/// `60-input-id.rules` sets them. A keyboard is `ID_INPUT_KEYBOARD`, not
+/// `ID_INPUT_KEY`, which a power button or a lid switch has too.
+const INPUT_KINDS: &[(&str, &[&str])] = &[
+    (
+        "KIOSK_INPUT_MOUSE",
+        &[
+            "ID_INPUT_MOUSE",
+            "ID_INPUT_TOUCHPAD",
+            "ID_INPUT_POINTINGSTICK",
+            "ID_INPUT_TRACKBALL",
+            "ID_INPUT_TABLET",
+        ],
+    ),
+    ("KIOSK_INPUT_KEYBOARD", &["ID_INPUT_KEYBOARD"]),
+    ("KIOSK_INPUT_TOUCH", &["ID_INPUT_TOUCHSCREEN"]),
+];
+
+/// The udev rule for the ignored input kinds, or `None` while every kind is
+/// used. libinput opens no device with `LIBINPUT_IGNORE_DEVICE`, so Weston
+/// never sees it, and Weston reads it only when it opens a device: a change
+/// restarts Weston (`Consumer::Weston`).
+pub fn input_rules(ignored: &[&str]) -> Option<String> {
+    let lines: Vec<String> = INPUT_KINDS
+        .iter()
+        .filter(|(env, _)| ignored.contains(env))
+        .flat_map(|(_, properties)| properties.iter())
+        .map(|property| {
+            format!(
+                "SUBSYSTEM==\"input\", KERNEL==\"event*\", ENV{{{property}}}==\"1\", \
+                 ENV{{LIBINPUT_IGNORE_DEVICE}}=\"1\"\n"
+            )
+        })
+        .collect();
+    (!lines.is_empty()).then(|| {
+        format!(
+            "# Rendered by tessaro-agent from screen.input.*: input devices Weston ignores.\n{}",
+            lines.concat()
+        )
+    })
+}
+
+/// The input rule, written or removed, and applied to the devices already
+/// present when it changed. A failure to apply it is only logged: the rule
+/// is in place for the next device and the next boot either way.
+fn render_input(paths: &Paths, effective: &state::Effective, log: &Log) -> Result<bool, String> {
+    let ignored: Vec<&str> = INPUT_KINDS
+        .iter()
+        .map(|(env, _)| *env)
+        .filter(|env| effective.get(env).as_deref() == Some("0"))
+        .collect();
+    let path = &paths.input_rules;
+    let changed = match input_rules(&ignored) {
+        Some(body) => write(path, &body)?,
+        None => match std::fs::remove_file(path) {
+            Ok(()) => true,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => false,
+            Err(err) => return Err(format!("{}: {err}", path.display())),
+        },
+    };
+    if changed && !paths.udevadm.as_os_str().is_empty() {
+        if let Err(err) = apply_input_rules(&paths.udevadm) {
+            log.info(format!("the input rule: {err}"));
+        }
+    }
+    Ok(changed)
+}
+
+/// Reload the rules and replay the input devices through them, so the
+/// Weston restart that follows opens them with the new property. The
+/// settle is bounded well inside the render's own deadline.
+fn apply_input_rules(udevadm: &Path) -> Result<(), String> {
+    let steps: [&[&str]; 3] = [
+        &["control", "--reload"],
+        &["trigger", "--action=change", "--subsystem-match=input"],
+        &["settle", "--timeout=5"],
+    ];
+    for args in steps {
+        let output = crate::proc::run(std::process::Command::new(udevadm).args(args), None)?;
+        if !output.status.success() {
+            return Err(format!(
+                "udevadm {}: {}",
+                args.join(" "),
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// The local proxy's config, or none: its absence keeps
@@ -1124,6 +1221,7 @@ mod tests {
                 firmware_changed: false,
                 proxy_changed: false,
                 camera_changed: true,
+                input_changed: false,
             }
         );
         assert_eq!(
@@ -1140,6 +1238,7 @@ mod tests {
                 firmware_changed: false,
                 proxy_changed: false,
                 camera_changed: false,
+                input_changed: false,
             }
         );
 
@@ -1159,6 +1258,7 @@ mod tests {
                 firmware_changed: false,
                 proxy_changed: false,
                 camera_changed: false,
+                input_changed: false,
             }
         );
         let env = std::fs::read_to_string(paths.generated_env()).unwrap();
@@ -1210,6 +1310,61 @@ mod tests {
         let generated = std::fs::read_to_string(paths.generated_env()).unwrap();
         assert!(!generated.contains("KIOSK_CAMERA"), "{generated}");
         assert!(!all(&paths, &defaults, &set, &log).unwrap().camera_changed);
+    }
+
+    #[test]
+    fn ignored_inputs_get_a_udev_rule_that_goes_when_they_are_used_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = Log::buffered(true);
+        let env: HashMap<String, String> = [
+            ("KIOSK_RUN_DIR", dir.path().join("run")),
+            ("KIOSK_POLICY", dir.path().join("policy.json")),
+            ("KIOSK_POLICY_BASE", dir.path().join("missing-base.json")),
+            ("KIOSK_PROXY_CONFIG", dir.path().join("tinyproxy.conf")),
+            ("KIOSK_CAMERA_ENV", dir.path().join("camera.env")),
+            ("KIOSK_INPUT_RULES", dir.path().join("input.rules")),
+            ("KIOSK_UDEVADM", std::path::PathBuf::new()),
+        ]
+        .into_iter()
+        .map(|(name, path)| (name.to_string(), path.display().to_string()))
+        .collect();
+        let paths = Paths::load(&env);
+        let defaults: HashMap<String, String> = [
+            ("KIOSK_INPUT_MOUSE".to_string(), "1".to_string()),
+            ("KIOSK_INPUT_KEYBOARD".to_string(), "1".to_string()),
+            ("KIOSK_INPUT_TOUCH".to_string(), "1".to_string()),
+        ]
+        .into();
+
+        let used = settings(&[]);
+        assert!(!all(&paths, &defaults, &used, &log).unwrap().input_changed);
+        assert!(!paths.input_rules.exists(), "every kind is used");
+
+        let set = settings(&[("screen.input.keyboard", "0"), ("screen.input.touch", "0")]);
+        assert!(all(&paths, &defaults, &set, &log).unwrap().input_changed);
+        let rules = std::fs::read_to_string(&paths.input_rules).unwrap();
+        assert!(rules.contains("ENV{ID_INPUT_KEYBOARD}==\"1\", ENV{LIBINPUT_IGNORE_DEVICE}=\"1\""));
+        assert!(rules.contains("ENV{ID_INPUT_TOUCHSCREEN}==\"1\""));
+        assert!(!rules.contains("ID_INPUT_MOUSE"), "{rules}");
+        assert!(
+            !rules.contains("ID_INPUT_KEY}"),
+            "the power button stays: {rules}"
+        );
+        assert!(!all(&paths, &defaults, &set, &log).unwrap().input_changed);
+
+        assert!(all(&paths, &defaults, &used, &log).unwrap().input_changed);
+        assert!(!paths.input_rules.exists());
+    }
+
+    #[test]
+    fn ignoring_the_mouse_takes_every_pointer() {
+        let rules = input_rules(&["KIOSK_INPUT_MOUSE"]).unwrap();
+        for property in ["MOUSE", "TOUCHPAD", "POINTINGSTICK", "TRACKBALL", "TABLET"] {
+            let wanted = format!("ENV{{ID_INPUT_{property}}}");
+            assert!(rules.contains(&wanted), "{property}");
+        }
+        assert!(!rules.contains("KEYBOARD") && !rules.contains("TOUCHSCREEN"));
+        assert_eq!(input_rules(&[]), None);
     }
 
     /// Paths with a Pi boot partition in `dir`, holding `config`.

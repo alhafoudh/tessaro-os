@@ -252,6 +252,54 @@ installed plugin headers (`weston.pc`), so changing it never rebuilds Weston.
 * **`device status` shows a `screen off` row**, and the page bridge offers the
   same as `tessaro.screen.off()` and `on()`.
 
+## Input devices
+
+**`screen.input.mouse`, `screen.input.keyboard` and `screen.input.touch`
+each switch one kind of input device off, at libinput, so Weston never opens
+it and nothing on the page can get around it.** For signage that must not
+react to a passer-by. `render.rs` writes
+`/run/udev/rules.d/69-tessaro-input.rules` with `LIBINPUT_IGNORE_DEVICE=1`
+on the ignored kinds, matched on the `ID_INPUT_*` properties udev's
+`60-input-id.rules` sets on each `event*` node; libinput skips a device
+with that property (`evdev_device_create`, `src/evdev.c`).
+
+* **The kinds**: mouse is `ID_INPUT_MOUSE`, `_TOUCHPAD`, `_POINTINGSTICK`,
+  `_TRACKBALL` and `_TABLET` (pens, and qemu's usb-tablet); keyboard is
+  `ID_INPUT_KEYBOARD`, which barcode scanners and RFID readers have too;
+  touch is `ID_INPUT_TOUCHSCREEN`. A power button or a lid switch has only
+  `ID_INPUT_KEY` and stays.
+* **A touch panel that reports itself as a mouse or a tablet goes with
+  `screen.input.mouse=0`.** Some USB panels (eGalax in mouse mode, some HID
+  digitizers) send absolute pointer events with a button instead of touch,
+  and udev tags them as such. Check `udevadm info /dev/input/eventN` before
+  switching the mouse off on such a device.
+* **Without a pointer device Weston draws no cursor.** That is the way to
+  hide it everywhere, iframes and the moments between pages included.
+* **A change restarts Weston, and the browser with it** (`Consumer::Weston`).
+  libinput reads the property only when it opens a device. The agent writes
+  the rule, replays the input devices through udev (`udevadm control
+  --reload`, `trigger --action=change --subsystem-match=input`, `settle`)
+  and then restarts Weston, which opens them anew. A device plugged in later
+  goes through the rule like any other.
+* **At boot the rule is in place before Weston starts.** `tessaro-config.service`
+  renders it after udev's coldplug (`After=systemd-udev-trigger.service`) and
+  before `weston.service`. The file is in `/run`, rendered from the settings
+  at every boot like the rest.
+* **`screen.input.keyboard=0` counts as no keyboard for `screen.osk=auto`**
+  (`tessaro-weston-config`), so the on-screen keyboard shows on a touch
+  device, and plugging a keyboard in changes nothing in the generated
+  config: the hotplug check restarts nothing for it.
+* **Weston starts with no input device at all.** `tessaro-weston-config`
+  writes `[core] require-input=false`: with its default, libweston's libinput
+  backend refuses to start without a device (`udev_input_enable`,
+  `libweston/libinput-seat.c`), which every kind ignored, or a board with
+  nothing plugged in, would cause.
+* **Remote management is not input here.** The API, Webconfig and SSH are
+  network services, and the VNC mirror's events go to its own `screen-share`
+  seat, not through libinput (docs/remote-access.md), so neither is affected.
+* **The page reads them in `tessaro.config` and cannot set them**
+  (docs/bridge.md).
+
 ## Boot splash and wallpaper
 
 **Both use the welcome page's palette, so the screen goes from boot to page

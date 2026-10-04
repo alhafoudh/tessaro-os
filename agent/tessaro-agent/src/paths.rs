@@ -136,6 +136,13 @@ pub struct Paths {
     pub camera_env: PathBuf,
     /// The mirrors, one per camera, as a unit pattern.
     pub camera_units: String,
+    /// The udev rule that hides the ignored input devices from libinput,
+    /// rendered from screen.input.*; absent while every kind is used. In
+    /// `/run`, so it is rendered from the settings at every boot.
+    pub input_rules: PathBuf,
+    /// Run to apply a changed rule to the devices already present; empty
+    /// leaves them alone (tests).
+    pub udevadm: PathBuf,
     /// Where the scripts' and schedules' systemd units are rendered. In
     /// `/run`, so they are rendered from the store at every start and never
     /// land on the `/etc` overlay.
@@ -245,6 +252,11 @@ impl Paths {
             camera_dir: path("KIOSK_CAMERA_DIR", "/run/tessaro-camera"),
             camera_env: path("KIOSK_CAMERA_ENV", "/run/tessaro-camera/camera.env"),
             camera_units: text("KIOSK_CAMERA_UNITS", "tessaro-camera@*.service"),
+            input_rules: path(
+                "KIOSK_INPUT_RULES",
+                "/run/udev/rules.d/69-tessaro-input.rules",
+            ),
+            udevadm: path("KIOSK_UDEVADM", "udevadm"),
             systemd_unit_dir: path("KIOSK_SYSTEMD_UNIT_DIR", "/run/systemd/system"),
             manage_schedules: text("KIOSK_MANAGE_SCHEDULES", "1") != "0",
             systemd_analyze: path("KIOSK_SYSTEMD_ANALYZE", "systemd-analyze"),

@@ -27,6 +27,12 @@ Before=NetworkManager.service
 After=local-fs.target systemd-tmpfiles-setup.service
 RequiresMountsFor=/data
 
+# The input rule (screen.input.*) is written into /run/udev/rules.d here and
+# replayed over the input devices: after udev's coldplug, so the replay sees
+# every device and coldplug cannot run the devices through the rules before
+# the file is there; before weston.service, so libinput opens none it ignores.
+After=systemd-udev-trigger.service
+
 [Service]
 Type=oneshot
 # Once per boot, and that is load-bearing. weston.service and both kiosk units

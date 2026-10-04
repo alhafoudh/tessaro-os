@@ -357,6 +357,12 @@ pub static KEYS: &[Key] = &[
     },
     key(OSK, "KIOSK_OSK", Kind::Choice(&["auto", "always", "never"]), WESTON,
         "On-screen keyboard: auto shows it only without a USB/Bluetooth keyboard."),
+    key(INPUT_MOUSE, "KIOSK_INPUT_MOUSE", Kind::Flag, WESTON,
+        "Use mice, touchpads and pen tablets; 0 ignores them, and no cursor is drawn. A touch panel that reports itself as a mouse is ignored too."),
+    key(INPUT_KEYBOARD, "KIOSK_INPUT_KEYBOARD", Kind::Flag, WESTON,
+        "Use keyboards, barcode scanners included; 0 ignores them, and screen.osk=auto shows the on-screen keyboard as if none were plugged in."),
+    key(INPUT_TOUCH, "KIOSK_INPUT_TOUCH", Kind::Flag, WESTON,
+        "Use touchscreens; 0 ignores them. Remote management and the VNC mirror keep working."),
     key("screen.vnc", "KIOSK_VNC", Kind::Choice(&["on", "off"]), WESTON,
         "Mirror the screen to VNC on 127.0.0.1:5900."),
     // Sound, on PipeWire. Applied to the running sound server at once; see
@@ -529,6 +535,9 @@ pub const ZOOM: &str = "browser.zoom";
 pub const INJECT_SCRIPT: &str = "browser.inject.script";
 pub const BRIDGE_MODE: &str = "browser.bridge.mode";
 pub const OSK: &str = "screen.osk";
+pub const INPUT_MOUSE: &str = "screen.input.mouse";
+pub const INPUT_KEYBOARD: &str = "screen.input.keyboard";
+pub const INPUT_TOUCH: &str = "screen.input.touch";
 pub const RESOLUTION: &str = "screen.resolution";
 pub const NAME: &str = "device.name";
 pub const ID: &str = "device.id";
@@ -2024,6 +2033,15 @@ mod tests {
         assert!(check(ZOOM, "501").is_err());
         assert!(check(ZOOM, "1.5").is_err());
         assert_eq!(find(ZOOM).unwrap().consumers, [Consumer::Browser]);
+    }
+
+    #[test]
+    fn ignoring_an_input_restarts_weston() {
+        for name in [INPUT_MOUSE, INPUT_KEYBOARD, INPUT_TOUCH] {
+            assert_eq!(check(name, "off").unwrap(), "0", "{name}");
+            assert_eq!(check(name, "1").unwrap(), "1", "{name}");
+            assert_eq!(find(name).unwrap().consumers, [Consumer::Weston], "{name}");
+        }
     }
 
     #[test]
