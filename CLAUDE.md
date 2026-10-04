@@ -83,6 +83,31 @@ same change as the behaviour it describes.
   (`render.rs`, `remote_debugging_server.cc`), and prefer what was measured
   over what was assumed.
 
+## Planning a feature
+
+**A feature plan covers every surface of the tooling, so Tessaro stays one
+coherent product instead of a device whose clients drift apart.** For each
+surface below, the plan says what changes and in which files, or why nothing
+does there. Nothing is left for a follow-up. The rules further down give the
+details for each surface; this is the checklist.
+
+* **The API**: the endpoint types in `agent/protocol/src/api.rs`, the
+  regenerated `openapi.json`, and any new setting in `keys.rs`.
+* **`tessaro-ctl`**: the command, its group and name (**tessaro-ctl command
+  and key structure** below), its `--json` output, and its logic and words
+  in `agent/client`.
+* **`tessaro-gui`**: the action on its group's page.
+* **The page bridge**: the `window.tessaro` call that mirrors it, or the
+  reason the page must not have it ([docs/bridge.md](docs/bridge.md)).
+* **Webconfig**: the action on its group's page and the ported describe
+  functions with their golden fixtures, or the reason it is native-only.
+* **Tests**: unit tests next to the code, `agent:integration` when Chromium
+  is involved, and an e2e case in the lane whose state it fits, or the
+  reason qemu cannot test it.
+* **Docs**: the subsystem's `docs/` file (a new file and a row in the table
+  above for a new subsystem), README for what users see, and
+  `docs:screenshots` when a page it shows changes.
+
 ## Commands
 
 Use the mise tasks rather than calling `kas-container` directly:
