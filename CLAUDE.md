@@ -83,6 +83,23 @@ same change as the behaviour it describes.
   (`render.rs`, `remote_debugging_server.cc`), and prefer what was measured
   over what was assumed.
 
+## GitHub issues
+
+**Every fix or feature asked for in a session is checked against the open
+GitHub issues first**, so the work and its issue stay linked instead of the
+issue going stale next to a finished change.
+
+* **Before starting**, search the issues (`gh issue list --search
+  '<keywords>'`, `gh issue view <n>`). If one matches, name it and ask the
+  user whether this work is that issue. Never assume the match.
+* **Once confirmed, track it to the end**: read the issue and its comments
+  for the requirements, keep the work to what the issue asks, and say which
+  parts are done or left when reporting back.
+* **When the work is committed**, offer to close the issue with a comment
+  that links the commits (`gh issue close <n> --comment 'Fixed in <sha>'`).
+  Closing it, and commenting on it, waits for the user's yes, like any
+  outward-facing action.
+
 ## Planning a feature
 
 **A feature plan covers every surface of the tooling, so Tessaro stays one
