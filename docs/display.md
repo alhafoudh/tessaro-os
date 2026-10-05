@@ -296,8 +296,11 @@ with that property (`evdev_device_create`, `src/evdev.c`).
   `libweston/libinput-seat.c`), which every kind ignored, or a board with
   nothing plugged in, would cause.
 * **Remote management is not input here.** The API, Webconfig and SSH are
-  network services, and the VNC mirror's events go to its own `screen-share`
-  seat, not through libinput (docs/remote-access.md), so neither is affected.
+  network services, and the VNC mirror's events are injected into the
+  compositor's seat by screen-share, not read through libinput
+  (docs/remote-access.md), so these keys do not turn either off. With every
+  device ignored, the mirror gives the seat a pointer and a keyboard for as
+  long as a viewer is connected.
 * **The page reads them in `tessaro.config` and cannot set them**
   (docs/bridge.md).
 

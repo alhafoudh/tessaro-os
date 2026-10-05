@@ -64,6 +64,10 @@ VNC_ADDRESS=127.0.0.1
 VNC_PORT=5900
 VNC_TLS_CERT=/usr/lib/tessaro-vnc/tls.crt
 VNC_TLS_KEY=/usr/lib/tessaro-vnc/tls.key
+# The classic VNC password for viewers without TLS, written below from the
+# image's KIOSK_VNC_PASSWORD. A fixed path, so the generated config is the
+# same whoever writes it.
+VNC_PASSWORD_FILE=/run/weston/vnc-password
 
 # Read one key out of a systemd environment file.
 #
@@ -292,10 +296,17 @@ fi
 #                                weston.ini, finding a [screen-share] section
 #                                and sharing itself, recursively.
 #   --vnc-tls-cert/-key          not optional: the backend refuses to start
-#                                without both, and clients must then log in
-#                                over the TLS channel. That login is checked
-#                                by tessaro-vnc-auth through PAM, against the
-#                                image's KIOSK_VNC_USER/KIOSK_VNC_PASSWORD.
+#                                without both. Clients log in over TLS
+#                                (VeNCrypt) or, without TLS, with Apple's
+#                                login; either is checked by tessaro-vnc-auth
+#                                through PAM, against the image's
+#                                KIOSK_VNC_USER/KIOSK_VNC_PASSWORD.
+#   --vnc-password-file          the classic VNC password, which most viewers
+#                                (macOS Screen Sharing, Royal TSX, RealVNC)
+#                                log in with. PAM cannot check it - the
+#                                server needs the password itself - so it is
+#                                written to a file only the weston user reads.
+#                                Only its first 8 characters count.
 #
 # Note what is *not* here: oe-core's stock command carries
 # --no-clients-resize, which is an RDP backend option. An unrecognised option
@@ -316,9 +327,27 @@ else
         input=true
         how="view and control"
     fi
+    # The classic password only when the image has one; the child refuses to
+    # start on an empty file. The file itself belongs to the real run only:
+    # tessaro-agent runs this as root into a scratch config
+    # (TESSARO_WESTON_CONFIG) just to compare, and must not touch what the
+    # running mirror reads. Written whole, then moved, readable by its owner
+    # alone.
+    password_option=
+    vnc_password=$(read_key "$DEFAULTS" KIOSK_VNC_PASSWORD)
+    if [ -n "$vnc_password" ]; then
+        password_option=" --vnc-password-file=$VNC_PASSWORD_FILE"
+        if [ -z "${TESSARO_WESTON_CONFIG:-}" ]; then
+            (
+                umask 077
+                printf '%s\n' "$vnc_password" > "$VNC_PASSWORD_FILE.new"
+            )
+            mv -f "$VNC_PASSWORD_FILE.new" "$VNC_PASSWORD_FILE"
+        fi
+    fi
     printf '\n[screen-share]\nstart-on-startup=true\ninput=%s\ncommand=%s\n' \
         "$input" \
-        "/usr/bin/weston --backend=vnc-backend.so --shell=fullscreen-shell.so --no-config --address=$VNC_ADDRESS --port=$VNC_PORT --vnc-tls-cert=$VNC_TLS_CERT --vnc-tls-key=$VNC_TLS_KEY" \
+        "/usr/bin/weston --backend=vnc-backend.so --shell=fullscreen-shell.so --no-config --address=$VNC_ADDRESS --port=$VNC_PORT --vnc-tls-cert=$VNC_TLS_CERT --vnc-tls-key=$VNC_TLS_KEY$password_option" \
         >> "$OUT"
     echo "tessaro-weston-config: remote access on ($how), VNC on $VNC_ADDRESS:$VNC_PORT"
 fi

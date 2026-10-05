@@ -38,11 +38,29 @@
 # picture only, which is screen.vnc=view-only (tessaro-weston-config writes
 # it). See docs/remote-access.md.
 
+#
+# The third lets any common viewer log in, not only those that speak
+# VeNCrypt. It keeps the login required but drops
+# NVNC_AUTH_REQUIRE_ENCRYPTION, so neatvnc also offers Apple's
+# Diffie-Hellman login and the classic VNC password - the one macOS Screen
+# Sharing, Royal TSX and RealVNC use - and adds --vnc-password-file= to hand
+# neatvnc that password (tessaro-weston-config writes the file). The server
+# is on 127.0.0.1 behind an SSH tunnel, which already encrypts the link. Both
+# logins need neatvnc built with nettle (tessaro.conf) and its backports
+# (recipes-graphics/neatvnc).
+#
+# The fourth keeps one VNC seat for the backend's life. A seat made and
+# destroyed per viewer took its wl_seat global with it, and a viewer that left
+# right after logging in removed it while screen-share was still binding it -
+# a protocol error that ended the mirror until Weston restarted.
+
 FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
 
 SRC_URI += " \
     file://0001-vnc-let-the-PAM-stack-decide-which-user-may-log-in.patch \
     file://0002-screen-share-inject-remote-input-into-the-compositor-seat.patch \
+    file://0003-vnc-offer-logins-for-viewers-without-TLS.patch \
+    file://0004-vnc-keep-one-seat-for-every-client.patch \
     file://weston-remote-access.pam \
     file://tessaro-vnc-auth \
 "

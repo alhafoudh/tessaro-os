@@ -1,0 +1,140 @@
+From: Ahmed Al Hafoudh <alhafoudh@freevision.sk>
+Date: Mon, 05 Oct 2026 13:00:00 +0200
+Subject: [PATCH] vnc: offer logins for viewers without TLS
+
+The VNC backend enables authentication with NVNC_AUTH_REQUIRE_AUTH |
+NVNC_AUTH_REQUIRE_ENCRYPTION. With both, neatvnc offers only VeNCrypt (TLS
+with a username and password inside) and its RSA-AES types. Most viewers
+speak neither: macOS Screen Sharing, Royal TSX, RealVNC and noVNC fail in
+the security handshake and never get to ask for a password.
+
+On Tessaro the server binds 127.0.0.1 only and is reached through an SSH
+tunnel, which is what encrypts the link. Requiring encryption again inside
+it buys nothing and locks those viewers out. So:
+
+- the login stays required (checked by the PAM stack, see 0001), the
+  encryption flag goes, and NVNC_AUTH_ALLOW_BROKEN_CRYPTO lets neatvnc offer
+  Apple's Diffie-Hellman login and the classic VNC password next to
+  VeNCrypt, which TLS still makes the first one offered;
+- --vnc-password-file=FILE gives that classic password. It is the one login
+  a PAM stack cannot check - the server needs the password itself to check
+  the viewer's DES answer - so it is read here and handed to neatvnc
+  (nvnc_set_vnc_password, from Tessaro's neatvnc backport). Without the
+  option there is no classic login.
+
+Upstream-Status: Inappropriate [Tessaro reaches the server through SSH only]
+
+Signed-off-by: Ahmed Al Hafoudh <alhafoudh@freevision.sk>
+---
+ compositor/main.c               |  4 +++
+ include/libweston/backend-vnc.h |  2 ++
+ libweston/backend-vnc/vnc.c     | 45 ++++++++++++++++++++++++++++++++-
+ 3 files changed, 50 insertions(+), 1 deletion(-)
+
+--- a/compositor/main.c
++++ b/compositor/main.c
+@@ -768,6 +768,8 @@
+ 		"  --port=PORT\t\tThe port to listen on\n"
+ 		"  --vnc-tls-cert=FILE\tThe file containing the certificate for TLS encryption\n"
+ 		"  --vnc-tls-key=FILE\tThe file containing the private key for TLS encryption\n"
++		"  --vnc-password-file=FILE\tThe file whose first line is the classic VNC password,\n"
++		"\t\t\t\toffered to viewers without TLS (8 characters count)\n"
+ 		"\n");
+ #endif
+
+@@ -3525,6 +3527,7 @@
+ 		{ WESTON_OPTION_INTEGER, "port", 0, &config.port },
+ 		{ WESTON_OPTION_STRING,  "vnc-tls-cert", 0, &config.server_cert },
+ 		{ WESTON_OPTION_STRING,  "vnc-tls-key", 0, &config.server_key },
++		{ WESTON_OPTION_STRING,  "vnc-password-file", 0, &config.password_file },
+ 	};
+
+ 	parse_options(vnc_options, ARRAY_LENGTH(vnc_options), argc, argv);
+@@ -3548,6 +3551,7 @@
+ 	free(config.bind_address);
+ 	free(config.server_cert);
+ 	free(config.server_key);
++	free(config.password_file);
+
+ 	if (!wb)
+ 		return -1;
+--- a/include/libweston/backend-vnc.h
++++ b/include/libweston/backend-vnc.h
+@@ -65,6 +65,8 @@
+ 	int refresh_rate;
+ 	char *server_cert;
+ 	char *server_key;
++	/* The classic VNC password's file, or NULL for no such login. */
++	char *password_file;
+ };
+
+ #ifdef  __cplusplus
+--- a/libweston/backend-vnc/vnc.c
++++ b/libweston/backend-vnc/vnc.c
+@@ -31,6 +31,7 @@
+
+ #include <assert.h>
+ #include <stdint.h>
++#include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
+ #include <errno.h>
+@@ -478,6 +479,40 @@
+ 	return weston_authenticate_user(username, password);
+ }
+
++/* The classic VNC password, from the first line of `path`. That login needs
++ * the password itself to check the viewer's answer, so PAM cannot check it. */
++static int
++vnc_load_password(struct nvnc *server, const char *path)
++{
++	char password[256] = "";
++	FILE *file;
++
++	file = fopen(path, "r");
++	if (!file) {
++		weston_log("Cannot read the VNC password file %s: %s\n",
++			   path, strerror(errno));
++		return -1;
++	}
++	if (!fgets(password, sizeof password, file))
++		password[0] = '\0';
++	fclose(file);
++
++	password[strcspn(password, "\r\n")] = '\0';
++	if (password[0] == '\0') {
++		weston_log("The VNC password file %s is empty\n", path);
++		return -1;
++	}
++
++	if (nvnc_set_vnc_password(server, password) < 0) {
++		weston_log("Neat VNC cannot check a classic VNC password "
++			   "(built without nettle)\n");
++		return -1;
++	}
++	memset(password, 0, sizeof password);
++
++	return 0;
++}
++
+ static void
+ vnc_client_cleanup(struct nvnc_client *client)
+ {
+@@ -1253,8 +1288,16 @@
+ 		goto err_output;
+ 	}
+
++	/* A login is still required; encryption is not, so that neatvnc also
++	 * offers the logins viewers without TLS speak: Apple's Diffie-Hellman
++	 * one, and the classic VNC password when a file gives one. The link
++	 * is an SSH tunnel. */
++	if (config->password_file &&
++	    vnc_load_password(backend->server, config->password_file) < 0)
++		goto err_output;
++
+ 	ret = nvnc_enable_auth(backend->server, NVNC_AUTH_REQUIRE_AUTH |
+-			       NVNC_AUTH_REQUIRE_ENCRYPTION, vnc_handle_auth,
++			       NVNC_AUTH_ALLOW_BROKEN_CRYPTO, vnc_handle_auth,
+ 			       NULL);
+ 	if (ret) {
+ 		weston_log("Failed to enable TLS support\n");

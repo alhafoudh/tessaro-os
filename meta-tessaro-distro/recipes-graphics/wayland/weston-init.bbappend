@@ -40,11 +40,12 @@ SRC_URI += " \
 
 # Self-signed certificate for the VNC screen share, generated at build time.
 #
-# Weston 13's VNC backend will not start without one: vnc.c calls
-# nvnc_enable_auth(NVNC_AUTH_REQUIRE_AUTH | NVNC_AUTH_REQUIRE_ENCRYPTION) and
-# bails with "requires a key and a certificate for TLS security" if either is
-# missing. There is no unencrypted mode and no VNC-standard password auth, so
-# the choice is not whether to have a cert but where it comes from.
+# Weston 13's VNC backend will not start without one: vnc.c bails with
+# "requires a key and a certificate for TLS security" if either is missing,
+# even though our weston patch no longer requires encryption (viewers without
+# TLS log in with Apple's login instead). VeNCrypt, the login TigerVNC and
+# tessaro-gui use, is TLS, so the choice is not whether to have a cert but
+# where it comes from.
 #
 # Build time, shipped read-only, rather than generated on first boot: it keeps
 # openssl out of the image and leaves no per-device state to lose, back up or

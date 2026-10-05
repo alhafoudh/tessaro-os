@@ -1,0 +1,60 @@
+From: Ahmed Al Hafoudh <alhafoudh@freevision.sk>
+Date: Mon, 05 Oct 2026 14:30:00 +0200
+Subject: [PATCH] server: normalize pixel format depth from client
+
+macOS Screen Sharing asks for 32 bits per pixel with depth 32, though its
+colours take 24 bits (max 255 each). neatvnc sizes ZRLE's compact pixels
+from the depth (calc_bytes_per_cpixel), so it sent 4-byte pixels where the
+viewer reads 3, and the viewer hung up after the first frame. Upstream's
+8c646d0 (in 1.0.0) recomputes the depth from the colour masks; this is that
+change with the rfb_pixfmt_depth() helper it relies on.
+
+Upstream-Status: Backport [https://github.com/any1/neatvnc/commit/8c646d0]
+
+Signed-off-by: Ahmed Al Hafoudh <alhafoudh@freevision.sk>
+---
+ include/pixels.h |  1 +
+ src/pixels.c     | 11 +++++++++++
+ src/server.c     |  1 +
+ 3 files changed, 13 insertions(+)
+
+--- a/include/pixels.h
++++ b/include/pixels.h
+@@ -32,6 +32,7 @@
+
+ int rfb_pixfmt_from_fourcc(struct rfb_pixel_format *dst, uint32_t src);
+ uint32_t rfb_pixfmt_to_fourcc(const struct rfb_pixel_format* fmt);
++int rfb_pixfmt_depth(const struct rfb_pixel_format *fmt);
+
+ int pixel_size_from_fourcc(uint32_t fourcc);
+
+--- a/src/pixels.c
++++ b/src/pixels.c
+@@ -413,6 +413,17 @@
+ 	return 0;
+ }
+
++/* The client does not always report accurate depth.
++ */
++int rfb_pixfmt_depth(const struct rfb_pixel_format *fmt)
++{
++	unsigned int r = fmt->red_max;
++	unsigned int g = fmt->green_max;
++	unsigned int b = fmt->blue_max;
++
++	return POPCOUNT(r) + POPCOUNT(g) + POPCOUNT(b);
++}
++
+ int pixel_size_from_fourcc(uint32_t fourcc)
+ {
+ 	switch (fourcc & ~DRM_FORMAT_BIG_ENDIAN) {
+--- a/src/server.c
++++ b/src/server.c
+@@ -1122,6 +1122,7 @@
+ 		fmt->green_max = ntohs(fmt->green_max);
+ 		fmt->blue_max = ntohs(fmt->blue_max);
+ 		memcpy(&client->pixfmt, fmt, sizeof(client->pixfmt));
++		client->pixfmt.depth = rfb_pixfmt_depth(&client->pixfmt);
+ 	} else {
+ 		nvnc_log(NVNC_LOG_DEBUG, "Using color palette for client %p",
+ 				client);

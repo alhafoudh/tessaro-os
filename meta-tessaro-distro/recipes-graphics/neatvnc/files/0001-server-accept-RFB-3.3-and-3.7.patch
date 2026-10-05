@@ -1,0 +1,161 @@
+From: Ahmed Al Hafoudh <alhafoudh@freevision.sk>
+Date: Mon, 05 Oct 2026 14:30:00 +0200
+Subject: [PATCH] server: accept RFB 3.3 and 3.7
+
+neatvnc 0.8.1 accepts only "RFB 003.008" and refuses every other client.
+macOS Screen Sharing answers a 3.8 server with 3.3, so it never got past
+the version message. Upstream's 58a6fbe ("Add RFB 3.3/3.7 protocol
+support", in 1.0.0) handles both; this is that change on 0.8.1:
+
+- 3.7 and 3.8 get the security type list; any other 3.x, Apple's 3.889
+  among them, is spoken to as 3.3, as the RFB spec asks of a server.
+- 3.3 is told the one type. Here a server that requires a login refuses
+  3.3 until a login it can name exists (the next patch adds the classic
+  VNC password). Unlike upstream, the refusal is type 0 followed by the
+  reason, which is what 3.3 defines.
+- A failed SecurityResult carries a reason only from 3.8 on, and 3.7 gets
+  no result at all for security type None.
+
+Upstream-Status: Backport [https://github.com/any1/neatvnc/commit/58a6fbe]
+
+Signed-off-by: Ahmed Al Hafoudh <alhafoudh@freevision.sk>
+---
+ include/common.h |  2 ++
+ src/server.c     | 86 ++++++++++++++++++++++++++++++++++++++++++++++++++----
+ 2 files changed, 81 insertions(+), 7 deletions(-)
+
+--- a/include/common.h
++++ b/include/common.h
+@@ -87,6 +87,8 @@
+ 	char username[256];
+ 	struct nvnc* server;
+ 	enum nvnc_client_state state;
++	/* The RFB 3.x the client speaks: 3, 7 or 8. */
++	int rfb_minor_version;
+ 	bool has_pixfmt;
+ 	struct rfb_pixel_format pixfmt;
+ 	enum rfb_encodings encodings[MAX_ENCODINGS + 1];
+--- a/src/server.c
++++ b/src/server.c
+@@ -261,6 +261,63 @@
+ 	return false;
+ }
+
++/* 3.7 and 3.8 as they are; any other 3.x, Apple's 3.889 among them, is
++ * spoken to as 3.3, as the RFB spec asks of a server. */
++static int parse_rfb_version(const char* version_string)
++{
++	int major = 0, minor = 0;
++	if (sscanf(version_string, "RFB %d.%d", &major, &minor) != 2)
++		return -1;
++
++	if (major != 3)
++		return -1;
++
++	if (minor == 7 || minor == 8)
++		return minor;
++
++	return 3;
++}
++
++/* RFB 3.3 has no list: the server names the one security type, and a
++ * refusal is type 0 followed by the reason. */
++static int refuse_rfb33(struct nvnc_client* client, const char* reason_string)
++{
++	char buffer[256];
++
++	nvnc_log(NVNC_LOG_INFO, "Security handshake failed: %s", reason_string);
++
++	client->state = VNC_CLIENT_STATE_ERROR;
++
++	uint32_t* type = (uint32_t*)buffer;
++	struct rfb_error_reason* reason =
++		(struct rfb_error_reason*)(buffer + sizeof(*type));
++
++	*type = htonl(RFB_SECURITY_TYPE_INVALID);
++	reason->length = htonl(strlen(reason_string));
++	strcpy(reason->message, reason_string);
++
++	size_t len = sizeof(*type) + sizeof(*reason) + strlen(reason_string);
++	stream_write(client->net_stream, buffer, len, close_after_write,
++			client);
++
++	return 12;
++}
++
++static int on_version_message_rfb33(struct nvnc_client* client)
++{
++	struct nvnc* server = client->server;
++
++	if (server->auth_flags & NVNC_AUTH_REQUIRE_AUTH)
++		return refuse_rfb33(client,
++				"Authentication required, but not supported for RFB 3.3");
++
++	uint32_t sec_type = htonl(RFB_SECURITY_TYPE_NONE);
++	stream_write(client->net_stream, &sec_type, sizeof(sec_type), NULL,
++			NULL);
++	client->state = VNC_CLIENT_STATE_WAITING_FOR_INIT;
++	return 12;
++}
++
+ static int on_version_message(struct nvnc_client* client)
+ {
+ 	struct nvnc* server = client->server;
+@@ -272,16 +329,24 @@
+ 	memcpy(version_string, client->msg_buffer + client->buffer_index, 12);
+ 	version_string[12] = '\0';
+
+-	if (strcmp(RFB_VERSION_MESSAGE, version_string) != 0)
++	int minor = parse_rfb_version(version_string);
++	if (minor < 0)
+ 		return handle_unsupported_version(client);
+
++	nvnc_log(NVNC_LOG_DEBUG, "Client RFB version: 3.%d", minor);
++
++	client->rfb_minor_version = minor;
++
++	init_security_types(server);
++
++	if (minor == 3)
++		return on_version_message_rfb33(client);
++
+ 	uint8_t buf[sizeof(struct rfb_security_types_msg) +
+ 		MAX_SECURITY_TYPES] = {};
+ 	struct rfb_security_types_msg* security =
+ 		(struct rfb_security_types_msg*)buf;
+
+-	init_security_types(server);
+-
+ 	security->n = server->n_security_types;
+ 	for (int i = 0; i < server->n_security_types; ++i) {
+ 		security->types[i] = server->security_types[i];
+@@ -314,10 +379,15 @@
+ 	        (struct rfb_error_reason*)(buffer + sizeof(*result));
+
+ 	*result = htonl(RFB_SECURITY_HANDSHAKE_FAILED);
+-	reason->length = htonl(strlen(reason_string));
+-	strcpy(reason->message, reason_string);
+
+-	size_t len = sizeof(*result) + sizeof(*reason) + strlen(reason_string);
++	/* The reason after a failed result is RFB 3.8's. */
++	size_t len = sizeof(*result);
++	if (client->rfb_minor_version >= 8) {
++		reason->length = htonl(strlen(reason_string));
++		strcpy(reason->message, reason_string);
++		len += sizeof(*reason) + strlen(reason_string);
++	}
++
+ 	stream_write(client->net_stream, buffer, len, close_after_write,
+ 			client);
+
+@@ -831,7 +901,9 @@
+
+ 	switch (type) {
+ 	case RFB_SECURITY_TYPE_NONE:
+-		security_handshake_ok(client, NULL);
++		/* RFB 3.7 sends no result for no authentication. */
++		if (client->rfb_minor_version >= 8)
++			security_handshake_ok(client, NULL);
+ 		client->state = VNC_CLIENT_STATE_WAITING_FOR_INIT;
+ 		break;
+ #ifdef ENABLE_TLS

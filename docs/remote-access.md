@@ -39,7 +39,9 @@ patch does, and why each part:
 * **Focus is the seat's.** Enter and leave from the child move no focus; a
   click or touch decides where keys go, as with a local keyboard. Keys and
   buttons the viewer still holds when it goes are released, so nothing stays
-  pressed.
+  pressed. Enter's position does move the pointer: it is the viewer's first
+  position, and a viewer that moves once and clicks (the e2e case does) sends
+  no motion besides it, so the click would land where the pointer last was.
 * **Positions go through `weston_coord_global_from_output_point`.** The
   child's surface is the output's buffer, so a viewer's position is in
   output pixels; upstream passed them on as global coordinates, which is
@@ -75,16 +77,49 @@ into this compositor's seat as described above.
   `--no-clients-resize`, an RDP-backend option; an unrecognised option is fatal
   to the child, and the failure reads as a screen-share problem rather than a
   typo.
-* **TLS and a login are not optional and not configurable.**
-  `libweston/backend-vnc/vnc.c` calls `nvnc_enable_auth(NVNC_AUTH_REQUIRE_AUTH |
-  NVNC_AUTH_REQUIRE_ENCRYPTION, ...)` and refuses to start without a cert and
-  key. There is no unauthenticated mode and no VNC-standard password auth -
-  neatvnc's only password mechanism is the "plain" sub-type inside VeNCrypt,
-  which *is* the TLS path. Hence what would otherwise look like
-  over-engineering: `PACKAGECONFIG:append:pn-neatvnc = " tls"` in
-  `tessaro.conf` (its own default is `""`, and without it Weston logs `Neat VNC
-  built without TLS support` and dies), and a self-signed certificate generated
-  at build time by the `weston-init` bbappend into `/usr/lib/tessaro-vnc/`.
+* **A login is required, encryption is not: the SSH tunnel encrypts.**
+  Upstream calls `nvnc_enable_auth(NVNC_AUTH_REQUIRE_AUTH |
+  NVNC_AUTH_REQUIRE_ENCRYPTION, ...)`, which leaves neatvnc offering only
+  VeNCrypt (a username and password inside TLS) and RSA-AES, logins most
+  viewers do not speak.
+  `0003-vnc-offer-logins-for-viewers-without-TLS.patch` drops the encryption
+  flag and sets `NVNC_AUTH_ALLOW_BROKEN_CRYPTO`, so neatvnc also offers
+  Apple's Diffie-Hellman login (type 30) and the classic VNC password
+  (type 2), in that order after VeNCrypt (`init_security_types` in neatvnc's
+  `server.c`). Neither encrypts the session. Encrypting again inside the
+  tunnel buys nothing, and the server binds the loopback only, so no path to
+  it skips SSH. There is still no unauthenticated mode.
+  * TLS stays: `vnc.c` refuses to start without a cert and key, and
+    `nvnc_has_auth()` is false without `PACKAGECONFIG:append:pn-neatvnc =
+    " tls"` in `tessaro.conf` (its own default is `""`; Weston logs `Neat VNC
+    built without TLS support` and dies). The certificate is self-signed,
+    generated at build time by the `weston-init` bbappend into
+    `/usr/lib/tessaro-vnc/`.
+  * Apple's login, RSA-AES and the classic password exist only when neatvnc
+    is built with nettle (`HAVE_CRYPTO`). The recipe has no `PACKAGECONFIG`
+    for it and meson's `auto` finds nettle only if something else put it in
+    the sysroot, so `tessaro.conf` enables `-Dnettle=enabled` and depends on
+    `nettle gmp`. Both already ship, for gnutls.
+* **The classic VNC password, RFB 3.3 and the depth fix are backports to
+  neatvnc 0.8.1** (`recipes-graphics/neatvnc/`). Upstream added all three
+  after 0.8.1 (`58a6fbe`, `6109e61`, `8c646d0`), but only in 1.0, whose
+  asynchronous auth API Weston 13's VNC backend cannot use. Each patch names
+  its commit; drop them when Weston moves to a neatvnc that has them.
+  * The classic password is a DES challenge the server checks with the
+    password itself, so PAM cannot check it. `tessaro-weston-config` writes
+    `KIOSK_VNC_PASSWORD` from the image defaults to
+    `/run/weston/vnc-password` (0600, the weston user's), and the child gets
+    `--vnc-password-file=`, an option the same Weston patch adds. Only its
+    first 8 characters count, as in every VNC server, and the login has no
+    username. The file is written only on the real run, never into the
+    scratch config the agent compares on hotplug.
+  * macOS Screen Sharing answers a 3.8 server with RFB 3.3, which has no
+    list of logins: the server names one, and names the classic password.
+    neatvnc 0.8.1 refused every version but 3.8.
+  * macOS asks for 32 bits per pixel with depth 32 though its colours take
+    24. neatvnc sized ZRLE's compact pixels from the depth and sent 4 bytes
+    where the viewer reads 3; the viewer hung up after the first frame. The
+    depth is now recomputed from the colour masks.
 * **The credential is `tessaro` / `tessaro`, and it is deliberately not a
   system account.** `weston_authenticate_user()` is
   `pam_start("weston-remote-access", <username the client sent>, ...)`, and the
@@ -109,11 +144,20 @@ into this compositor's seat as described above.
   by the same bbappend, removes that check. It needs `pam-plugin-exec`, which is not in the
   image by default and is an `RDEPENDS` of weston for that reason; without it
   every login fails with a bare `PAM: authentication failed`.
-* **Client compatibility is narrow.** VeNCrypt with plain auth means TigerVNC,
-  Remmina, or the viewer built into `tessaro-gui` (VNC in [gui.md](gui.md)).
-  macOS Screen Sharing and RealVNC fail in the handshake. The cert
-  is self-signed and identical across an image, so the fingerprint warning
-  means nothing.
+* **Which viewer gets which login.** The viewer picks from the list.
+  TigerVNC, Remmina and the viewer built into `tessaro-gui` (VNC in
+  [gui.md](gui.md)) take VeNCrypt, `tessaro` / `tessaro`; neatvnc names its
+  sub-type TLSPlain on the wire, and its cert is self-signed and identical
+  across an image, so the fingerprint warning means nothing. macOS Screen
+  Sharing, Royal TSX, RealVNC and noVNC take the classic password and ask for
+  the password alone.
+* **A viewer that leaves at once does not take the mirror down.** Weston's
+  VNC backend made a seat per viewer and destroyed it on disconnect, so its
+  `wl_seat` global vanished while screen-share could still be binding it;
+  the child answered with `invalid global wl_seat` and exited (`Primary
+  client died`). `0004-vnc-keep-one-seat-for-every-client.patch` keeps one
+  seat for the backend's life and only adds and releases a viewer's pointer
+  and keyboard.
 * **Sharing is not free while it is on.** `weston_output_disable_planes_incr()`
   takes the output off hardware overlay and cursor planes for as long as it is
   shared, and every damage rectangle goes through `read_pixels()`. A static

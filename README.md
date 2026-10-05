@@ -63,7 +63,7 @@ or from [Webconfig](#webconfig) in any browser:
 - 🏢 **Enterprise networks welcome**: HTTP and SOCKS proxies, your own certificate authorities, your own NTP servers.
 - ⏰ **Scripts and schedules**: screens off at night, a different page at the weekend, anything a shell can do.
 - 🧰 **Maintenance and debug screens** at the flip of a switch, with your own message.
-- 👀 **See and reach it remotely**: a live VNC view of the panel you can click and type in (or only watch), and an SSH shell with your own key.
+- 👀 **See and reach it remotely**: a live VNC view of the panel, from any common VNC viewer, that you can click and type in (or only watch), and an SSH shell with your own key.
 - 📺 **Display safety net**: a new resolution nobody confirms reverts by itself.
 - ⚡ **Changes apply live**: most settings take effect without a restart, and nothing restarts that does not have to.
 
@@ -318,6 +318,17 @@ tessaro-ctl time timezone Europe/Bratislava
 tessaro-ctl script create screen-off --body 'tessaro-ctl screen power off'
 tessaro-ctl schedule create screen-off --on 'Mon..Fri 20:00' --script screen-off
 ```
+
+**Remote screen**
+
+```sh
+tessaro-ctl ssh connect -- -N -L 5900:127.0.0.1:5900   # then point any VNC viewer at localhost:5900
+tessaro-ctl config set screen.vnc=view-only            # watch only; "on" lets the viewer click and type
+```
+
+The mirror only listens on the device itself, so the SSH tunnel is the way in.
+macOS Screen Sharing, Royal TSX, RealVNC and the like ask for the password
+`tessaro`; TigerVNC and Remmina log in as `tessaro` / `tessaro`.
 
 **Updates and access**
 

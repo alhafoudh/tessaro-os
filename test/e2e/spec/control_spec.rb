@@ -616,10 +616,13 @@ module AgentE2E
 
     # The VNC mirror's input lands in Weston's own seat, which Chromium binds
     # (docs/remote-access.md). Checked with qemu's keyboard and tablet in the
-    # seat, then with both ignored - a seat the mirror has to give a pointer
-    # and a keyboard of its own - and refused on view-only.
-    it "vnc: a click and a key over VNC reach the page, with or without local input devices; " \
-       "screen.vnc=view-only drops them", :reconfigure do
+    # seat, after VeNCrypt and after the classic password over RFB 3.3, then
+    # with both devices ignored - a seat the mirror has to give a pointer and
+    # a keyboard of its own - and refused on view-only. Viewers that leave
+    # right after logging in must not take the mirror down.
+    it "vnc: a click and a key over VNC reach the page, with or without local input devices, over " \
+       "VeNCrypt or the classic password; quick logouts keep the mirror; screen.vnc=view-only drops them",
+       :reconfigure do
       weston_started = -> { guest.run("systemctl show -p ActiveEnterTimestampMonotonic --value weston.service").strip }
       # Weston restarts for each of these keys, and the browser with it.
       apply = lambda do |settings|
@@ -656,12 +659,12 @@ module AgentE2E
         JSON.parse(result.dig("result", "value"))
       end
       # The child compositor comes up a moment after Weston.
-      over_vnc = lambda do |&body|
+      over_vnc = lambda do |**login, &body|
         Vnc.tunnel do |port|
           step "wait up to 30s for the VNC mirror to log in"
           deadline = Time.now + 30
           begin
-            quietly { Vnc.connect(port, &body) }
+            quietly { Vnc.connect(port, **login, &body) }
           rescue Failure, SystemCallError, IOError, OpenSSL::SSL::SSLError
             raise if Time.now > deadline
 
@@ -670,9 +673,9 @@ module AgentE2E
           end
         end
       end
-      click_and_type = lambda do
+      click_and_type = lambda do |**login|
         at = nil
-        over_vnc.call do |vnc|
+        over_vnc.call(**login) do |vnc|
           at = [vnc.width / 2, vnc.height / 2]
           vnc.click(*at)
           vnc.key(0x71) # q
@@ -680,6 +683,7 @@ module AgentE2E
         end
         at
       end
+      mirror_listens = -> { guest.run("netstat -ltn").include?("127.0.0.1:5900 ") }
 
       expect(guest.run("grep -A2 '^\\[screen-share\\]' /run/weston/weston.ini")).to include("input=true")
       record.call
@@ -689,6 +693,20 @@ module AgentE2E
       expect(seen["pointer"].first[0]).to be_within(2).of(at[0])
       expect(seen["pointer"].first[1]).to be_within(2).of(at[1])
       expect(seen["keys"]).to include("q")
+
+      # The classic VNC password over RFB 3.3, as macOS Screen Sharing logs in.
+      record.call
+      click_and_type.call(login: :password, version: "3.3")
+      seen = recorded.call
+      expect(seen["pointer"]).not_to be_empty, "the click never reached the page after a classic VNC login"
+      expect(seen["keys"]).to include("q")
+
+      # A viewer that logs in and leaves at once leaves the mirror running.
+      Vnc.tunnel do |port|
+        3.times { quietly { Vnc.connect(port, login: :password) { nil } } }
+      end
+      pause 2, "give a crashed mirror time to go"
+      expect(mirror_listens.call).to be(true), "a viewer that left at once took the mirror down"
 
       apply.call("set screen.input.keyboard=0 screen.input.mouse=0")
       record.call

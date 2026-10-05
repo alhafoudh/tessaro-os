@@ -1,0 +1,89 @@
+From: Ahmed Al Hafoudh <alhafoudh@freevision.sk>
+Date: Mon, 05 Oct 2026 14:45:00 +0200
+Subject: [PATCH] vnc: keep one seat for every client
+
+vnc_new_client() made a seat for each viewer and vnc_client_cleanup()
+destroyed it, so the seat's wl_seat global came and went with the viewer.
+screen-share binds that global as the child compositor's client. A viewer
+that left right after logging in removed the global before screen-share's
+bind arrived; the child then answered with a protocol error ("invalid
+global wl_seat"), screen-share's connection ended, and the child exited
+("Primary client died") - the mirror was gone until Weston restarted.
+
+Make the seat once, when the backend is set up, and keep it to the end. A
+viewer only adds a pointer and a keyboard to it and releases them when it
+leaves; libweston counts both per seat, and clients follow through the
+seat's capabilities, which screen-share already does.
+
+Upstream-Status: Pending
+
+Signed-off-by: Ahmed Al Hafoudh <alhafoudh@freevision.sk>
+---
+ libweston/backend-vnc/vnc.c | 21 +++++++++++++++++----
+ 1 file changed, 17 insertions(+), 4 deletions(-)
+
+--- a/libweston/backend-vnc/vnc.c
++++ b/libweston/backend-vnc/vnc.c
+@@ -77,6 +77,12 @@
+ 	struct nvnc *server;
+ 	int vnc_monitor_refresh_rate;
+
++	/* Every viewer's input, on one seat kept from start to end: a seat's
++	 * wl_seat global made and removed per viewer vanishes while a client
++	 * (screen-share) may still be binding it, which is a protocol error
++	 * that ends that client. */
++	struct weston_seat *seat;
++
+ 	const struct pixel_format_info **formats;
+ 	unsigned int formats_count;
+ };
+@@ -522,7 +528,6 @@
+ 	wl_list_remove(&peer->link);
+ 	weston_seat_release_keyboard(peer->seat);
+ 	weston_seat_release_pointer(peer->seat);
+-	weston_seat_release(peer->seat);
+ 	free(peer);
+ 	weston_log("VNC Client disconnected\n");
+
+@@ -783,16 +788,14 @@
+ 	struct vnc_backend *backend = nvnc_get_userdata(server);
+ 	struct vnc_output *output = backend->output;
+ 	struct vnc_peer *peer;
+-	const char *seat_name = "VNC Client";
+
+ 	weston_log("New VNC client connected\n");
+
+ 	peer = xzalloc(sizeof(*peer));
+ 	peer->client = client;
+ 	peer->backend = backend;
+-	peer->seat = xzalloc(sizeof(*peer->seat));
++	peer->seat = backend->seat;
+
+-	weston_seat_init(peer->seat, backend->compositor, seat_name);
+ 	weston_seat_init_pointer(peer->seat);
+ 	weston_seat_init_keyboard(peer->seat, backend->xkb_keymap);
+
+@@ -983,6 +986,11 @@
+ 	wl_list_for_each_safe(head, next, &ec->head_list, compositor_link)
+ 		vnc_head_destroy(head);
+
++	if (backend->seat) {
++		weston_seat_release(backend->seat);
++		free(backend->seat);
++	}
++
+ 	xkb_keymap_unref(backend->xkb_keymap);
+
+ 	if (backend->debug)
+@@ -1313,6 +1321,11 @@
+ 		goto err_output;
+ 	}
+
++	/* Made last, after every way out above: no viewer can connect before
++	 * the compositor runs its loop. */
++	backend->seat = xzalloc(sizeof(*backend->seat));
++	weston_seat_init(backend->seat, compositor, "VNC Client");
++
+ 	return backend;
+
+ err_output:

@@ -395,8 +395,10 @@ the device is on `screen.vnc=view-only`.
   port to `127.0.0.1:5900`. An unclaimed device gets no key and ssh gets in
   by its empty password (**SSH keys** in remote-access.md), so the panel
   works before a claim too.
-* The server is neatvnc, which takes VeNCrypt with a plain login inside TLS
-  and nothing else. No Rust VNC crate speaks that, so `vnc.rs` is a small RFB
+* The server is neatvnc, which takes a login and no anonymous viewers: VeNCrypt
+  with a plain login inside TLS, or the logins for viewers without TLS (the
+  classic VNC password, Apple's, RSA-AES; see remote-access.md). The panel
+  uses VeNCrypt. No Rust VNC crate speaks it, so `vnc.rs` is a small RFB
   3.8 client: VeNCrypt X509Plain (or TLSPlain), the image's `tessaro` login,
   then Raw and CopyRect updates into a framebuffer. The picture is handed to
   the UI at most every 150ms.

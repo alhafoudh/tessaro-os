@@ -108,9 +108,11 @@ start.
 * **VNC is driven from the host the same way**, through a tunnel to the
   guest's `127.0.0.1:5900` on the worker's `vnc_tunnel` port (15900 plus the
   worker's offset), opened only for the case that needs it
-  (`spec/support/vnc.rb`). Its RFB client logs in with VeNCrypt X509Plain
-  and sends clicks and keys only; what reached the page is read over
-  DevTools.
+  (`spec/support/vnc.rb`). Its RFB client logs in the way TigerVNC does
+  (VeNCrypt) or the way macOS Screen Sharing does (the classic VNC password,
+  over RFB 3.8 or 3.3), and sends clicks and keys only; what reached the page
+  is read over DevTools. The classic password's DES is triple DES with the
+  key three times, which is single DES and needs no OpenSSL legacy provider.
 * **The guest's BusyBox has `pgrep` but no `pkill`**, and `pgrep -f` also
   matches the remote shell running the kill. The harness brackets one
   character (`--type=rendere[r]`); unbracketed, `SIGKILL` ends its own SSH
