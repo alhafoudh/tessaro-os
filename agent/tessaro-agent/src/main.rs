@@ -105,6 +105,10 @@ struct Device {
 /// own budget as it goes; this only covers the gaps between them.
 const STARTUP: Duration = Duration::from_secs(30);
 
+/// How long a stopping agent waits for blocking threads still running after
+/// its loop has ended.
+const SHUTDOWN: Duration = Duration::from_secs(2);
+
 /// Bytes of a probed page worth reading. The probe wants the status; a large
 /// home page is truncated here rather than failed.
 const PROBE_BODY: usize = 256 * 1024;
@@ -169,6 +173,13 @@ fn main() -> ExitCode {
     };
 
     runtime.block_on(run(config, log, device, settings.settings));
+
+    // A blocking thread whose deadline already freed the agent can still be
+    // running (a slow disk, a resolver that swallows queries). Dropping the
+    // runtime would wait for it without limit and hold up every shutdown, so
+    // it is abandoned instead: store writes are transactional, and systemd
+    // kills any program it started along with the unit.
+    runtime.shutdown_timeout(SHUTDOWN);
     ExitCode::SUCCESS
 }
 
@@ -497,6 +508,7 @@ async fn signals(stop: Arc<watch::Sender<bool>>, log: Arc<Log>) {
         _ = hup.recv() => {}
     }
 
+    log.info("signal received, stopping");
     stop.send_replace(true);
 }
 

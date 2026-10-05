@@ -70,6 +70,12 @@ EnvironmentFile=/usr/lib/tessaro-kiosk/tessaro-kiosk.env
 
 ExecStart=/usr/bin/tessaro-agent
 
+# A stop is over in seconds: the loop leaves at the signal, and blocking
+# threads get 2s before they are abandoned (`SHUTDOWN` in main.rs). Past 10s
+# something is wedged, and killing the agent is as safe here as it is for the
+# watchdog; systemd's default 90s would hold up a reboot for nothing.
+TimeoutStopSec=10
+
 Restart=always
 RestartSec=10
 

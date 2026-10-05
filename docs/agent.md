@@ -42,6 +42,13 @@ kiosk goes unsupervised.
   has no `resolve` module - adding nss-resolve would put an unbounded call
   behind it. A resolver that swallows queries is reported as
   `DNS did not answer within 5s`, not as a slow site.
+* **A stopping agent does not wait for its blocking threads.** A deadline
+  frees the agent from a `spawn_blocking` call, but the thread runs on, and
+  dropping the runtime would wait for it without limit. `main` ends with
+  `shutdown_timeout(SHUTDOWN)` (2s) instead, and the unit's
+  `TimeoutStopSec=10` caps whatever else could hold a stop. The journal has
+  `signal received, stopping` when the signal lands and `stopping` when the
+  loop has left.
 * **The CDP session reconnects on its own and logs only at debug** (except a
   failed `DeviceAccess.enable` when `agent.device_access` is on). Every
   command is under `KIOSK_CDP_TIMEOUT`, and a websocket ping every
