@@ -5,9 +5,10 @@
 <h1 align="center">tessaro-os</h1>
 
 <p align="center">
-  <strong>The web kiosk that looks after itself.</strong><br>
-  Turn a Raspberry Pi or an x86 PC into a locked-down screen that boots straight
-  into your web app, keeps it running, and is managed from anywhere.
+  <strong>The kiosk and signage screen that looks after itself.</strong><br>
+  Turn a Raspberry Pi or an x86 PC into a locked-down kiosk or digital signage
+  screen that boots straight into your web app, keeps it running, and is managed
+  from anywhere.
 </p>
 
 <p align="center">
@@ -28,15 +29,16 @@
 > window, with the desktop app, a terminal and Webconfig one click away.
 > [How →](#try-it-on-a-mac)
 
-Every screen you deploy is a promise: the menu is up, the check-in works, the
-dashboard is live. Tessaro keeps that promise without anyone standing next to
+Every screen you deploy is a promise: the menu is up, the departure board is
+current, the check-in works, the dashboard is live. Tessaro keeps that promise without anyone standing next to
 it. Flash it, plug it in, point it at your site:
 
 ```sh
 tessaro-ctl -n golden-thistle-5731 config set browser.url=https://menu.example.com/
 ```
 
-That is the whole deployment.
+That is the whole deployment. Tessaro is not a CMS: point it at your signage
+player's web URL or at any page of your own.
 
 Prefer windows to a terminal? Manage it from [the desktop app](#the-desktop-app),
 or from [Webconfig](#webconfig) in any browser:
@@ -65,11 +67,17 @@ or from [Webconfig](#webconfig) in any browser:
 - 📺 **Display safety net**: a new resolution nobody confirms reverts by itself.
 - ⚡ **Changes apply live**: most settings take effect without a restart, and nothing restarts that does not have to.
 
+### For digital signage
+
+- 📅 **Screens on a schedule**: panels off at night, a different page at the weekend.
+- 📁 **Content that plays offline**: sync videos, images and JSON to the device, served at `http://127.0.0.1/files/`, and they keep playing when the network drops.
+- 🧩 **One image, a whole fleet**: `{placeholders}` and your own `data.*` keys give each screen its own playlist URL.
+- 📸 **See what every screen shows**: a screenshot or a live VNC view, from anywhere.
+- 🔊 **Sound and screen power, managed remotely.**
+
 ### For developers
 
 - 🔓 **Locked down, never locked in**: full root access stays yours. Tessaro's services orchestrate standard systemd units and plain config files, so you can extend the system with your own services the usual Linux way.
-- 🧩 **One image, every screen different**: `{placeholders}` and your own `data.*` keys give each device its own URL.
-- 📁 **Offline content**: sync videos, images and JSON to the device, served at `http://127.0.0.1/files/`.
 - 🌉 **A bridge into the device**: an injected script and `window.tessaro` let your page read status, print and run scripts.
 - 📜 **A real HTTP API**, with an OpenAPI document and Swagger UI on the device.
 - 🐞 **Remote DevTools** and `browser eval`, for debugging the page as the screen runs it.
