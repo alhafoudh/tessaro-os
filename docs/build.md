@@ -240,7 +240,8 @@ is how Chromium's `PACKAGECONFIG` and `CHROMIUM_EXTRA_ARGS` are set.
   version, bumped by hand) plus the short sha of this repo's `HEAD`, computed
   at parse, with `-dirty` appended when `git status` reports any change. It overrides the `IMAGE_VERSION: "0"` that Moonforge's
   `meta-moonforge-distro.yml` kas fragment sets under `env:`, and it is also
-  `IMAGE_VERSION` in os-release. The separator is `-`, not semver's `+`,
+  `IMAGE_VERSION` in os-release and the version on the console login banner
+  (`DISTRO_VERSION:pn-base-files`, which writes `/etc/issue`). The separator is `-`, not semver's `+`,
   because os-release allows only `[0-9a-z._-]` there. The stable symlink is
   `tessaro-os-<machine>.rootfs.*`, and the mise tasks depend on that `.rootfs`
   spelling. The bitbake target is still `moonforge-image-base` - only the
