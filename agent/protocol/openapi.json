@@ -1108,7 +1108,7 @@
         "tags": [
           "screen"
         ],
-        "summary": "Keep a guarded change (a resolution) that is on probation.",
+        "summary": "Keep the guarded changes (a resolution, a rotation) that are on probation.",
         "responses": {
           "200": {
             "description": "Done.",
@@ -4368,6 +4368,28 @@
       "Pending": {
         "type": "object",
         "properties": {
+          "changes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PendingChange"
+            },
+            "description": "By key, never empty."
+          },
+          "seconds_left": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "changes",
+          "seconds_left"
+        ],
+        "description": "The guarded changes on probation: made together, kept by one `confirm`\nor reverted together when `seconds_left` runs out."
+      },
+      "PendingChange": {
+        "type": "object",
+        "properties": {
           "key": {
             "type": "string"
           },
@@ -4378,18 +4400,13 @@
             "type": [
               "string",
               "null"
-            ]
-          },
-          "seconds_left": {
-            "type": "integer",
-            "format": "uint64",
-            "minimum": 0
+            ],
+            "description": "What a revert goes back to; `None` when the key was not set."
           }
         },
         "required": [
           "key",
-          "value",
-          "seconds_left"
+          "value"
         ]
       },
       "AudioStatus": {

@@ -367,6 +367,11 @@ pub static KEYS: &[Key] = &[
         ..key(RESOLUTION, "KIOSK_RESOLUTION", Kind::Resolution, WESTON,
             "Output mode, WIDTHxHEIGHT from `tessaro-ctl screen modes`, or preferred. Reverts unless confirmed with `tessaro-ctl screen confirm`.")
     },
+    Key {
+        guarded: true,
+        ..key(ROTATION, "KIOSK_ROTATION", Kind::Choice(ROTATIONS), WESTON,
+            "How far the picture is turned clockwise, for every screen: 0, 90, 180, 270, or flipped (mirrored) and flipped-90/180/270. Touch turns with it. Reverts unless confirmed with `tessaro-ctl screen confirm`.")
+    },
     key(OSK, "KIOSK_OSK", Kind::Choice(&["auto", "always", "never"]), WESTON,
         "On-screen keyboard: auto shows it only without a USB/Bluetooth keyboard."),
     key(INPUT_MOUSE, "KIOSK_INPUT_MOUSE", Kind::Flag, WESTON,
@@ -553,6 +558,7 @@ pub const INPUT_MOUSE: &str = "screen.input.mouse";
 pub const INPUT_KEYBOARD: &str = "screen.input.keyboard";
 pub const INPUT_TOUCH: &str = "screen.input.touch";
 pub const RESOLUTION: &str = "screen.resolution";
+pub const ROTATION: &str = "screen.rotation";
 pub const NAME: &str = "device.name";
 pub const ID: &str = "device.id";
 pub const GPU_MEM: &str = "device.gpu_mem";
@@ -580,6 +586,19 @@ pub const CAMERA_MIRRORS_MAX: i64 = 8;
 
 /// What camera.format may be.
 pub const CAMERA_FORMATS: &[&str] = &["auto", "mjpeg", "yuyv"];
+/// `screen.rotation`, in degrees clockwise. tessaro-weston-config turns each
+/// into Weston's `transform=` (`90` is `rotate-90`, `flipped-90` is
+/// `flipped-rotate-90`), and the splash into psplash's `--angle`.
+pub const ROTATIONS: &[&str] = &[
+    "0",
+    "90",
+    "180",
+    "270",
+    "flipped",
+    "flipped-90",
+    "flipped-180",
+    "flipped-270",
+];
 
 /// The timezone of a device where time.timezone was never set.
 pub const DEFAULT_TIMEZONE: &str = "UTC";
@@ -1632,6 +1651,18 @@ mod tests {
         assert!(check("screen.resolution", "1920x1080@60").is_err());
         assert!(check("screen.resolution", "10x10").is_err());
         assert!(find("screen.resolution").unwrap().guarded);
+    }
+
+    #[test]
+    fn rotation_is_degrees_clockwise_or_flipped() {
+        // tessaro-weston-config and the splash read exactly these.
+        for value in ROTATIONS {
+            assert_eq!(check(ROTATION, value).unwrap(), *value);
+        }
+        assert_eq!(check(ROTATION, "Flipped-90").unwrap(), "flipped-90");
+        assert!(check(ROTATION, "45").is_err());
+        assert!(check(ROTATION, "rotate-90").is_err());
+        assert!(find(ROTATION).unwrap().guarded);
     }
 
     #[test]

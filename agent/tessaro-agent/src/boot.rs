@@ -71,13 +71,12 @@ pub fn run(env: &dyn Env, log: &Log) {
     }
 
     match db.update(|state: &mut State| Ok(state.revert_pending())) {
-        Ok(Some(pending)) => log.info(format!(
-            "{}={} was never confirmed; back to {}",
-            pending.key,
-            pending.value,
-            pending.previous_or_default()
+        Ok(pending) if pending.is_empty() => {}
+        Ok(pending) => log.info(format!(
+            "{} never confirmed; {}",
+            state::listed(&pending),
+            state::listed_back(&pending)
         )),
-        Ok(None) => {}
         Err(err) => log.info(format!("could not check for an unconfirmed change: {err}")),
     }
 
@@ -93,7 +92,7 @@ pub fn run(env: &dyn Env, log: &Log) {
     }
 
     let state: State = db.read(log);
-    match render::all(&paths, &defaults, &state.settings, log) {
+    match render::state(&paths, &defaults, &state, log) {
         Ok(rendered) => {
             log.info(format!(
                 "rendered settings revision {} (env {}, policy {})",
@@ -437,11 +436,19 @@ mod tests {
                 state
                     .settings
                     .insert("screen.resolution".into(), "640x480".into());
-                state.pending = Some(state::PendingChange {
-                    key: "screen.resolution".into(),
-                    value: "640x480".into(),
-                    previous: None,
-                });
+                state.settings.insert("screen.rotation".into(), "90".into());
+                state.pending = vec![
+                    state::PendingChange {
+                        key: "screen.resolution".into(),
+                        value: "640x480".into(),
+                        previous: None,
+                    },
+                    state::PendingChange {
+                        key: "screen.rotation".into(),
+                        value: "90".into(),
+                        previous: Some("180".into()),
+                    },
+                ];
                 Ok(())
             })
             .unwrap();
@@ -449,8 +456,17 @@ mod tests {
         run(&device.env, &log);
 
         let state = device.state();
-        assert!(state.pending.is_none());
+        assert!(state.pending.is_empty());
         assert!(!state.settings.contains_key("screen.resolution"));
+        assert_eq!(state.settings["screen.rotation"], "180");
+        // The splash never saw the turn on probation, and keeps the one before.
+        assert_eq!(
+            fs::read_to_string(device.paths().splash_env())
+                .unwrap()
+                .lines()
+                .last(),
+            Some("PSPLASH_ARGS=--angle 180")
+        );
     }
 
     #[test]

@@ -128,6 +128,12 @@
       "source": "default"
     },
     {
+      "key": "screen.rotation",
+      "env": "KIOSK_ROTATION",
+      "value": "0",
+      "source": "default"
+    },
+    {
       "key": "screen.osk",
       "env": "KIOSK_OSK",
       "value": "auto",

@@ -153,7 +153,7 @@ impl Control {
             caller.describe()
         ));
 
-        if after.pending.is_some() && !guarded.is_empty() {
+        if !after.pending.is_empty() && !guarded.is_empty() {
             self.arm_probation();
         }
 
@@ -319,7 +319,7 @@ impl Control {
         apply: bool,
         network: Option<protocol::NetChange>,
     ) -> Reply {
-        let rendered = match self.render(&state.settings).await {
+        let rendered = match self.render(state).await {
             Ok(rendered) => rendered,
             Err(err) => {
                 return Reply::err(format!(
@@ -469,18 +469,31 @@ impl Control {
         .then(after)
     }
 
-    pub(super) async fn render(
-        &self,
-        settings: &BTreeMap<String, String>,
-    ) -> Result<render::Rendered, String> {
+    pub(super) async fn render(&self, state: &State) -> Result<render::Rendered, String> {
         let paths = self.paths.clone();
         let defaults = self.defaults.clone();
-        let settings = settings.clone();
+        let state = state.clone();
         let log = Arc::clone(&self.log);
         blocking("rendering", move || {
-            render::all(&paths, &defaults, &settings, &log)
+            render::state(&paths, &defaults, &state, &log)
         })
         .await
+    }
+
+    /// Render what follows a change only once it is kept, after a confirm.
+    /// Everything else already follows it, and restarts nothing again.
+    async fn render_confirmed(&self, state: &State) {
+        let paths = self.paths.clone();
+        let defaults = self.defaults.clone();
+        let state = state.clone();
+        let rendered = blocking("rendering the splash", move || {
+            render::render_splash(&paths, &defaults, &state)
+        })
+        .await;
+        if let Err(err) = rendered {
+            self.log
+                .info(format!("confirmed, but the splash did not follow: {err}"));
+        }
     }
 
     async fn check_mode(&self, mode: &str) -> Result<(), String> {
@@ -544,11 +557,10 @@ impl Control {
 
     pub async fn arm_if_pending(self: &Arc<Self>) {
         if let Ok(state) = self.read_state().await {
-            if let Some(pending) = &state.pending {
+            if !state.pending.is_empty() {
                 self.log.info(format!(
-                    "{}={} is on probation: `tessaro-ctl screen confirm` within {}s or it reverts",
-                    pending.key,
-                    pending.value,
+                    "{} on probation: `tessaro-ctl screen confirm` within {}s or it reverts",
+                    state::listed(&state.pending),
                     protocol::CONFIRM_SECONDS
                 ));
                 self.arm_probation();
@@ -569,8 +581,8 @@ impl Control {
             .await;
 
         let (pending, state) = match reverted {
-            Ok((Some(pending), state)) => (pending, state),
-            Ok((None, _)) => return,
+            Ok((pending, _)) if pending.is_empty() => return,
+            Ok(reverted) => reverted,
             Err(err) => {
                 self.log
                     .info(format!("could not revert an unconfirmed change: {err}"));
@@ -580,16 +592,15 @@ impl Control {
         *lock(&self.probation) = None;
 
         self.log.info(format!(
-            "{}={} was not confirmed within {}s; back to {}",
-            pending.key,
-            pending.value,
+            "{} not confirmed within {}s; {}",
+            state::listed(&pending),
             protocol::CONFIRM_SECONDS,
-            pending.previous_or_default()
+            state::listed_back(&pending)
         ));
 
-        let changed: Vec<Changed> = keys::find(&pending.key)
-            .map(|key| (pending.key.clone(), key))
-            .into_iter()
+        let changed: Vec<Changed> = pending
+            .iter()
+            .filter_map(|change| keys::find(&change.key).map(|key| (change.key.clone(), key)))
             .collect();
         let reply = self.converge(&changed, &state, true, None).await;
         if let Err(err) = &reply.result {
@@ -602,19 +613,21 @@ impl Control {
 
     pub(super) async fn confirm(&self) -> Result<Done, String> {
         let _writes = self.writes.lock().await;
-        let kept = self
+        let (kept, state) = self
             .update_state("confirming", |state| {
-                state
-                    .pending
-                    .take()
-                    .ok_or_else(|| "nothing is waiting to be confirmed".to_string())
+                if state.pending.is_empty() {
+                    return Err("nothing is waiting to be confirmed".to_string());
+                }
+                Ok((std::mem::take(&mut state.pending), state.clone()))
             })
             .await?;
 
         *lock(&self.probation) = None;
-        self.log
-            .info(format!("{}={} confirmed", kept.key, kept.value));
-        Ok(Done::new(format!("kept {}={}", kept.key, kept.value)))
+        let kept = state::listed(&kept);
+        self.log.info(format!("{kept} confirmed"));
+        // What follows only a kept change (the splash) follows it now.
+        self.render_confirmed(&state).await;
+        Ok(Done::new(format!("kept {kept}")))
     }
 }
 
@@ -660,7 +673,8 @@ fn changed_keys(
 struct Edit {
     normalized: BTreeMap<String, Option<String>>,
     if_revision: Option<u64>,
-    /// The guarded keys among them (`screen.resolution`).
+    /// The guarded keys among them (`screen.resolution`, `screen.rotation`),
+    /// in name order.
     guarded: Vec<&'static str>,
     /// Every one of `keys::TEMPLATES`, with its image default.
     default_templates: Vec<(&'static str, keys::Expansion, String)>,
@@ -679,13 +693,16 @@ impl Edit {
                 ));
             }
         }
-        if !self.guarded.is_empty() {
-            if let Some(pending) = &state.pending {
-                return Err(format!(
-                    "{}={} is waiting for `tessaro-ctl screen confirm`; confirm it or let it revert first",
-                    pending.key, pending.value
-                ));
-            }
+        if !self.guarded.is_empty() && !state.pending.is_empty() {
+            let (is, it) = if state.pending.len() == 1 {
+                ("is", "it")
+            } else {
+                ("are", "them")
+            };
+            return Err(format!(
+                "{} {is} waiting for `tessaro-ctl screen confirm`; confirm {it} or let {it} revert first",
+                state::listed(&state.pending)
+            ));
         }
 
         let before = state.settings.clone();
@@ -719,15 +736,15 @@ impl Edit {
         }
 
         state.revision += 1;
+        // Every guarded key this changed, together: one confirm keeps them
+        // all, and a revert takes them all back. An unset one is on
+        // probation at the image default it falls back to.
         for name in &self.guarded {
             if before.get(*name) != state.settings.get(*name) {
-                state.pending = Some(PendingChange {
+                state.pending.push(PendingChange {
                     key: name.to_string(),
-                    value: state
-                        .settings
-                        .get(*name)
-                        .cloned()
-                        .unwrap_or_else(|| "preferred".to_string()),
+                    value: state::setting(&state.settings, &self.defaults, name)
+                        .unwrap_or_default(),
                     previous: before.get(*name).cloned(),
                 });
             }

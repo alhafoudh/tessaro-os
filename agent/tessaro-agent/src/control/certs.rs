@@ -78,7 +78,7 @@ impl Control {
             return Ok(());
         }
         let state = self.read_state().await?;
-        self.render(&state.settings)
+        self.render(&state)
             .await
             .map(|_| ())
             .map_err(|err| format!("the certificates are stored, but rendering failed: {err}"))

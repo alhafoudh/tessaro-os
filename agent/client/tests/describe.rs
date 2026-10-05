@@ -62,6 +62,17 @@ fn render(function: &str, input: &Value) -> Value {
             &from(&input["applied"]),
             input["no_apply"].as_bool().unwrap_or(false),
         )),
+        "device::reverting" => Value::Array(
+            input
+                .as_array()
+                .expect("a list of { pending, left }")
+                .iter()
+                .map(|case| {
+                    let left = case["left"].as_u64().expect("left");
+                    json!(device::reverting(&from(&case["pending"]), left))
+                })
+                .collect(),
+        ),
         "device::eval" => match device::eval(&from(input)) {
             Ok(shown) => json!({ "line": line(&shown), "thrown": false }),
             Err(thrown) => json!({ "line": line(&thrown), "thrown": true }),

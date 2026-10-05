@@ -27,8 +27,8 @@ pub const DEFAULT_SOCKET: &str = "/run/tessaro-agent.sock";
 /// mDNS service type, in the fully qualified form mdns-sd expects.
 pub const SERVICE_TYPE: &str = "_tessaro._tcp.local.";
 
-/// How long a guarded change (`screen.resolution`) waits for `confirm`
-/// before it reverts itself.
+/// How long a guarded change (`screen.resolution`, `screen.rotation`) waits
+/// for `confirm` before it reverts itself.
 pub const CONFIRM_SECONDS: u64 = 60;
 
 /// Largest piece of an upload, an image or a file, in one request. Small
@@ -221,7 +221,7 @@ pub enum Command {
         #[serde(default)]
         verify: Verify,
     },
-    /// Keep a guarded change that is on probation.
+    /// Keep the guarded changes that are on probation.
     Confirm,
     Navigate {
         url: String,
@@ -763,15 +763,24 @@ pub struct JobPage {
     pub error: Option<String>,
 }
 
+/// The guarded changes on probation: made together, kept by one `confirm`
+/// or reverted together when `seconds_left` runs out.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Pending {
-    pub key: String,
-    pub value: String,
-    pub previous: Option<String>,
+    /// By key, never empty.
+    pub changes: Vec<PendingChange>,
     pub seconds_left: u64,
 }
 
-impl Pending {
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PendingChange {
+    pub key: String,
+    pub value: String,
+    /// What a revert goes back to; `None` when the key was not set.
+    pub previous: Option<String>,
+}
+
+impl PendingChange {
     /// What a revert goes back to, in words.
     pub fn previous_or_default(&self) -> &str {
         previous_or_default(self.previous.as_deref())

@@ -244,6 +244,41 @@ mod tests {
     }
 
     #[test]
+    fn a_change_on_probation_survives_the_move_to_the_pending_table() {
+        // A store as it was before `V20261005120000__pending_changes`, with
+        // a resolution on probation in the single row of `state`.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(FILE);
+        let before =
+            embedded::migrations::runner().set_target(refinery::Target::Version(20260930120000));
+        let opened = tessaro_db::open(&path, before).unwrap();
+        opened
+            .connection
+            .execute_batch(
+                "INSERT INTO settings (key, value) VALUES ('screen.resolution', '800x600'); \
+                 INSERT INTO state (id, revision, pending_key, pending_value, pending_previous) \
+                 VALUES (1, 9, 'screen.resolution', '800x600', '1920x1080');",
+            )
+            .unwrap();
+        drop(opened);
+
+        let log = Log::buffered(true);
+        let state = Db::open(dir.path(), &log).read::<State>(&log);
+
+        assert_eq!(state.revision, 9);
+        assert_eq!(state.settings["screen.resolution"], "800x600");
+        assert_eq!(
+            state.pending,
+            vec![crate::state::PendingChange {
+                key: "screen.resolution".into(),
+                value: "800x600".into(),
+                previous: Some("1920x1080".into()),
+            }]
+        );
+        assert!(log.lines().is_empty(), "{:?}", log.lines());
+    }
+
+    #[test]
     fn clearing_empties_only_that_type() {
         let (_dir, db, log) = fixture();
         db.update(|state: &mut State| {

@@ -1049,7 +1049,8 @@ pub mod screen {
             }
             = |_, _| Action::Run(Command::Screenshot);
 
-        /// Keep a guarded change (a resolution) that is on probation.
+        /// Keep the guarded changes (a resolution, a rotation) that are on
+        /// probation.
         Confirm: Post "/api/v1/screen/confirm" (Empty, ()) -> Done
             = |_, _| Action::Run(Command::Confirm);
 

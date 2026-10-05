@@ -3,7 +3,7 @@
 //! Browser pages.
 
 use protocol::keys::Consumer;
-use protocol::{Applied, EvalResult, Hardware, KeyInfo, NodeInfo, Status};
+use protocol::{Applied, EvalResult, Hardware, KeyInfo, NodeInfo, Pending, Status};
 use serde_json::Value;
 
 use crate::describe::{audio, time};
@@ -192,12 +192,12 @@ pub fn status(status: &Status) -> StatusText {
 
     let pending = status.pending.as_ref().map(|pending| {
         Line::of(Tone::Warn, "on probation")
-            .text(format!(" {}={} - ", pending.key, pending.value))
+            .text(format!(" {} - ", pending_values(pending)))
             .add(Tone::Cmd, format!("`{CONFIRM_COMMAND}`"))
             .text(format!(
-                " within {}s or it goes back to {}",
+                " within {}s or {}",
                 pending.seconds_left,
-                pending.previous_or_default()
+                pending_back(pending, false)
             ))
     });
     StatusText {
@@ -248,11 +248,16 @@ pub fn applied(applied: &Applied, no_apply: bool) -> Vec<Line> {
         );
     }
     if let Some(pending) = &applied.pending {
+        let is = if pending.changes.len() == 1 {
+            "is"
+        } else {
+            "are"
+        };
         lines.push(Line::new());
         lines.push(
             Line::of(
                 Tone::Warn,
-                format!("{}={} is on probation.", pending.key, pending.value),
+                format!("{} {is} on probation.", pending_values(pending)),
             )
             .text(" Check the screen, then run"),
         );
@@ -260,12 +265,58 @@ pub fn applied(applied: &Applied, no_apply: bool) -> Vec<Line> {
         lines.push(Line::plain("    ").add(Tone::Cmd, CONFIRM_COMMAND));
         lines.push(Line::new());
         lines.push(Line::plain(format!(
-            "within {}s, or it goes back to {} on its own.",
+            "within {}s, or {}.",
             pending.seconds_left,
-            pending.previous_or_default()
+            pending_back(pending, true)
         )));
     }
     lines
+}
+
+/// The changes on probation in a status bar, `left` seconds before they
+/// revert: `a=1 reverts to 0 in 42s`, or `a=1, b=2 revert in 42s`.
+pub fn reverting(pending: &Pending, left: u64) -> String {
+    match pending.changes.as_slice() {
+        [change] => format!(
+            "{}={} reverts to {} in {left}s",
+            change.key,
+            change.value,
+            change.previous_or_default()
+        ),
+        _ => format!("{} revert in {left}s", pending_values(pending)),
+    }
+}
+
+/// `a=1, b=2`: the changes on probation.
+fn pending_values(pending: &Pending) -> String {
+    pending
+        .changes
+        .iter()
+        .map(|change| format!("{}={}", change.key, change.value))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// What a revert of them does: `it goes back to 1`, or for more than one
+/// `they go back: a to 1, b to the default`, with `on its own` or `on their
+/// own` when `alone`.
+fn pending_back(pending: &Pending, alone: bool) -> String {
+    match pending.changes.as_slice() {
+        [change] => format!(
+            "it goes back to {}{}",
+            change.previous_or_default(),
+            if alone { " on its own" } else { "" }
+        ),
+        changes => format!(
+            "they go back{}: {}",
+            if alone { " on their own" } else { "" },
+            changes
+                .iter()
+                .map(|change| format!("{} to {}", change.key, change.previous_or_default()))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    }
 }
 
 /// What a change of a key read by `consumer` restarts, in words.

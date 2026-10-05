@@ -32,15 +32,21 @@ connector will be called, the config is generated per boot:
   wide or more and 1 below - measured on the mode being set, if one is. `none` writes
   no `scale=`.
 * **Resolution is `screen.resolution` (`KIOSK_RESOLUTION`)**: `preferred`, or
-  a `WIDTHxHEIGHT` written as `mode=` into each connector's `[output]`. It is
-  the one setting that can leave nobody able to see the screen, so it is
-  guarded on every layer. The agent only accepts a mode some connected connector lists
+  a `WIDTHxHEIGHT` written as `mode=` into each connector's `[output]`. It
+  can leave nobody able to see the screen, so it is guarded on every layer.
+  The agent only accepts a mode some connected connector lists
   in `/sys/class/drm/*/modes` (`tessaro-ctl screen modes` prints them); the
   generator writes it only for connectors that list it and leaves the rest on
-  their preferred mode; and the change is on **probation** - it reverts on its
-  own unless `tessaro-ctl screen confirm` arrives within 60s. The pending change is in
-  the `state` table of `tessaro.db`, so an agent that crashes re-arms it at
-  start (`arm_if_pending`), and the boot oneshot reverts a change still
+  their preferred mode; and the change is on **probation**.
+* **A guarded key's change is on probation**: `screen.resolution` and
+  `screen.rotation` (`guarded` in `keys.rs`). It reverts on its own unless
+  `tessaro-ctl screen confirm` arrives within 60s. Guarded keys changed by one
+  `config set` are on probation together: one confirm keeps them all, and
+  the timeout reverts them all, so a mode and a turn tried at once cannot
+  half survive. A guarded key cannot change while others wait. An unset one
+  is on probation at the image default it falls back to. The pending changes
+  are the `pending` table of `tessaro.db`, so an agent that crashes re-arms
+  them at start (`arm_if_pending`), and the boot oneshot reverts changes still
   pending at boot: a reboot is not a confirm. The agent keeps running through
   the Weston restart the change makes, so the 60s start again from that
   restart (`extend_probation` in `control/settings.rs`): the screen has to be
@@ -71,6 +77,37 @@ connector will be called, the config is generated per boot:
   its API on 7400 and every Webconfig session keep running through a Weston
   restart. A change that also has a `Consumer::AgentRestart` key restarts
   Weston, then the agent (`After::Restarts`).
+
+## Screen rotation
+
+**`screen.rotation` (`KIOSK_ROTATION`) is how far the picture is turned
+clockwise, written as Weston's `[output] transform=` into every generated
+section**, so a portrait panel or one mounted upside down shows the page
+upright. `90` is `rotate-90`, `flipped` is `flipped` (mirrored, for a rear
+projection or a teleprompter glass) and `flipped-90` is `flipped-rotate-90`;
+Weston's man page counts `rotate-90` clockwise (`weston.ini.man`). `0`
+writes no `transform=`, so an unturned device keeps the config it had and a
+hotplug check sees no difference. The turn is on probation like a resolution:
+a wrong one can leave a touch screen with nothing anyone can hit.
+
+* **Touch turns with the output, with nothing to set.** Weston maps each
+  touch through the transform of the output the touchscreen is bound to
+  (`libinput-device.c`), and with one screen that is the only output. With
+  several, a touchscreen goes to the first unless a udev `WL_OUTPUT`
+  property names its output. A digitizer mounted differently from its own
+  panel is a calibration, `LIBINPUT_CALIBRATION_MATRIX`, not a rotation.
+* **The page gets the turned size.** Chromium is given the output's
+  logical size, so a quarter turn swaps `innerWidth` and `innerHeight`, and
+  CSS orientation queries follow. Auto scale still reads the panel's own
+  width: a 4K panel turned to portrait keeps scale 2.
+* **The VNC mirror's clicks follow it**: the screen-share patch converts a
+  viewer's position with `weston_coord_global_from_output_point`, which
+  applies the transform ([remote-access.md](remote-access.md)).
+* **The Pi firmware's `display_rotate` and `display_hdmi_rotate` do nothing
+  here.** Under full KMS the kernel owns the display, and the firmware's
+  options are ignored like the rest of `hdmi_*`.
+* **The boot splash turns too, from the next boot** (see **Boot splash and
+  wallpaper**).
 
 ## Display hotplug
 
@@ -319,6 +356,19 @@ script run and both committed.
   and the bbappend replaces the last two in the source before configure.
   `SPLASH_IMAGES:rpi` is set as well, or `meta-moonforge-raspberrypi`'s
   Moonforge logo wins on the Pi.
+* **The splash turns with `screen.rotation`, through psplash's `--angle`.**
+  It starts at sysinit, before anything the agent renders into `/run`
+  exists, so the agent keeps `PSPLASH_ARGS=--angle N` in
+  `/data/tessaro/splash.env`, which the overlayfs preinit has mounted before
+  systemd starts; the `psplash-start.service` drop-in
+  `20-tessaro-angle.conf` reads it (`EnvironmentFile=-`, an unbraced
+  `$PSPLASH_ARGS` that is empty or missing passes nothing). Only a confirmed
+  turn is written (`render_splash` in `render.rs`, from `State::confirmed`):
+  one still on probation is reverted at boot, so the splash must not take
+  it. psplash counts its angle the other way round from Weston
+  (`splash_angle`), and cannot mirror, so `flipped-N` gets the turn alone.
+  The drop-in is its own file, not `framebuf.conf`, which Moonforge's Pi
+  layer ships.
 * **psplash draws a pixel fully or not at all** (`psplash_fb_draw_image` in
   `psplash-fb.c` tests only whether alpha is non-zero), so the logo and the
   bar's frame carry no alpha: the background colour and the mark's glow are

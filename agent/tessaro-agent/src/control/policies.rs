@@ -167,7 +167,7 @@ impl Control {
     async fn apply_policies(&self) -> Result<bool, String> {
         let state = self.read_state().await?;
         let rendered = self
-            .render(&state.settings)
+            .render(&state)
             .await
             .map_err(|err| format!("the browser policy is stored, but rendering failed: {err}"))?;
         if !rendered.policy_changed {

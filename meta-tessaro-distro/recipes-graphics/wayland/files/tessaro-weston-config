@@ -93,6 +93,25 @@ o=$(read_key "$OVERRIDE" KIOSK_RESOLUTION)
 [ -n "$o" ] && resolution=$o
 [ -n "$resolution" ] || resolution=preferred
 
+# Degrees clockwise, or flipped (mirrored) and flipped-N (screen.rotation), as
+# Weston's [output] transform=. Weston turns touch input with the output it
+# is bound to, so nothing else follows it. On probation like the resolution.
+rotation=$(read_key "$DEFAULTS" KIOSK_ROTATION)
+o=$(read_key "$OVERRIDE" KIOSK_ROTATION)
+[ -n "$o" ] && rotation=$o
+[ -n "$rotation" ] || rotation=0
+
+case $rotation in
+    0) transform= ;;
+    90|180|270) transform=rotate-$rotation ;;
+    flipped) transform=flipped ;;
+    flipped-90|flipped-180|flipped-270) transform=flipped-rotate-${rotation#flipped-} ;;
+    *)
+        echo "tessaro-weston-config: KIOSK_ROTATION=$rotation is not 0, 90, 180, 270 or flipped[-N] - using 0" >&2
+        transform=
+        ;;
+esac
+
 osk=$(read_key "$DEFAULTS" KIOSK_OSK)
 o=$(read_key "$OVERRIDE" KIOSK_OSK)
 [ -n "$o" ] && osk=$o
@@ -393,7 +412,8 @@ for dev in "$DRM_ROOT"/card*-*; do
         why="KIOSK_SCALE"
     else
         # The mode being set, or else the first line of modes, which is the
-        # connector's preferred one.
+        # connector's preferred one. The panel's own width, before any
+        # transform=: a 4K panel turned to portrait still wants scale 2.
         if [ -n "$mode" ]; then
             width=${mode%%x*}
         else
@@ -420,5 +440,10 @@ for dev in "$DRM_ROOT"/card*-*; do
     if [ -n "$mode" ]; then
         printf 'mode=%s\n' "$mode" >> "$OUT"
     fi
-    echo "tessaro-weston-config: $name scale=${scale:-default} mode=${mode:-preferred} ($why)"
+    # Only when turned, so an unrotated device keeps the config it had and a
+    # hotplug check sees no difference.
+    if [ -n "$transform" ]; then
+        printf 'transform=%s\n' "$transform" >> "$OUT"
+    fi
+    echo "tessaro-weston-config: $name scale=${scale:-default} mode=${mode:-preferred} transform=${transform:-normal} ($why)"
 done

@@ -486,7 +486,7 @@ same thing. Keep to these rules when adding a command or a setting:
   profiles' keys (`network.ethernet.*`, `network.wifi.*`).
 * **Renaming a key means a migration** in
   `agent/tessaro-agent/migrations/device/` that moves its row in `settings`
-  (and `state.pending_key`) and rewrites its placeholders in the URL and
+  (and in `pending`) and rewrites its placeholders in the URL and
   template values, so devices in the field follow at boot (see
   **Migrations** in [docs/storage.md](docs/storage.md)), and a `git grep`
   over the whole repo. The `KIOSK_*` env names do not follow the keys and

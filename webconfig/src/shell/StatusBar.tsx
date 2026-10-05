@@ -5,7 +5,8 @@
 
 import { useEffect, useState } from "react";
 
-import { memUsedPercent, previousOrDefault } from "../describe/common";
+import { memUsedPercent } from "../describe/common";
+import { reverting } from "../describe/device";
 import { useDevice } from "../device/DeviceContext";
 
 /** Seconds a probation has left now, counted down between polls. */
@@ -55,12 +56,8 @@ export function StatusBar() {
           )}
           {status.pending && left !== null && (
             <span className="ms-auto text-warning">
-              <span className="max-md:hidden">
-                {status.pending.key}={status.pending.value} reverts to {previousOrDefault(status.pending.previous)}{" "}
-                in{" "}
-              </span>
-              <span className="md:hidden">reverts in </span>
-              {left}s
+              <span className="max-md:hidden">{reverting(status.pending, left)}</span>
+              <span className="md:hidden">reverts in {left}s</span>
             </span>
           )}
         </>

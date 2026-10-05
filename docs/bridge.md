@@ -83,7 +83,7 @@ answers everything:
 | Call | Mode | Does what `tessaro-ctl` does with |
 | --- | --- | --- |
 | `log(level, message)` | config | the journal, as `page (level): message`; `debug` only with `agent.debug` |
-| `device.status()` | config | `device status`, without the node's fingerprint and claim, whether remote DevTools is open (it tells a page it can be driven) and the settings revision (`tessaro:config` says when they change): its `name`, the hardware and its serial, memory, `cpuPercent`, the clock (`time`), a mode on probation (`pending`) and why the injected script is not in the page (`bridge.scriptProblem`) included |
+| `device.status()` | config | `device status`, without the node's fingerprint and claim, whether remote DevTools is open (it tells a page it can be driven) and the settings revision (`tessaro:config` says when they change): its `name`, the hardware and its serial, memory, `cpuPercent`, the clock (`time`), the changes on probation (`pending`: `changes`, each a `key`, `value` and `previous`, and `secondsLeft`) and why the injected script is not in the page (`bridge.scriptProblem`) included |
 | `network.status()` | config | `network show`, without the public address |
 | `audio.status()` | config | `audio show` |
 | `printer.list()` | config | `printer list`, without each printer's URI |
@@ -127,7 +127,11 @@ mirror from the page. Nor is `screen.input.*`, which the page reads in
 `tessaro.config` but cannot set: ignoring the touchscreen or the keyboard
 is the operator's lockout of the people in front of the screen, which the
 page must not lift, and each change restarts Weston and the browser
-(**Input devices** in docs/display.md).
+(**Input devices** in docs/display.md). Nor is `screen.rotation`, read in
+`tessaro.config` too: a turn waits for `tessaro-ctl screen confirm` from
+someone who can see the screen, and a page that wants to know its shape
+has CSS media queries and `screen.orientation` (**Screen rotation** in
+docs/display.md).
 
 The other commands no call mirrors are the operator's too:
 

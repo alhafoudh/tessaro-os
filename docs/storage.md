@@ -10,7 +10,7 @@ touch one row instead of rewriting a whole document.
 
 | Store | Opened by | Tables | Why there |
 | --- | --- | --- | --- |
-| `/data/tessaro/tessaro.db` | `tessaro-agent` and `tessaro-agent boot` (`db.rs`) | `settings`, `state`, `tokens`, `secrets`, `scripts`, `schedules`, `browser_policies`, `printers`, `net_txn`, `net_last` | on `/data`, so it survives reboots and updates |
+| `/data/tessaro/tessaro.db` | `tessaro-agent` and `tessaro-agent boot` (`db.rs`) | `settings`, `state`, `pending`, `tokens`, `secrets`, `scripts`, `schedules`, `browser_policies`, `printers`, `net_txn`, `net_last` | on `/data`, so it survives reboots and updates |
 | `/run/tessaro-kiosk/sessions.db` | `tessaro-agent` (`api/sessions.rs`) | `sessions` | on tmpfs, so a reboot ends every browser session |
 | `<config dir>/tessaro.db` | `tessaro-ctl`, `tessaro-gui` (`agent/client/src/store.rs`) | `nodes`, `gui_prefs` | the config dir is `TESSARO_CONFIG_DIR`, else `$XDG_CONFIG_HOME/tessaro`, else `~/.config/tessaro` |
 
@@ -65,8 +65,14 @@ whole, inside the transaction it is given (`State` in `state.rs`, `Auth` in
   commit (`control/settings.rs`) writes a staged WiFi password to `secrets`
   and the settings to `settings` together, so a power cut cannot leave a
   password for a network the settings do not name.
+* **`pending` holds the guarded changes on probation, one row per key**,
+  and `state` only the settings' revision. One `config set` can change
+  `screen.resolution` and `screen.rotation` together, and they are kept by
+  one `screen confirm` or reverted together, so they cannot share one row.
+  `previous` is what a revert goes back to, NULL for a key that was not set
+  (see **Display scaling** in [display.md](display.md)).
 * **A factory reset clears rows, not the file**: `tokens`, `settings`,
-  `state`, `secrets`, `scripts`, `schedules`, `browser_policies`, `printers`. The store
+  `state`, `pending`, `secrets`, `scripts`, `schedules`, `browser_policies`, `printers`. The store
   and its migration history stay.
 * **`printers` is what CUPS is reconciled with**, one row per queue by name,
   and the row with `is_default` is the printer `window.print()` uses; a
@@ -149,7 +155,7 @@ values that are templates. For `screen.osk` becoming `screen.keyboard`:
 ```sql
 UPDATE OR IGNORE settings SET key = 'screen.keyboard' WHERE key = 'screen.osk';
 DELETE FROM settings WHERE key = 'screen.osk';
-UPDATE state SET pending_key = 'screen.keyboard' WHERE pending_key = 'screen.osk';
+UPDATE pending SET key = 'screen.keyboard' WHERE key = 'screen.osk';
 UPDATE settings SET value = replace(value, '{screen.osk}', '{screen.keyboard}')
     WHERE key IN ('browser.url', 'browser.debug.template');
 ```

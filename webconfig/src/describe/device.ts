@@ -128,11 +128,9 @@ export function status(status: Schemas["Status"]): StatusText {
 
   const pending = status.pending
     ? Line.of("warn", "on probation")
-        .text(` ${status.pending.key}=${status.pending.value} - `)
+        .text(` ${pendingValues(status.pending)} - `)
         .add("cmd", `\`${CONFIRM_COMMAND}\``)
-        .text(
-          ` within ${status.pending.seconds_left}s or it goes back to ${previousOrDefault(status.pending.previous)}`,
-        )
+        .text(` within ${status.pending.seconds_left}s or ${pendingBack(status.pending, false)}`)
     : null;
   return { facts, units, more, pending };
 }
@@ -159,18 +157,39 @@ export function applied(applied: Schemas["Applied"], noApply: boolean): Line[] {
   }
   if (applied.pending) {
     const pending = applied.pending;
+    const is = pending.changes.length === 1 ? "is" : "are";
     lines.push(new Line());
-    lines.push(Line.of("warn", `${pending.key}=${pending.value} is on probation.`).text(" Check the screen, then run"));
+    lines.push(Line.of("warn", `${pendingValues(pending)} ${is} on probation.`).text(" Check the screen, then run"));
     lines.push(new Line());
     lines.push(Line.plain("    ").add("cmd", CONFIRM_COMMAND));
     lines.push(new Line());
-    lines.push(
-      Line.plain(
-        `within ${pending.seconds_left}s, or it goes back to ${previousOrDefault(pending.previous)} on its own.`,
-      ),
-    );
+    lines.push(Line.plain(`within ${pending.seconds_left}s, or ${pendingBack(pending, true)}.`));
   }
   return lines;
+}
+
+/** The changes on probation in a status bar, `left` seconds before they revert. */
+export function reverting(pending: Schemas["Pending"], left: number): string {
+  const [change, ...rest] = pending.changes;
+  if (change && rest.length === 0) {
+    return `${change.key}=${change.value} reverts to ${previousOrDefault(change.previous)} in ${left}s`;
+  }
+  return `${pendingValues(pending)} revert in ${left}s`;
+}
+
+/** `a=1, b=2`: the changes on probation. */
+function pendingValues(pending: Schemas["Pending"]): string {
+  return pending.changes.map((change) => `${change.key}=${change.value}`).join(", ");
+}
+
+/** What a revert of them does, `on its own` or `on their own` when `alone`. */
+function pendingBack(pending: Schemas["Pending"], alone: boolean): string {
+  const [change, ...rest] = pending.changes;
+  if (change && rest.length === 0) {
+    return `it goes back to ${previousOrDefault(change.previous)}${alone ? " on its own" : ""}`;
+  }
+  const each = pending.changes.map((change) => `${change.key} to ${previousOrDefault(change.previous)}`);
+  return `they go back${alone ? " on their own" : ""}: ${each.join(", ")}`;
 }
 
 export function restarts(consumer: Schemas["Consumer"]): string {

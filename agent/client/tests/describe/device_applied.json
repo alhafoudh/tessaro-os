@@ -5,14 +5,24 @@
       "audio": "hdmi at 80%; input off",
       "changed": [
         "screen.resolution",
+        "screen.rotation",
         "audio.volume"
       ],
       "network": null,
       "pending": {
-        "key": "screen.resolution",
-        "previous": "1920x1080",
-        "seconds_left": 30,
-        "value": "1280x720"
+        "changes": [
+          {
+            "key": "screen.resolution",
+            "previous": "1920x1080",
+            "value": "1280x720"
+          },
+          {
+            "key": "screen.rotation",
+            "previous": null,
+            "value": "90"
+          }
+        ],
+        "seconds_left": 30
       },
       "reboot": true,
       "restarted": [
@@ -37,7 +47,7 @@
       ],
       [
         "ok",
-        "screen.resolution, audio.volume",
+        "screen.resolution, screen.rotation, audio.volume",
         0
       ]
     ],
@@ -90,7 +100,7 @@
     [
       [
         "warn",
-        "screen.resolution=1280x720 is on probation.",
+        "screen.resolution=1280x720, screen.rotation=90 are on probation.",
         0
       ],
       [
@@ -116,7 +126,7 @@
     [
       [
         "plain",
-        "within 30s, or it goes back to 1920x1080 on its own.",
+        "within 30s, or they go back on their own: screen.resolution to 1920x1080, screen.rotation to the default.",
         0
       ]
     ]

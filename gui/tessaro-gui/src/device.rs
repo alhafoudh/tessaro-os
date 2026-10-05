@@ -2057,13 +2057,8 @@ impl Device {
             if let Some(pending) = &status.pending {
                 let left = pending.seconds_left.saturating_sub(at.elapsed().as_secs());
                 bar = bar.push(
-                    small(format!(
-                        "{}={} reverts to {} in {left}s",
-                        pending.key,
-                        pending.value,
-                        pending.previous_or_default()
-                    ))
-                    .style(iced::widget::text::warning),
+                    small(tessaro_client::describe::device::reverting(pending, left))
+                        .style(iced::widget::text::warning),
                 );
             }
         }

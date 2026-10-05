@@ -429,6 +429,69 @@ module AgentE2E
       pause 5, "let Weston settle"
     end
 
+    # A quarter turn is a portrait viewport: the page's innerWidth and
+    # innerHeight trade places. nil while the browser restarts with Weston.
+    it "rotation: a quarter turn swaps the page's width and height, and reverts without a confirm", :reconfigure do
+      viewport = lambda do
+        quietly { cdp.command("Runtime.evaluate", expression: "[innerWidth, innerHeight]", returnByValue: true) }
+          .dig("result", "value")
+      rescue AgentE2E::Failure, SystemCallError, IOError
+        nil
+      end
+      wait_for_viewport = lambda do |want, seconds|
+        step "wait up to #{seconds}s for innerWidth x innerHeight #{want.join("x")}"
+        deadline = Time.now + seconds
+        seen = viewport.call
+        until seen == want || Time.now > deadline
+          sleep 1
+          seen = viewport.call
+        end
+        expect(seen).to eq(want)
+      end
+      width, height = viewport.call
+      expect(width).to be > height, "the screen does not start out landscape"
+
+      guest.run("tessaro-ctl config set screen.rotation=90")
+      # Weston restarts after the answer; the page is back once it has.
+      wait_for_viewport.call([height, width], 60)
+      expect(guest.run("cat /run/weston/weston.ini")).to include("transform=rotate-90")
+      expect(guest.run("tessaro-ctl device status")).to include("on probation screen.rotation=90")
+
+      pause CONFIRM_SECONDS + 10, "no confirm, so the probation runs out"
+      expect(guest.run("tessaro-ctl config get screen.rotation")).to include("(default)"), "an unconfirmed turn stuck"
+      wait_for_viewport.call([width, height], 60)
+    ensure
+      guest.run("tessaro-ctl config unset screen.rotation", allow_failure: true)
+      pause 5, "let Weston settle"
+    end
+
+    it "rotation and resolution: set together, one confirm keeps both, and the splash follows the turn", :reconfigure do
+      modes = JSON.parse(guest.run("tessaro-ctl --json screen modes")).flat_map { _1["modes"] }
+      target = modes[1] || modes[0]
+
+      guest.run("tessaro-ctl config set screen.rotation=180 screen.resolution=#{target}")
+      step "wait up to 60s for tessaro-ctl device status to say both are on probation"
+      deadline = Time.now + 60
+      status = ""
+      until status.include?("screen.rotation=180") || Time.now > deadline
+        sleep 2
+        status = quietly { guest.run("tessaro-ctl device status 2>/dev/null", allow_failure: true) }
+      end
+      expect(status).to include("on probation screen.resolution=#{target}, screen.rotation=180")
+      # Not kept yet, so not the splash's either.
+      expect(guest.run("cat /data/tessaro/splash.env")).to include("PSPLASH_ARGS=\n")
+
+      expect(guest.run("tessaro-ctl screen confirm")).to include("kept screen.resolution=#{target}, screen.rotation=180")
+      expect(guest.run("tessaro-ctl config get screen.rotation")).to include("180")
+      expect(guest.run("tessaro-ctl config get screen.resolution")).to include(target)
+      expect(guest.run("cat /data/tessaro/splash.env")).to include("PSPLASH_ARGS=--angle 180")
+    ensure
+      # The unset is on probation too; keep it, or the next case is refused.
+      guest.run("tessaro-ctl config unset screen.rotation screen.resolution", allow_failure: true)
+      guest.run("tessaro-ctl screen confirm", allow_failure: true)
+      pause 5, "let Weston settle"
+    end
+
     # The store as the page sees it: fetched by the browser from nginx, not
     # read off the disk. The kiosk page is http://127.0.0.1/ itself, so the
     # fetch is same-origin; the CORS header is checked all the same, since

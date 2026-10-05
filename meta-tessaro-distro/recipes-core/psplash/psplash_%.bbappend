@@ -20,9 +20,20 @@ SPLASH_IMAGES:rpi = "file://tessaro-splash.png;outsuffix=raspberrypi"
 SRC_URI += " \
     file://psplash-colors.h \
     file://psplash-bar.png \
+    file://psplash-tessaro-angle.conf \
 "
 
 do_configure:prepend() {
     install -m0644 ${WORKDIR}/psplash-colors.h ${S}/psplash-colors.h
     install -m0644 ${WORKDIR}/psplash-bar.png ${S}/base-images/psplash-bar.png
 }
+
+# The splash turns with screen.rotation: psplash's --angle, from a file the
+# agent keeps on /data (see the drop-in). systemd.bbclass packages only the
+# units it names, so the drop-in directory is listed by hand.
+do_install:append() {
+    install -Dm0644 ${WORKDIR}/psplash-tessaro-angle.conf \
+        ${D}${systemd_system_unitdir}/psplash-start.service.d/20-tessaro-angle.conf
+}
+
+FILES:${PN} += "${systemd_system_unitdir}/psplash-start.service.d"

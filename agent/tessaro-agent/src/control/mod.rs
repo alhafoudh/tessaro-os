@@ -1134,14 +1134,14 @@ impl Control {
     }
 
     fn pending(&self, state: &State) -> Option<Pending> {
-        let change = state.pending.as_ref()?;
+        if state.pending.is_empty() {
+            return None;
+        }
         let seconds_left = lock(&self.probation)
             .map(|deadline| deadline.saturating_duration_since(Instant::now()).as_secs())
             .unwrap_or(protocol::CONFIRM_SECONDS);
         Some(Pending {
-            key: change.key.clone(),
-            value: change.value.clone(),
-            previous: change.previous.clone(),
+            changes: state.pending.clone(),
             seconds_left,
         })
     }
@@ -3071,8 +3071,9 @@ mod tests {
         )
         .await;
         let pending = applied.pending.expect("a guarded change is on probation");
-        assert_eq!(pending.value, "1280x720");
-        assert_eq!(pending.previous, None);
+        assert_eq!(pending.changes.len(), 1);
+        assert_eq!(pending.changes[0].value, "1280x720");
+        assert_eq!(pending.changes[0].previous, None);
 
         let busy = err(
             &fx.control,
@@ -3122,6 +3123,132 @@ mod tests {
         )
         .await;
         assert_eq!(settings.settings[0].source, Source::Default);
+    }
+
+    /// Wait out the confirm window, and the revert's file work on the
+    /// blocking pool after it.
+    async fn past_probation() {
+        tokio::time::sleep(Duration::from_secs(protocol::CONFIRM_SECONDS + 1)).await;
+        for _ in 0..50 {
+            tokio::task::yield_now().await;
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
+    async fn value(control: &Arc<Control>, key: &str) -> Option<String> {
+        let settings: Settings = ok(
+            control,
+            &Caller::Local,
+            Command::Get {
+                key: Some(key.into()),
+            },
+        )
+        .await;
+        settings.settings[0].value.clone()
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_rotation_and_a_resolution_set_together_revert_together() {
+        let fx = fixture();
+        let applied: Applied = ok(
+            &fx.control,
+            &Caller::Local,
+            set(&[("screen.resolution", "1280x720"), ("screen.rotation", "90")]),
+        )
+        .await;
+        let pending = applied.pending.expect("both are on probation");
+        let keys: Vec<&str> = pending.changes.iter().map(|c| c.key.as_str()).collect();
+        assert_eq!(keys, ["screen.resolution", "screen.rotation"]);
+
+        let busy = err(
+            &fx.control,
+            &Caller::Local,
+            set(&[("screen.rotation", "180")]),
+        )
+        .await;
+        assert!(
+            busy.contains("screen.resolution=1280x720, screen.rotation=90 are waiting"),
+            "{busy}"
+        );
+
+        past_probation().await;
+
+        let settings: Settings = ok(&fx.control, &Caller::Local, Command::Get { key: None }).await;
+        for key in ["screen.resolution", "screen.rotation"] {
+            let setting = settings.settings.iter().find(|s| s.key == key).unwrap();
+            assert_eq!(setting.source, Source::Default, "{key}");
+        }
+        let status = fx.control.status().await.unwrap();
+        assert!(status.pending.is_none());
+    }
+
+    #[tokio::test]
+    async fn one_confirm_keeps_every_change_and_the_splash_follows_it() {
+        let fx = fixture();
+        let splash = fx.control.paths.splash_env();
+        let angle = || {
+            std::fs::read_to_string(&splash)
+                .ok()
+                .and_then(|body| body.lines().last().map(str::to_string))
+        };
+        let _: Applied = ok(
+            &fx.control,
+            &Caller::Local,
+            set(&[("screen.resolution", "1280x720"), ("screen.rotation", "90")]),
+        )
+        .await;
+        // On probation, the splash keeps the rotation it had.
+        assert_eq!(angle().as_deref(), Some("PSPLASH_ARGS="));
+
+        let done: Done = ok(&fx.control, &Caller::Local, Command::Confirm).await;
+        assert!(
+            done.message
+                .contains("kept screen.resolution=1280x720, screen.rotation=90"),
+            "{}",
+            done.message
+        );
+        assert_eq!(
+            value(&fx.control, "screen.resolution").await.as_deref(),
+            Some("1280x720")
+        );
+        assert_eq!(
+            value(&fx.control, "screen.rotation").await.as_deref(),
+            Some("90")
+        );
+        assert_eq!(angle().as_deref(), Some("PSPLASH_ARGS=--angle 270"));
+    }
+
+    #[tokio::test]
+    async fn unsetting_a_guarded_key_is_on_probation_at_its_default() {
+        let fx = fixture_with(
+            [
+                ("KIOSK_URL".to_string(), "http://127.0.0.1/".to_string()),
+                ("KIOSK_ROTATION".to_string(), "0".to_string()),
+            ]
+            .into(),
+        );
+        let _: Applied = ok(
+            &fx.control,
+            &Caller::Local,
+            set(&[("screen.rotation", "180")]),
+        )
+        .await;
+        let _: Done = ok(&fx.control, &Caller::Local, Command::Confirm).await;
+
+        let applied: Applied = ok(
+            &fx.control,
+            &Caller::Local,
+            Command::Unset {
+                keys: vec!["screen.rotation".to_string()],
+                if_revision: None,
+                apply: true,
+                verify: Default::default(),
+            },
+        )
+        .await;
+        let pending = applied.pending.expect("the unset is on probation");
+        assert_eq!(pending.changes[0].previous.as_deref(), Some("180"));
+        assert_eq!(pending.changes[0].value, "0");
     }
 
     #[tokio::test]

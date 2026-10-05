@@ -1,0 +1,40 @@
+{
+  "function": "device::reverting",
+  "input": [
+    {
+      "left": 42,
+      "pending": {
+        "changes": [
+          {
+            "key": "screen.rotation",
+            "previous": null,
+            "value": "90"
+          }
+        ],
+        "seconds_left": 60
+      }
+    },
+    {
+      "left": 7,
+      "pending": {
+        "changes": [
+          {
+            "key": "screen.resolution",
+            "previous": "1920x1080",
+            "value": "1280x720"
+          },
+          {
+            "key": "screen.rotation",
+            "previous": "180",
+            "value": "270"
+          }
+        ],
+        "seconds_left": 60
+      }
+    }
+  ],
+  "output": [
+    "screen.rotation=90 reverts to the default in 42s",
+    "screen.resolution=1280x720, screen.rotation=270 revert in 7s"
+  ]
+}

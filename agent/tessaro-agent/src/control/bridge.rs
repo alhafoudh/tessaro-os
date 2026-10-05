@@ -1091,9 +1091,11 @@ fn page_status(status: &protocol::Status) -> Value {
         "debugScreen": status.debug_screen,
         "screenOn": status.screen_on,
         "pending": status.pending.as_ref().map(|pending| json!({
-            "key": pending.key,
-            "value": pending.value,
-            "previous": pending.previous,
+            "changes": pending.changes.iter().map(|change| json!({
+                "key": change.key,
+                "value": change.value,
+                "previous": change.previous,
+            })).collect::<Vec<_>>(),
             "secondsLeft": pending.seconds_left,
         })),
         "bridge": status.bridge.as_ref().map(|bridge| json!({

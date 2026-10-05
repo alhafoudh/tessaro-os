@@ -2,8 +2,6 @@
 //! keys that log in as root, and the factory reset that clears them all.
 //! See `auth.rs` for the claim model itself.
 
-use std::collections::BTreeMap;
-
 use protocol::sshkey::PublicKey;
 use protocol::{
     Claimed, Done, Password, SshAccess, SshKeyInfo, SshKeyRevoked, TokenCreated, TokenInfo,
@@ -379,7 +377,7 @@ impl Control {
             return Reply::err(err);
         }
 
-        if let Err(err) = self.render(&BTreeMap::new()).await {
+        if let Err(err) = self.render(&crate::state::State::default()).await {
             return Reply::err(format!("reset, but rendering failed: {err}"));
         }
         // The profiles now say the defaults: DHCP, an open hotspot. What is

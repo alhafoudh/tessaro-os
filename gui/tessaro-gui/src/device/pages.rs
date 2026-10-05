@@ -156,6 +156,7 @@ enum Action {
     Zoom,
     Inject,
     Bridge,
+    Rotation,
     Eval,
     ControlPing,
     FactoryReset,
@@ -230,6 +231,7 @@ pub enum Msg {
     PolicyMove(bool),
     // screen
     UseMode,
+    Rotation,
     ScreenPower(bool),
     Keyboard(bool),
     // network
@@ -1480,6 +1482,22 @@ impl Device {
                     self.set(&[("screen.resolution", &mode)]);
                 }
             }
+            Msg::Rotation => {
+                let current = self
+                    .setting(keys::ROTATION)
+                    .and_then(|setting| setting.value.clone())
+                    .unwrap_or_default();
+                let rotation = keys::ROTATIONS
+                    .iter()
+                    .find(|rotation| **rotation == current)
+                    .copied()
+                    .unwrap_or("0");
+                self.form(
+                    Form::new("Rotate the screen", "Rotate", Action::Rotation)
+                        .intro("How far the picture is turned clockwise, on every screen; flipped mirrors it. Touch turns with it. It turns back on its own unless confirmed within a minute.")
+                        .field(Field::choice("Rotation", rotation, keys::ROTATIONS)),
+                );
+            }
             Msg::ScreenPower(on) => self.call(
                 "screen.power",
                 send::<api::screen::PowerSet>(ScreenPowerBody { on }),
@@ -2565,6 +2583,10 @@ impl Device {
                 let mode = form.value("Mode");
                 self.set(&[(keys::BRIDGE_MODE, mode)]);
             }
+            Action::Rotation => {
+                let rotation = form.value("Rotation");
+                self.set(&[(keys::ROTATION, rotation)]);
+            }
             Action::Eval => {
                 let code = form.value("Code").trim().to_string();
                 if code.is_empty() {
@@ -3424,6 +3446,7 @@ impl Device {
                 "Use this mode",
                 self.selected("modes").and_then(|_| self.when(Msg::UseMode))
             ),
+            theme::tool("Rotate", self.when(Msg::Rotation)),
             theme::tool(
                 if screen_off {
                     "Screen on"

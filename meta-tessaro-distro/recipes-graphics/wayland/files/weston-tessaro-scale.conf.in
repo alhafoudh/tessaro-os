@@ -5,8 +5,8 @@
 # Weston 13, which does not implement wp_fractional_scale_manager_v1, so
 # weston.ini's [output] scale= is the only lever there is.
 #
-# The knobs are screen.scale, screen.resolution, screen.osk and
-# screen.vnc, set with tessaro-ctl and rendered by tessaro-agent into
+# The knobs are screen.scale, screen.resolution, screen.rotation, screen.osk
+# and screen.vnc, set with tessaro-ctl and rendered by tessaro-agent into
 # /run/tessaro-kiosk/generated.env, which the generator reads over the image
 # defaults. tessaro-agent restarts this unit when one of them changes, which
 # takes the browser down and back up with it, since tessaro-kiosk.service is

@@ -64,7 +64,8 @@ or from [Webconfig](#webconfig) in any browser:
 - ⏰ **Scripts and schedules**: screens off at night, a different page at the weekend, anything a shell can do.
 - 🧰 **Maintenance and debug screens** at the flip of a switch, with your own message.
 - 👀 **See and reach it remotely**: a live VNC view of the panel, from any common VNC viewer, that you can click and type in (or only watch), and an SSH shell with your own key.
-- 📺 **Display safety net**: a new resolution nobody confirms reverts by itself.
+- 📺 **Display safety net**: a new resolution or rotation nobody confirms reverts by itself.
+- 🔄 **Portrait or upside down**: turn the picture, touch and boot splash included, for however the screen is mounted.
 - ⚡ **Changes apply live**: most settings take effect without a restart, and nothing restarts that does not have to.
 
 ### For digital signage
@@ -307,6 +308,7 @@ tessaro-ctl config set printer.enable=1   # window.print() now prints, silently
 
 ```sh
 tessaro-ctl config set screen.resolution=1920x1080 && tessaro-ctl screen confirm
+tessaro-ctl config set screen.rotation=90 && tessaro-ctl screen confirm   # a portrait screen
 tessaro-ctl network wifi join Office
 tessaro-ctl network proxy set 'http://proxy.corp.test:8080' --bypass .corp.test
 tessaro-ctl time timezone Europe/Bratislava

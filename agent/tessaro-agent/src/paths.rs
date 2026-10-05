@@ -312,6 +312,14 @@ impl Paths {
         self.run_dir.join("screen-off")
     }
 
+    /// psplash's arguments, read by `psplash-start.service` at sysinit
+    /// (`EnvironmentFile=`). On `/data`, not in `run_dir`: the splash starts
+    /// long before the agent renders anything, and `/data` is mounted by the
+    /// overlayfs preinit before systemd is.
+    pub fn splash_env(&self) -> PathBuf {
+        self.state_dir.join("splash.env")
+    }
+
     pub fn tls_dir(&self) -> PathBuf {
         self.state_dir.join("tls")
     }

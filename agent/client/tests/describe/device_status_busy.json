@@ -72,10 +72,14 @@
     },
     "os": "Tessaro 0.1.0",
     "pending": {
-      "key": "screen.resolution",
-      "previous": null,
-      "seconds_left": 25,
-      "value": "1280x720"
+      "changes": [
+        {
+          "key": "screen.resolution",
+          "previous": null,
+          "value": "1280x720"
+        }
+      ],
+      "seconds_left": 25
     },
     "revision": 42,
     "screen_on": false,

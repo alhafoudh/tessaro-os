@@ -22,10 +22,12 @@ use crate::log::Log;
 pub struct State {
     pub revision: u64,
     pub settings: BTreeMap<String, String>,
-    /// A guarded change on probation. Survives an agent restart - which the
-    /// change itself causes, by restarting Weston - but not a reboot: the
-    /// boot oneshot reverts it, because nobody confirmed it.
-    pub pending: Option<PendingChange>,
+    /// The guarded changes on probation, by key; empty when nothing waits.
+    /// They were made together and are confirmed or reverted together.
+    /// They survive an agent restart - which the change itself causes, by
+    /// restarting Weston - but not a reboot: the boot oneshot reverts them,
+    /// because nobody confirmed them.
+    pub pending: Vec<PendingChange>,
 }
 
 impl Stored for State {
@@ -38,26 +40,23 @@ impl Stored for State {
             let (key, value): (String, String) = row?;
             settings.insert(key, value);
         }
-        let rest = db
-            .query_row(
-                "SELECT revision, pending_key, pending_value, pending_previous \
-                 FROM state WHERE id = 1",
-                [],
-                |row| {
-                    let revision: i64 = row.get(0)?;
-                    let key: Option<String> = row.get(1)?;
-                    let value: Option<String> = row.get(2)?;
-                    let previous: Option<String> = row.get(3)?;
-                    let pending = key.zip(value).map(|(key, value)| PendingChange {
-                        key,
-                        value,
-                        previous,
-                    });
-                    Ok((revision as u64, pending))
-                },
-            )
-            .optional()?;
-        let (revision, pending) = rest.unwrap_or_default();
+        let revision = db
+            .query_row("SELECT revision FROM state WHERE id = 1", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .optional()?
+            .unwrap_or_default() as u64;
+        let mut pending = Vec::new();
+        let mut rows = db.prepare("SELECT key, value, previous FROM pending ORDER BY key")?;
+        for row in rows.query_map([], |row| {
+            Ok(PendingChange {
+                key: row.get(0)?,
+                value: row.get(1)?,
+                previous: row.get(2)?,
+            })
+        })? {
+            pending.push(row?);
+        }
         Ok(Self {
             revision,
             settings,
@@ -71,51 +70,69 @@ impl Stored for State {
         for (key, value) in &self.settings {
             insert.execute(params![key, value])?;
         }
-        let pending = self.pending.as_ref();
         db.execute(
-            "INSERT OR REPLACE INTO state \
-             (id, revision, pending_key, pending_value, pending_previous) \
-             VALUES (1, ?1, ?2, ?3, ?4)",
-            params![
-                self.revision as i64,
-                pending.map(|change| &change.key),
-                pending.map(|change| &change.value),
-                pending.and_then(|change| change.previous.as_ref()),
-            ],
+            "INSERT OR REPLACE INTO state (id, revision) VALUES (1, ?1)",
+            params![self.revision as i64],
         )?;
+        db.execute("DELETE FROM pending", [])?;
+        let mut insert =
+            db.prepare("INSERT INTO pending (key, value, previous) VALUES (?1, ?2, ?3)")?;
+        for change in &self.pending {
+            insert.execute(params![change.key, change.value, change.previous])?;
+        }
         Ok(())
     }
 
     fn clear(db: &Connection) -> tessaro_db::rusqlite::Result<()> {
-        db.execute_batch("DELETE FROM settings; DELETE FROM state;")
+        db.execute_batch("DELETE FROM settings; DELETE FROM state; DELETE FROM pending;")
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PendingChange {
-    pub key: String,
-    pub value: String,
-    /// What to go back to. `None` means the key was not set.
-    pub previous: Option<String>,
+/// One guarded change on probation, as the API shows it.
+pub use protocol::PendingChange;
+
+/// `a=1, b=2`: the changes on probation, for the journal and an error.
+pub fn listed(changes: &[PendingChange]) -> String {
+    changes
+        .iter()
+        .map(|change| format!("{}={}", change.key, change.value))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
-impl PendingChange {
-    /// What a revert goes back to, in words.
-    pub fn previous_or_default(&self) -> &str {
-        protocol::previous_or_default(self.previous.as_deref())
-    }
+/// `a back to 1, b back to the default`: what a revert of them did.
+pub fn listed_back(changes: &[PendingChange]) -> String {
+    changes
+        .iter()
+        .map(|change| format!("{} back to {}", change.key, change.previous_or_default()))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 impl State {
-    /// Put a pending change back. Returns whether there was one.
-    pub fn revert_pending(&mut self) -> Option<PendingChange> {
-        let pending = self.pending.take()?;
-        match &pending.previous {
-            Some(value) => self.settings.insert(pending.key.clone(), value.clone()),
-            None => self.settings.remove(&pending.key),
-        };
+    /// Put every pending change back, all at once. Returns them; empty when
+    /// nothing was pending.
+    pub fn revert_pending(&mut self) -> Vec<PendingChange> {
+        if self.pending.is_empty() {
+            return Vec::new();
+        }
+        self.settings = self.confirmed();
         self.revision += 1;
-        Some(pending)
+        std::mem::take(&mut self.pending)
+    }
+
+    /// The settings as last confirmed: each key on probation at what it goes
+    /// back to. What must not follow a change until it is kept (the splash)
+    /// is rendered from these.
+    pub fn confirmed(&self) -> BTreeMap<String, String> {
+        let mut settings = self.settings.clone();
+        for change in &self.pending {
+            match &change.previous {
+                Some(value) => settings.insert(change.key.clone(), value.clone()),
+                None => settings.remove(&change.key),
+            };
+        }
+        settings
     }
 }
 
@@ -628,32 +645,68 @@ mod tests {
         assert!(log.lines().iter().any(|line| line.contains("future.thing")));
     }
 
+    fn change(key: &str, value: &str, previous: Option<&str>) -> PendingChange {
+        PendingChange {
+            key: key.to_string(),
+            value: value.to_string(),
+            previous: previous.map(str::to_string),
+        }
+    }
+
     #[test]
     fn reverting_restores_or_removes() {
         let mut state = State {
             revision: 4,
             settings: settings(&[("screen.resolution", "1280x720")]),
-            pending: Some(PendingChange {
-                key: "screen.resolution".to_string(),
-                value: "1280x720".to_string(),
-                previous: None,
-            }),
+            pending: vec![change("screen.resolution", "1280x720", None)],
         };
-        assert!(state.revert_pending().is_some());
+        assert_eq!(state.revert_pending().len(), 1);
         assert!(state.settings.is_empty());
         assert_eq!(state.revision, 5);
-        assert!(state.revert_pending().is_none());
+        assert!(state.revert_pending().is_empty());
+        assert_eq!(state.revision, 5);
 
         state
             .settings
             .insert("screen.resolution".to_string(), "800x600".to_string());
-        state.pending = Some(PendingChange {
-            key: "screen.resolution".to_string(),
-            value: "800x600".to_string(),
-            previous: Some("1920x1080".to_string()),
-        });
+        state.pending = vec![change("screen.resolution", "800x600", Some("1920x1080"))];
         state.revert_pending();
         assert_eq!(state.settings["screen.resolution"], "1920x1080");
+    }
+
+    #[test]
+    fn changes_made_together_revert_together() {
+        let mut state = State {
+            revision: 1,
+            settings: settings(&[
+                ("browser.url", "https://a.test/"),
+                ("screen.resolution", "1280x720"),
+                ("screen.rotation", "90"),
+            ]),
+            pending: vec![
+                change("screen.resolution", "1280x720", Some("1920x1080")),
+                change("screen.rotation", "90", None),
+            ],
+        };
+        // What is confirmed leaves the pending values out, without reverting.
+        assert_eq!(
+            state.confirmed(),
+            settings(&[
+                ("browser.url", "https://a.test/"),
+                ("screen.resolution", "1920x1080"),
+            ])
+        );
+        assert_eq!(state.pending.len(), 2);
+
+        assert_eq!(state.revert_pending().len(), 2);
+        assert_eq!(
+            state.settings,
+            settings(&[
+                ("browser.url", "https://a.test/"),
+                ("screen.resolution", "1920x1080"),
+            ])
+        );
+        assert_eq!(state.revision, 2);
     }
 
     #[test]
@@ -667,11 +720,10 @@ mod tests {
                 ("browser.url".to_string(), "https://a.test/".to_string()),
                 ("data.store".to_string(), "42".to_string()),
             ]),
-            pending: Some(PendingChange {
-                key: "screen.resolution".to_string(),
-                value: "800x600".to_string(),
-                previous: None,
-            }),
+            pending: vec![
+                change("screen.resolution", "800x600", None),
+                change("screen.rotation", "270", Some("90")),
+            ],
         };
         db.update(|state: &mut State| {
             *state = saved.clone();
@@ -682,10 +734,10 @@ mod tests {
         assert_eq!(db.read::<State>(&log), saved);
 
         db.update(|state: &mut State| {
-            state.pending = None;
+            state.pending.clear();
             Ok(())
         })
         .unwrap();
-        assert!(db.read::<State>(&log).pending.is_none());
+        assert!(db.read::<State>(&log).pending.is_empty());
     }
 }

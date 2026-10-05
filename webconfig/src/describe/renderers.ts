@@ -46,6 +46,7 @@ export const renderers: Record<string, (input: any) => unknown> = {
     };
   },
   "device::applied": (input) => lines(device.applied(input.applied, input.no_apply ?? false)),
+  "device::reverting": (input) => input.map((one: any) => device.reverting(one.pending, one.left)),
   "device::eval": (input) => {
     const shown = device.evalResult(input);
     return { line: spans(shown.line), thrown: shown.thrown };

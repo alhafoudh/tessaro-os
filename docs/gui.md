@@ -297,7 +297,7 @@ applies and stays, Default unsets.**
 | Page | Covers |
 | --- | --- |
 | Overview | `device status` and `id`, systemd units, `device ping`, `device factory-reset` |
-| Screen | `screen modes` with "use this mode", `screen screenshot` with a 3s live refresh and Save, `screen power`, `screen keyboard` |
+| Screen | `screen modes` with "use this mode", "Rotate" (`screen.rotation`), `screen screenshot` with a 3s live refresh and Save, `screen power`, `screen keyboard` |
 | Browser | what the browser shows, `browser navigate`, `reload`, `clear-cache`, `maintenance`, `debug`, `zoom`, `devtools` (a job holding the tunnel until Cancel), `inject`, `bridge`, `eval` (results in Messages) |
 | Policies | `browser policies list` in priority order with its `#` column, `set` and `edit` in one wide editor (from the template, a file, or the stored text, checked as you type, saved against the revision it opened), `move` as Move up and Move down (the moved row stays selected), `show` (the effective policy), `remove` |
 | Network | `network show` and interfaces, `network last`, `network ping`, `network speedtest` (with "Bypass the proxy"), `network proxy set`, `off` and `test`, `network profiles list` and `show` |
@@ -324,8 +324,8 @@ for, so no page or settings window has a Refresh of its own. The status bar
 shows the device's `Status`, and a guarded change's countdown on every page.
 **The one Confirm is a green button in the Screen page's toolbar**, shown
 only while a change waits, with the seconds left in its label: every guarded
-key is a `screen.*` one, whether it came from "Use this mode" or from a
-setting.
+key is a `screen.*` one, whether it came from "Use this mode", "Rotate" or
+from a setting, and one confirm keeps every change that waits.
 
 **Dialogs are one generic form** (`pages::Form`), confirmed with Enter. A
 destructive one - factory reset, unclaim, growing `/data`, an update that
