@@ -123,7 +123,17 @@ node list when no window is open or the list was clicked last:
   0.6 to 2.0, and the zoom is kept in `gui_prefs`.
 
 A key a widget took - Esc leaving a text field, Enter submitting one - is
-left to it; the zoom always works.
+left to it; the zoom always works. The exception is Esc in a dialog's
+field, which still closes the dialog.
+
+**A dialog opens with the cursor in its first field to type in**
+(`dialog::Fields`), as Webconfig's do, so typing needs no click first. The
+focus is asked for once, as the dialog opens (`Device::open`, or when a
+login or claim dialog's field arrives with the device's answer), so a field
+clicked into afterwards keeps it. A dialog with only boxes, choices or
+buttons focuses nothing. Each window numbers its own fields, because every
+inner window shares one widget tree, where the same id twice would focus
+both.
 
 **One dark look, in the welcome page's colours** (`theme.rs` in
 `gui/tessaro-style`, the crate the GUI shares with Try Tessaro along with

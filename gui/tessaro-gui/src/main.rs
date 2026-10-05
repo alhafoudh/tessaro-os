@@ -254,6 +254,8 @@ enum Message {
     Job(mdi::Id, u64, jobs::Event),
     Desk(mdi::Message),
     Key(Key),
+    /// Escape, taken by a text field to let go of the cursor.
+    FieldEscape,
     /// A key for the VNC panel the pointer is over.
     VncKey(device::VncInput),
     /// The screen's device pixels per point, at start and when it changes.
@@ -395,6 +397,12 @@ impl App {
             Message::Key(Key::ZoomReset) => self.key(Key::ZoomReset),
             Message::Key(_) if self.vnc_keys().is_some() => Task::none(),
             Message::Key(key) => self.key(key),
+            // A dialog opens with the cursor in its field, so the first
+            // Escape closes it all the same; elsewhere the field keeps it.
+            Message::FieldEscape if self.vnc_keys().is_none() && self.dialog_on_top() => {
+                self.key(Key::Escape)
+            }
+            Message::FieldEscape => Task::none(),
             Message::VncKey(input) => match self.vnc_keys() {
                 Some(id) => self.device_update(id, device::Message::Vnc(input)),
                 None => Task::none(),
@@ -493,6 +501,15 @@ impl App {
             .iter()
             .find(|(_, device)| device.vnc_has_keys())
             .map(|(&id, _)| id)
+    }
+
+    /// Whether the window on top shows a dialog.
+    fn dialog_on_top(&self) -> bool {
+        let Some(top) = self.desk.top() else {
+            return self.nodes.has_dialog();
+        };
+        let id = self.configs.get(&top).map_or(top, |(id, _)| *id);
+        self.devices.get(&id).is_some_and(Device::has_dialog)
     }
 
     /// The keyboard talks to the window on top.
@@ -766,8 +783,9 @@ fn keys(event: iced::Event, status: event::Status, id: window::Id) -> Option<Mes
                     _ => None,
                 };
             }
+            let escape = key == keyboard::Key::Named(key::Named::Escape);
             if status == event::Status::Captured {
-                return None;
+                return escape.then_some(Message::FieldEscape);
             }
             let key = match key {
                 keyboard::Key::Named(key::Named::Escape) => Key::Escape,

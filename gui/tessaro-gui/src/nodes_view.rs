@@ -204,6 +204,8 @@ pub struct NodesView {
     selected: Option<String>,
     filter: String,
     dialog: Option<Dialog>,
+    /// Each dialog here has one field to type in, at 0.
+    fields: dialog::Fields,
     discovery: Option<String>,
     message: Option<Result<String, String>>,
     /// Bumped by Rescan: a new browse.
@@ -224,10 +226,15 @@ impl NodesView {
             selected: None,
             filter: String::new(),
             dialog: None,
+            fields: dialog::Fields::default(),
             discovery: None,
             message,
             generation: 0,
         }
+    }
+
+    pub fn has_dialog(&self) -> bool {
+        self.dialog.is_some()
     }
 
     pub fn rows(&self) -> Vec<Row> {
@@ -339,7 +346,7 @@ impl NodesView {
                     error: None,
                     busy: false,
                 });
-                none
+                (self.fields.focus(0), None)
             }
             Message::AddressInput(value) => {
                 if let Some(Dialog::Address { input, error, .. }) = &mut self.dialog {
@@ -422,7 +429,8 @@ impl NodesView {
                         return (Task::none(), node);
                     }
                 }
-                none
+                // The token or name field shows only now, with the answer.
+                (self.fields.focus(0), None)
             }
             Message::TokenInput(value) => {
                 if let Some(Dialog::Access { token, error, .. }) = &mut self.dialog {
@@ -744,6 +752,7 @@ impl NodesView {
                     field(
                         "Address",
                         text_input("192.168.1.20 or 192.168.1.20:7400", input)
+                            .id(self.fields.id(0))
                             .on_input(Message::AddressInput)
                             .on_submit(Message::AddressSubmit)
                             .size(theme::SMALL)
@@ -803,6 +812,7 @@ impl NodesView {
                             Mode::Login => field(
                                 "Token",
                                 text_input("tsr_...", token)
+                                    .id(self.fields.id(0))
                                     .on_input(Message::TokenInput)
                                     .on_submit(Message::Commit)
                                     .secure(true)
@@ -811,6 +821,7 @@ impl NodesView {
                             Mode::Claim => field(
                                 "Claim as",
                                 text_input("user@host", name)
+                                    .id(self.fields.id(0))
                                     .on_input(Message::NameInput)
                                     .on_submit(Message::Commit)
                                     .size(theme::SMALL),
@@ -1051,6 +1062,7 @@ mod tests {
             selected: None,
             filter: String::new(),
             dialog: None,
+            fields: dialog::Fields::default(),
             discovery: None,
             message: None,
             generation: 0,

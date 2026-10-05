@@ -436,6 +436,17 @@ impl Form {
         self
     }
 
+    /// The first field to type in, which has the cursor when the form
+    /// opens; none when every field is a box or a choice.
+    fn first_text(&self) -> Option<usize> {
+        self.fields.iter().position(|field| {
+            matches!(
+                field.kind,
+                FieldKind::Text(_) | FieldKind::Multiline(_) | FieldKind::Secret
+            )
+        })
+    }
+
     fn wide(mut self) -> Self {
         self.wide = true;
         self
@@ -825,7 +836,8 @@ impl Device {
     }
 
     fn form(&mut self, form: Form) {
-        self.dialog = Some(Dialog::Form(form));
+        let first = form.first_text();
+        self.open(Dialog::Form(form), first);
     }
 
     /// The browser policy editor: `name` for one the device has, at
@@ -3035,6 +3047,7 @@ impl Device {
             };
             let input: Element<'a, Message> = match item.kind {
                 FieldKind::Text(placeholder) => text_input(placeholder, &item.value)
+                    .id(self.fields.id(at))
                     .on_input(move |value| Message::P(Msg::FormText(at, value)))
                     .on_submit(Message::P(Msg::FormOk))
                     .size(theme::SMALL)
@@ -3042,6 +3055,7 @@ impl Device {
                     .into(),
                 FieldKind::Multiline(placeholder) => match &item.editor {
                     Some(editor) => text_editor(editor)
+                        .id(self.fields.id(at))
                         .placeholder(placeholder)
                         .on_action(move |action| Message::P(Msg::FormEdit(at, action)))
                         .height(Length::Fixed(if item.tall { 360.0 } else { 96.0 }))
@@ -3051,6 +3065,7 @@ impl Device {
                     None => space().into(),
                 },
                 FieldKind::Secret => text_input("", &item.value)
+                    .id(self.fields.id(at))
                     .on_input(move |value| Message::P(Msg::FormText(at, value)))
                     .on_submit(Message::P(Msg::FormOk))
                     .secure(true)
@@ -4813,5 +4828,17 @@ mod tests {
         let form = Form::new("Unclaim", "Unclaim", Action::Unclaim).typed();
         assert!(form.typed);
         assert_eq!(form.value("Device name"), "");
+    }
+
+    #[test]
+    fn a_form_opens_with_the_cursor_in_its_first_field_to_type_in() {
+        let form = Form::new("Print", "Print", Action::Navigate)
+            .field(Field::check("Duplex", false))
+            .field(Field::text("Copies", "1", ""))
+            .field(Field::secret("Token"));
+        assert_eq!(form.first_text(), Some(1));
+
+        let boxes = Form::new("Mute", "OK", Action::Navigate).field(Field::check("Muted", true));
+        assert_eq!(boxes.first_text(), None);
     }
 }

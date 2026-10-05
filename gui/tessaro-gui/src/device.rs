@@ -214,6 +214,10 @@ struct Edit {
 }
 
 impl Edit {
+    /// Its fields, as `dialog::Fields` numbers them.
+    const NAME: usize = 0;
+    const VALUE: usize = 1;
+
     /// The key being edited: for a new one, `data.` and the typed name.
     fn key(&self) -> String {
         if self.adding {
@@ -464,6 +468,9 @@ pub struct Device {
     log: Messages,
     log_open: bool,
     dialog: Option<Dialog>,
+    fields: dialog::Fields,
+    /// The field to focus once the update that opened a dialog is done.
+    focus: Option<usize>,
     page: Page,
     shot: Option<Shot>,
     shot_error: Option<String>,
@@ -623,6 +630,8 @@ impl Device {
             log: Messages::default(),
             log_open,
             dialog: None,
+            fields: dialog::Fields::default(),
+            focus: None,
             page: Page::Overview,
             shot: None,
             shot_error: None,
@@ -1199,6 +1208,20 @@ impl Device {
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
+        let task = self.handle(message);
+        match self.focus.take() {
+            Some(at) => Task::batch([task, self.fields.focus(at)]),
+            None => task,
+        }
+    }
+
+    /// Opens `dialog` with the cursor in its field `at`, if it has one.
+    fn open(&mut self, dialog: Dialog, at: Option<usize>) {
+        self.dialog = Some(dialog);
+        self.focus = at;
+    }
+
+    fn handle(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Table(name, event) => return self.tables.update(&name, event),
             Message::Configure(scope) => {
@@ -1379,16 +1402,19 @@ impl Device {
             Cfg::Filter(filter) => config.filter = filter,
             Cfg::Edit => self.open_edit(&prefix),
             Cfg::Add => {
-                self.dialog = Some(Dialog::Edit(Edit {
-                    window: prefix,
-                    key: String::new(),
-                    adding: true,
-                    name: String::new(),
-                    value: String::new(),
-                    error: None,
-                    busy: false,
-                    close_after: false,
-                }));
+                self.open(
+                    Dialog::Edit(Edit {
+                        window: prefix,
+                        key: String::new(),
+                        adding: true,
+                        name: String::new(),
+                        value: String::new(),
+                        error: None,
+                        busy: false,
+                        close_after: false,
+                    }),
+                    Some(Edit::NAME),
+                );
             }
             Cfg::Reset => {
                 if let Some(key) = config.selected.clone() {
@@ -1456,16 +1482,21 @@ impl Device {
         }
         // A default shows as the value it is, so editing starts from it.
         let value = setting.value.clone().unwrap_or_default();
-        self.dialog = Some(Dialog::Edit(Edit {
-            window: prefix.to_string(),
-            key: setting.key.clone(),
-            adding: false,
-            name: String::new(),
-            value,
-            error: None,
-            busy: false,
-            close_after: false,
-        }));
+        // A flag or a choice has no field to type in, and nothing takes
+        // the focus.
+        self.open(
+            Dialog::Edit(Edit {
+                window: prefix.to_string(),
+                key: setting.key.clone(),
+                adding: false,
+                name: String::new(),
+                value,
+                error: None,
+                busy: false,
+                close_after: false,
+            }),
+            Some(Edit::VALUE),
+        );
     }
 
     fn apply_edit(&mut self, close_after: bool) {
@@ -2168,6 +2199,7 @@ impl Device {
                 row![
                     text(keys::DATA_PREFIX).size(theme::SMALL),
                     text_input("table", &edit.name)
+                        .id(self.fields.id(Edit::NAME))
                         .on_input(Message::EditName)
                         .size(theme::SMALL),
                 ]
@@ -2196,6 +2228,7 @@ impl Device {
             .padding([2, 6])
             .into(),
             Input::Text => text_input("", &edit.value)
+                .id(self.fields.id(Edit::VALUE))
                 .on_input(Message::EditValue)
                 .on_submit(Message::EditOk)
                 .size(theme::SMALL)

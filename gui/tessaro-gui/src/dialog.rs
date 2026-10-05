@@ -1,11 +1,40 @@
 //! Modal dialogs: a framed box over the dimmed window, which takes no input
 //! while the dialog is up.
 
-use iced::widget::{center, column, container, opaque, row, space, stack, text};
-use iced::{Element, Length};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use iced::widget::{center, column, container, opaque, operation, row, space, stack, text, Id};
+use iced::{Element, Length, Task};
 
 use crate::grid::bold;
 use crate::theme;
+
+/// The ids of a window's dialog fields. Every inner window shares one widget
+/// tree, where the same id twice would take the focus in both, so each
+/// window numbers its own.
+#[derive(Debug)]
+pub struct Fields(u64);
+
+impl Default for Fields {
+    fn default() -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        Self(NEXT.fetch_add(1, Ordering::Relaxed))
+    }
+}
+
+impl Fields {
+    /// The id of the dialog's field `at`.
+    pub fn id(&self, at: usize) -> Id {
+        Id::from(format!("dialog:{}:{at}", self.0))
+    }
+
+    /// Puts the cursor in field `at`, so typing goes there without a click.
+    /// Asked once, as the dialog opens: a field clicked into afterwards
+    /// keeps the focus.
+    pub fn focus<T>(&self, at: usize) -> Task<T> {
+        operation::focus(self.id(at))
+    }
+}
 
 /// `dialog` over `base`.
 pub fn modal<'a, M: Clone + 'a>(base: Element<'a, M>, dialog: Element<'a, M>) -> Element<'a, M> {
@@ -61,5 +90,17 @@ pub fn error<'a, M: 'a>(error: Option<String>) -> Element<'a, M> {
     match error {
         Some(error) => text(error).size(theme::SMALL).style(text::danger).into(),
         None => space().into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn two_windows_never_share_a_field() {
+        let (a, b) = (Fields::default(), Fields::default());
+        assert_ne!(a.id(0), b.id(0));
+        assert_eq!(a.id(0), a.id(0));
     }
 }
