@@ -45,8 +45,9 @@ patch does, and why each part:
 * **Positions go through `weston_coord_global_from_output_point`.** The
   child's surface is the output's buffer, so a viewer's position is in
   output pixels; upstream passed them on as global coordinates, which is
-  wrong once `screen.scale` scales the output or a second output is not at
-  0,0.
+  wrong once `screen.scale` scales the output, `screen.rotation` turns it
+  (**Screen rotation** in [display.md](display.md)), or a second output is
+  not at 0,0.
 * **`view-only` is `input=false` in `[screen-share]`**, a key the patch
   adds. The child's `wl_seat` is then never bound, so nothing the viewer
   sends arrives, whatever the client.

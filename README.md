@@ -74,6 +74,7 @@ or from [Webconfig](#webconfig) in any browser:
 - 📁 **Content that plays offline**: sync videos, images and JSON to the device, served at `http://127.0.0.1/files/`, and they keep playing when the network drops.
 - 🧩 **One image, a whole fleet**: `{placeholders}` and your own `data.*` keys give each screen its own playlist URL.
 - 📸 **See what every screen shows**: a screenshot or a live VNC view, from anywhere.
+- 🖼️ **Portrait displays and totems**: `screen.rotation` turns the picture for a panel mounted on its side or upside down, boot splash included, and reverts on its own unless you confirm it.
 - 🔊 **Sound and screen power, managed remotely.**
 
 ### For developers
@@ -96,7 +97,7 @@ permission prompt in the way.
 - 🎙️ **Microphone** granted to your site, with the input and level set remotely.
 - 📷 **USB cameras, shared**: your page and other software on the device watch the same camera at once.
 - 🖨️ **Printing**: `window.print()` goes silently to the default printer, and the bridge prints to any printer by name. Office printers need no driver (IPP Everywhere, AirPrint), and receipt and label printers take raw ESC/POS or ZPL. Find printers on USB and the network and set them up from the CLI, the desktop app or Webconfig.
-- 👆 **Touch screens** work out of the box.
+- 👆 **Touch screens** work out of the box, and turn with the picture on a rotated screen.
 - ⌨️ **On-screen keyboard** that appears only when no keyboard is plugged in.
 - 🔊 **Sound** on HDMI, the headphone jack or USB, switched and leveled remotely.
 
