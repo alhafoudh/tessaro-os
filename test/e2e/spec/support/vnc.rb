@@ -6,14 +6,17 @@ module AgentE2E
   # Just enough RFB to click and type on the panel the way a technician's
   # viewer would, through an SSH tunnel to the guest's 127.0.0.1:5900 (the
   # mirror binds the loopback only). The server is neatvnc: RFB 3.8, then
-  # VeNCrypt X509Plain, the image's login inside TLS (docs/remote-access.md).
-  # It asks for no picture: a case reads what arrived on the page over CDP.
+  # VeNCrypt with the image's login inside TLS (docs/remote-access.md). It
+  # offers the TLSPlain sub-type, with its certificate all the same, so
+  # either plain sub-type is taken. It asks for no picture: a case reads
+  # what arrived on the page over CDP.
   class Vnc
     # KIOSK_VNC_USER / KIOSK_VNC_PASSWORD, an image property.
     USER = "tessaro"
     PASSWORD = "tessaro"
     VENCRYPT = 19
-    X509_PLAIN = 263
+    # X509Plain, then TLSPlain, as tessaro-gui's vnc.rs tries them.
+    PLAIN_IN_TLS = [263, 262].freeze
 
     # An SSH tunnel to the guest's VNC port for the block, closed after.
     def self.tunnel
@@ -62,10 +65,11 @@ module AgentE2E
       raise Failure, "VNC refused VeNCrypt 0.2" unless read(1).unpack1("C").zero?
 
       subtypes = read(4 * read(1).unpack1("C")).unpack("N*")
-      raise Failure, "VNC offers VeNCrypt #{subtypes}, not X509Plain" unless subtypes.include?(X509_PLAIN)
+      chosen = PLAIN_IN_TLS.find { subtypes.include?(_1) } or
+        raise Failure, "VNC offers VeNCrypt #{subtypes}, no plain login in TLS"
 
-      write([X509_PLAIN].pack("N"))
-      raise Failure, "VNC refused X509Plain" unless read(1).unpack1("C") == 1
+      write([chosen].pack("N"))
+      raise Failure, "VNC refused VeNCrypt #{chosen}" unless read(1).unpack1("C") == 1
 
       # Self-signed and the same across an image: nothing to verify.
       context = OpenSSL::SSL::SSLContext.new
