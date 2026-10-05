@@ -461,8 +461,7 @@ module AgentE2E
       expect(guest.run("tessaro-ctl config get screen.rotation")).to include("(default)"), "an unconfirmed turn stuck"
       wait_for_viewport.call([width, height], 60)
     ensure
-      guest.run("tessaro-ctl config unset screen.rotation", allow_failure: true)
-      pause 5, "let Weston settle"
+      screen_back_to_default("screen.rotation")
     end
 
     it "rotation and resolution: set together, one confirm keeps both, and the splash follows the turn", :reconfigure do
@@ -486,8 +485,16 @@ module AgentE2E
       expect(guest.run("tessaro-ctl config get screen.resolution")).to include(target)
       expect(guest.run("cat /data/tessaro/splash.env")).to include("PSPLASH_ARGS=--angle 180")
     ensure
-      # The unset is on probation too; keep it, or the next case is refused.
-      guest.run("tessaro-ctl config unset screen.rotation screen.resolution", allow_failure: true)
+      screen_back_to_default("screen.rotation", "screen.resolution")
+    end
+
+    # Unset guarded screen keys from whatever a case left: a change still on
+    # probation refuses the unset, so it is kept first, and the unset is on
+    # probation too, so it is kept after. Otherwise the next case is refused,
+    # or runs on a turned screen.
+    def screen_back_to_default(*keys)
+      guest.run("tessaro-ctl screen confirm", allow_failure: true)
+      guest.run("tessaro-ctl config unset #{keys.join(" ")}", allow_failure: true)
       guest.run("tessaro-ctl screen confirm", allow_failure: true)
       pause 5, "let Weston settle"
     end

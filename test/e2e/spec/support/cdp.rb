@@ -82,16 +82,25 @@ module AgentE2E
 
     def read_frame(socket)
       loop do
-        first, second = socket.read(2).bytes
+        first, second = read_exactly(socket, 2).bytes
         length = second & 0x7f
-        length = socket.read(2).unpack1("n") if length == 126
-        length = socket.read(8).unpack1("Q>") if length == 127
-        payload = socket.read(length)
+        length = read_exactly(socket, 2).unpack1("n") if length == 126
+        length = read_exactly(socket, 8).unpack1("Q>") if length == 127
+        payload = read_exactly(socket, length)
         case first & 0x0f
         when 0x1 then return payload.force_encoding("UTF-8")
         when 0x8 then raise Failure, "websocket closed by the browser"
         end
       end
+    end
+
+    # A browser that goes away mid-frame (a restart) closes the socket
+    # without a close frame: `read` then gives nil or a short string.
+    def read_exactly(socket, length)
+      data = socket.read(length)
+      raise IOError, "the browser closed DevTools mid-frame" if data.nil? || data.bytesize < length
+
+      data
     end
   end
 end
