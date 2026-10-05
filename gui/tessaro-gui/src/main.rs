@@ -12,6 +12,7 @@ mod dialog;
 mod discovery;
 mod grid;
 mod jobs;
+mod keysym;
 mod logs;
 mod mdi;
 mod messages;
@@ -253,6 +254,8 @@ enum Message {
     Job(mdi::Id, u64, jobs::Event),
     Desk(mdi::Message),
     Key(Key),
+    /// A key for the VNC panel the pointer is over.
+    VncKey(device::VncInput),
     /// The screen's device pixels per point, at start and when it changes.
     Rescaled(f32),
     /// The app window opened, moved or resized: whichever it reported.
@@ -320,7 +323,19 @@ impl App {
                 Task::none()
             }
             Message::Device(id, message) => {
-                self.desk.raise(id);
+                // The pointer moving over a VNC picture does not raise its
+                // window; a click does.
+                let passing = matches!(
+                    message,
+                    device::Message::Vnc(
+                        device::VncInput::Move(..)
+                            | device::VncInput::Exit
+                            | device::VncInput::Scroll(_)
+                    )
+                );
+                if !passing {
+                    self.desk.raise(id);
+                }
                 self.device_update(id, message)
             }
             Message::Settings(window, message) => {
@@ -374,7 +389,16 @@ impl App {
                 }
                 Task::none()
             }
+            // Over a VNC picture, keys are the device's; only the zoom
+            // stays the app's.
+            Message::Key(Key::Zoom(by)) => self.key(Key::Zoom(by)),
+            Message::Key(Key::ZoomReset) => self.key(Key::ZoomReset),
+            Message::Key(_) if self.vnc_keys().is_some() => Task::none(),
             Message::Key(key) => self.key(key),
+            Message::VncKey(input) => match self.vnc_keys() {
+                Some(id) => self.device_update(id, device::Message::Vnc(input)),
+                None => Task::none(),
+            },
             Message::Rescaled(dpi) => {
                 self.dpi = dpi;
                 self.rescale();
@@ -460,6 +484,15 @@ impl App {
             self.save();
         }
         task
+    }
+
+    /// The device whose VNC panel has the keyboard: the pointer is over its
+    /// picture.
+    fn vnc_keys(&self) -> Option<mdi::Id> {
+        self.devices
+            .iter()
+            .find(|(_, device)| device.vnc_has_keys())
+            .map(|(&id, _)| id)
     }
 
     /// The keyboard talks to the window on top.
@@ -693,6 +726,9 @@ impl App {
         if self.desk.dragging() {
             all.push(event::listen_with(dragging));
         }
+        if self.vnc_keys().is_some() {
+            all.push(event::listen_with(vnc_keys));
+        }
         if self.moving.is_some() {
             all.push(Subscription::run(settling).map(|()| Message::Settle));
         }
@@ -744,6 +780,40 @@ fn keys(event: iced::Event, status: event::Status, id: window::Id) -> Option<Mes
         }
         _ => None,
     }
+}
+
+/// Keys for the VNC panel under the pointer, pressed and released. The
+/// zoom stays the app's, and a key a text field took is left to it.
+fn vnc_keys(event: iced::Event, status: event::Status, _: window::Id) -> Option<Message> {
+    let iced::Event::Keyboard(event) = event else {
+        return None;
+    };
+    let (physical, keysym, down) = match event {
+        keyboard::Event::KeyPressed {
+            key,
+            modified_key,
+            physical_key,
+            location,
+            modifiers,
+            ..
+        } => {
+            let zoom = matches!(
+                key.as_ref(),
+                keyboard::Key::Character("=" | "+" | "-" | "0")
+            );
+            if (modifiers.command() && zoom) || status == event::Status::Captured {
+                return None;
+            }
+            (physical_key, keysym::of(&modified_key, location), true)
+        }
+        keyboard::Event::KeyReleased { physical_key, .. } => (physical_key, None, false),
+        _ => return None,
+    };
+    Some(Message::VncKey(device::VncInput::Key {
+        physical,
+        keysym,
+        down,
+    }))
 }
 
 /// Where the app window is now, from where it was and what it reported.

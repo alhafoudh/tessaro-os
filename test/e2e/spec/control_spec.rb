@@ -613,5 +613,98 @@ module AgentE2E
       guest.run("tessaro-ctl config unset screen.input.keyboard screen.input.mouse", allow_failure: true)
       pause 5, "let Weston settle"
     end
+
+    # The VNC mirror's input lands in Weston's own seat, which Chromium binds
+    # (docs/remote-access.md). Checked with qemu's keyboard and tablet in the
+    # seat, then with both ignored - a seat the mirror has to give a pointer
+    # and a keyboard of its own - and refused on view-only.
+    it "vnc: a click and a key over VNC reach the page, with or without local input devices; " \
+       "screen.vnc=view-only drops them", :reconfigure do
+      weston_started = -> { guest.run("systemctl show -p ActiveEnterTimestampMonotonic --value weston.service").strip }
+      # Weston restarts for each of these keys, and the browser with it.
+      apply = lambda do |settings|
+        before = weston_started.call
+        guest.run("tessaro-ctl config #{settings}")
+        step "wait up to 60s for Weston to restart"
+        deadline = Time.now + 60
+        sleep 2 until quietly { weston_started.call } != before || Time.now > deadline
+        expect(weston_started.call).not_to eq(before), "Weston did not restart for #{settings}"
+      end
+      # Pointer downs in device pixels and key names, from now on.
+      record = lambda do
+        step "wait up to 60s for the page to load, then record its input"
+        deadline = Time.now + 60
+        begin
+          quietly do
+            cdp.command("Runtime.evaluate", expression: <<~JS)
+              window.e2eInput = { pointer: [], keys: [] };
+              addEventListener("pointerdown", (e) => e2eInput.pointer.push(
+                [Math.round(e.clientX * devicePixelRatio), Math.round(e.clientY * devicePixelRatio)]), true);
+              addEventListener("keydown", (e) => e2eInput.keys.push(e.key), true);
+              document.readyState
+            JS
+          end
+        rescue Failure, SystemCallError, IOError
+          raise if Time.now > deadline
+
+          sleep 2
+          retry
+        end
+      end
+      recorded = lambda do
+        result = cdp.command("Runtime.evaluate", expression: "JSON.stringify(window.e2eInput)", returnByValue: true)
+        JSON.parse(result.dig("result", "value"))
+      end
+      # The child compositor comes up a moment after Weston.
+      over_vnc = lambda do |&body|
+        Vnc.tunnel do |port|
+          step "wait up to 30s for the VNC mirror to log in"
+          deadline = Time.now + 30
+          begin
+            quietly { Vnc.connect(port, &body) }
+          rescue Failure, SystemCallError, IOError, OpenSSL::SSL::SSLError
+            raise if Time.now > deadline
+
+            sleep 2
+            retry
+          end
+        end
+      end
+      click_and_type = lambda do
+        at = nil
+        over_vnc.call do |vnc|
+          at = [vnc.width / 2, vnc.height / 2]
+          vnc.click(*at)
+          vnc.key(0x71) # q
+          pause 2, "let the click and the key reach the page"
+        end
+        at
+      end
+
+      expect(guest.run("grep -A2 '^\\[screen-share\\]' /run/weston/weston.ini")).to include("input=true")
+      record.call
+      at = click_and_type.call
+      seen = recorded.call
+      expect(seen["pointer"]).not_to be_empty, "the click never reached the page"
+      expect(seen["pointer"].first[0]).to be_within(2).of(at[0])
+      expect(seen["pointer"].first[1]).to be_within(2).of(at[1])
+      expect(seen["keys"]).to include("q")
+
+      apply.call("set screen.input.keyboard=0 screen.input.mouse=0")
+      record.call
+      click_and_type.call
+      seen = recorded.call
+      expect(seen["pointer"]).not_to be_empty, "the click never reached a page with no local pointer"
+      expect(seen["keys"]).to include("q"), "the key never reached a page with no local keyboard"
+
+      apply.call("set screen.vnc=view-only")
+      expect(guest.run("grep -A2 '^\\[screen-share\\]' /run/weston/weston.ini")).to include("input=false")
+      record.call
+      click_and_type.call
+      expect(recorded.call).to eq({ "pointer" => [], "keys" => [] }), "view-only let input through"
+    ensure
+      guest.run("tessaro-ctl config unset screen.vnc screen.input.keyboard screen.input.mouse", allow_failure: true)
+      pause 5, "let Weston settle"
+    end
   end
 end

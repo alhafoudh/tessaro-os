@@ -1,0 +1,520 @@
+From: Ahmed Al Hafoudh <alhafoudh@freevision.sk>
+Date: Mon, 05 Oct 2026 12:00:00 +0200
+Subject: [PATCH] screen-share: inject remote input into the compositor's seat
+
+screen-share forwards the remote viewer's pointer and keyboard through a
+seat of its own, made with weston_seat_init(..., "screen-share") when the
+child compositor announces its wl_seat. That is a second wl_seat global,
+and a client binds one: Chromium's WaylandConnection keeps the first seat
+it sees, which is the libinput seat with the local devices. So every
+remote click and key went to a seat nobody listened on.
+
+Inject into the compositor's existing seat instead (the first on
+compositor->seat_list; one is made, named "screen-share", only when there
+is none at all, and kept until the compositor goes). Remote and local
+input then share one cursor and one keyboard focus.
+
+What sharing a seat with local devices takes:
+
+- The seat gets a pointer and a keyboard for as long as the viewer has
+  them (weston_seat_init_pointer/_keyboard, released on disconnect).
+  libweston counts devices per seat, so local ones are unaffected.
+- The child's keymap and modifier mask are not applied: they would replace
+  the seat's keymap and overwrite its xkb state. Keys update the state
+  themselves (STATE_UPDATE_AUTOMATIC). Both compositors build their keymap
+  from the same xkb defaults.
+- Enter and leave no longer move focus, and keys and buttons the viewer
+  still holds are released when it goes, so nothing stays pressed.
+- Positions are converted with weston_coord_global_from_output_point. The
+  child's surface is the output's buffer, so its coordinates are output
+  pixels, not global ones; they differ once the output is scaled or not at
+  0,0.
+
+And a [screen-share] key, input (default true): input=false does not bind
+the child's seat at all, and the share is picture only.
+
+Upstream-Status: Inappropriate [Tessaro kiosk policy]
+
+Signed-off-by: Ahmed Al Hafoudh <alhafoudh@freevision.sk>
+---
+ compositor/screen-share.c | 286 +++++++++++++++++++++++++-------------
+ 1 file changed, 184 insertions(+), 102 deletions(-)
+
+--- a/compositor/screen-share.c
++++ b/compositor/screen-share.c
+@@ -53,6 +53,7 @@
+
+ struct shared_output {
+ 	struct weston_output *output;
++	struct screen_share *share;
+ 	struct wl_listener output_destroyed;
+ 	struct wl_list seat_list;
+ 	struct wl_list output_link;	/** screen_share::output_list */
+@@ -86,8 +87,20 @@
+ 	size_t tmp_data_size;
+ };
+
++/*
++ * The remote viewer's pointer and keyboard, bound from the child compositor.
++ * Their events go into the compositor's own seat (`target`) rather than a
++ * seat of their own: a client binds one wl_seat - Chromium the first one it
++ * sees - so input on a second seat reaches nobody. Remote and local input
++ * share that seat's cursor and keyboard focus.
++ */
+ struct ss_seat {
+-	struct weston_seat base;
++	struct weston_seat *target;
++	bool has_pointer;
++	bool has_keyboard;
++	/* Keys and buttons the viewer holds down, released when it goes. */
++	struct wl_array keys;
++	struct wl_array buttons;
+ 	struct shared_output *output;
+ 	struct wl_list link;
+ 	uint32_t id;
+@@ -97,9 +110,6 @@
+ 		struct wl_pointer *pointer;
+ 		struct wl_keyboard *keyboard;
+ 	} parent;
+-
+-	enum weston_key_state_update keyboard_state_update;
+-	uint32_t key_serial;
+ };
+
+ struct ss_shm_buffer {
+@@ -120,19 +130,74 @@
+ 	struct wl_listener compositor_destroy_listener;
+ 	struct wl_list output_list;
+ 	char *command;
++	/* [screen-share] input=false shares the picture only. */
++	bool input;
++	/* The seat made here when the compositor has none, kept to the end. */
++	struct weston_seat *own_seat;
+ };
+
++/* Note `code` held down, or no longer held. */
++static void
++ss_seat_hold(struct wl_array *held, uint32_t code, bool down)
++{
++	uint32_t *k, *slot;
++
++	wl_array_for_each(k, held) {
++		if (*k != code)
++			continue;
++		if (!down) {
++			*k = *(uint32_t *) ((char *) held->data + held->size -
++					    sizeof *k);
++			held->size -= sizeof *k;
++		}
++		return;
++	}
++
++	if (down) {
++		slot = wl_array_add(held, sizeof *slot);
++		if (slot)
++			*slot = code;
++	}
++}
++
++/* Let go of every key and button the viewer still holds, so that nothing
++ * stays pressed on the shared seat after it disconnects. */
++static void
++ss_seat_release_held(struct ss_seat *seat)
++{
++	struct timespec ts;
++	uint32_t *k;
++
++	weston_compositor_get_time(&ts);
++
++	if (seat->has_keyboard) {
++		wl_array_for_each(k, &seat->keys)
++			notify_key(seat->target, &ts, *k,
++				   WL_KEYBOARD_KEY_STATE_RELEASED,
++				   STATE_UPDATE_AUTOMATIC);
++	}
++	seat->keys.size = 0;
++
++	if (seat->has_pointer) {
++		wl_array_for_each(k, &seat->buttons) {
++			notify_button(seat->target, &ts, *k,
++				      WL_POINTER_BUTTON_STATE_RELEASED);
++			notify_pointer_frame(seat->target);
++		}
++	}
++	seat->buttons.size = 0;
++}
++
++/*
++ * Pointer focus is not touched on enter and leave: the target seat's focus
++ * is whatever its cursor is over, local or remote, and the next motion
++ * picks it.
++ */
+ static void
+ ss_seat_handle_pointer_enter(void *data, struct wl_pointer *pointer,
+ 			     uint32_t serial, struct wl_surface *surface,
+ 			     wl_fixed_t x, wl_fixed_t y)
+ {
+-	struct ss_seat *seat = data;
+-
+-	/* No transformation of input position is required here because we are
+-	 * always receiving the input in the same coordinates as the output. */
+-
+-	clear_pointer_focus(&seat->base);
+ }
+
+ static void
+@@ -141,7 +206,7 @@
+ {
+ 	struct ss_seat *seat = data;
+
+-	clear_pointer_focus(&seat->base);
++	ss_seat_release_held(seat);
+ }
+
+ static void
+@@ -154,12 +219,14 @@
+
+ 	timespec_from_msec(&ts, time);
+
+-	/* No transformation of input position is required here because we are
+-	 * always receiving the input in the same coordinates as the output. */
+-
+-	pos.c = weston_coord_from_fixed(x, y);
+-	notify_motion_absolute(&seat->base, &ts, pos);
+-	notify_pointer_frame(&seat->base);
++	/* The child's surface is this output's buffer, so the position is in
++	 * output pixels; the seat wants global coordinates, which differ by
++	 * the output's position, scale and transform. */
++	pos = weston_coord_global_from_output_point(wl_fixed_to_double(x),
++						    wl_fixed_to_double(y),
++						    seat->output->output);
++	notify_motion_absolute(seat->target, &ts, pos);
++	notify_pointer_frame(seat->target);
+ }
+
+ static void
+@@ -172,8 +239,10 @@
+
+ 	timespec_from_msec(&ts, time);
+
+-	notify_button(&seat->base, &ts, button, state);
+-	notify_pointer_frame(&seat->base);
++	ss_seat_hold(&seat->buttons, button,
++		     state == WL_POINTER_BUTTON_STATE_PRESSED);
++	notify_button(seat->target, &ts, button, state);
++	notify_pointer_frame(seat->target);
+ }
+
+ static void
+@@ -190,8 +259,8 @@
+
+ 	timespec_from_msec(&ts, time);
+
+-	notify_axis(&seat->base, &ts, &weston_event);
+-	notify_pointer_frame(&seat->base);
++	notify_axis(seat->target, &ts, &weston_event);
++	notify_pointer_frame(seat->target);
+ }
+
+ static const struct wl_pointer_listener ss_seat_pointer_listener = {
+@@ -202,73 +271,28 @@
+ 	ss_seat_handle_axis,
+ };
+
++/*
++ * The child's keymap is not applied: the target seat keeps its own, which a
++ * local keyboard shares. Both compositors build theirs from the same xkb
++ * defaults, so the keycodes the child sends mean the same keys here.
++ */
+ static void
+ ss_seat_handle_keymap(void *data, struct wl_keyboard *wl_keyboard,
+ 		      uint32_t format, int fd, uint32_t size)
+ {
+-	struct ss_seat *seat = data;
+-	struct xkb_keymap *keymap;
+-	char *map_str;
+-
+-	if (!data)
+-		goto error_no_seat;
+-
+-	if (format == WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1) {
+-		map_str = mmap(NULL, size, PROT_READ, MAP_SHARED, fd, 0);
+-		if (map_str == MAP_FAILED) {
+-			weston_log("mmap failed: %s\n", strerror(errno));
+-			goto error;
+-		}
+-
+-		keymap = xkb_keymap_new_from_string(seat->base.compositor->xkb_context,
+-						    map_str,
+-						    XKB_KEYMAP_FORMAT_TEXT_V1,
+-						    0);
+-		munmap(map_str, size);
+-
+-		if (!keymap) {
+-			weston_log("failed to compile keymap\n");
+-			goto error;
+-		}
+-
+-		seat->keyboard_state_update = STATE_UPDATE_NONE;
+-	} else if (format == WL_KEYBOARD_KEYMAP_FORMAT_NO_KEYMAP) {
+-		weston_log("No keymap provided; falling back to default\n");
+-		keymap = NULL;
+-		seat->keyboard_state_update = STATE_UPDATE_AUTOMATIC;
+-	} else {
+-		weston_log("Invalid keymap\n");
+-		goto error;
+-	}
+-
+-	close(fd);
+-
+-	if (seat->base.keyboard_device_count)
+-		weston_seat_update_keymap(&seat->base, keymap);
+-	else
+-		weston_seat_init_keyboard(&seat->base, keymap);
+-
+-	xkb_keymap_unref(keymap);
+-
+-	return;
+-
+-error:
+-	wl_keyboard_release(seat->parent.keyboard);
+-error_no_seat:
+ 	close(fd);
+ }
+
++/*
++ * Keyboard focus is the target seat's, set by clicks and touches like a
++ * local keyboard's; the child's enter and leave only say whether the viewer
++ * is there.
++ */
+ static void
+ ss_seat_handle_keyboard_enter(void *data, struct wl_keyboard *keyboard,
+ 			      uint32_t serial, struct wl_surface *surface,
+ 			      struct wl_array *keys)
+ {
+-	struct ss_seat *seat = data;
+-
+-	/* XXX: If we get a modifier event immediately before the focus,
+-	 *      we should try to keep the same serial. */
+-	notify_keyboard_focus_in(&seat->base, keys,
+-				 STATE_UPDATE_AUTOMATIC);
+ }
+
+ static void
+@@ -277,7 +301,7 @@
+ {
+ 	struct ss_seat *seat = data;
+
+-	notify_keyboard_focus_out(&seat->base);
++	ss_seat_release_held(seat);
+ }
+
+ static void
+@@ -289,37 +313,24 @@
+ 	struct timespec ts;
+
+ 	timespec_from_msec(&ts, time);
+-	seat->key_serial = serial;
+-	notify_key(&seat->base, &ts, key,
++	ss_seat_hold(&seat->keys, key, state != 0);
++	notify_key(seat->target, &ts, key,
+ 		   state ? WL_KEYBOARD_KEY_STATE_PRESSED :
+ 			   WL_KEYBOARD_KEY_STATE_RELEASED,
+-		   seat->keyboard_state_update);
++		   STATE_UPDATE_AUTOMATIC);
+ }
+
++/*
++ * Modifiers follow from the keys themselves (STATE_UPDATE_AUTOMATIC above).
++ * Writing the child's mask into the target seat's xkb state would overwrite
++ * whatever a local keyboard holds.
++ */
+ static void
+ ss_seat_handle_modifiers(void *data, struct wl_keyboard *wl_keyboard,
+ 			 uint32_t serial_in, uint32_t mods_depressed,
+ 			 uint32_t mods_latched, uint32_t mods_locked,
+ 			 uint32_t group)
+ {
+-	struct ss_seat *seat = data;
+-	struct weston_compositor *c = seat->base.compositor;
+-	struct weston_keyboard *keyboard;
+-	uint32_t serial_out;
+-
+-	/* If we get a key event followed by a modifier event with the
+-	 * same serial number, then we try to preserve those semantics by
+-	 * reusing the same serial number on the way out too. */
+-	if (serial_in == seat->key_serial)
+-		serial_out = wl_display_get_serial(c->wl_display);
+-	else
+-		serial_out = wl_display_next_serial(c->wl_display);
+-
+-	keyboard = weston_seat_get_keyboard(&seat->base);
+-	xkb_state_update_mask(keyboard->xkb_state.state,
+-			      mods_depressed, mods_latched,
+-			      mods_locked, 0, 0, group);
+-	notify_modifiers(&seat->base, serial_out);
+ }
+
+ static const struct wl_keyboard_listener ss_seat_keyboard_listener = {
+@@ -336,15 +347,24 @@
+ {
+ 	struct ss_seat *ss_seat = data;
+
++	/* The target seat gets a pointer and a keyboard for as long as the
++	 * viewer has them. libweston counts devices per seat, so a local mouse
++	 * or keyboard is unaffected; on a touch-only panel a cursor appears
++	 * while someone is connected and goes when they leave. */
+ 	if ((caps & WL_SEAT_CAPABILITY_POINTER) && !ss_seat->parent.pointer) {
+ 		ss_seat->parent.pointer = wl_seat_get_pointer(seat);
+ 		wl_pointer_set_user_data(ss_seat->parent.pointer, ss_seat);
+ 		wl_pointer_add_listener(ss_seat->parent.pointer,
+ 					&ss_seat_pointer_listener, ss_seat);
+-		weston_seat_init_pointer(&ss_seat->base);
++		if (weston_seat_init_pointer(ss_seat->target) == 0)
++			ss_seat->has_pointer = true;
+ 	} else if (!(caps & WL_SEAT_CAPABILITY_POINTER) && ss_seat->parent.pointer) {
++		ss_seat_release_held(ss_seat);
+ 		wl_pointer_destroy(ss_seat->parent.pointer);
+ 		ss_seat->parent.pointer = NULL;
++		if (ss_seat->has_pointer)
++			weston_seat_release_pointer(ss_seat->target);
++		ss_seat->has_pointer = false;
+ 	}
+
+ 	if ((caps & WL_SEAT_CAPABILITY_KEYBOARD) && !ss_seat->parent.keyboard) {
+@@ -352,9 +372,16 @@
+ 		wl_keyboard_set_user_data(ss_seat->parent.keyboard, ss_seat);
+ 		wl_keyboard_add_listener(ss_seat->parent.keyboard,
+ 					 &ss_seat_keyboard_listener, ss_seat);
++		/* NULL: the compositor's keymap, if the seat has none yet. */
++		if (weston_seat_init_keyboard(ss_seat->target, NULL) == 0)
++			ss_seat->has_keyboard = true;
+ 	} else if (!(caps & WL_SEAT_CAPABILITY_KEYBOARD) && ss_seat->parent.keyboard) {
++		ss_seat_release_held(ss_seat);
+ 		wl_keyboard_destroy(ss_seat->parent.keyboard);
+ 		ss_seat->parent.keyboard = NULL;
++		if (ss_seat->has_keyboard)
++			weston_seat_release_keyboard(ss_seat->target);
++		ss_seat->has_keyboard = false;
+ 	}
+ }
+
+@@ -362,16 +389,52 @@
+ 	ss_seat_handle_capabilities,
+ };
+
++/*
++ * The seat remote input goes into: the compositor's first, the one the
++ * libinput backend made for the local devices and every client has bound.
++ * With no input device at all there is none, and one is made here and kept
++ * until the compositor goes, so that a client that bound it keeps it across
++ * viewers. It is not called "default": the libinput backend looks its seats
++ * up by name and would take this one for its own.
++ */
++static struct weston_seat *
++ss_target_seat(struct screen_share *ss)
++{
++	struct weston_compositor *c = ss->compositor;
++	struct weston_seat *seat;
++
++	if (ss->own_seat)
++		return ss->own_seat;
++
++	if (!wl_list_empty(&c->seat_list))
++		return wl_container_of(c->seat_list.next, seat, link);
++
++	seat = zalloc(sizeof *seat);
++	if (seat == NULL)
++		return NULL;
++	weston_seat_init(seat, c, "screen-share");
++	ss->own_seat = seat;
++
++	return seat;
++}
++
+ static struct ss_seat *
+ ss_seat_create(struct shared_output *so, uint32_t id)
+ {
+ 	struct ss_seat *seat;
++	struct weston_seat *target;
++
++	target = ss_target_seat(so->share);
++	if (target == NULL)
++		return NULL;
+
+ 	seat = zalloc(sizeof *seat);
+ 	if (seat == NULL)
+ 		return NULL;
+
+-	weston_seat_init(&seat->base, so->output->compositor, "screen-share");
++	seat->target = target;
++	wl_array_init(&seat->keys);
++	wl_array_init(&seat->buttons);
+ 	seat->output = so;
+ 	seat->id = id;
+ 	seat->parent.seat = wl_registry_bind(so->parent.registry, id,
+@@ -387,6 +450,12 @@
+ static void
+ ss_seat_destroy(struct ss_seat *seat)
+ {
++	ss_seat_release_held(seat);
++	if (seat->has_pointer)
++		weston_seat_release_pointer(seat->target);
++	if (seat->has_keyboard)
++		weston_seat_release_keyboard(seat->target);
++
+ 	if (seat->parent.pointer)
+ 		wl_pointer_release(seat->parent.pointer);
+ 	if (seat->parent.keyboard)
+@@ -395,7 +464,8 @@
+
+ 	wl_list_remove(&seat->link);
+
+-	weston_seat_release(&seat->base);
++	wl_array_release(&seat->keys);
++	wl_array_release(&seat->buttons);
+
+ 	free(seat);
+ }
+@@ -728,7 +798,10 @@
+ 			wl_registry_bind(registry,
+ 					 id, &wl_output_interface, 1);
+ 	} else if (strcmp(interface, "wl_seat") == 0) {
+-		ss_seat_create(so, id);
++		/* Not bound at all when sharing the picture only: the viewer's
++		 * input then has nowhere to go, whatever it sends. */
++		if (so->share->input)
++			ss_seat_create(so, id);
+ 	} else if (strcmp(interface, "wl_shm") == 0) {
+ 		so->parent.shm =
+ 			wl_registry_bind(registry,
+@@ -965,6 +1038,9 @@
+ 		goto err_close;
+
+ 	wl_list_init(&so->seat_list);
++	/* Before the first roundtrip, which can already announce a seat. */
++	so->output = output;
++	so->share = ss;
+
+ 	so->parent.display = wl_display_connect_to_fd(parent_fd);
+ 	if (!so->parent.display)
+@@ -1201,6 +1277,11 @@
+
+ 	wl_list_remove(&ss->compositor_destroy_listener.link);
+
++	if (ss->own_seat) {
++		weston_seat_release(ss->own_seat);
++		free(ss->own_seat);
++	}
++
+ 	free(ss->command);
+ 	free(ss);
+ }
+@@ -1231,6 +1312,7 @@
+ 	section = weston_config_get_section(config, "screen-share", NULL, NULL);
+
+ 	weston_config_section_get_string(section, "command", &ss->command, NULL);
++	weston_config_section_get_bool(section, "input", &ss->input, true);
+
+ 	weston_compositor_add_key_binding(compositor, KEY_S,
+ 				          MODIFIER_CTRL | MODIFIER_ALT,

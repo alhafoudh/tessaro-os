@@ -63,7 +63,7 @@ or from [Webconfig](#webconfig) in any browser:
 - 🏢 **Enterprise networks welcome**: HTTP and SOCKS proxies, your own certificate authorities, your own NTP servers.
 - ⏰ **Scripts and schedules**: screens off at night, a different page at the weekend, anything a shell can do.
 - 🧰 **Maintenance and debug screens** at the flip of a switch, with your own message.
-- 👀 **See and reach it remotely**: a live VNC view of the panel and an SSH shell with your own key.
+- 👀 **See and reach it remotely**: a live VNC view of the panel you can click and type in (or only watch), and an SSH shell with your own key.
 - 📺 **Display safety net**: a new resolution nobody confirms reverts by itself.
 - ⚡ **Changes apply live**: most settings take effect without a restart, and nothing restarts that does not have to.
 
@@ -334,7 +334,8 @@ Every command group has worked examples in `tessaro-ctl <group> --help`, and
 
 `tessaro-gui` is everything the CLI does, in windows and tables: every device
 on the network in one list, a page per area, a file manager, printers,
-policies, a live journal, and a live VNC view of the screen. It shares the
+policies, a live journal, and a live VNC view of the screen to control it
+from. It shares the
 CLI's devices and tokens, so a device claimed in one is open in the other.
 
 <p align="center">

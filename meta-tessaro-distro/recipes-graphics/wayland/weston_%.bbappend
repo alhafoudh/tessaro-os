@@ -27,10 +27,22 @@
 # pam_unix, which could not have authenticated anyone else anyway; once the
 # credential is checked by our own script the premise is gone. Six lines.
 
+#
+# The second patch is what makes the share interactive. screen-share.so
+# forwards the viewer's pointer and keyboard through a seat of its own, a
+# second wl_seat, and Chromium binds only the first one - so remote input
+# reached nobody. The patch injects it into the compositor's own seat
+# instead, leaves that seat's keymap and modifiers alone, releases whatever
+# the viewer still holds when it goes, and maps positions through the
+# output's scale. It also adds `input=` to [screen-share]: false shares the
+# picture only, which is screen.vnc=view-only (tessaro-weston-config writes
+# it). See docs/remote-access.md.
+
 FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
 
 SRC_URI += " \
     file://0001-vnc-let-the-PAM-stack-decide-which-user-may-log-in.patch \
+    file://0002-screen-share-inject-remote-input-into-the-compositor-seat.patch \
     file://weston-remote-access.pam \
     file://tessaro-vnc-auth \
 "

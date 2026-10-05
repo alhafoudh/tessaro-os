@@ -23,6 +23,8 @@ module AgentE2E
     def self.telnet = 2323 + offset
     def self.api = 7400 + offset
     def self.cdp_tunnel = 19_222 + offset
+    # The SSH tunnel to the guest's VNC mirror (support/vnc.rb).
+    def self.vnc_tunnel = 15_900 + offset
     # The fake webcam's USB/IP server (support/usbcam.rb), which the guest
     # reaches as 10.0.2.2: no forward, the guest connects out.
     def self.usbip = 3240 + offset

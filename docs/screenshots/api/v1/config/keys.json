@@ -398,14 +398,15 @@
       "weston"
     ],
     "guarded": false,
-    "doc": "Mirror the screen to VNC on 127.0.0.1:5900.",
-    "values": "one of: on, off",
+    "doc": "Mirror the screen to VNC on 127.0.0.1:5900: on to view and control it, view-only to watch only, off for no mirror.",
+    "values": "one of: on, view-only, off",
     "default": "on",
     "value": null,
     "input": {
       "kind": "choice",
       "choices": [
         "on",
+        "view-only",
         "off"
       ]
     }

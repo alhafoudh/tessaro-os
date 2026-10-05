@@ -108,9 +108,9 @@ o=$(read_key "$OVERRIDE" KIOSK_VNC)
 [ -n "$vnc" ] || vnc=on
 
 case $vnc in
-    on|off) ;;
+    on|view-only|off) ;;
     *)
-        echo "tessaro-weston-config: KIOSK_VNC=$vnc is not on or off - using on" >&2
+        echo "tessaro-weston-config: KIOSK_VNC=$vnc is not on, view-only or off - using on" >&2
         vnc=on
         ;;
 esac
@@ -265,9 +265,12 @@ fi
 # screen-share.so (loaded from the unit drop-in) forks the command below, hands
 # it one end of a socketpair, and presents this output into it through
 # zwp_fullscreen_shell_v1; the child serves that surface over VNC and sends
-# pointer and key events back, which screen-share injects into this compositor
-# through a synthetic seat. That seat is a second wl_seat, which Chromium never
-# binds, so the session is view only (see docs/remote-access.md).
+# pointer and key events back, which screen-share injects into this
+# compositor's own seat - the one Chromium binds - thanks to the weston
+# bbappend's screen-share patch (see docs/remote-access.md).
+#
+# input= is that patch's key: false (KIOSK_VNC=view-only) never binds the
+# child's seat, so the viewer sees the panel and nothing it sends arrives.
 #
 # The cost is real and continuous: sharing an output makes Weston stop using
 # hardware overlay and cursor planes for it, and every damage rectangle is read
@@ -306,10 +309,18 @@ if grep -q '^[[:space:]]*\[screen-share\]' "$OUT"; then
 elif [ "$vnc" = off ]; then
     echo "tessaro-weston-config: remote access off (KIOSK_VNC=off)"
 else
-    printf '\n[screen-share]\nstart-on-startup=true\ncommand=%s\n' \
+    if [ "$vnc" = view-only ]; then
+        input=false
+        how="view only"
+    else
+        input=true
+        how="view and control"
+    fi
+    printf '\n[screen-share]\nstart-on-startup=true\ninput=%s\ncommand=%s\n' \
+        "$input" \
         "/usr/bin/weston --backend=vnc-backend.so --shell=fullscreen-shell.so --no-config --address=$VNC_ADDRESS --port=$VNC_PORT --vnc-tls-cert=$VNC_TLS_CERT --vnc-tls-key=$VNC_TLS_KEY" \
         >> "$OUT"
-    echo "tessaro-weston-config: remote access on, VNC on $VNC_ADDRESS:$VNC_PORT"
+    echo "tessaro-weston-config: remote access on ($how), VNC on $VNC_ADDRESS:$VNC_PORT"
 fi
 
 for dev in "$DRM_ROOT"/card*-*; do

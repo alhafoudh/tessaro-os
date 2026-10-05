@@ -105,6 +105,12 @@ start.
   no curl or Python. Chromium's DevTools HTTP server answers HTTP/1.0 with
   nothing at all and holds 1.1 connections open, so the client reads by
   `Content-Length`.
+* **VNC is driven from the host the same way**, through a tunnel to the
+  guest's `127.0.0.1:5900` on the worker's `vnc_tunnel` port (15900 plus the
+  worker's offset), opened only for the case that needs it
+  (`spec/support/vnc.rb`). Its RFB client logs in with VeNCrypt X509Plain
+  and sends clicks and keys only; what reached the page is read over
+  DevTools.
 * **The guest's BusyBox has `pgrep` but no `pkill`**, and `pgrep -f` also
   matches the remote shell running the kill. The harness brackets one
   character (`--type=rendere[r]`); unbracketed, `SIGKILL` ends its own SSH

@@ -17,10 +17,10 @@ use std::time::Instant;
 
 use iced::widget::image;
 use iced::widget::{
-    button, checkbox, column, container, pick_list, row, rule, scrollable, space, text, text_input,
-    Column,
+    button, checkbox, column, container, mouse_area, pick_list, responsive, row, rule, scrollable,
+    space, text, text_input, Column,
 };
-use iced::{Element, Length, Task};
+use iced::{keyboard, mouse, Element, Length, Task};
 use protocol::keys::{self, Consumer, Kind};
 use protocol::{Applied, KeyInfo, NodeInfo, RestartTarget, Setting, Settings, Source, Status};
 use tessaro_client::journal::Entry;
@@ -298,6 +298,8 @@ pub enum Message {
     JournalUnitApply,
     JournalFilter(String),
     ToggleVnc,
+    /// The pointer or a key in the VNC panel.
+    Vnc(VncInput),
     /// Show this camera in the camera panel.
     OpenCamera(String),
     CloseCamera,
@@ -504,6 +506,96 @@ struct Vnc {
     uploading: Option<u64>,
     uploads: u64,
     state: Option<Result<String, String>>,
+    /// Where input goes, while connected.
+    control: Option<vnc::Control>,
+    /// The device's screen, in its own pixels, as the last frame had it.
+    size: Option<vnc::Size>,
+    /// Where the pointer is on the device's screen, while it is over the
+    /// picture. Keys go to the device only then.
+    pointer: Option<(u16, u16)>,
+    /// The buttons held down, as RFB's mask.
+    buttons: u8,
+    /// The keys held down, with the keysym each was sent as, so that a
+    /// release sends the same one whatever the modifiers did meanwhile.
+    held: BTreeMap<keyboard::key::Physical, u32>,
+}
+
+/// What the viewer does in the VNC panel.
+#[derive(Debug, Clone)]
+pub enum VncInput {
+    /// The pointer is over the picture, at this pixel of the device's screen.
+    Move(u16, u16),
+    /// It left the picture.
+    Exit,
+    /// A button in RFB's mask went down or up.
+    Button(u8, bool),
+    /// The wheel turned, in lines; up is positive.
+    Scroll(f32),
+    Key {
+        physical: keyboard::key::Physical,
+        /// What a press sends; a release sends what its press did.
+        keysym: Option<u32>,
+        down: bool,
+    },
+}
+
+/// RFB's button bits.
+const LEFT: u8 = 1;
+const MIDDLE: u8 = 1 << 1;
+const RIGHT: u8 = 1 << 2;
+const WHEEL_UP: u8 = 1 << 3;
+const WHEEL_DOWN: u8 = 1 << 4;
+
+/// The device pixel under `point`, for a picture of `screen` drawn into
+/// `area` with `ContentFit::Contain`: scaled to fit and centred. `None` in
+/// the bars around it.
+fn letterbox(area: iced::Size, screen: vnc::Size, point: iced::Point) -> Option<(u16, u16)> {
+    let (width, height) = (f32::from(screen.width), f32::from(screen.height));
+    if width < 1.0 || height < 1.0 || area.width <= 0.0 || area.height <= 0.0 {
+        return None;
+    }
+    let scale = (area.width / width).min(area.height / height);
+    let x = (point.x - (area.width - width * scale) / 2.0) / scale;
+    let y = (point.y - (area.height - height * scale) / 2.0) / scale;
+    ((0.0..width).contains(&x) && (0.0..height).contains(&y)).then_some((x as u16, y as u16))
+}
+
+/// The device's screen, fitted into the panel.
+fn screen_image(frame: image::Handle) -> iced::widget::Image {
+    iced::widget::image(frame)
+        .content_fit(iced::ContentFit::Contain)
+        .width(Length::Fill)
+        .height(Length::Fill)
+}
+
+/// The picture taking the pointer: its position mapped to the device's
+/// pixels through the letterbox, its buttons and wheel as RFB's.
+fn vnc_picture<'a>(
+    frame: image::Handle,
+    area: iced::Size,
+    screen: vnc::Size,
+) -> Element<'a, Message> {
+    let input = |input| Message::Vnc(input);
+    mouse_area(screen_image(frame))
+        .on_move(move |point| match letterbox(area, screen, point) {
+            Some((x, y)) => input(VncInput::Move(x, y)),
+            None => input(VncInput::Exit),
+        })
+        .on_exit(input(VncInput::Exit))
+        .on_press(input(VncInput::Button(LEFT, true)))
+        .on_release(input(VncInput::Button(LEFT, false)))
+        .on_middle_press(input(VncInput::Button(MIDDLE, true)))
+        .on_middle_release(input(VncInput::Button(MIDDLE, false)))
+        .on_right_press(input(VncInput::Button(RIGHT, true)))
+        .on_right_release(input(VncInput::Button(RIGHT, false)))
+        .on_scroll(move |delta| {
+            input(VncInput::Scroll(match delta {
+                mouse::ScrollDelta::Lines { y, .. } => y,
+                // A notch is about this many pixels on a trackpad.
+                mouse::ScrollDelta::Pixels { y, .. } => y / 40.0,
+            }))
+        })
+        .into()
 }
 
 /// A VNC frame iced has finished uploading, for the window it was meant for.
@@ -566,16 +658,131 @@ impl Device {
     pub fn vnc_event(&mut self, event: vnc::Event) -> Task<VncUploaded> {
         match event {
             vnc::Event::State(state) => self.vnc.state = Some(Ok(state)),
-            vnc::Event::Frame(image) if self.vnc.open => {
+            vnc::Event::Ready(control) => {
+                self.vnc_forget_input();
+                self.vnc.control = Some(control);
+            }
+            vnc::Event::Frame(image, size) if self.vnc.open => {
+                self.vnc.size = Some(size);
                 if self.vnc.uploading.is_none() {
                     return self.vnc_upload(image);
                 }
                 self.vnc.next = Some(image);
             }
-            vnc::Event::Frame(_) => {}
-            vnc::Event::Lost(why) => self.vnc.state = Some(Err(why)),
+            vnc::Event::Frame(..) => {}
+            vnc::Event::Lost(why) => {
+                self.vnc_forget_input();
+                self.vnc.state = Some(Err(why));
+            }
         }
         Task::none()
+    }
+
+    /// What `screen.vnc` says the panel may do, as the device reported it.
+    fn vnc_mode(&self) -> &str {
+        self.setting("screen.vnc")
+            .and_then(|setting| setting.value.as_deref())
+            .unwrap_or("on")
+    }
+
+    /// Whether input from the panel goes to the device: connected, and the
+    /// device takes it.
+    fn vnc_controls(&self) -> bool {
+        self.vnc.open && self.vnc.control.is_some() && self.vnc_mode() == "on"
+    }
+
+    /// Whether the keyboard is the panel's now: the pointer is over a
+    /// picture the device takes input on.
+    pub fn vnc_has_keys(&self) -> bool {
+        self.vnc.pointer.is_some() && self.vnc_controls()
+    }
+
+    /// Drop the connection's input state; the device releases what the
+    /// connection held when it goes.
+    fn vnc_forget_input(&mut self) {
+        self.vnc.control = None;
+        self.vnc.pointer = None;
+        self.vnc.buttons = 0;
+        self.vnc.held.clear();
+    }
+
+    fn vnc_send(&self, input: vnc::Input) {
+        if let (true, Some(control)) = (self.vnc_controls(), &self.vnc.control) {
+            control.send(input);
+        }
+    }
+
+    fn vnc_pointer(&self) {
+        if let Some((x, y)) = self.vnc.pointer {
+            self.vnc_send(vnc::Input::Pointer {
+                x,
+                y,
+                buttons: self.vnc.buttons,
+            });
+        }
+    }
+
+    fn vnc_input(&mut self, input: VncInput) {
+        match input {
+            VncInput::Move(x, y) => {
+                self.vnc.pointer = Some((x, y));
+                self.vnc_pointer();
+            }
+            VncInput::Exit => {
+                // Nothing stays pressed on the device once the pointer is
+                // elsewhere: its buttons and keys go up there.
+                if self.vnc.buttons != 0 {
+                    self.vnc.buttons = 0;
+                    self.vnc_pointer();
+                }
+                for keysym in std::mem::take(&mut self.vnc.held).into_values() {
+                    self.vnc_send(vnc::Input::Key {
+                        keysym,
+                        down: false,
+                    });
+                }
+                self.vnc.pointer = None;
+            }
+            VncInput::Button(button, down) => {
+                if down {
+                    self.vnc.buttons |= button;
+                } else {
+                    self.vnc.buttons &= !button;
+                }
+                self.vnc_pointer();
+            }
+            VncInput::Scroll(lines) => {
+                let notch = if lines > 0.0 { WHEEL_UP } else { WHEEL_DOWN };
+                for _ in 0..(lines.abs().round() as u32).clamp(1, 10) {
+                    self.vnc.buttons |= notch;
+                    self.vnc_pointer();
+                    self.vnc.buttons &= !notch;
+                    self.vnc_pointer();
+                }
+            }
+            VncInput::Key {
+                physical,
+                keysym,
+                down: true,
+            } => {
+                if let (Some(keysym), true) = (keysym, self.vnc_has_keys()) {
+                    self.vnc.held.insert(physical, keysym);
+                    self.vnc_send(vnc::Input::Key { keysym, down: true });
+                }
+            }
+            VncInput::Key {
+                physical,
+                down: false,
+                ..
+            } => {
+                if let Some(keysym) = self.vnc.held.remove(&physical) {
+                    self.vnc_send(vnc::Input::Key {
+                        keysym,
+                        down: false,
+                    });
+                }
+            }
+        }
     }
 
     /// A frame is uploaded: show it, and start on the newest one waiting.
@@ -618,29 +825,34 @@ impl Device {
                 .style(theme::muted)
                 .into(),
         };
-        let off = self
-            .setting("screen.vnc")
-            .and_then(|setting| setting.value.as_deref())
-            == Some("off");
+        let mode = self.vnc_mode();
+        let off = mode == "off";
         let picture: Element<'_, Message> = match (&self.vnc.frame, off) {
             (_, true) => text("VNC is off on this device (screen.vnc=off)")
                 .size(theme::SMALL)
                 .style(text::warning)
                 .into(),
-            (Some((frame, _)), false) => iced::widget::image(frame.clone())
-                .content_fit(iced::ContentFit::Contain)
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .into(),
+            (Some((frame, _)), false) => match (self.vnc_controls(), self.vnc.size) {
+                (true, Some(screen)) => {
+                    let frame = frame.clone();
+                    responsive(move |area| vnc_picture(frame.clone(), area, screen)).into()
+                }
+                _ => screen_image(frame.clone()).into(),
+            },
             (None, false) => text("no picture yet")
                 .size(theme::SMALL)
                 .style(theme::muted)
                 .into(),
         };
+        let what = match mode {
+            "view-only" => "view only (screen.vnc=view-only)",
+            "off" => "off",
+            _ => "control: click, scroll, and type with the pointer over the picture",
+        };
         column![
             row![
                 text("VNC").size(theme::SMALL).font(bold()),
-                text("view only").size(theme::SMALL).style(theme::muted),
+                text(what).size(theme::SMALL).style(theme::muted),
                 space::horizontal(),
                 theme::tool("Reconnect", Some(Message::VncReconnect)),
             ]
@@ -1087,11 +1299,14 @@ impl Device {
                     self.vnc.next = None;
                     self.vnc.uploading = None;
                     self.vnc.state = None;
+                    self.vnc_forget_input();
                 }
             }
+            Message::Vnc(input) => self.vnc_input(input),
             Message::VncReconnect => {
                 self.vnc.generation += 1;
                 self.vnc.state = None;
+                self.vnc_forget_input();
             }
             Message::P(message) => return self.page_update(message),
             Message::Refresh => {
@@ -2186,5 +2401,21 @@ mod tests {
     fn the_input_follows_the_kind() {
         assert_eq!(input("browser.url"), Input::Text);
         assert!(matches!(input("browser.touch"), Input::Choice(_)));
+    }
+
+    #[test]
+    fn the_pointer_maps_through_the_letterbox() {
+        let screen = vnc::Size {
+            width: 1920,
+            height: 1080,
+        };
+        // Half size, with bars of 60 above and below.
+        let area = iced::Size::new(960.0, 660.0);
+        let at = |x, y| letterbox(area, screen, iced::Point::new(x, y));
+        assert_eq!(at(0.0, 60.0), Some((0, 0)));
+        assert_eq!(at(480.0, 330.0), Some((960, 540)));
+        assert_eq!(at(959.0, 599.0), Some((1918, 1078)));
+        assert_eq!(at(480.0, 30.0), None);
+        assert_eq!(at(480.0, 600.0), None);
     }
 }

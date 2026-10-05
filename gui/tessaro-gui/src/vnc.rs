@@ -11,15 +11,15 @@
 //! Its server is neatvnc, which takes VeNCrypt with a plain login inside
 //! TLS and nothing else, so no VNC crate fits and this is a small RFB 3.8
 //! client of its own: VeNCrypt X509Plain, then Raw and CopyRect updates
-//! into a framebuffer, handed to the UI a few times a second. View only:
-//! remote input never reaches the browser anyway (the second seat, same
-//! doc).
+//! into a framebuffer, handed to the UI a few times a second. Pointer and
+//! keys go the other way through [`Control`]; a device on
+//! `screen.vnc=view-only` drops them itself (same doc).
 
 use std::hash::{Hash, Hasher};
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::net::{Shutdown, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 
 use iced::futures::channel::mpsc as ui;
@@ -39,14 +39,51 @@ const USER: &str = "tessaro";
 const PASSWORD: &str = "tessaro";
 /// The fastest the picture is handed to the UI.
 const FRAME_EVERY: Duration = Duration::from_millis(150);
+/// The longest input waits while the screen is still.
+const INPUT_EVERY: Duration = Duration::from_millis(20);
 const RETRY: Duration = Duration::from_secs(3);
 
 #[derive(Debug, Clone)]
 pub enum Event {
     /// What it is doing, for the panel's status line.
     State(String),
-    Frame(image::Handle),
+    /// Connected: where to send input for this connection.
+    Ready(Control),
+    /// The picture, and its size in device pixels.
+    Frame(image::Handle, Size),
     Lost(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Size {
+    pub width: u16,
+    pub height: u16,
+}
+
+/// What the viewer does, in device pixels and X keysyms.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Input {
+    /// Where the pointer is and which buttons are down: bit 0 left, 1
+    /// middle, 2 right, 3 and 4 the wheel up and down.
+    Pointer {
+        x: u16,
+        y: u16,
+        buttons: u8,
+    },
+    Key {
+        keysym: u32,
+        down: bool,
+    },
+}
+
+/// Input for one connection. Sending after it ended does nothing.
+#[derive(Debug, Clone)]
+pub struct Control(mpsc::Sender<Input>);
+
+impl Control {
+    pub fn send(&self, input: Input) {
+        let _ = self.0.send(input);
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -153,6 +190,11 @@ const ENCODING_DESKTOP_SIZE: i32 = -223;
 
 /// The handshake, then updates until the connection ends.
 fn view(tcp: TcpStream, out: &ui::UnboundedSender<Event>) -> Result<(), String> {
+    // The same socket, for the read timeout that lets input out while the
+    // screen is still.
+    let socket = tcp
+        .try_clone()
+        .map_err(|err| format!("the tunnel: {err}"))?;
     let mut stream = handshake(Box::new(tcp))?;
     let stream = stream.as_mut();
 
@@ -186,11 +228,32 @@ fn view(tcp: TcpStream, out: &ui::UnboundedSender<Event>) -> Result<(), String> 
     request(stream, false, width, height)?;
     let mut shown = Instant::now() - FRAME_EVERY;
     let mut dirty = false;
+    let (control, inputs) = mpsc::channel();
+    let _ = out.unbounded_send(Event::Ready(Control(control)));
 
     loop {
-        let mut kind = [0u8; 1];
-        read(stream, &mut kind)?;
-        match kind[0] {
+        let kind = loop {
+            send_input(stream, &inputs, width, height)?;
+            // Only the message type byte waits with a timeout: a read
+            // that times out there has taken nothing, while one inside a
+            // message would lose its place.
+            socket
+                .set_read_timeout(Some(INPUT_EVERY))
+                .map_err(|err| format!("VNC: {err}"))?;
+            let mut kind = [0u8; 1];
+            let got = stream.read(&mut kind);
+            socket
+                .set_read_timeout(None)
+                .map_err(|err| format!("VNC: {err}"))?;
+            match got {
+                Ok(0) => return Err("VNC: the server closed the connection".to_string()),
+                Ok(_) => break kind[0],
+                Err(err) if matches!(err.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
+                Err(err) if err.kind() == ErrorKind::Interrupted => {}
+                Err(err) => return Err(format!("VNC: {err}")),
+            }
+        };
+        match kind {
             0 => {
                 let mut header = [0u8; 3];
                 read(stream, &mut header)?;
@@ -243,11 +306,13 @@ fn view(tcp: TcpStream, out: &ui::UnboundedSender<Event>) -> Result<(), String> 
         }
 
         if dirty && shown.elapsed() >= FRAME_EVERY {
-            let frame = Event::Frame(image::Handle::from_rgba(
-                width as u32,
-                height as u32,
-                rgba(&screen),
-            ));
+            let frame = Event::Frame(
+                image::Handle::from_rgba(width as u32, height as u32, rgba(&screen)),
+                Size {
+                    width: width as u16,
+                    height: height as u16,
+                },
+            );
             if out.unbounded_send(frame).is_err() {
                 return Ok(());
             }
@@ -358,6 +423,42 @@ fn request(
     write(stream, &message)
 }
 
+/// Everything the viewer did since the last call, as RFB messages.
+fn send_input(
+    stream: &mut dyn Stream,
+    inputs: &mpsc::Receiver<Input>,
+    width: usize,
+    height: usize,
+) -> Result<(), String> {
+    let mut message = Vec::new();
+    while let Ok(input) = inputs.try_recv() {
+        message.extend(encode(input, width, height));
+    }
+    if message.is_empty() {
+        return Ok(());
+    }
+    write(stream, &message)
+}
+
+/// A PointerEvent (5), kept on the screen, or a KeyEvent (4).
+fn encode(input: Input, width: usize, height: usize) -> Vec<u8> {
+    match input {
+        Input::Pointer { x, y, buttons } => {
+            let x = x.min(width.saturating_sub(1) as u16);
+            let y = y.min(height.saturating_sub(1) as u16);
+            let mut message = vec![5u8, buttons];
+            message.extend(x.to_be_bytes());
+            message.extend(y.to_be_bytes());
+            message
+        }
+        Input::Key { keysym, down } => {
+            let mut message = vec![4u8, down as u8, 0, 0];
+            message.extend(keysym.to_be_bytes());
+            message
+        }
+    }
+}
+
 fn read(stream: &mut dyn Stream, buffer: &mut [u8]) -> Result<(), String> {
     stream
         .read_exact(buffer)
@@ -448,5 +549,24 @@ mod tests {
     #[test]
     fn pixels_become_rgba() {
         assert_eq!(rgba(&[1, 2, 3, 0]), vec![3, 2, 1, 255]);
+    }
+
+    #[test]
+    fn pointer_events_are_kept_on_the_screen() {
+        let pointer = Input::Pointer {
+            x: 300,
+            y: 2000,
+            buttons: 0b101,
+        };
+        assert_eq!(encode(pointer, 1920, 1080), vec![5, 0b101, 1, 44, 4, 55]);
+    }
+
+    #[test]
+    fn key_events_carry_the_keysym() {
+        let key = Input::Key {
+            keysym: 0xff0d,
+            down: true,
+        };
+        assert_eq!(encode(key, 1, 1), vec![4, 1, 0, 0, 0, 0, 0xff, 0x0d]);
     }
 }

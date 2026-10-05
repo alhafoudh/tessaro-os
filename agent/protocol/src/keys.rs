@@ -375,8 +375,8 @@ pub static KEYS: &[Key] = &[
         "Use keyboards, barcode scanners included; 0 ignores them, and screen.osk=auto shows the on-screen keyboard as if none were plugged in."),
     key(INPUT_TOUCH, "KIOSK_INPUT_TOUCH", Kind::Flag, WESTON,
         "Use touchscreens; 0 ignores them. Remote management and the VNC mirror keep working."),
-    key("screen.vnc", "KIOSK_VNC", Kind::Choice(&["on", "off"]), WESTON,
-        "Mirror the screen to VNC on 127.0.0.1:5900."),
+    key("screen.vnc", "KIOSK_VNC", Kind::Choice(&["on", "view-only", "off"]), WESTON,
+        "Mirror the screen to VNC on 127.0.0.1:5900: on to view and control it, view-only to watch only, off for no mirror."),
     // Sound, on PipeWire. Applied to the running sound server at once; see
     // `tessaro-ctl audio show`.
     key(AUDIO_OUTPUT, "KIOSK_AUDIO_OUTPUT", Kind::AudioOutput, AUDIO,
@@ -1632,6 +1632,16 @@ mod tests {
         assert!(check("screen.resolution", "1920x1080@60").is_err());
         assert!(check("screen.resolution", "10x10").is_err());
         assert!(find("screen.resolution").unwrap().guarded);
+    }
+
+    #[test]
+    fn vnc_is_on_view_only_or_off() {
+        // tessaro-weston-config reads exactly these.
+        for value in ["on", "view-only", "off"] {
+            assert_eq!(check("screen.vnc", value).unwrap(), value);
+        }
+        assert_eq!(check("screen.vnc", "View-Only").unwrap(), "view-only");
+        assert!(check("screen.vnc", "view").is_err());
     }
 
     #[test]

@@ -26,7 +26,7 @@ module AgentE2E
     begin
       TCPSocket.new("127.0.0.1", port).close
     rescue SystemCallError
-      raise Failure, "the DevTools tunnel on #{port} never came up" if Time.now > deadline
+      raise Failure, "the SSH tunnel on #{port} never came up" if Time.now > deadline
 
       sleep 0.2
       retry

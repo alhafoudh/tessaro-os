@@ -20,7 +20,7 @@ module AgentE2E
                      browser.debug.template audio.output audio.volume audio.mute audio.input
                      audio.input_volume network.proxy.url network.proxy.bypass printer.enable
                      browser.bridge.mode browser.url agent.cdp_ping camera.format camera.size
-                     camera.mirrors].freeze
+                     camera.mirrors screen.vnc].freeze
 
   class Failure < StandardError; end
 

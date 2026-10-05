@@ -384,8 +384,9 @@ snapshot is taken is **Snapshots** in [camera.md](camera.md).
 
 ## VNC
 
-**The VNC panel shows the device's screen live, view only, beside any page**
-(`vnc.rs`, the VNC toggle).
+**The VNC panel shows the device's screen live beside any page, and takes
+the mouse and keyboard to control it** (`vnc.rs`, the VNC toggle), unless
+the device is on `screen.vnc=view-only`.
 
 * The device's server listens on its loopback only (see
   [remote-access.md](remote-access.md)). So the panel sends the SSH key and
@@ -406,9 +407,26 @@ snapshot is taken is **Snapshots** in [camera.md](camera.md).
   far past that, so putting each new handle in the view straight away blanks
   the panel on every frame. The shown frame keeps its `Allocation`; while
   one upload runs, only the newest frame waits.
-* It is view only because remote input never reaches the browser (the second
-  seat, in remote-access.md).
-* `screen.vnc=off` shows a note instead of a picture.
+* **Keys go to the device only while the pointer is over the picture**
+  (`vnc_keys` in `main.rs`, `vnc_has_keys` in `device.rs`), so typing
+  elsewhere in the app stays the app's. Even then the zoom keys stay the
+  app's, and a key a text field took is left to it. Leaving the picture
+  releases every key and button held on the device, and a release always
+  sends the keysym its press did (`held`), whatever Shift did meanwhile.
+* **The pointer is mapped through the letterbox** (`letterbox`): the
+  picture is drawn with `ContentFit::Contain`, so a position is scaled back
+  to the device's pixels and the bars around it are outside the screen.
+  Moving over the picture does not raise its window; a click does.
+* **Input waits at most 20ms on a still screen.** The connection is one TLS
+  stream read by one thread, so only the wait for the next server message
+  has a read timeout, and input queued by the UI (`Control`) is written
+  between messages. A timeout inside a message would lose its place.
+* Characters are sent as the keysym of what was typed, Shift applied
+  (`keysym.rs`); the device's VNC backend turns it back into a keycode with
+  its own keymap.
+* `screen.vnc=view-only` shows the picture without taking input, and the
+  device would drop it anyway (remote-access.md). `screen.vnc=off` shows a
+  note instead of a picture.
 
 ## Adding a page
 

@@ -4,20 +4,50 @@
 through an SSH tunnel. It is the live screen with the live Chromium on it, not
 a second session.
 
-**It is view only, and that is a Chromium limitation rather than a setting.**
-Remote input does arrive: `screen-share` injects it with `notify_motion_absolute`
-and friends through a synthetic seat. But that seat is a *second* `wl_seat`
-(`weston_seat_init(&seat->base, compositor, "screen-share")`,
-`screen-share.c:374`), created when the first viewer connects, and Chromium
-binds exactly one seat - `wayland_seat.cc:34` returns early once
-`connection->seat_` is set, which the libinput seat has done at startup. So
-clicks and keys are delivered to a seat the browser never bound. The fix is
-a small patch against `screen-share.c` that injects into the compositor's
-existing seat instead of creating one (`struct ss_seat` holding a
-`weston_seat *`, the `notify_*` calls unchanged), so remote and local share
-one cursor and one keyboard focus; do not go looking for a flag. Patching
-Chromium to bind more than one seat is the wrong end: a Chromium patch and a
-multi-hour rebuild against a few dozen lines in a module nothing else uses.
+**The viewer can click and type, unless `screen.vnc=view-only`.** `on` (the
+default) is view and control, `view-only` is the picture alone, `off` is no
+mirror. Remote and local input share one seat: one cursor, one keyboard
+focus. On a touch-only panel a cursor appears while a viewer is connected
+and goes when they leave.
+
+**Remote input goes into the compositor's own seat, by a patch to
+`screen-share.c`** (`0002-screen-share-inject-remote-input-into-the-compositor-seat.patch`,
+applied by `weston_%.bbappend`). Upstream gives the viewer a seat of its own,
+a *second* `wl_seat` (`weston_seat_init(&seat->base, compositor,
+"screen-share")`), and Chromium binds exactly one seat -
+`wayland_seat.cc:34` returns early once `connection->seat_` is set, which the
+libinput seat has done at startup - so remote clicks and keys reached nobody.
+Patching Chromium to bind more than one seat is the wrong end: a Chromium
+patch and a multi-hour rebuild against a module nothing else uses. What the
+patch does, and why each part:
+
+* **The target is the first seat on `compositor->seat_list`**, the libinput
+  one. With no input device at all there is none; the patch makes one and
+  keeps it until Weston exits, so a client that bound it keeps it across
+  viewers. It is named `screen-share`, never `default`: the libinput backend
+  looks its seats up by name (`udev_seat_get_named`) and would treat ours as
+  its own struct.
+* **The seat gets a pointer and a keyboard only while a viewer has them**
+  (`weston_seat_init_pointer`/`_keyboard`, released on disconnect). libweston
+  counts devices per seat, so a local mouse or keyboard is unaffected.
+* **The panel's keymap and modifiers are left alone.** The child's keymap is
+  ignored and its modifier mask is not written into the seat's xkb state;
+  keys update the state themselves (`STATE_UPDATE_AUTOMATIC`). Both
+  compositors build their keymap from the same xkb defaults, and nothing in
+  the image sets a layout. Setting one on the device means setting the same
+  one for the child, or keycodes would mean different keys.
+* **Focus is the seat's.** Enter and leave from the child move no focus; a
+  click or touch decides where keys go, as with a local keyboard. Keys and
+  buttons the viewer still holds when it goes are released, so nothing stays
+  pressed.
+* **Positions go through `weston_coord_global_from_output_point`.** The
+  child's surface is the output's buffer, so a viewer's position is in
+  output pixels; upstream passed them on as global coordinates, which is
+  wrong once `screen.scale` scales the output or a second output is not at
+  0,0.
+* **`view-only` is `input=false` in `[screen-share]`**, a key the patch
+  adds. The child's `wl_seat` is then never bound, so nothing the viewer
+  sends arrives, whatever the client.
 
 **It cannot be done by adding a VNC backend to the running compositor.** In
 Weston a backend is what drives the display, and this one is on
@@ -25,10 +55,10 @@ Weston a backend is what drives the display, and this one is on
 `weston.service` drop-in): it forks a *second* Weston on `vnc-backend.so` plus
 `fullscreen-shell.so`, presents this compositor's output surface into it over
 `zwp_fullscreen_shell_v1`, and injects the remote pointer and key events back
-through the synthetic seat described above.
+into this compositor's seat as described above.
 
 * **The `[screen-share]` section is generated**, by `tessaro-weston-config`,
-  under `screen.vnc` (`KIOSK_VNC`, `on` by default, `off` to disable) - the same file, the
+  under `screen.vnc` (`KIOSK_VNC`: `on` by default, `view-only`, `off`) - the same file, the
   same log (`journalctl -t tessaro-weston-config`) and the same "a section
   written by hand in `/etc/xdg/weston/weston.ini` wins" rule as `[output]` and
   `[input-method]`. The `weston-init` bbappend deletes the `[screen-share]`
