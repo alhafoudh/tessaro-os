@@ -80,12 +80,14 @@ connector will be called, the config is generated per boot:
 
 ## Screen rotation
 
-**`screen.rotation` (`KIOSK_ROTATION`) is how far the picture is turned
-clockwise, written as Weston's `[output] transform=` into every generated
-section**, so a portrait panel or one mounted upside down shows the page
-upright. `90` is `rotate-90`, `flipped` is `flipped` (mirrored, for a rear
-projection or a teleprompter glass) and `flipped-90` is `flipped-rotate-90`;
-Weston's man page counts `rotate-90` clockwise (`weston.ini.man`). `0`
+**`screen.rotation` (`KIOSK_ROTATION`) is how far the screen is mounted
+turned clockwise, written as Weston's `[output] transform=` into every
+generated section**, so a portrait panel or one mounted upside down shows the
+page upright. `90` is `rotate-90`, `flipped` is `flipped` (mirrored, for a
+rear projection or a teleprompter glass) and `flipped-90` is
+`flipped-rotate-90`. The number is the panel's turn, not the picture's:
+`rotate-90` draws the top of the picture along the panel's left edge, so on
+an unturned panel the page lies turned counter-clockwise (seen in qemu). `0`
 writes no `transform=`, so an unturned device keeps the config it had and a
 hotplug check sees no difference. The turn is on probation like a resolution:
 a wrong one can leave a touch screen with nothing anyone can hit.
@@ -365,8 +367,9 @@ script run and both committed.
   `$PSPLASH_ARGS` that is empty or missing passes nothing). Only a confirmed
   turn is written (`render_splash` in `render.rs`, from `State::confirmed`):
   one still on probation is reverted at boot, so the splash must not take
-  it. psplash counts its angle the other way round from Weston
-  (`splash_angle`), and cannot mirror, so `flipped-N` gets the turn alone.
+  it. psplash's `--angle` counts the same way as Weston's `transform=`, so
+  the splash gets the same number (`splash_angle`). It cannot mirror, so
+  `flipped-N` gets the turn alone.
   The drop-in is its own file, not `framebuf.conf`, which Moonforge's Pi
   layer ships.
 * **psplash draws a pixel fully or not at all** (`psplash_fb_draw_image` in

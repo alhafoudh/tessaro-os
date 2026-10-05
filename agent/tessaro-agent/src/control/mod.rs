@@ -3215,7 +3215,7 @@ mod tests {
             value(&fx.control, "screen.rotation").await.as_deref(),
             Some("90")
         );
-        assert_eq!(angle().as_deref(), Some("PSPLASH_ARGS=--angle 270"));
+        assert_eq!(angle().as_deref(), Some("PSPLASH_ARGS=--angle 90"));
     }
 
     #[tokio::test]

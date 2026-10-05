@@ -333,7 +333,7 @@
       "weston"
     ],
     "guarded": true,
-    "doc": "How far the picture is turned clockwise, for every screen: 0, 90, 180, 270, or flipped (mirrored) and flipped-90/180/270. Touch turns with it. Reverts unless confirmed with `tessaro-ctl screen confirm`.",
+    "doc": "How far the screen is mounted turned clockwise, for every screen: 0, 90, 180, 270, or flipped (mirrored) and flipped-90/180/270. The picture and touch turn back to stay upright. Reverts unless confirmed with `tessaro-ctl screen confirm`.",
     "values": "one of: 0, 90, 180, 270, flipped, flipped-90, flipped-180, flipped-270",
     "default": "0",
     "value": null,

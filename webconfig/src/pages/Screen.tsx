@@ -163,8 +163,8 @@ function RotationDialog({
   return (
     <Dialog title="Rotate the screen" onClose={onClose} onSubmit={() => void submit()} submit="Rotate" busy={busy}>
       <Intro>
-        How far the picture is turned clockwise, on every screen; flipped mirrors it. Touch turns with it. It turns back
-        on its own unless confirmed within a minute.
+        How far the screen is mounted turned clockwise, on every screen; flipped mirrors the picture. The picture and
+        touch turn to stay upright. It turns back on its own unless confirmed within a minute.
       </Intro>
       <Field label="Rotation">
         <select value={value} onChange={(event) => setValue(event.target.value)}>

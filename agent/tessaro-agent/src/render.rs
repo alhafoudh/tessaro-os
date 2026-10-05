@@ -484,16 +484,14 @@ pub fn render_splash(
 
 /// psplash's `--angle` for a screen.rotation. psplash only turns, it cannot
 /// mirror, so a flipped picture gets the turn without the mirror. Its angle
-/// counts the other way round from Weston's `transform=`: at `--angle 90` it
-/// draws the top of the picture along the framebuffer's left edge
-/// (`psplash_fb_plot_pixel` in `psplash-fb.c`), where Weston's `rotate-90`
-/// puts it along the right.
+/// counts the same way as Weston's `transform=`: at `--angle 90` and at
+/// `rotate-90` alike the top of the picture is drawn along the panel's left
+/// edge, upright on a screen mounted turned 90° clockwise (seen in qemu).
 pub fn splash_angle(rotation: &str) -> u16 {
-    let clockwise: u16 = match rotation.strip_prefix("flipped") {
+    match rotation.strip_prefix("flipped") {
         Some(rest) => rest.trim_start_matches('-').parse().unwrap_or(0),
         None => rotation.parse().unwrap_or(0),
-    };
-    (360 - clockwise % 360) % 360
+    }
 }
 
 /// camera.mirrors on a device whose env file predates it.

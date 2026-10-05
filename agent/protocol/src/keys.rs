@@ -370,7 +370,7 @@ pub static KEYS: &[Key] = &[
     Key {
         guarded: true,
         ..key(ROTATION, "KIOSK_ROTATION", Kind::Choice(ROTATIONS), WESTON,
-            "How far the picture is turned clockwise, for every screen: 0, 90, 180, 270, or flipped (mirrored) and flipped-90/180/270. Touch turns with it. Reverts unless confirmed with `tessaro-ctl screen confirm`.")
+            "How far the screen is mounted turned clockwise, for every screen: 0, 90, 180, 270, or flipped (mirrored) and flipped-90/180/270. The picture and touch turn back to stay upright. Reverts unless confirmed with `tessaro-ctl screen confirm`.")
     },
     key(OSK, "KIOSK_OSK", Kind::Choice(&["auto", "always", "never"]), WESTON,
         "On-screen keyboard: auto shows it only without a USB/Bluetooth keyboard."),

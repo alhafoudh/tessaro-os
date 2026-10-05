@@ -1494,7 +1494,7 @@ impl Device {
                     .unwrap_or("0");
                 self.form(
                     Form::new("Rotate the screen", "Rotate", Action::Rotation)
-                        .intro("How far the picture is turned clockwise, on every screen; flipped mirrors it. Touch turns with it. It turns back on its own unless confirmed within a minute.")
+                        .intro("How far the screen is mounted turned clockwise, on every screen; flipped mirrors the picture. The picture and touch turn to stay upright. It turns back on its own unless confirmed within a minute.")
                         .field(Field::choice("Rotation", rotation, keys::ROTATIONS)),
                 );
             }
