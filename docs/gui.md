@@ -185,9 +185,9 @@ the whole list, so the app's long-lived copy cannot overwrite what
 **A device's tags are badges in the Tags column, and pressing one filters the
 list by it** (`tag_cell`, `Message::TagFilter`). Each tag keeps its colour
 (`theme::badge_colour`, see **Tags** in [settings.md](settings.md)), and
-`unclaimed` is the warning colour. The tags picked show as badges over the
-list, each pressed again to drop it, with Clear for all; a row has to carry
-every one of them, and the Find box matches tags too. A badge is a button
+`unclaimed` is the warning colour. The tags picked show as badges between the
+toolbar and the table, each pressed again to drop it, with Clear for all; a
+row has to carry every one of them, and the Find box matches tags too. A badge is a button
 inside the cell, so the press is the badge's and does not select the row
 (`grid::widget`). A known device that is not seen shows the tags the store
 last kept for it.

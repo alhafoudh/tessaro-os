@@ -684,7 +684,7 @@ impl NodesView {
             .collect()
     }
 
-    /// The tag filter over the list, each tag a badge that takes it out
+    /// The tag filter under the toolbar, each tag a badge that takes it out
     /// again. Nothing while no tag is picked.
     fn tag_bar(&self) -> Option<Element<'_, Message>> {
         if self.tag_filter.is_empty() {
@@ -779,6 +779,11 @@ impl NodesView {
             move |at| Message::Select(keys[at].clone()),
             move |at| Message::Activate(keys_too[at].clone()),
         );
+        // The tags picked go between the toolbar and the table.
+        let table: Element<'_, Message> = match self.tag_bar() {
+            Some(bar) => column![bar, table].spacing(4).into(),
+            None => table,
+        };
 
         let usable = selected.as_ref().filter(|row| row.pin != Pin::Mismatch);
         let known = selected
@@ -819,10 +824,6 @@ impl NodesView {
                 text(format!("not browsing the network: {why}")).style(text::warning)
             }
             (None, None) => text("browsing the network for devices (mDNS)").style(theme::muted),
-        };
-        let list: Element<'_, Message> = match self.tag_bar() {
-            Some(bar) => column![bar, list].spacing(4).into(),
-            None => list,
         };
         let page = column![
             container(list).padding(6).height(Length::Fill),
