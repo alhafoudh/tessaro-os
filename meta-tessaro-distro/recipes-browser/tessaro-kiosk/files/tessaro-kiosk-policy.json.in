@@ -68,6 +68,21 @@
   // to the CUPS default printer (render.rs `policy`, docs/printing.md).
   "PrintingEnabled": false,
 
+  // --- the player's frames ------------------------------------------------
+  //
+  // A playlist shows sites in iframes of the player page at
+  // http://127.0.0.1/player.html, which makes every one of them third-party
+  // to it. Left at Chromium's defaults, such a site loses its cookies and
+  // gets its storage partitioned under 127.0.0.1, so a logged-in dashboard
+  // logs out the moment it is put in a playlist, and does not share its
+  // session with the same site shown as browser.url. BlockThirdPartyCookies
+  // false keeps third-party cookies on for every page, which a kiosk showing
+  // its own sites loses nothing by, and pins it against a Chromium default
+  // that moves; the partitioning exemption names only the player's origin
+  // as the top level, so storage everywhere else stays partitioned.
+  "BlockThirdPartyCookies": false,
+  "ThirdPartyStoragePartitioningBlockedForOrigins": ["http://127.0.0.1"],
+
   // --- device APIs --------------------------------------------------------
   //
   // 3 = "Ask", 2 = "Block". There is no "Allow" value for any of these;

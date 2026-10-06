@@ -86,6 +86,12 @@ pub struct State {
 /// script runs.
 pub const BINDING: &str = "__tessaroBridge";
 
+/// The player page's way to the agent (docs/playlists.md): what it plays,
+/// its heartbeat, and input in the frames it shows. The page keeps it; a
+/// frame's copy is taken by `PageScripts::frame_sources` before the frame's
+/// own scripts run.
+pub const PLAYER_BINDING: &str = "__tessaroPlayerEvent";
+
 /// What the page gets besides itself: the bridge binding and the scripts run
 /// in every new document. Registered on every session, since Chromium drops
 /// them with the connection that made them.
@@ -95,6 +101,13 @@ pub struct PageScripts {
     pub binding: bool,
     /// Sources for `Page.addScriptToEvaluateOnNewDocument`, in order.
     pub sources: Vec<String>,
+    /// The player is on screen: `Runtime.enable`, the `PLAYER_BINDING`, and
+    /// every iframe in a process of its own attached as a child session
+    /// (`Target.setAutoAttach` with `flatten`), which gets the binding and
+    /// `frame_sources` before it runs.
+    pub player: bool,
+    /// What each child session runs in every new document.
+    pub frame_sources: Vec<String>,
     /// Evaluated in the page after the binding is added on a session: hands a
     /// page that already ran the preamble the new binding, so a reconnect to
     /// the same page needs no reload.
@@ -107,11 +120,19 @@ pub struct PageScripts {
 /// the browser reports it - never as the page says.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BindingCall {
+    /// Which binding was called: `BINDING` or `PLAYER_BINDING`.
+    pub binding: &'static str,
+    /// The child session of the iframe it came from, which `context` belongs
+    /// to; `None` for the page's own.
+    pub session: Option<String>,
     pub context: i64,
     /// The calling context's origin; empty when the browser has not said.
     pub origin: String,
     /// The main frame's own page world: not an iframe, not an isolated world.
     pub top: bool,
+    /// A document's own page world, the main frame's or an iframe's: not an
+    /// isolated world.
+    pub frame: bool,
     pub payload: String,
 }
 
@@ -134,6 +155,8 @@ impl PageHooks {
 type Reply = Result<Value, String>;
 
 struct Envelope {
+    /// A child session to send it on; the page's own without one.
+    session: Option<String>,
     method: &'static str,
     params: Value,
     reply: oneshot::Sender<Reply>,
@@ -160,6 +183,19 @@ impl SessionHandle {
         params: Value,
         limit: Duration,
     ) -> Reply {
+        // naked: call_on bounds itself with within()
+        self.call_on(heartbeat, None, method, params, limit).await
+    }
+
+    /// `call`, on a child session (`BindingCall::session`) when one is given.
+    pub async fn call_on(
+        &self,
+        heartbeat: &Heartbeat,
+        session: Option<&str>,
+        method: &'static str,
+        params: Value,
+        limit: Duration,
+    ) -> Reply {
         let down = {
             let state = self.state.borrow();
             (!state.up).then(|| state.reason.clone())
@@ -171,6 +207,7 @@ impl SessionHandle {
         let (reply, answer) = oneshot::channel();
         self.commands
             .try_send(Envelope {
+                session: session.map(str::to_string),
                 method,
                 params,
                 reply,
@@ -313,7 +350,16 @@ struct Link {
     stale_requests: Vec<u64>,
     /// The page's execution contexts, from `Runtime.executionContextCreated`:
     /// id to (origin, frame id, default world). Only kept with the binding.
-    contexts: HashMap<i64, (String, String, bool)>,
+    contexts: Contexts,
+    /// The player's iframes in processes of their own, by child session.
+    children: HashMap<String, Child>,
+}
+
+/// An iframe attached as a child session.
+struct Child {
+    /// Its target id, which is its main frame's id.
+    target: String,
+    contexts: Contexts,
 }
 
 impl Link {
@@ -327,6 +373,7 @@ impl Link {
             script_requests: Vec::new(),
             stale_requests: Vec::new(),
             contexts: HashMap::new(),
+            children: HashMap::new(),
         }
     }
 }
@@ -568,8 +615,11 @@ impl Driver {
     /// loop, which keeps the scripts' identifiers; a failure there is logged
     /// by nobody on purpose - the page simply goes without.
     async fn apply(&self, link: &mut Link, wanted: &PageScripts) -> Result<(), String> {
-        if wanted.binding && !link.applied.binding {
+        let runtime = |scripts: &PageScripts| scripts.binding || scripts.player;
+        if runtime(wanted) && !runtime(&link.applied) {
             self.fire(link, "Runtime.enable", json!({})).await?;
+        }
+        if wanted.binding && !link.applied.binding {
             self.fire(link, "Runtime.addBinding", json!({ "name": BINDING }))
                 .await?;
             if let Some(rebind) = &wanted.rebind {
@@ -579,6 +629,27 @@ impl Driver {
         } else if !wanted.binding && link.applied.binding {
             self.fire(link, "Runtime.removeBinding", json!({ "name": BINDING }))
                 .await?;
+        }
+        if wanted.player && !link.applied.player {
+            self.fire(
+                link,
+                "Runtime.addBinding",
+                json!({ "name": PLAYER_BINDING }),
+            )
+            .await?;
+            self.fire(link, "Target.setAutoAttach", auto_attach(true))
+                .await?;
+        } else if !wanted.player && link.applied.player {
+            self.fire(
+                link,
+                "Runtime.removeBinding",
+                json!({ "name": PLAYER_BINDING }),
+            )
+            .await?;
+            self.fire(link, "Target.setAutoAttach", auto_attach(false))
+                .await?;
+        }
+        if !runtime(wanted) && runtime(&link.applied) {
             self.fire(link, "Runtime.disable", json!({})).await?;
             link.contexts.clear();
         }
@@ -615,51 +686,149 @@ impl Driver {
     /// console messages above all, goes nowhere. `true` when the event was
     /// one of them.
     fn runtime_event(&self, link: &mut Link, method: &str, params: &Value) -> bool {
-        match method {
-            "Runtime.executionContextCreated" => {
-                let context = &params["context"];
-                if let Some(id) = context["id"].as_i64() {
-                    let aux = &context["auxData"];
-                    link.contexts.insert(
-                        id,
-                        (
-                            context["origin"].as_str().unwrap_or("").to_string(),
-                            aux["frameId"].as_str().unwrap_or("").to_string(),
-                            aux["isDefault"].as_bool().unwrap_or(false),
-                        ),
-                    );
-                }
-            }
-            "Runtime.executionContextDestroyed" => {
-                if let Some(id) = params["executionContextId"].as_i64() {
-                    link.contexts.remove(&id);
-                }
-            }
-            "Runtime.executionContextsCleared" => link.contexts.clear(),
-            "Runtime.bindingCalled" if params["name"].as_str() == Some(BINDING) => {
-                let context = params["executionContextId"].as_i64().unwrap_or(0);
-                let (origin, top) = match link.contexts.get(&context) {
-                    Some((origin, frame, default)) => (
-                        origin.clone(),
-                        *default && link.main_frame.as_deref() == Some(frame.as_str()),
-                    ),
-                    None => (String::new(), false),
-                };
-                let call = BindingCall {
-                    context,
-                    origin,
-                    top,
-                    payload: params["payload"].as_str().unwrap_or("").to_string(),
-                };
-                if self.calls.try_send(call).is_err() {
-                    self.log
-                        .debug("cdp: a page bridge call was dropped; the bridge is busy");
-                }
-            }
-            _ if method.starts_with("Runtime.") => {}
-            _ => return false,
+        if !method.starts_with("Runtime.") {
+            return false;
+        }
+        if let Some(call) = track(
+            &mut link.contexts,
+            method,
+            params,
+            None,
+            link.main_frame.as_deref(),
+        ) {
+            self.pass_on(call);
         }
         true
+    }
+
+    fn pass_on(&self, call: BindingCall) {
+        if self.calls.try_send(call).is_err() {
+            self.log
+                .debug("cdp: a page bridge call was dropped; the bridge is busy");
+        }
+    }
+
+    /// An event of a child session: an iframe in a process of its own. Its
+    /// contexts are kept apart from the page's - context ids are per target,
+    /// so they would collide - and its binding calls are passed on with the
+    /// session they came from, which is where they are answered.
+    async fn child_event(
+        &self,
+        link: &mut Link,
+        session: &str,
+        method: &str,
+        params: &Value,
+    ) -> Result<(), String> {
+        if method == "Target.attachedToTarget" {
+            return self.attached(link, params).await;
+        }
+        if method == "Target.detachedFromTarget" {
+            if let Some(child) = params["sessionId"].as_str() {
+                link.children.remove(child);
+            }
+            return Ok(());
+        }
+        if !method.starts_with("Runtime.") {
+            return Ok(());
+        }
+        let Some(child) = link.children.get_mut(session) else {
+            return Ok(());
+        };
+        let target = child.target.clone();
+        if let Some(call) = track(
+            &mut child.contexts,
+            method,
+            params,
+            Some(session),
+            Some(&target),
+        ) {
+            self.pass_on(call);
+        }
+        Ok(())
+    }
+
+    /// A target auto-attached while the player is on screen: an iframe gets
+    /// the bindings and the frame scripts, then runs. Anything else attached
+    /// (a worker) is only let go on. Paused until then by
+    /// `waitForDebuggerOnStart`, so the frame's own scripts never run first.
+    async fn attached(&self, link: &mut Link, params: &Value) -> Result<(), String> {
+        let Some(session) = params["sessionId"].as_str() else {
+            return Ok(());
+        };
+        let session = session.to_string();
+        if params["targetInfo"]["type"].as_str() == Some("iframe") && link.applied.player {
+            link.children.insert(
+                session.clone(),
+                Child {
+                    // An iframe target's id is its main frame's.
+                    target: params["targetInfo"]["targetId"]
+                        .as_str()
+                        .unwrap_or("")
+                        .to_string(),
+                    contexts: HashMap::new(),
+                },
+            );
+            self.fire_on(link, &session, "Runtime.enable", json!({}))
+                .await?;
+            // Without it a child session's scripts are accepted and never
+            // run: measured on Chromium 147, the frame's own scripts then
+            // keep the binding and the frame says nothing about input.
+            self.fire_on(link, &session, "Page.enable", json!({}))
+                .await?;
+            self.fire_on(
+                link,
+                &session,
+                "Runtime.addBinding",
+                json!({ "name": PLAYER_BINDING }),
+            )
+            .await?;
+            if link.applied.binding {
+                self.fire_on(
+                    link,
+                    &session,
+                    "Runtime.addBinding",
+                    json!({ "name": BINDING }),
+                )
+                .await?;
+            }
+            for source in link.applied.frame_sources.clone() {
+                self.fire_on(
+                    link,
+                    &session,
+                    "Page.addScriptToEvaluateOnNewDocument",
+                    json!({ "source": source }),
+                )
+                .await?;
+            }
+            self.fire_on(link, &session, "Target.setAutoAttach", auto_attach(true))
+                .await?;
+        }
+        self.fire_on(link, &session, "Runtime.runIfWaitingForDebugger", json!({}))
+            .await
+            .map(drop)
+    }
+
+    /// `fire`, on a child session.
+    async fn fire_on(
+        &self,
+        link: &mut Link,
+        session: &str,
+        method: &str,
+        params: Value,
+    ) -> Result<u64, String> {
+        link.next_id += 1;
+        let text = protocol::request_on(link.next_id, session, method, &params);
+        match deadline::within(
+            "cdp send",
+            self.config.timeout,
+            link.ws.send(Message::Text(text.into())),
+        )
+        .await
+        {
+            Ok(Ok(())) => Ok(link.next_id),
+            Ok(Err(err)) => Err(format!("send failed: {err}")),
+            Err(expired) => Err(expired.to_string()),
+        }
     }
 
     /// A command during priming, before the serve loop exists to route replies.
@@ -688,7 +857,16 @@ impl Driver {
                         Incoming::Reply { id: got, result } if got == id => {
                             return result.map_err(|err| format!("{method}: {err}"))
                         }
-                        Incoming::Event { method, params } => {
+                        Incoming::Event {
+                            method,
+                            params,
+                            session,
+                        } => {
+                            // Child sessions are only asked for once the
+                            // page is primed; one cannot be talking yet.
+                            if session.is_some() || method.starts_with("Target.") {
+                                continue;
+                            }
                             if self.runtime_event(link, &method, &params) {
                                 continue;
                             }
@@ -756,7 +934,10 @@ impl Driver {
 
                     link.next_id += 1;
                     let id = link.next_id;
-                    let text = protocol::request(id, envelope.method, &envelope.params);
+                    let text = match &envelope.session {
+                        Some(session) => protocol::request_on(id, session, envelope.method, &envelope.params),
+                        None => protocol::request(id, envelope.method, &envelope.params),
+                    };
                     match deadline::within("cdp send", limit, link.ws.send(Message::Text(text.into()))).await {
                         Ok(Ok(())) => {
                             pending.insert(id, (envelope.method, envelope.reply));
@@ -797,7 +978,22 @@ impl Driver {
                                     }
                                 }
                             }
-                            Incoming::Event { method, params } => {
+                            Incoming::Event { method, params, session } => {
+                                if let Some(session) = session {
+                                    if let Err(err) = self.child_event(link, &session, &method, &params).await {
+                                        return err;
+                                    }
+                                    continue;
+                                }
+                                if method == "Target.attachedToTarget" {
+                                    if let Err(err) = self.attached(link, &params).await {
+                                        return err;
+                                    }
+                                    continue;
+                                }
+                                if method.starts_with("Target.") {
+                                    continue;
+                                }
                                 if self.runtime_event(link, &method, &params) {
                                     continue;
                                 }
@@ -834,6 +1030,7 @@ impl Driver {
                                         link.script_requests.clear();
                                         link.stale_requests.clear();
                                         link.contexts.clear();
+                                        link.children.clear();
                                         let wanted = self.scripts.borrow().clone();
                                         if let Err(err) = self.apply(link, &wanted).await {
                                             return err;
@@ -950,6 +1147,82 @@ fn on_event(
     meaning
 }
 
+/// A session's execution contexts: id to (origin, frame id, default world).
+type Contexts = HashMap<i64, (String, String, bool)>;
+
+/// Keep `contexts` on one Runtime event, and make a binding call of it when
+/// it is one. `main_frame` is the frame whose default world counts as `top`
+/// for the page's own session; a child session passes its iframe's frame,
+/// whose calls are never `top`.
+fn track(
+    contexts: &mut Contexts,
+    method: &str,
+    params: &Value,
+    session: Option<&str>,
+    main_frame: Option<&str>,
+) -> Option<BindingCall> {
+    match method {
+        "Runtime.executionContextCreated" => {
+            let context = &params["context"];
+            if let Some(id) = context["id"].as_i64() {
+                let aux = &context["auxData"];
+                contexts.insert(
+                    id,
+                    (
+                        context["origin"].as_str().unwrap_or("").to_string(),
+                        aux["frameId"].as_str().unwrap_or("").to_string(),
+                        aux["isDefault"].as_bool().unwrap_or(false),
+                    ),
+                );
+            }
+            None
+        }
+        "Runtime.executionContextDestroyed" => {
+            if let Some(id) = params["executionContextId"].as_i64() {
+                contexts.remove(&id);
+            }
+            None
+        }
+        "Runtime.executionContextsCleared" => {
+            contexts.clear();
+            None
+        }
+        "Runtime.bindingCalled" => {
+            let binding = match params["name"].as_str() {
+                Some(BINDING) => BINDING,
+                Some(PLAYER_BINDING) => PLAYER_BINDING,
+                _ => return None,
+            };
+            let context = params["executionContextId"].as_i64().unwrap_or(0);
+            let (origin, frame, top) = match contexts.get(&context) {
+                Some((origin, frame, default)) => (
+                    origin.clone(),
+                    *default,
+                    *default && session.is_none() && main_frame == Some(frame.as_str()),
+                ),
+                None => (String::new(), false, false),
+            };
+            Some(BindingCall {
+                binding,
+                session: session.map(str::to_string),
+                context,
+                origin,
+                top,
+                frame,
+                payload: params["payload"].as_str().unwrap_or("").to_string(),
+            })
+        }
+        _ => None,
+    }
+}
+
+/// `Target.setAutoAttach` for the player's frames: every iframe in a process
+/// of its own as a child session on this connection (`flatten`), paused until
+/// it has what it needs (`waitForDebuggerOnStart`).
+fn auto_attach(on: bool) -> Value {
+    json!({ "autoAttach": on, "waitForDebuggerOnStart": on, "flatten": true })
+}
+
 fn next_backoff(current: Duration, ceiling: Duration) -> Duration {
     if current.is_zero() {
         Duration::from_secs(1).min(ceiling)
@@ -1057,7 +1330,13 @@ mod tests {
                                     let request: Value = serde_json::from_str(&text).unwrap();
                                     let id = request["id"].clone();
                                     let method = request["method"].as_str().unwrap();
-                                    log.lock().unwrap().push((method.to_string(), request["params"].clone()));
+                                    // A child session's command is logged as
+                                    // `<session>:<method>`.
+                                    let logged = match request["sessionId"].as_str() {
+                                        Some(session) => format!("{session}:{method}"),
+                                        None => method.to_string(),
+                                    };
+                                    log.lock().unwrap().push((logged, request["params"].clone()));
 
                                     // A sad tab, as Chromium 147 behaves: the
                                     // crash is replayed to a session that
@@ -1419,6 +1698,7 @@ mod tests {
             sources: sources.iter().map(|source| source.to_string()).collect(),
             rebind: Some("rebind()".to_string()),
             reload: 0,
+            ..PageScripts::default()
         }
     }
 
@@ -1555,5 +1835,137 @@ mod tests {
                 ("from nowhere known".to_string(), false, String::new()),
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn the_player_attaches_its_frames_and_hears_from_them() {
+        let chromium = FakeChromium::start().await;
+        let scripts = PageScripts {
+            binding: true,
+            sources: vec!["input".to_string(), "preamble".to_string()],
+            player: true,
+            frame_sources: vec!["input".to_string(), "preamble".to_string()],
+            ..PageScripts::default()
+        };
+        let (_session, _scripts, mut calls) = bridged_session(&chromium, scripts).await;
+        until("the frames attached", || {
+            chromium.count("Target.setAutoAttach", &auto_attach(true)) == 1
+                && chromium.count("Runtime.addBinding", &json!({ "name": PLAYER_BINDING })) == 1
+        })
+        .await;
+
+        // An iframe in a process of its own, paused until it is ready.
+        chromium.emit(json!({ "method": "Target.attachedToTarget", "params": {
+            "sessionId": "C1",
+            "targetInfo": { "targetId": "FRAME1", "type": "iframe" },
+            "waitingForDebugger": true
+        } }));
+        until("the frame ready to run", || {
+            chromium.count("C1:Runtime.runIfWaitingForDebugger", &Value::Null) == 1
+        })
+        .await;
+        assert_eq!(
+            chromium.count("C1:Runtime.addBinding", &json!({ "name": PLAYER_BINDING })),
+            1
+        );
+        assert_eq!(
+            chromium.count("C1:Runtime.addBinding", &json!({ "name": BINDING })),
+            1
+        );
+        assert_eq!(
+            chromium.count("C1:Page.addScriptToEvaluateOnNewDocument", &Value::Null),
+            2
+        );
+        // A child session runs its scripts only with the Page domain on.
+        assert_eq!(chromium.count("C1:Page.enable", &Value::Null), 1);
+
+        // The frame's contexts are its own: the same id as the page's means
+        // nothing to the page's.
+        chromium.emit(
+            json!({ "method": "Runtime.executionContextCreated", "sessionId": "C1",
+            "params": { "context": { "id": 1, "origin": "https://menu.test",
+                "auxData": { "frameId": "FRAME1", "isDefault": true } } } }),
+        );
+        chromium.emit(json!({ "method": "Runtime.executionContextCreated",
+            "params": { "context": { "id": 1, "origin": "http://127.0.0.1",
+                "auxData": { "frameId": "F", "isDefault": true } } } }));
+        chromium.emit(
+            json!({ "method": "Runtime.bindingCalled", "sessionId": "C1", "params": {
+            "name": PLAYER_BINDING, "executionContextId": 1, "payload": "{\"event\":\"input\"}"
+        } }),
+        );
+        chromium.emit(
+            json!({ "method": "Runtime.bindingCalled", "sessionId": "C1", "params": {
+            "name": BINDING, "executionContextId": 1, "payload": "bridge"
+        } }),
+        );
+        chromium.emit(json!({ "method": "Runtime.bindingCalled", "params": {
+            "name": PLAYER_BINDING, "executionContextId": 1, "payload": "report"
+        } }));
+
+        let mut got = Vec::new();
+        for _ in 0..3 {
+            let call = deadline::within("a binding call", Duration::from_secs(5), calls.recv())
+                .await
+                .expect("a call in time")
+                .expect("the channel is open");
+            got.push((
+                call.binding,
+                call.session,
+                call.origin,
+                call.top,
+                call.frame,
+            ));
+        }
+        assert_eq!(
+            got,
+            vec![
+                (
+                    PLAYER_BINDING,
+                    Some("C1".to_string()),
+                    "https://menu.test".to_string(),
+                    false,
+                    true
+                ),
+                (
+                    BINDING,
+                    Some("C1".to_string()),
+                    "https://menu.test".to_string(),
+                    false,
+                    true
+                ),
+                (
+                    PLAYER_BINDING,
+                    None,
+                    "http://127.0.0.1".to_string(),
+                    true,
+                    true
+                ),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_worker_attached_is_only_let_go_on() {
+        let chromium = FakeChromium::start().await;
+        let scripts = PageScripts {
+            player: true,
+            ..PageScripts::default()
+        };
+        let (_session, _scripts, _calls) = bridged_session(&chromium, scripts).await;
+        until("auto-attach", || {
+            chromium.count("Target.setAutoAttach", &auto_attach(true)) == 1
+        })
+        .await;
+        chromium.emit(json!({ "method": "Target.attachedToTarget", "params": {
+            "sessionId": "W1",
+            "targetInfo": { "targetId": "W", "type": "worker" },
+            "waitingForDebugger": true
+        } }));
+        until("the worker running", || {
+            chromium.count("W1:Runtime.runIfWaitingForDebugger", &Value::Null) == 1
+        })
+        .await;
+        assert_eq!(chromium.count("W1:Runtime.addBinding", &Value::Null), 0);
     }
 }

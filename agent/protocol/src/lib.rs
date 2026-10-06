@@ -11,6 +11,7 @@ pub mod api;
 pub mod files;
 pub mod keys;
 pub mod openapi;
+pub mod playlist;
 pub mod policy;
 pub mod sshkey;
 
@@ -596,6 +597,81 @@ pub enum Command {
         #[serde(default)]
         count: Option<u32>,
     },
+    /// Every playlist and where it is used.
+    PlaylistList,
+    /// One playlist, its items in full.
+    PlaylistShow {
+        playlist: String,
+    },
+    PlaylistCreate {
+        spec: playlist::PlaylistSpec,
+    },
+    /// Change what is given of one playlist, by id or name. Given `items`
+    /// replace them all.
+    PlaylistSet {
+        playlist: String,
+        #[serde(default)]
+        name: Option<String>,
+        #[serde(default)]
+        transition: Option<playlist::Transition>,
+        #[serde(default)]
+        transition_ms: Option<u32>,
+        #[serde(default)]
+        items: Option<Vec<playlist::PlaylistItem>>,
+    },
+    /// Refused while it is `playlist.default` or in the timetable.
+    PlaylistRemove {
+        playlist: String,
+    },
+    /// Add an item at `at` (from 1), at the end without one.
+    PlaylistItemAdd {
+        playlist: String,
+        item: playlist::PlaylistItem,
+        #[serde(default)]
+        at: Option<u32>,
+    },
+    /// Replace the item at `position` (from 1).
+    PlaylistItemSet {
+        playlist: String,
+        position: u32,
+        item: playlist::PlaylistItem,
+    },
+    PlaylistItemRemove {
+        playlist: String,
+        position: u32,
+    },
+    /// Move the item at `position` to `to`, both from 1.
+    PlaylistItemMove {
+        playlist: String,
+        position: u32,
+        to: u32,
+    },
+    /// What the player is doing.
+    PlaylistStatus,
+    /// Every timetable entry, in order.
+    TimetableList,
+    TimetableCreate {
+        spec: playlist::TimetableSpec,
+    },
+    /// Change what is given of one entry, by id.
+    TimetableSet {
+        entry: String,
+        #[serde(default)]
+        playlist: Option<String>,
+        #[serde(default)]
+        days: Option<Vec<playlist::Day>>,
+        #[serde(default)]
+        from: Option<String>,
+        #[serde(default)]
+        to: Option<String>,
+        #[serde(default)]
+        priority: Option<i32>,
+        #[serde(default)]
+        enabled: Option<bool>,
+    },
+    TimetableRemove {
+        entry: String,
+    },
     /// Every printer, the default one, and whether pages may print.
     PrinterList,
     /// One printer in full: its state, what CUPS says about it, its
@@ -848,6 +924,10 @@ pub struct Status {
     /// Defaulted the same way.
     #[serde(default)]
     pub cpu_percent: Option<u8>,
+    /// The player: whether it is on screen, the playlist and the item.
+    /// Defaulted the same way.
+    #[serde(default)]
+    pub playlist: Option<playlist::PlaylistStatus>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

@@ -46,6 +46,9 @@
       "name": "schedules"
     },
     {
+      "name": "playlists"
+    },
+    {
       "name": "printers"
     },
     {
@@ -2977,6 +2980,634 @@
         }
       }
     },
+    "/api/v1/playlists": {
+      "get": {
+        "operationId": "playlists.List",
+        "tags": [
+          "playlists"
+        ],
+        "summary": "Every playlist and where it is used.",
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PlaylistInfo"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "playlists.Create",
+        "tags": [
+          "playlists"
+        ],
+        "summary": "Add a playlist.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlaylistSpec"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlaylistInfo"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/playlists/status": {
+      "get": {
+        "operationId": "playlists.Status",
+        "tags": [
+          "playlists"
+        ],
+        "summary": "What the player is doing: whether it is on screen, the playlist, the item, what it skipped, how far the media cache is.",
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlaylistStatus"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/playlists/{playlist}": {
+      "get": {
+        "operationId": "playlists.Show",
+        "tags": [
+          "playlists"
+        ],
+        "summary": "One playlist, its items in full.",
+        "parameters": [
+          {
+            "name": "playlist",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Its id or its name."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlaylistInfo"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "operationId": "playlists.Change",
+        "tags": [
+          "playlists"
+        ],
+        "summary": "Change what is given of one playlist.",
+        "parameters": [
+          {
+            "name": "playlist",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Its id or its name."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlaylistChange"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlaylistInfo"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "playlists.Remove",
+        "tags": [
+          "playlists"
+        ],
+        "summary": "Remove a playlist that is neither the default nor in the timetable.",
+        "parameters": [
+          {
+            "name": "playlist",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Its id or its name."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Done"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/playlists/{playlist}/items": {
+      "post": {
+        "operationId": "playlists.ItemAdd",
+        "tags": [
+          "playlists"
+        ],
+        "summary": "Add an item.",
+        "parameters": [
+          {
+            "name": "playlist",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Its id or its name."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlaylistItemAddBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlaylistInfo"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/playlists/{playlist}/items/{position}": {
+      "put": {
+        "operationId": "playlists.ItemSet",
+        "tags": [
+          "playlists"
+        ],
+        "summary": "Replace one item.",
+        "parameters": [
+          {
+            "name": "playlist",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Its id or its name."
+          },
+          {
+            "name": "position",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "description": "The item's place in it, from 1."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlaylistItem"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlaylistInfo"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "playlists.ItemRemove",
+        "tags": [
+          "playlists"
+        ],
+        "summary": "Remove one item.",
+        "parameters": [
+          {
+            "name": "playlist",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Its id or its name."
+          },
+          {
+            "name": "position",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "description": "The item's place in it, from 1."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlaylistInfo"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/playlists/{playlist}/items/{position}/move": {
+      "post": {
+        "operationId": "playlists.ItemMove",
+        "tags": [
+          "playlists"
+        ],
+        "summary": "Move one item to another place.",
+        "parameters": [
+          {
+            "name": "playlist",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Its id or its name."
+          },
+          {
+            "name": "position",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "description": "The item's place in it, from 1."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlaylistItemMoveBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlaylistInfo"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/playlists/timetable": {
+      "get": {
+        "operationId": "playlists.TimetableList",
+        "tags": [
+          "playlists"
+        ],
+        "summary": "Every timetable entry, in order, and which one is active.",
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/TimetableInfo"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "playlists.TimetableCreate",
+        "tags": [
+          "playlists"
+        ],
+        "summary": "Add a timetable entry.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TimetableSpec"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TimetableInfo"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/playlists/timetable/{entry}": {
+      "patch": {
+        "operationId": "playlists.TimetableChange",
+        "tags": [
+          "playlists"
+        ],
+        "summary": "Change what is given of one timetable entry.",
+        "parameters": [
+          {
+            "name": "entry",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TimetableEntryChange"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TimetableInfo"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "playlists.TimetableRemove",
+        "tags": [
+          "playlists"
+        ],
+        "summary": "Remove a timetable entry.",
+        "parameters": [
+          {
+            "name": "entry",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Done"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/printers": {
       "get": {
         "operationId": "printers.List",
@@ -4355,6 +4986,18 @@
             "maximum": 255,
             "description": "How busy the CPU was over the agent's last 2s sample, every core\ncounted: 100 is all of them. `None` until it has two samples.\nDefaulted the same way.",
             "default": null
+          },
+          "playlist": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PlaylistStatus"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The player: whether it is on screen, the playlist and the item.\nDefaulted the same way.",
+            "default": null
           }
         },
         "required": [
@@ -4694,6 +5337,213 @@
           "available"
         ],
         "description": "RAM, in bytes, from `/proc/meminfo`. `available` is `MemAvailable`: what\ncan be handed out without swapping, page cache included."
+      },
+      "PlaylistStatus": {
+        "type": "object",
+        "properties": {
+          "player": {
+            "type": "boolean",
+            "description": "The player is on screen: `playlist.default` is set or the timetable\nhas an entry. Otherwise browser.url is shown directly."
+          },
+          "playlist": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The playlist playing, by name; `None` when browser.url plays.",
+            "default": null
+          },
+          "reason": {
+            "$ref": "#/components/schemas/ActiveReason"
+          },
+          "entry": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The timetable entry that picked it, by id.",
+            "default": null
+          },
+          "item": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PlayingItem"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The item on screen, once the player has said.",
+            "default": null
+          },
+          "skipped": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SkippedItem"
+            },
+            "description": "The latest items it went past, newest first.",
+            "default": []
+          },
+          "nothing_playable": {
+            "type": "boolean",
+            "description": "The player has nothing it can show, and the offline page is up.",
+            "default": false
+          },
+          "cache": {
+            "$ref": "#/components/schemas/CacheStatus",
+            "default": {
+              "ready": 0,
+              "pending": 0,
+              "failed": 0
+            }
+          }
+        },
+        "required": [
+          "player",
+          "reason"
+        ],
+        "description": "What the player is doing."
+      },
+      "ActiveReason": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "timetable",
+            "description": "A timetable entry covers now."
+          },
+          {
+            "type": "string",
+            "const": "default",
+            "description": "No entry does; `playlist.default` plays."
+          },
+          {
+            "type": "string",
+            "const": "url",
+            "description": "Neither: browser.url plays, as a playlist of one."
+          }
+        ],
+        "description": "Why the player shows what it shows."
+      },
+      "PlayingItem": {
+        "type": "object",
+        "properties": {
+          "position": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "From 1."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ItemKind"
+          },
+          "src": {
+            "type": "string"
+          },
+          "since": {
+            "$ref": "#/components/schemas/Moment"
+          }
+        },
+        "required": [
+          "position",
+          "kind",
+          "src",
+          "since"
+        ],
+        "description": "The item on screen."
+      },
+      "ItemKind": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "url",
+            "description": "A web page, in a frame of the player."
+          },
+          {
+            "type": "string",
+            "const": "image",
+            "description": "A picture the browser can decode."
+          },
+          {
+            "type": "string",
+            "const": "video",
+            "description": "A video the browser can play, from start to end or its trim."
+          }
+        ],
+        "description": "What an item shows."
+      },
+      "Moment": {
+        "type": "object",
+        "properties": {
+          "unix": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Seconds since the epoch, UTC."
+          },
+          "local": {
+            "type": "string",
+            "description": "The device's wall clock: `2026-09-28 07:00:00 CEST`."
+          }
+        },
+        "required": [
+          "unix",
+          "local"
+        ],
+        "description": "A moment as the device reports it."
+      },
+      "SkippedItem": {
+        "type": "object",
+        "properties": {
+          "position": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "src": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "at": {
+            "$ref": "#/components/schemas/Moment"
+          }
+        },
+        "required": [
+          "position",
+          "src",
+          "reason",
+          "at"
+        ],
+        "description": "An item the player could not show and went past."
+      },
+      "CacheStatus": {
+        "type": "object",
+        "properties": {
+          "ready": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "On the device, ready to play offline."
+          },
+          "pending": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "Not fetched yet; they play from their source meanwhile."
+          },
+          "failed": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "The last fetch failed and there is no copy."
+          }
+        },
+        "required": [
+          "ready",
+          "pending",
+          "failed"
+        ],
+        "description": "How far the copies of the playlists' media are."
       },
       "WelcomeInfo": {
         "type": "object",
@@ -7815,25 +8665,6 @@
         ],
         "description": "How a finished run of a script ended."
       },
-      "Moment": {
-        "type": "object",
-        "properties": {
-          "unix": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Seconds since the epoch, UTC."
-          },
-          "local": {
-            "type": "string",
-            "description": "The device's wall clock: `2026-09-28 07:00:00 CEST`."
-          }
-        },
-        "required": [
-          "unix",
-          "local"
-        ],
-        "description": "A moment as the device reports it."
-      },
       "ScriptSpec": {
         "type": "object",
         "properties": {
@@ -8173,6 +9004,537 @@
           "next"
         ],
         "description": "What `schedule-check` found."
+      },
+      "PlaylistInfo": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Stable across renames."
+          },
+          "name": {
+            "type": "string",
+            "description": "`[a-z0-9][a-z0-9-]*`, unique on the device."
+          },
+          "transition": {
+            "$ref": "#/components/schemas/Transition",
+            "default": "fade"
+          },
+          "transition_ms": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "default": 800
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlaylistItem"
+            },
+            "default": []
+          },
+          "default": {
+            "type": "boolean",
+            "description": "It is `playlist.default`.",
+            "default": false
+          },
+          "timetable": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The timetable entries that play it, by id.",
+            "default": []
+          },
+          "playing": {
+            "type": "boolean",
+            "description": "It is on screen now.",
+            "default": false
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "description": "One playlist and where it is used."
+      },
+      "Transition": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "cut",
+            "description": "At once."
+          },
+          {
+            "type": "string",
+            "const": "fade",
+            "description": "The new item fades in over the old one."
+          },
+          {
+            "type": "string",
+            "const": "slide",
+            "description": "The new item slides in from the right."
+          }
+        ],
+        "description": "How one item replaces the one before it."
+      },
+      "PlaylistItem": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/ItemKind"
+          },
+          "src": {
+            "type": "string",
+            "description": "An http or https URL: a page, or the image or video file. Files in\nthe store are `http://127.0.0.1/files/...`; any other image or video\nis cached on the device first."
+          },
+          "duration_s": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "description": "How long a URL or image item stays on screen, seconds. For an\ninteractive item it is the least it stays. A video plays to its end\nor its trim, so it takes none.",
+            "default": null
+          },
+          "trim_start_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Where a video starts, milliseconds into it.",
+            "default": null
+          },
+          "trim_end_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Where a video stops, milliseconds into it.",
+            "default": null
+          },
+          "sound": {
+            "type": "boolean",
+            "description": "A video plays with its sound; muted otherwise.",
+            "default": false
+          },
+          "volume": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint8",
+            "minimum": 0,
+            "maximum": 255,
+            "description": "The video's volume with `sound`, 0-100.",
+            "default": null
+          },
+          "fit": {
+            "$ref": "#/components/schemas/Fit",
+            "default": "contain"
+          },
+          "background": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What shows around an image or video that does not fill the screen,\n`#rrggbb`. Black when not given.",
+            "default": null
+          },
+          "transition": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Transition"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How this item comes on screen, instead of the playlist's.",
+            "default": null
+          },
+          "transition_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "default": null
+          },
+          "interactive": {
+            "type": "boolean",
+            "description": "A URL or image item takes touch and keys: input holds it on screen,\nand it moves on once `duration_s` has passed and nobody has touched\nit for `idle_s`.",
+            "default": false
+          },
+          "idle_s": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "description": "Seconds without input before an interactive item moves on.",
+            "default": null
+          },
+          "ready_delay_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "description": "How long after its `load` a URL item counts as ready to show,\nmilliseconds, for a page that is still drawing then.",
+            "default": null
+          },
+          "bridge": {
+            "type": "boolean",
+            "description": "A URL item gets `window.tessaro`, as the kiosk page would\n(docs/bridge.md).",
+            "default": false
+          }
+        },
+        "required": [
+          "kind",
+          "src"
+        ],
+        "description": "One screen of a playlist."
+      },
+      "Fit": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "contain",
+            "description": "All of it shows, bars where the shapes differ."
+          },
+          {
+            "type": "string",
+            "const": "cover",
+            "description": "The screen is filled, the edges cut where the shapes differ."
+          },
+          {
+            "type": "string",
+            "const": "stretch",
+            "description": "The screen is filled, the picture stretched."
+          }
+        ],
+        "description": "How an image or a video fills the screen."
+      },
+      "PlaylistSpec": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "`[a-z0-9][a-z0-9-]*`, unique on the device."
+          },
+          "transition": {
+            "$ref": "#/components/schemas/Transition",
+            "default": "fade"
+          },
+          "transition_ms": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "default": 800
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlaylistItem"
+            },
+            "default": []
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "description": "What a playlist is: its items in order and how they change."
+      },
+      "PlaylistRef": {
+        "type": "object",
+        "properties": {
+          "playlist": {
+            "type": "string",
+            "description": "Its id or its name."
+          }
+        },
+        "required": [
+          "playlist"
+        ]
+      },
+      "PlaylistChange": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "transition": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Transition"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "transition_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "default": null
+          },
+          "items": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/PlaylistItem"
+            },
+            "default": null
+          }
+        },
+        "description": "What is given replaces what the playlist has; given `items` replace\nthem all."
+      },
+      "PlaylistItemAddBody": {
+        "type": "object",
+        "properties": {
+          "item": {
+            "$ref": "#/components/schemas/PlaylistItem"
+          },
+          "at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "description": "Where it goes, from 1; at the end when not given.",
+            "default": null
+          }
+        },
+        "required": [
+          "item"
+        ]
+      },
+      "PlaylistItemRef": {
+        "type": "object",
+        "properties": {
+          "playlist": {
+            "type": "string",
+            "description": "Its id or its name."
+          },
+          "position": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "The item's place in it, from 1."
+          }
+        },
+        "required": [
+          "playlist",
+          "position"
+        ]
+      },
+      "PlaylistItemMoveBody": {
+        "type": "object",
+        "properties": {
+          "to": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "Its new place, from 1."
+          }
+        },
+        "required": [
+          "to"
+        ]
+      },
+      "TimetableInfo": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "playlist": {
+            "type": "string",
+            "description": "The playlist: its id or its name when sent, its id when answered."
+          },
+          "days": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Day"
+            },
+            "description": "The days the entry starts on. Empty is every day.",
+            "default": []
+          },
+          "from": {
+            "type": "string",
+            "description": "`HH:MM`, the device's time."
+          },
+          "to": {
+            "type": "string",
+            "description": "`HH:MM`. Earlier than `from` runs past midnight into the next day;\nthe same as `from` is the whole day."
+          },
+          "priority": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The highest wins where entries overlap; then the one listed first.",
+            "default": 0
+          },
+          "enabled": {
+            "type": "boolean",
+            "default": true
+          },
+          "playlist_name": {
+            "type": "string",
+            "description": "The name of the playlist it plays."
+          },
+          "active": {
+            "type": "boolean",
+            "description": "It decides what plays now.",
+            "default": false
+          }
+        },
+        "required": [
+          "id",
+          "playlist",
+          "from",
+          "to",
+          "playlist_name"
+        ],
+        "description": "One timetable entry."
+      },
+      "Day": {
+        "type": "string",
+        "enum": [
+          "mon",
+          "tue",
+          "wed",
+          "thu",
+          "fri",
+          "sat",
+          "sun"
+        ],
+        "description": "A day of the week, as the timetable names it."
+      },
+      "TimetableSpec": {
+        "type": "object",
+        "properties": {
+          "playlist": {
+            "type": "string",
+            "description": "The playlist: its id or its name when sent, its id when answered."
+          },
+          "days": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Day"
+            },
+            "description": "The days the entry starts on. Empty is every day.",
+            "default": []
+          },
+          "from": {
+            "type": "string",
+            "description": "`HH:MM`, the device's time."
+          },
+          "to": {
+            "type": "string",
+            "description": "`HH:MM`. Earlier than `from` runs past midnight into the next day;\nthe same as `from` is the whole day."
+          },
+          "priority": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The highest wins where entries overlap; then the one listed first.",
+            "default": 0
+          },
+          "enabled": {
+            "type": "boolean",
+            "default": true
+          }
+        },
+        "required": [
+          "playlist",
+          "from",
+          "to"
+        ],
+        "description": "When a playlist plays instead of the default."
+      },
+      "TimetableRef": {
+        "type": "object",
+        "properties": {
+          "entry": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "entry"
+        ]
+      },
+      "TimetableEntryChange": {
+        "type": "object",
+        "properties": {
+          "playlist": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The playlist, by id or name.",
+            "default": null
+          },
+          "days": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/Day"
+            },
+            "default": null
+          },
+          "from": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "to": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "priority": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "default": null
+          },
+          "enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "default": null
+          }
+        },
+        "description": "What is given replaces what the entry has."
       },
       "PrinterList": {
         "type": "object",

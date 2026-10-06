@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tessaro player</title>
+<!--
+  The player page: shows the playlist tessaro-agent writes, one item after
+  another (player.js). Served by nginx at http://127.0.0.1/player.html, the
+  same origin as the self-test, so it is a secure context and the Chromium
+  policy can name it. Nothing here comes from the network: no fonts, no
+  scripts but its own, nothing that needs the site to be up.
+-->
+<style>
+  html, body {
+    margin: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: #000;
+  }
+  /* A kiosk has nobody aiming a mouse; the pointer is never drawn over the
+     content. A page inside an iframe decides its own cursor. */
+  *, *::before, *::after { cursor: none !important; }
+
+  #stage {
+    position: fixed;
+    inset: 0;
+    overflow: hidden;
+    background: #000;
+  }
+
+  /* Prepared layers wait transparent at the bottom, taking no input; the one
+     on screen is above them, and the one coming in above that until its
+     transition is over. will-change puts each on a compositor layer of its
+     own, so a fade or a slide is the GPU moving a finished picture, never a
+     repaint. */
+  .layer {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    opacity: 0;
+    z-index: 0;
+    pointer-events: none;
+    will-change: opacity, transform;
+    contain: strict;
+  }
+  .layer.shown { z-index: 1; pointer-events: auto; }
+  .layer.incoming { z-index: 2; }
+  /* The offline page, while nothing in the playlist plays, covers the lot;
+     the first item ready again comes in over it, and then it goes. */
+  .layer.offline { z-index: 3; transition: opacity 400ms linear; }
+  .layer.incoming.over-offline { z-index: 4; }
+
+  .layer img,
+  .layer video,
+  .layer iframe {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    border: 0;
+    margin: 0;
+    display: block;
+    background: transparent;
+    user-select: none;
+    -webkit-user-drag: none;
+  }
+  .layer iframe.passive { pointer-events: none; }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<script type="module" src="player.js"></script>
+</body>
+</html>

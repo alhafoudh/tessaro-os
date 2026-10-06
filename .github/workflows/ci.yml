@@ -99,6 +99,8 @@ jobs:
       # Includes bitbake-lock.json being current.
       - run: mise run webconfig:test
       - run: mise run webconfig:build
+      # The player page's tests need the same Node and nothing installed.
+      - run: mise run player:test
 
   # The license policy over every crate, npm package and vendored file
   # (docs/sbom.md). cargo metadata and npm sbom read the lock files, so

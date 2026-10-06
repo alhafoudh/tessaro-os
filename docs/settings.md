@@ -230,6 +230,9 @@ plus `data.msg=...`.
   without knowing the mode exists: `generated.env` (a reboot in maintenance
   never flashes the site), the agent's navigation and origin enforcement, the
   periodic refresh, `device status` and the read-only key watcher.
+* **It wins over the player** (see **On screen: browser.url or the player**
+  in [playlists.md](playlists.md)), which swaps `KIOSK_URL` the same way;
+  the debug screen wins over both.
 * **`KIOSK_PROBE_URL` reads as empty meanwhile**, so the agent probes the
   maintenance page. Probing the site's health endpoint instead would put the
   offline page over the maintenance page the moment the site went down - and

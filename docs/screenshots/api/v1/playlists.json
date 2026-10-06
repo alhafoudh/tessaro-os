@@ -1,0 +1,111 @@
+[
+  {
+    "id": "4f2a9c1e",
+    "name": "lobby",
+    "transition": "fade",
+    "transition_ms": 800,
+    "items": [
+      {
+        "kind": "image",
+        "src": "https://cdn.example.com/menu/today.png",
+        "duration_s": 15,
+        "trim_start_ms": null,
+        "trim_end_ms": null,
+        "sound": false,
+        "volume": null,
+        "fit": "contain",
+        "background": null,
+        "transition": null,
+        "transition_ms": null,
+        "interactive": false,
+        "idle_s": null,
+        "ready_delay_ms": null,
+        "bridge": false
+      },
+      {
+        "kind": "video",
+        "src": "http://127.0.0.1/files/promo.mp4",
+        "duration_s": null,
+        "trim_start_ms": 5000,
+        "trim_end_ms": 35000,
+        "sound": false,
+        "volume": null,
+        "fit": "contain",
+        "background": null,
+        "transition": null,
+        "transition_ms": null,
+        "interactive": false,
+        "idle_s": null,
+        "ready_delay_ms": null,
+        "bridge": false
+      },
+      {
+        "kind": "url",
+        "src": "https://menu.example.com/",
+        "duration_s": 30,
+        "trim_start_ms": null,
+        "trim_end_ms": null,
+        "sound": false,
+        "volume": null,
+        "fit": "contain",
+        "background": null,
+        "transition": null,
+        "transition_ms": null,
+        "interactive": true,
+        "idle_s": 60,
+        "ready_delay_ms": null,
+        "bridge": true
+      }
+    ],
+    "default": true,
+    "timetable": [],
+    "playing": true
+  },
+  {
+    "id": "b71d03e5",
+    "name": "lunch",
+    "transition": "slide",
+    "transition_ms": 800,
+    "items": [
+      {
+        "kind": "image",
+        "src": "https://cdn.example.com/menu/lunch.png",
+        "duration_s": 20,
+        "trim_start_ms": null,
+        "trim_end_ms": null,
+        "sound": false,
+        "volume": null,
+        "fit": "contain",
+        "background": null,
+        "transition": null,
+        "transition_ms": null,
+        "interactive": false,
+        "idle_s": null,
+        "ready_delay_ms": null,
+        "bridge": false
+      },
+      {
+        "kind": "url",
+        "src": "https://menu.example.com/",
+        "duration_s": 30,
+        "trim_start_ms": null,
+        "trim_end_ms": null,
+        "sound": false,
+        "volume": null,
+        "fit": "contain",
+        "background": null,
+        "transition": null,
+        "transition_ms": null,
+        "interactive": true,
+        "idle_s": 60,
+        "ready_delay_ms": null,
+        "bridge": true
+      }
+    ],
+    "default": false,
+    "timetable": [
+      "e5c8a1f0"
+    ],
+    "playing": false
+  }
+]

@@ -81,6 +81,12 @@ impl Db {
         &self.path
     }
 
+    /// Whether the store's file is there at all: a read of one that is not
+    /// would create it empty.
+    pub fn exists(&self) -> bool {
+        self.path.is_file()
+    }
+
     fn connect(&self) -> Result<Connection, String> {
         tessaro_db::connect(&self.path)
     }

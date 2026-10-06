@@ -70,6 +70,8 @@ or from [Webconfig](#webconfig) in any browser:
 
 ### For digital signage
 
+- 🎞️ **Playlists instead of one URL**: web pages, images and videos in turn, with fades or slides and no loading flash in between. Videos play muted unless you unmute them, to their end or a trimmed span; pages and images stay as long as you say, and interactive ones stay while someone is touching them. A timetable switches playlists by the day and the hour.
+
 - 📅 **Screens on a schedule**: panels off at night, a different page at the weekend.
 - 📁 **Content that plays offline**: sync videos, images and JSON to the device, served at `http://127.0.0.1/files/`, and they keep playing when the network drops.
 - 🧩 **One image, a whole fleet**: `{placeholders}` and your own `data.*` keys give each screen its own playlist URL.
@@ -314,6 +316,24 @@ tessaro-ctl network wifi join Office
 tessaro-ctl network proxy set 'http://proxy.corp.test:8080' --bypass .corp.test
 tessaro-ctl time timezone Europe/Bratislava
 ```
+
+**Playlists**
+
+```sh
+tessaro-ctl playlist create lobby --transition fade
+tessaro-ctl playlist items add lobby --image https://cdn.example.com/menu.png --duration 15s
+tessaro-ctl playlist items add lobby --video http://127.0.0.1/files/promo.mp4 --from 5s --to 35s
+tessaro-ctl playlist items add lobby --url https://shop.example.com/ --duration 30s --interactive --idle 60s
+tessaro-ctl config set playlist.default=lobby       # the player now plays lobby instead of browser.url
+tessaro-ctl playlist timetable add lunch --days mon-fri --from 11:30 --to 14:00
+```
+
+Images and videos from anywhere but the device itself are copied to it first,
+so they keep playing when the network drops.
+
+<p align="center">
+  <img src="docs/images/webconfig-playlists.jpg" width="70%" alt="Webconfig's Playlists page: what plays now, the playlists, the items of the one on screen and the timetable">
+</p>
 
 **Scripts and schedules**
 

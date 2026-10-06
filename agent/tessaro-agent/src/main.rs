@@ -40,12 +40,14 @@ mod http;
 mod identity;
 mod log;
 mod mdns;
+mod media;
 mod net;
 mod nm;
 mod notify;
 mod offline;
 mod paths;
 mod ping;
+mod playlists;
 mod policies;
 mod ports;
 mod power;
@@ -362,6 +364,8 @@ async fn start_control(
     control.watch_printers();
     control.watch_welcome();
     control.watch_screen_power();
+    control.watch_playlist();
+    control.watch_media();
     // Before the agent's first navigation, so the page it opens already
     // runs the bridge and the injected script.
     control.start_bridge(bridge).await; // naked: blocking() reads and the session's own within()

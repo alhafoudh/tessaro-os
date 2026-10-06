@@ -75,6 +75,17 @@ pub struct HttpResponse {
     pub body: String,
 }
 
+/// What `HyperHttp::download` was answered.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Downloaded {
+    pub status: u16,
+    pub location: Option<String>,
+    pub etag: Option<String>,
+    pub last_modified: Option<String>,
+    /// Bytes written; 0 unless the status is 200.
+    pub size: u64,
+}
+
 /// Classified transport failures. The probe turns these into the sentences
 /// that reach the journal; keeping the classification separate from the
 /// wording means the wording can be asserted on.
@@ -192,18 +203,161 @@ impl HyperHttp {
     /// calls this from a spawned task.
     pub async fn fetch(&self, url: &str) -> Result<HttpResponse, HttpError> {
         let target = Target::parse(url).ok_or(HttpError::InvalidUrl)?;
-        let stream = match self.proxy {
-            Some(proxy) => self.tunnel(&target, proxy).await?,
-            None => self.connect(&target).await?,
-        };
-
-        let io: Box<dyn Io> = if target.https {
-            self.tls_handshake(&target, stream).await?
-        } else {
-            Box::new(stream)
-        };
-
+        let io = self.open(&target).await?;
         self.exchange(&target, io).await
+    }
+
+    /// The connection a request to `target` goes over: through the proxy
+    /// or straight, TLS for https.
+    async fn open(&self, target: &Target) -> Result<Box<dyn Io>, HttpError> {
+        let stream = match self.proxy {
+            Some(proxy) => self.tunnel(target, proxy).await?,
+            None => self.connect(target).await?,
+        };
+        if target.https {
+            self.tls_handshake(target, stream).await
+        } else {
+            Ok(Box::new(stream))
+        }
+    }
+
+    /// A GET whose body goes to the file `to`, which it creates, rather
+    /// than into memory: the media cache's copies (`media.rs`). `headers`
+    /// go along, for a conditional request. Only a 200 writes the file; any
+    /// other answer is handed back for the caller to read (a 304, a
+    /// redirect to follow). A body past `max` bytes is an error, the file
+    /// left for the caller to remove. Every frame is its own `within()`, so
+    /// a large file on a slow link is fine and a stalled one is not.
+    pub async fn download(
+        &self,
+        url: &str,
+        headers: &[(&'static str, String)],
+        to: &std::path::Path,
+        max: u64,
+    ) -> Result<Downloaded, HttpError> {
+        use tokio::io::AsyncWriteExt;
+
+        let target = Target::parse(url).ok_or(HttpError::InvalidUrl)?;
+        let io = self.open(&target).await?;
+        let handshake = hyper::client::conn::http1::handshake(TokioIo::new(io));
+        let (mut sender, connection) = match self
+            .heartbeat
+            .within("HTTP handshake", self.connect_timeout, handshake)
+            .await
+        {
+            Err(_) => return Err(HttpError::ConnectTimeout),
+            Ok(Err(err)) => return Err(HttpError::Other(err.to_string())),
+            Ok(Ok(pair)) => pair,
+        };
+        let _driver = AbortOnDrop(tokio::spawn(connection));
+
+        let mut request = Request::get(target.path.as_str())
+            .header(HOST, target.authority.as_str())
+            .header(USER_AGENT_HEADER, USER_AGENT);
+        for (name, value) in headers {
+            request = request.header(*name, value.as_str());
+        }
+        let request = request
+            .body(Empty::<Bytes>::new())
+            .map_err(|_| HttpError::InvalidUrl)?;
+        let response = match self
+            .heartbeat
+            .within(
+                "HTTP response",
+                self.read_timeout,
+                sender.send_request(request),
+            )
+            .await
+        {
+            Err(_) => return Err(HttpError::ReadTimeout),
+            Ok(Err(err)) => return Err(classify_text(&err.to_string())),
+            Ok(Ok(response)) => response,
+        };
+
+        let header = |name: hyper::header::HeaderName| {
+            response
+                .headers()
+                .get(name)
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_string)
+        };
+        let mut answer = Downloaded {
+            status: response.status().as_u16(),
+            location: header(LOCATION),
+            etag: header(hyper::header::ETAG),
+            last_modified: header(hyper::header::LAST_MODIFIED),
+            size: 0,
+        };
+        if answer.status != 200 {
+            return Ok(answer);
+        }
+
+        let write_failed =
+            |err: std::io::Error| HttpError::Other(format!("{}: {err}", to.display()));
+        let mut file = match self
+            .heartbeat
+            .within(
+                "creating the file",
+                self.read_timeout,
+                tokio::fs::File::create(to),
+            )
+            .await
+        {
+            Err(_) => {
+                return Err(HttpError::Other(format!(
+                    "{}: the disk did not answer",
+                    to.display()
+                )))
+            }
+            Ok(Err(err)) => return Err(write_failed(err)),
+            Ok(Ok(file)) => file,
+        };
+        let mut body = response.into_body();
+        loop {
+            let frame = match self
+                .heartbeat
+                .within("HTTP body", self.read_timeout, body.frame())
+                .await
+            {
+                Err(_) => return Err(HttpError::ReadTimeout),
+                Ok(None) => break,
+                Ok(Some(Err(err))) => return Err(HttpError::Other(err.to_string())),
+                Ok(Some(Ok(frame))) => frame,
+            };
+            let Ok(data) = frame.into_data() else {
+                continue;
+            };
+            answer.size += data.len() as u64;
+            if answer.size > max {
+                return Err(HttpError::Other(format!("larger than {max} bytes")));
+            }
+            match self
+                .heartbeat
+                .within("writing the file", self.read_timeout, file.write_all(&data))
+                .await
+            {
+                Err(_) => {
+                    return Err(HttpError::Other(format!(
+                        "{}: the disk did not answer",
+                        to.display()
+                    )))
+                }
+                Ok(Err(err)) => return Err(write_failed(err)),
+                Ok(Ok(())) => {}
+            }
+        }
+        match self
+            .heartbeat
+            .within("syncing the file", self.read_timeout, file.sync_all())
+            .await
+        {
+            Err(_) => Err(HttpError::Other(format!(
+                "{}: the disk did not answer",
+                to.display()
+            ))),
+            Ok(Err(err)) => Err(write_failed(err)),
+            Ok(Ok(())) => Ok(answer),
+        }
     }
 
     async fn connect(&self, target: &Target) -> Result<TcpStream, HttpError> {

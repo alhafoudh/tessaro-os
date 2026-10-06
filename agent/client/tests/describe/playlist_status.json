@@ -1,0 +1,640 @@
+{
+  "function": "playlist::status",
+  "input": {
+    "cases": [
+      {
+        "cache": {
+          "failed": 0,
+          "pending": 0,
+          "ready": 0
+        },
+        "entry": null,
+        "item": null,
+        "nothing_playable": false,
+        "player": false,
+        "playlist": null,
+        "reason": "url",
+        "skipped": []
+      },
+      {
+        "cache": {
+          "failed": 1,
+          "pending": 1,
+          "ready": 4
+        },
+        "entry": "7f3a9c21e4b05d68",
+        "item": {
+          "kind": "video",
+          "position": 2,
+          "since": {
+            "local": "2026-09-21 16:13:20 CEST",
+            "unix": 1790000000
+          },
+          "src": "https://cdn.test/clips/promo.mp4"
+        },
+        "nothing_playable": false,
+        "player": true,
+        "playlist": "lunch",
+        "reason": "timetable",
+        "skipped": [
+          {
+            "at": {
+              "local": "2026-09-21 16:17:20 CEST",
+              "unix": 1790000240
+            },
+            "position": 3,
+            "reason": "the video would not play",
+            "src": "https://cdn.test/clips/broken.mp4"
+          },
+          {
+            "at": {
+              "local": "2026-09-21 15:18:20 CEST",
+              "unix": 1789996700
+            },
+            "position": 1,
+            "reason": "it did not load within 30 s",
+            "src": "https://menu.test/today"
+          }
+        ]
+      },
+      {
+        "cache": {
+          "failed": 0,
+          "pending": 0,
+          "ready": 2
+        },
+        "entry": null,
+        "item": null,
+        "nothing_playable": false,
+        "player": true,
+        "playlist": "lobby",
+        "reason": "default",
+        "skipped": []
+      },
+      {
+        "cache": {
+          "failed": 0,
+          "pending": 0,
+          "ready": 0
+        },
+        "entry": null,
+        "item": {
+          "kind": "url",
+          "position": 1,
+          "since": {
+            "local": "2026-09-21 16:18:20 CEST",
+            "unix": 1790000300
+          },
+          "src": "https://shop.test/"
+        },
+        "nothing_playable": false,
+        "player": true,
+        "playlist": null,
+        "reason": "url",
+        "skipped": []
+      },
+      {
+        "cache": {
+          "failed": 2,
+          "pending": 0,
+          "ready": 0
+        },
+        "entry": null,
+        "item": null,
+        "nothing_playable": true,
+        "player": true,
+        "playlist": "lobby",
+        "reason": "default",
+        "skipped": []
+      }
+    ],
+    "now": 1790000300
+  },
+  "output": [
+    {
+      "facts": [
+        {
+          "label": "player",
+          "value": [
+            [
+              "muted",
+              "off",
+              0
+            ],
+            [
+              "plain",
+              " ",
+              0
+            ],
+            [
+              "muted",
+              "- browser.url shows; set",
+              0
+            ],
+            [
+              "plain",
+              " ",
+              0
+            ],
+            [
+              "cmd",
+              "tessaro-ctl config set playlist.default=NAME",
+              0
+            ],
+            [
+              "plain",
+              " ",
+              0
+            ],
+            [
+              "muted",
+              "or add a timetable entry",
+              0
+            ]
+          ]
+        }
+      ],
+      "summary": [
+        [
+          "muted",
+          "off - browser.url shows directly",
+          0
+        ]
+      ]
+    },
+    {
+      "facts": [
+        {
+          "label": "player",
+          "value": [
+            [
+              "ok",
+              "on",
+              0
+            ]
+          ]
+        },
+        {
+          "label": "playlist",
+          "value": [
+            [
+              "heading",
+              "lunch",
+              0
+            ],
+            [
+              "plain",
+              " ",
+              0
+            ],
+            [
+              "muted",
+              "(timetable entry 7f3a9c21)",
+              0
+            ]
+          ]
+        },
+        {
+          "label": "item",
+          "value": [
+            [
+              "muted",
+              "2",
+              0
+            ],
+            [
+              "plain",
+              " ",
+              0
+            ],
+            [
+              "label",
+              "video",
+              0
+            ],
+            [
+              "plain",
+              " ",
+              0
+            ],
+            [
+              "plain",
+              "cdn.test/clips/promo.mp4",
+              0
+            ],
+            [
+              "plain",
+              " ",
+              0
+            ],
+            [
+              "muted",
+              "(came on 5min ago)",
+              0
+            ]
+          ]
+        },
+        {
+          "label": "skipped",
+          "value": [
+            [
+              "warn",
+              "3 cdn.test/clips/broken.mp4",
+              0
+            ],
+            [
+              "plain",
+              ": ",
+              0
+            ],
+            [
+              "plain",
+              "the video would not play",
+              0
+            ],
+            [
+              "plain",
+              " ",
+              0
+            ],
+            [
+              "muted",
+              "(1min ago)",
+              0
+            ]
+          ]
+        },
+        {
+          "label": "",
+          "value": [
+            [
+              "warn",
+              "1 menu.test/today",
+              0
+            ],
+            [
+              "plain",
+              ": ",
+              0
+            ],
+            [
+              "plain",
+              "it did not load within 30 s",
+              0
+            ],
+            [
+              "plain",
+              " ",
+              0
+            ],
+            [
+              "muted",
+              "(1h ago)",
+              0
+            ]
+          ]
+        },
+        {
+          "label": "media",
+          "value": [
+            [
+              "ok",
+              "4 ready",
+              0
+            ],
+            [
+              "plain",
+              ", ",
+              0
+            ],
+            [
+              "warn",
+              "1 pending",
+              0
+            ],
+            [
+              "plain",
+              ", ",
+              0
+            ],
+            [
+              "bad",
+              "1 failed",
+              0
+            ]
+          ]
+        }
+      ],
+      "summary": [
+        [
+          "heading",
+          "lunch",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "(timetable entry 7f3a9c21)",
+          0
+        ],
+        [
+          "plain",
+          ", item 2 video",
+          0
+        ],
+        [
+          "plain",
+          ", ",
+          0
+        ],
+        [
+          "warn",
+          "1 media copy failed",
+          0
+        ]
+      ]
+    },
+    {
+      "facts": [
+        {
+          "label": "player",
+          "value": [
+            [
+              "ok",
+              "on",
+              0
+            ]
+          ]
+        },
+        {
+          "label": "playlist",
+          "value": [
+            [
+              "heading",
+              "lobby",
+              0
+            ],
+            [
+              "plain",
+              " ",
+              0
+            ],
+            [
+              "muted",
+              "(playlist.default)",
+              0
+            ]
+          ]
+        },
+        {
+          "label": "item",
+          "value": [
+            [
+              "muted",
+              "(the player has not said yet)",
+              0
+            ]
+          ]
+        },
+        {
+          "label": "media",
+          "value": [
+            [
+              "ok",
+              "2 ready",
+              0
+            ]
+          ]
+        }
+      ],
+      "summary": [
+        [
+          "heading",
+          "lobby",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "(playlist.default)",
+          0
+        ]
+      ]
+    },
+    {
+      "facts": [
+        {
+          "label": "player",
+          "value": [
+            [
+              "ok",
+              "on",
+              0
+            ]
+          ]
+        },
+        {
+          "label": "playlist",
+          "value": [
+            [
+              "plain",
+              "browser.url",
+              0
+            ],
+            [
+              "plain",
+              " ",
+              0
+            ],
+            [
+              "muted",
+              "(no timetable entry covers now and playlist.default is empty)",
+              0
+            ]
+          ]
+        },
+        {
+          "label": "item",
+          "value": [
+            [
+              "muted",
+              "1",
+              0
+            ],
+            [
+              "plain",
+              " ",
+              0
+            ],
+            [
+              "label",
+              "url",
+              0
+            ],
+            [
+              "plain",
+              " ",
+              0
+            ],
+            [
+              "plain",
+              "shop.test/",
+              0
+            ],
+            [
+              "plain",
+              " ",
+              0
+            ],
+            [
+              "muted",
+              "(came on just now)",
+              0
+            ]
+          ]
+        },
+        {
+          "label": "media",
+          "value": [
+            [
+              "muted",
+              "nothing to keep a copy of",
+              0
+            ]
+          ]
+        }
+      ],
+      "summary": [
+        [
+          "plain",
+          "browser.url",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "(no timetable entry covers now and playlist.default is empty)",
+          0
+        ],
+        [
+          "plain",
+          ", item 1 url",
+          0
+        ]
+      ]
+    },
+    {
+      "facts": [
+        {
+          "label": "player",
+          "value": [
+            [
+              "ok",
+              "on",
+              0
+            ]
+          ]
+        },
+        {
+          "label": "showing",
+          "value": [
+            [
+              "bad",
+              "nothing playable",
+              0
+            ],
+            [
+              "plain",
+              " ",
+              0
+            ],
+            [
+              "muted",
+              "- the offline page is up",
+              0
+            ]
+          ]
+        },
+        {
+          "label": "playlist",
+          "value": [
+            [
+              "heading",
+              "lobby",
+              0
+            ],
+            [
+              "plain",
+              " ",
+              0
+            ],
+            [
+              "muted",
+              "(playlist.default)",
+              0
+            ]
+          ]
+        },
+        {
+          "label": "item",
+          "value": [
+            [
+              "muted",
+              "(the player has not said yet)",
+              0
+            ]
+          ]
+        },
+        {
+          "label": "media",
+          "value": [
+            [
+              "ok",
+              "0 ready",
+              0
+            ],
+            [
+              "plain",
+              ", ",
+              0
+            ],
+            [
+              "bad",
+              "2 failed",
+              0
+            ]
+          ]
+        }
+      ],
+      "summary": [
+        [
+          "bad",
+          "nothing playable",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "- the offline page is up",
+          0
+        ]
+      ]
+    }
+  ]
+}

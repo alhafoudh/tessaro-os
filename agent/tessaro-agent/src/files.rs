@@ -37,7 +37,7 @@ use crate::paths::Paths;
 
 /// Left free on `/data` whatever is uploaded: the Chromium profile, the
 /// settings and an image update all live there too.
-const RESERVE: u64 = 256 << 20;
+pub(crate) const RESERVE: u64 = 256 << 20;
 
 const META: &str = "upload.json";
 const PART: &str = "upload.part";

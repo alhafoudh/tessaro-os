@@ -1,0 +1,23 @@
+{
+  "function": "playlist::list",
+  "input": [],
+  "output": [
+    [
+      [
+        "muted",
+        "no playlists; add one with",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "cmd",
+        "tessaro-ctl playlist create NAME",
+        0
+      ]
+    ]
+  ]
+}

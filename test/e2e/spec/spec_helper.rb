@@ -46,6 +46,7 @@ require_relative "support/network"
 require_relative "support/update"
 require_relative "support/usbcam"
 require_relative "support/vnc"
+require_relative "support/host_web"
 
 RSpec.configure do |config|
   # A lane's cases leave state behind for the next one, in file order.

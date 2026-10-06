@@ -1,0 +1,22 @@
+{
+  "player": true,
+  "playlist": "lobby",
+  "reason": "default",
+  "entry": null,
+  "item": {
+    "position": 2,
+    "kind": "video",
+    "src": "http://127.0.0.1/files/promo.mp4",
+    "since": {
+      "unix": 1791270000,
+      "local": "2026-10-06 09:40:00 CEST"
+    }
+  },
+  "skipped": [],
+  "nothing_playable": false,
+  "cache": {
+    "ready": 2,
+    "pending": 0,
+    "failed": 0
+  }
+}

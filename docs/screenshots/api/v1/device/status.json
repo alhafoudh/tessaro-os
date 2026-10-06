@@ -87,5 +87,19 @@
     "total": 4000000000,
     "available": 2900000000
   },
-  "cpu_percent": 12
+  "cpu_percent": 12,
+  "playlist": {
+    "player": false,
+    "playlist": null,
+    "reason": "url",
+    "entry": null,
+    "item": null,
+    "skipped": [],
+    "nothing_playable": false,
+    "cache": {
+      "ready": 0,
+      "pending": 0,
+      "failed": 0
+    }
+  }
 }

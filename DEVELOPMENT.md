@@ -257,6 +257,24 @@ mise run webconfig:lock      # after changing a dependency
 points the dev server at a real device. How it works is in
 [docs/webconfig.md](docs/webconfig.md).
 
+## The player page
+
+The player page plays playlists on the device: static files in
+`meta-tessaro-distro/recipes-browser/tessaro-selftest/files/player/`, plain
+ES modules with no build step, served by nginx at
+`http://127.0.0.1/player.html`. Its decisions are in `player-core.js`, which
+has no DOM and is unit-tested.
+
+```sh
+mise run player:test   # player-core.js, with node --test
+mise run player:run    # the page and dev/sample.json on http://127.0.0.1:8090
+```
+
+`player:run` prints the URL to open. The page reads the playlist from
+`?src=` and looks for changes every 5 seconds, so editing
+`dev/sample.json` shows on the open page. The events the agent would get
+go to the browser console.
+
 ## End-to-end tests
 
 `mise run e2e:run` boots the qemux86-64 image and provokes what the agent

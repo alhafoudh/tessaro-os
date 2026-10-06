@@ -342,6 +342,7 @@ pub enum Page {
     Screen,
     Browser,
     Policies,
+    Playlists,
     Network,
     Wifi,
     Certs,
@@ -366,6 +367,7 @@ impl Page {
         (Page::Screen, "Screen", sections::KIOSK),
         (Page::Browser, "Browser", sections::KIOSK),
         (Page::Policies, "Policies", sections::KIOSK),
+        (Page::Playlists, "Playlists", sections::KIOSK),
         (Page::Files, "Files", sections::KIOSK),
         (Page::Audio, "Audio", sections::PERIPHERALS),
         (Page::Camera, "Camera", sections::PERIPHERALS),
@@ -397,6 +399,7 @@ impl Page {
             Page::Camera => ("camera", None),
             Page::Time => ("time", None),
             Page::Printer => ("printer", None),
+            Page::Playlists => ("playlist", None),
             Page::Access => ("access", None),
             Page::Policies
             | Page::Certs

@@ -10,7 +10,7 @@
 use std::path::Path;
 
 use serde_json::{json, Value};
-use tessaro_client::describe::{audio, browser, camera, device, net, printer, time};
+use tessaro_client::describe::{audio, browser, camera, device, net, playlist, printer, time};
 use tessaro_client::ping;
 use tessaro_client::text::{Fact, Line};
 
@@ -207,6 +207,76 @@ fn render(function: &str, input: &Value) -> Value {
             })
         }
         "printer::queued" => line(&printer::queued(&from(input))),
+        // --- playlists and the timetable ---
+        "playlist::list" => {
+            let playlists: Vec<protocol::playlist::PlaylistInfo> = from(input);
+            lines(&playlist::list(&playlists))
+        }
+        "playlist::show" => {
+            let info = from(input);
+            json!({ "facts": facts(&playlist::show(&info)), "items": lines(&playlist::items(&info)) })
+        }
+        "playlist::item" => {
+            let items: Vec<protocol::playlist::PlaylistItem> = from(input);
+            Value::Array(
+                items
+                    .iter()
+                    .zip(1..)
+                    .map(|(one, position)| {
+                        json!({
+                            "line": line(&playlist::item(one, position)),
+                            "timing": playlist::timing(one),
+                            "options": playlist::options(one),
+                        })
+                    })
+                    .collect(),
+            )
+        }
+        "playlist::timetable" => {
+            let entries: Vec<protocol::playlist::TimetableInfo> = from(input);
+            json!({
+                "lines": lines(&playlist::timetable(&entries)),
+                "entries": entries.iter().map(|one| line(&playlist::entry(one))).collect::<Vec<_>>(),
+            })
+        }
+        "playlist::status" => {
+            let now = input["now"].as_i64().unwrap();
+            let cases: Vec<protocol::playlist::PlaylistStatus> = from(&input["cases"]);
+            Value::Array(
+                cases
+                    .iter()
+                    .map(|one| {
+                        json!({
+                            "facts": facts(&playlist::status(one, now)),
+                            "summary": line(&playlist::summary(one)),
+                        })
+                    })
+                    .collect(),
+            )
+        }
+        "playlist::words" => {
+            use tessaro_client::playlist::{
+                format_ms, format_position, format_seconds, parse_ms, parse_seconds,
+            };
+            let sources: Vec<String> = from(&input["src"]);
+            let ms: Vec<u64> = from(&input["ms"]);
+            let seconds: Vec<u32> = from(&input["seconds"]);
+            let typed: Vec<String> = from(&input["typed"]);
+            let transitions: Vec<(protocol::playlist::Transition, u32)> =
+                from(&input["transition"]);
+            json!({
+                "shorten": sources.iter().map(|src| playlist::shorten(src)).collect::<Vec<_>>(),
+                "format_ms": ms.iter().map(|v| format_ms(*v)).collect::<Vec<_>>(),
+                "format_position": ms.iter().map(|v| format_position(*v)).collect::<Vec<_>>(),
+                "format_seconds": seconds.iter().map(|v| format_seconds(*v)).collect::<Vec<_>>(),
+                "parse_ms": typed.iter().map(|t| parse_ms(t).ok()).collect::<Vec<_>>(),
+                "parse_seconds": typed.iter().map(|t| parse_seconds(t).ok()).collect::<Vec<_>>(),
+                "transition": transitions
+                    .iter()
+                    .map(|(kind, ms)| playlist::transition(*kind, *ms))
+                    .collect::<Vec<_>>(),
+            })
+        }
         "schedule::moment" => {
             let now = input["now"].as_i64().unwrap();
             let moments: Vec<protocol::Moment> = from(&input["moments"]);

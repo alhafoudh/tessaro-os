@@ -204,6 +204,12 @@ fn factory_reset(paths: &Paths, db: &Db, log: &Log) {
     if let Err(err) = crate::scripts::clear(db, &paths.script_runs_dir()) {
         log.info(format!("factory reset: the scripts: {err}"));
     }
+    if let Err(err) = crate::playlists::clear(db) {
+        log.info(format!("factory reset: the playlists: {err}"));
+    }
+    if let Err(err) = crate::media::wipe(paths, db) {
+        log.info(format!("factory reset: the media cache: {err}"));
+    }
     match fs::remove_file(paths.factory_reset_marker()) {
         Ok(()) => {}
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
@@ -211,7 +217,8 @@ fn factory_reset(paths: &Paths, db: &Db, log: &Log) {
     }
     log.info(
         "factory reset: settings, tokens, ssh keys, root and network passwords, \
-         certificate authorities, browser policies, scripts, schedules, stored files cleared",
+         certificate authorities, browser policies, scripts, schedules, playlists, \
+         timetable, media cache, stored files cleared",
     );
 }
 

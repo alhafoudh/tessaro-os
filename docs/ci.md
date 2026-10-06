@@ -16,7 +16,8 @@ request**, on GitHub's own runners so it never waits behind an image build:
 * `gui`: `gui:lint`, `gui:test`, and `gui:build`, uploaded as
   `tessaro-gui-linux-x86_64`.
 * `webconfig`: `webconfig:setup`, `webconfig:lint`, `webconfig:test` (which
-  includes `bitbake-lock.json` being current) and `webconfig:build`.
+  includes `bitbake-lock.json` being current) and `webconfig:build`, then
+  `player:test`, the player page's unit tests, which need the same Node.
 * `sbom`: `sbom:test` and `sbom:check`, the license policy over every crate,
   npm package and vendored file ([sbom.md](sbom.md)). It builds nothing:
   cargo and npm read the lock files, and the runner's own ruby runs the

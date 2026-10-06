@@ -230,7 +230,7 @@
     "guarded": false,
     "doc": "Chromium features to disable. Replaces the default: keep FallbackToSWIfGLES3NotSupported (Pi 3 GPU) and PersistentHistograms (no metrics files on /data).",
     "values": "Chromium feature names, comma separated, no spaces",
-    "default": "FallbackToSWIfGLES3NotSupported,PersistentHistograms",
+    "default": "FallbackToSWIfGLES3NotSupported,PersistentHistograms,DisableLoadExtensionCommandLineSwitch",
     "value": null,
     "input": {
       "kind": "text"
@@ -626,6 +626,21 @@
     "value": null,
     "input": {
       "kind": "flag"
+    }
+  },
+  {
+    "name": "playlist.default",
+    "env": "KIOSK_PLAYLIST",
+    "applies": [
+      "agent"
+    ],
+    "guarded": false,
+    "doc": "The playlist the player shows when no timetable entry covers now. Set, or a timetable entry existing, puts the player on screen instead of browser.url. Empty for none. `tessaro-ctl playlist`.",
+    "values": "a playlist's name from `tessaro-ctl playlist list`, or empty",
+    "default": "",
+    "value": null,
+    "input": {
+      "kind": "text"
     }
   },
   {

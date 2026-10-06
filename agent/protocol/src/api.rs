@@ -25,6 +25,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::files::{FileBegun, FilesListing};
+use crate::playlist::{
+    Day, PlaylistInfo, PlaylistItem, PlaylistSpec, PlaylistStatus, TimetableInfo, TimetableSpec,
+    Transition,
+};
 use crate::policy::{
     EffectiveEntry, PolicyDoc, PolicyInfo, PolicyMoved, PolicyRemoved, PolicySaved,
 };
@@ -746,6 +750,71 @@ pub struct PrintJobRef {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PlaylistRef {
+    /// Its id or its name.
+    pub playlist: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PlaylistItemRef {
+    /// Its id or its name.
+    pub playlist: String,
+    /// The item's place in it, from 1.
+    pub position: u32,
+}
+
+/// What is given replaces what the playlist has; given `items` replace
+/// them all.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PlaylistChange {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub transition: Option<Transition>,
+    #[serde(default)]
+    pub transition_ms: Option<u32>,
+    #[serde(default)]
+    pub items: Option<Vec<PlaylistItem>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PlaylistItemAddBody {
+    pub item: PlaylistItem,
+    /// Where it goes, from 1; at the end when not given.
+    #[serde(default)]
+    pub at: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PlaylistItemMoveBody {
+    /// Its new place, from 1.
+    pub to: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct TimetableRef {
+    pub entry: String,
+}
+
+/// What is given replaces what the entry has.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct TimetableEntryChange {
+    /// The playlist, by id or name.
+    #[serde(default)]
+    pub playlist: Option<String>,
+    #[serde(default)]
+    pub days: Option<Vec<Day>>,
+    #[serde(default)]
+    pub from: Option<String>,
+    #[serde(default)]
+    pub to: Option<String>,
+    #[serde(default)]
+    pub priority: Option<i32>,
+    #[serde(default)]
+    pub enabled: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct CalendarBody {
     pub calendar: Vec<String>,
     /// How many run times to answer with.
@@ -1383,6 +1452,99 @@ pub mod schedule {
     }
 }
 
+pub mod playlist {
+    use super::*;
+
+    endpoints! {
+        /// Every playlist and where it is used.
+        List: Get "/api/v1/playlists" (Empty, ()) -> Vec<PlaylistInfo>
+            = |_, _| Action::Run(Command::PlaylistList);
+
+        /// Add a playlist.
+        Create: Post "/api/v1/playlists" (Empty, PlaylistSpec) -> PlaylistInfo
+            = |_, spec| Action::Run(Command::PlaylistCreate { spec });
+
+        /// What the player is doing: whether it is on screen, the playlist,
+        /// the item, what it skipped, how far the media cache is.
+        Status: Get "/api/v1/playlists/status" (Empty, ()) -> PlaylistStatus
+            = |_, _| Action::Run(Command::PlaylistStatus);
+
+        /// One playlist, its items in full.
+        Show: Get "/api/v1/playlists/{playlist}" (PlaylistRef, ()) -> PlaylistInfo
+            = |target, _| Action::Run(Command::PlaylistShow { playlist: target.playlist });
+
+        /// Change what is given of one playlist.
+        Change: Patch "/api/v1/playlists/{playlist}" (PlaylistRef, PlaylistChange) -> PlaylistInfo
+            = |target, change| Action::Run(Command::PlaylistSet {
+                playlist: target.playlist,
+                name: change.name,
+                transition: change.transition,
+                transition_ms: change.transition_ms,
+                items: change.items,
+            });
+
+        /// Remove a playlist that is neither the default nor in the
+        /// timetable.
+        Remove: Delete "/api/v1/playlists/{playlist}" (PlaylistRef, ()) -> Done
+            = |target, _| Action::Run(Command::PlaylistRemove { playlist: target.playlist });
+
+        /// Add an item.
+        ItemAdd: Post "/api/v1/playlists/{playlist}/items" (PlaylistRef, PlaylistItemAddBody) -> PlaylistInfo
+            = |target, body| Action::Run(Command::PlaylistItemAdd {
+                playlist: target.playlist,
+                item: body.item,
+                at: body.at,
+            });
+
+        /// Replace one item.
+        ItemSet: Put "/api/v1/playlists/{playlist}/items/{position}" (PlaylistItemRef, PlaylistItem) -> PlaylistInfo
+            = |target, item| Action::Run(Command::PlaylistItemSet {
+                playlist: target.playlist,
+                position: target.position,
+                item,
+            });
+
+        /// Remove one item.
+        ItemRemove: Delete "/api/v1/playlists/{playlist}/items/{position}" (PlaylistItemRef, ()) -> PlaylistInfo
+            = |target, _| Action::Run(Command::PlaylistItemRemove {
+                playlist: target.playlist,
+                position: target.position,
+            });
+
+        /// Move one item to another place.
+        ItemMove: Post "/api/v1/playlists/{playlist}/items/{position}/move" (PlaylistItemRef, PlaylistItemMoveBody) -> PlaylistInfo
+            = |target, body| Action::Run(Command::PlaylistItemMove {
+                playlist: target.playlist,
+                position: target.position,
+                to: body.to,
+            });
+
+        /// Every timetable entry, in order, and which one is active.
+        TimetableList: Get "/api/v1/playlists/timetable" (Empty, ()) -> Vec<TimetableInfo>
+            = |_, _| Action::Run(Command::TimetableList);
+
+        /// Add a timetable entry.
+        TimetableCreate: Post "/api/v1/playlists/timetable" (Empty, TimetableSpec) -> TimetableInfo
+            = |_, spec| Action::Run(Command::TimetableCreate { spec });
+
+        /// Change what is given of one timetable entry.
+        TimetableChange: Patch "/api/v1/playlists/timetable/{entry}" (TimetableRef, TimetableEntryChange) -> TimetableInfo
+            = |target, change| Action::Run(Command::TimetableSet {
+                entry: target.entry,
+                playlist: change.playlist,
+                days: change.days,
+                from: change.from,
+                to: change.to,
+                priority: change.priority,
+                enabled: change.enabled,
+            });
+
+        /// Remove a timetable entry.
+        TimetableRemove: Delete "/api/v1/playlists/timetable/{entry}" (TimetableRef, ()) -> Done
+            = |target, _| Action::Run(Command::TimetableRemove { entry: target.entry });
+    }
+}
+
 pub mod printer {
     use super::*;
 
@@ -1594,6 +1756,7 @@ pub fn all() -> Vec<Route> {
         time::routes(),
         script::routes(),
         schedule::routes(),
+        playlist::routes(),
         printer::routes(),
         update::routes(),
         files::routes(),

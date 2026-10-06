@@ -1,0 +1,96 @@
+{
+  "function": "playlist::show",
+  "input": {
+    "default": false,
+    "id": "5566778899aabbcc",
+    "items": [],
+    "name": "spare",
+    "playing": false,
+    "timetable": [],
+    "transition": "cut",
+    "transition_ms": 0
+  },
+  "output": {
+    "facts": [
+      {
+        "label": "name",
+        "value": [
+          [
+            "heading",
+            "spare",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "id",
+        "value": [
+          [
+            "muted",
+            "5566778899aabbcc",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "transition",
+        "value": [
+          [
+            "plain",
+            "cut",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "default",
+        "value": [
+          [
+            "muted",
+            "no",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "timetable",
+        "value": [
+          [
+            "muted",
+            "not in it",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "playing",
+        "value": [
+          [
+            "muted",
+            "no",
+            0
+          ]
+        ]
+      }
+    ],
+    "items": [
+      [
+        [
+          "warn",
+          "no items; add one with",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "cmd",
+          "tessaro-ctl playlist items add spare --url URL",
+          0
+        ]
+      ]
+    ]
+  }
+}

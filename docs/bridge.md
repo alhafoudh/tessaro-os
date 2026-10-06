@@ -89,6 +89,7 @@ answers everything:
 | `printer.list()` | config | `printer list`, without each printer's URI |
 | `printer.jobs(printer)` | config | `printer jobs`: every printer's, or the one named |
 | `scripts.list()` | config | `script list`, only the scripts with `--bridge`, without their bodies: name, description, concurrency, runs going, the last run |
+| `playlist.status()` | config | `playlist status`: whether the player is on screen, what plays and why, the item on screen, what was gone past, the media cache; also `device.status().playlist` |
 | `network.publicIp()` | actions | `config get network.public_ip`: asked now |
 | `network.online()` | actions | the same lookup, resolved as `true` or `false` |
 | `browser.reload()` | actions | `browser reload` |
@@ -140,6 +141,9 @@ The other commands no call mirrors are the operator's too:
 * **`schedule`, `script logs` and the rest of `script`**: when root scripts
   run and what they printed before is the operator's; the page gets the
   output of the runs it starts.
+* **The rest of `playlist`**: what the screen shows and when is the
+  operator's; a page in the player that could change the playlists could
+  keep itself on screen.
 * **`storage`**: the page reads `storage.*` in `tessaro.config`, and
   `storage grow` repartitions the disk.
 * **`screen modes`, `confirm` and `screenshot`**: a wrong mode leaves the
@@ -224,10 +228,17 @@ port left out as the browser writes it.
   default world. An iframe, an isolated world or an unknown context is ignored
   without an answer. The console noise `Runtime.enable` brings is dropped in
   the session, never broadcast.
+* **While the player is on screen, a frame of it is answered too - but only
+  as an item.** The frame must be directly in the player page, in its own
+  page world, on the origin of a URL item with `bridge` (of any playlist) or
+  browser.url's, which plays as a playlist of one (`Offer::frame_origins`,
+  `answered` in `control/bridge.rs`). A frame in a process of its own is a
+  child session whose contexts are kept apart, and its call is answered on
+  that session (see **Interactive items** in [playlists.md](playlists.md)).
 * **The raw binding never reaches page code.** Chromium installs it as
   `window.__tessaroBridge` in every frame; the preamble runs first, takes it
-  into a closure and deletes it, and outside the allowed origin or the top
-  frame exposes nothing at all.
+  into a closure and deletes it, and outside the allowed origins, the top
+  frame and the player's items exposes nothing at all.
 * **The agent answers through a handle the page cannot guess**: a property
   named `__tessaro_` plus random hex, new with every agent start, reached with
   `Runtime.evaluate` in the calling context.

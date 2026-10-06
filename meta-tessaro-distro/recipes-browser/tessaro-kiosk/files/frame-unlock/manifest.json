@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "Tessaro frame unlock",
+  "description": "Lets the Tessaro player page at http://127.0.0.1 show any site in its frames, by dropping the headers that forbid framing on those frames only.",
+  "version": "1.0",
+  "permissions": ["declarativeNetRequest"],
+  "host_permissions": ["<all_urls>"],
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "frame_unlock",
+        "enabled": true,
+        "path": "rules.json"
+      }
+    ]
+  }
+}

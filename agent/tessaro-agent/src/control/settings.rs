@@ -76,6 +76,14 @@ impl Control {
                     return Reply::err(err);
                 }
             }
+            // A playlist must be one the device has.
+            if let (keys::Kind::Playlist, Some(name)) = (key.kind, &value) {
+                if !name.is_empty() {
+                    if let Err(err) = self.check_playlist(name).await {
+                        return Reply::err(err);
+                    }
+                }
+            }
             if key.guarded {
                 if !apply {
                     return Reply::err(format!(

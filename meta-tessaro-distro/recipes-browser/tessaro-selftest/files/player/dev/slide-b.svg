@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1080" viewBox="0 0 1080 1080">
+  <rect width="1080" height="1080" fill="#c0392b"/>
+  <rect x="90" y="90" width="900" height="900" fill="none" stroke="#ffffff" stroke-width="12" stroke-opacity="0.6"/>
+  <text x="540" y="560" font-family="sans-serif" font-size="140" font-weight="700" fill="#ffffff" text-anchor="middle">Slide B</text>
+  <text x="540" y="650" font-family="sans-serif" font-size="44" fill="#ffffff" fill-opacity="0.8" text-anchor="middle">square, cover, slide</text>
+</svg>

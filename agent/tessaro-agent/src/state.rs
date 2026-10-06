@@ -250,6 +250,9 @@ pub fn resolve(
 pub struct Live {
     pub derived_name: Option<String>,
     pub values: BTreeMap<String, String>,
+    /// What the playlists' store holds (`playlists::Shared`): whether the
+    /// timetable has an entry, and the interactive items' origins.
+    pub playlists: crate::playlists::Shared,
 }
 
 impl Live {
@@ -293,6 +296,16 @@ pub fn debug_screen(settings: &BTreeMap<String, String>, defaults: &dyn Env) -> 
     setting(settings, defaults, "browser.debug.enable").as_deref() == Some("1")
 }
 
+/// Is the player on screen instead of browser.url? While playlist.default is
+/// set or the timetable has an entry - the configuration decides, never the
+/// clock, so the device does not move between the two at a timetable
+/// entry's edges (docs/playlists.md).
+pub fn player(settings: &BTreeMap<String, String>, defaults: &dyn Env, live: &Live) -> bool {
+    live.playlists.timetable
+        || setting(settings, defaults, protocol::keys::PLAYLIST_DEFAULT)
+            .is_some_and(|name| !name.is_empty())
+}
+
 /// The URL template the screen follows, and the key it came from:
 /// browser.maintenance.url in maintenance mode, else browser.url - each as set, else
 /// the image default.
@@ -307,6 +320,13 @@ pub fn shown_template(
     };
     (name, setting(settings, defaults, name).unwrap_or_default())
 }
+
+/// The player page, when the image does not say (`KIOSK_PLAYER_URL`).
+pub const PLAYER_URL: &str = "http://127.0.0.1/player.html";
+
+/// Not a setting and never in an env file: what `Effective` answers for
+/// whether the player is on screen, so `Config` reads it like the rest.
+pub const PLAYER_MODE: &str = "KIOSK_PLAYER_MODE";
 
 /// The image's defaults with this device's settings on top - what every
 /// consumer ends up seeing. `KIOSK_URL` comes out expanded: the browser, the
@@ -367,6 +387,26 @@ impl<'a> Effective<'a> {
         maintenance(&self.settings, self.base)
     }
 
+    /// The player is on screen (`player`), unless maintenance mode puts its
+    /// page there instead.
+    pub fn player(&self) -> bool {
+        !self.maintenance() && player(&self.settings, self.base, &self.live)
+    }
+
+    /// The player page: `KIOSK_PLAYER_URL`, an image-only variable.
+    pub fn player_url(&self) -> String {
+        self.base
+            .get("KIOSK_PLAYER_URL")
+            .filter(|url| !url.is_empty())
+            .unwrap_or_else(|| PLAYER_URL.to_string())
+    }
+
+    /// The origins of the playlists' interactive items, which get the device
+    /// grants with browser.url's.
+    pub fn player_origins(&self) -> &[String] {
+        &self.live.playlists.origins
+    }
+
     /// browser.url expanded, maintenance mode or not. The device-API grants
     /// follow this one: toggling maintenance must not rewrite the policy,
     /// which would restart the browser and take the site's grants away.
@@ -388,8 +428,12 @@ impl Env for Effective<'_> {
             "KIOSK_URL" if self.maintenance() => {
                 Some(self.expand(&self.raw("KIOSK_MAINTENANCE_URL").unwrap_or_default()))
             }
+            PLAYER_MODE => Some(if self.player() { "1" } else { "0" }.to_string()),
+            "KIOSK_URL" if self.player() => Some(self.player_url()),
             "KIOSK_URL" => self.kiosk_url(),
-            "KIOSK_PROBE_URL" if self.maintenance() => Some(String::new()),
+            // The player is the device's own page, always there: the probe
+            // checks it, and a source that is down is the player's to skip.
+            "KIOSK_PROBE_URL" if self.maintenance() || self.player() => Some(String::new()),
             _ => self.raw(key),
         }
     }
@@ -513,6 +557,50 @@ mod tests {
     }
 
     #[test]
+    fn the_player_is_on_screen_while_a_playlist_or_the_timetable_says() {
+        let log = Log::buffered(true);
+        let base: HashMap<String, String> = [
+            ("KIOSK_URL".to_string(), "https://shop.test/".to_string()),
+            (
+                "KIOSK_MAINTENANCE_URL".to_string(),
+                "http://127.0.0.1/maintenance.html".to_string(),
+            ),
+        ]
+        .into();
+        let direct = Effective::new(&base, &settings(&[]), &log);
+        assert_eq!(direct.get("KIOSK_URL").unwrap(), "https://shop.test/");
+        assert_eq!(direct.get(PLAYER_MODE).unwrap(), "0");
+
+        let set = settings(&[(protocol::keys::PLAYLIST_DEFAULT, "lobby")]);
+        let default = Effective::new(&base, &set, &log);
+        assert_eq!(default.get("KIOSK_URL").unwrap(), PLAYER_URL);
+        assert_eq!(default.get("KIOSK_PROBE_URL").unwrap(), "");
+        assert_eq!(default.get(PLAYER_MODE).unwrap(), "1");
+        // The grants stay browser.url's.
+        assert_eq!(default.kiosk_url().unwrap(), "https://shop.test/");
+
+        let timetable = Effective::new(&base, &settings(&[]), &log).with_live(Live {
+            playlists: crate::playlists::Shared {
+                timetable: true,
+                ..Default::default()
+            },
+            ..Live::default()
+        });
+        assert_eq!(timetable.get("KIOSK_URL").unwrap(), PLAYER_URL);
+
+        let maintenance = settings(&[
+            (protocol::keys::PLAYLIST_DEFAULT, "lobby"),
+            ("browser.maintenance.enable", "1"),
+        ]);
+        let maintenance = Effective::new(&base, &maintenance, &log);
+        assert_eq!(
+            maintenance.get("KIOSK_URL").unwrap(),
+            "http://127.0.0.1/maintenance.html"
+        );
+        assert_eq!(maintenance.get(PLAYER_MODE).unwrap(), "0");
+    }
+
+    #[test]
     fn maintenance_mode_shows_the_maintenance_page_and_keeps_the_kiosk_url() {
         let log = Log::buffered(true);
         let base: HashMap<String, String> = [
@@ -593,6 +681,7 @@ mod tests {
                 ("device.id".to_string(), "abc".to_string()),
             ]
             .into(),
+            ..Live::default()
         };
 
         let effective = Effective::new(&base, &set, &log).with_live(live);
@@ -618,6 +707,7 @@ mod tests {
         let live = Live {
             derived_name: Some("brave-otter-3fa2".into()),
             values: [("network.cidr".to_string(), "10.0.0.20/24".to_string())].into(),
+            ..Live::default()
         };
 
         let (text, missing) = expand_text(

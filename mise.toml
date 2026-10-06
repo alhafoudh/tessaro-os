@@ -376,6 +376,25 @@ description = "Type check, ESLint and Prettier on Webconfig"
 dir = "{{config_root}}/webconfig"
 run = "npm run lint"
 
+[tasks."player:test"]
+description = "The player page's unit tests (player-core.js), with node --test"
+dir = "{{config_root}}/meta-tessaro-distro/recipes-browser/tessaro-selftest/files/player"
+run = "node --test"
+
+# The directory the recipe installs from, so the sample playlist reaches the
+# self-test page and its sample video by the same relative paths as on disk.
+# python3's http.server because it is already a mise tool and needs nothing
+# fetched; the page polls ?src= for changes, so editing dev/sample.json
+# shows within seconds.
+[tasks."player:run"]
+description = "Serve the player page with dev/sample.json on http://127.0.0.1:8090 (PLAYER_PORT)"
+dir = "{{config_root}}/meta-tessaro-distro/recipes-browser/tessaro-selftest/files"
+run = '''
+port="${PLAYER_PORT:-8090}"
+echo "http://127.0.0.1:$port/player/player.html?src=dev/sample.json"
+exec python3 -m http.server "$port" --bind 127.0.0.1
+'''
+
 [tasks."docs:screenshots"]
 description = "Render the README's screenshots (the kiosk's pages, Webconfig, tessaro-gui) from the shipped pages and fixed data, Webconfig's with Playwright in docker"
 dir = "{{config_root}}"

@@ -1,0 +1,453 @@
+{
+  "function": "playlist::timetable",
+  "input": [
+    {
+      "active": true,
+      "days": [
+        "mon",
+        "tue",
+        "wed",
+        "thu",
+        "fri"
+      ],
+      "enabled": true,
+      "from": "11:30",
+      "id": "7f3a9c21e4b05d68",
+      "playlist": "0f9e8d7c6b5a4938",
+      "playlist_name": "lunch",
+      "priority": 0,
+      "to": "14:00"
+    },
+    {
+      "active": false,
+      "days": [
+        "sat",
+        "sun"
+      ],
+      "enabled": true,
+      "from": "22:00",
+      "id": "2b8e4f10c9a7d356",
+      "playlist": "0f9e8d7c6b5a4938",
+      "playlist_name": "night",
+      "priority": 5,
+      "to": "02:00"
+    },
+    {
+      "active": false,
+      "days": [],
+      "enabled": false,
+      "from": "00:00",
+      "id": "c4d5e6f7",
+      "playlist": "a1b2c3d4e5f60718",
+      "playlist_name": "lobby",
+      "priority": -1,
+      "to": "00:00"
+    }
+  ],
+  "output": {
+    "entries": [
+      [
+        [
+          "ok",
+          "*",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "7f3a9c21",
+          8
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "plain",
+          "mon-fri",
+          13
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "plain",
+          "11:30-14:00",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "->",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "heading",
+          "lunch",
+          0
+        ],
+        [
+          "plain",
+          ", priority 0",
+          0
+        ]
+      ],
+      [
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "2b8e4f10",
+          8
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "plain",
+          "sat,sun",
+          13
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "plain",
+          "22:00-02:00",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "->",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "heading",
+          "night",
+          0
+        ],
+        [
+          "plain",
+          ", priority 5",
+          0
+        ]
+      ],
+      [
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "c4d5e6f7",
+          8
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "every day",
+          13
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "00:00-00:00",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "->",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "lobby",
+          0
+        ],
+        [
+          "muted",
+          ", priority -1",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "(off)",
+          0
+        ]
+      ]
+    ],
+    "lines": [
+      [
+        [
+          "ok",
+          "*",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "7f3a9c21",
+          8
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "plain",
+          "mon-fri",
+          13
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "plain",
+          "11:30-14:00",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "->",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "heading",
+          "lunch",
+          0
+        ],
+        [
+          "plain",
+          ", priority 0",
+          0
+        ]
+      ],
+      [
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "2b8e4f10",
+          8
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "plain",
+          "sat,sun",
+          13
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "plain",
+          "22:00-02:00",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "->",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "heading",
+          "night",
+          0
+        ],
+        [
+          "plain",
+          ", priority 5",
+          0
+        ]
+      ],
+      [
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "c4d5e6f7",
+          8
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "every day",
+          13
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "00:00-00:00",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "->",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "lobby",
+          0
+        ],
+        [
+          "muted",
+          ", priority -1",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "(off)",
+          0
+        ]
+      ],
+      [],
+      [
+        [
+          "muted",
+          "* decides what plays now; where entries overlap the highest priority wins, then the one listed first",
+          0
+        ]
+      ]
+    ]
+  }
+}

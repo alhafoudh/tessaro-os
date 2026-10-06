@@ -1,0 +1,26 @@
+{
+  "function": "playlist::timetable",
+  "input": [],
+  "output": {
+    "entries": [],
+    "lines": [
+      [
+        [
+          "muted",
+          "no timetable entries; add one with",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "cmd",
+          "tessaro-ctl playlist timetable add PLAYLIST --from HH:MM --to HH:MM",
+          0
+        ]
+      ]
+    ]
+  }
+}

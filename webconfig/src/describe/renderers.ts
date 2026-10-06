@@ -16,6 +16,7 @@ import * as device from "./device";
 import * as journal from "./journal";
 import * as net from "./net";
 import * as ping from "./ping";
+import * as playlist from "./playlist";
 import * as printer from "./printer";
 import * as transfer from "./transfer";
 import * as update from "./update";
@@ -101,6 +102,42 @@ export const renderers: Record<string, (input: any) => unknown> = {
     none: spans(printer.foundHint([])),
   }),
   "printer::queued": (input) => spans(printer.queued(input)),
+  // --- playlists and the timetable ---
+  "playlist::list": (input) => lines(playlist.list(input)),
+  "playlist::show": (input) => ({ facts: facts(playlist.show(input)), items: lines(playlist.items(input)) }),
+  "playlist::item": (input) =>
+    input.map((one: any, at: number) => ({
+      line: spans(playlist.item(one, at + 1)),
+      timing: playlist.timing(one),
+      options: playlist.options(one),
+    })),
+  "playlist::timetable": (input) => ({
+    lines: lines(playlist.timetable(input)),
+    entries: input.map((one: any) => spans(playlist.entry(one))),
+  }),
+  "playlist::status": (input) =>
+    input.cases.map((one: any) => ({
+      facts: facts(playlist.status(one, input.now)),
+      summary: spans(playlist.summary(one)),
+    })),
+  "playlist::words": (input) => {
+    const ok = <T>(parse: () => T): T | null => {
+      try {
+        return parse();
+      } catch {
+        return null;
+      }
+    };
+    return {
+      shorten: input.src.map(playlist.shorten),
+      format_ms: input.ms.map(playlist.formatMs),
+      format_position: input.ms.map(playlist.formatPosition),
+      format_seconds: input.seconds.map(playlist.formatSeconds),
+      parse_ms: input.typed.map((typed: string) => ok(() => playlist.parseMs(typed))),
+      parse_seconds: input.typed.map((typed: string) => ok(() => playlist.parseSeconds(typed))),
+      transition: input.transition.map(([kind, ms]: [any, number]) => playlist.transition(kind, ms)),
+    };
+  },
   "schedule::moment": (input) => input.moments.map((at: any) => spans(schedule.moment(at, input.now))),
   "schedule::last_run": (input) => input.infos.map((info: any) => spans(schedule.lastRun(info, input.now))),
   "script::last_run": (input) => input.infos.map((info: any) => spans(script.lastRun(info, input.now))),

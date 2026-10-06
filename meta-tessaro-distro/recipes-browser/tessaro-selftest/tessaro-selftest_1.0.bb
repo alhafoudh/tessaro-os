@@ -5,7 +5,8 @@ node name, its addresses and whether it is claimed. selftest.html is the self-te
 technician points KIOSK_URL at to check rendering, fonts, emoji, form inputs, scrolling \
 and multi-touch, WebSerial and WebHID, audio and video playback, and WebAudio synthesis \
 - on one screen, with the network down. maintenance.html is the page maintenance mode \
-shows by default."
+shows by default. player.html plays the playlist the agent writes to \
+/playlist.json."
 LICENSE = "Apache-2.0"
 LIC_FILES_CHKSUM = "file://${COMMON_LICENSE_DIR}/Apache-2.0;md5=89aea4e17d99a7cacdbeed46a0096b10"
 
@@ -17,6 +18,9 @@ SRC_URI = " \
     file://index.html \
     file://selftest.html \
     file://maintenance.html \
+    file://player/player.html \
+    file://player/player.js \
+    file://player/player-core.js \
     file://10-tessaro-selftest.conf \
     file://media/sample-video-3s-fullhd.mp4 \
     file://media/sample-video-3s-4k.mp4 \
@@ -40,6 +44,14 @@ do_install() {
     # this directory is already nginx's root on the loopback, so it is
     # http://127.0.0.1/maintenance.html with no server config of its own.
     install -m0644 ${WORKDIR}/maintenance.html ${D}${datadir}/tessaro-selftest/maintenance.html
+
+    # The playlist player, http://127.0.0.1/player.html, which the agent puts
+    # on screen when a playlist plays. Flat in the root, next to the other
+    # pages: player.js imports ./player-core.js by relative path. The unit
+    # test and the dev/ samples next to them in player/ stay out of the image.
+    install -m0644 ${WORKDIR}/player/player.html ${D}${datadir}/tessaro-selftest/player.html
+    install -m0644 ${WORKDIR}/player/player.js ${D}${datadir}/tessaro-selftest/player.js
+    install -m0644 ${WORKDIR}/player/player-core.js ${D}${datadir}/tessaro-selftest/player-core.js
 
     # The page refers to these by relative path, so the layout under
     # ${datadir}/tessaro-selftest has to match what selftest.html asks for.

@@ -25,7 +25,7 @@ use tokio::sync::{mpsc, watch, Notify};
 use tokio::time::Instant;
 
 use super::{After, Caller, Control, Stream, CDP_LIMIT};
-use crate::cdp::session::{BindingCall, PageScripts, BINDING};
+use crate::cdp::session::{BindingCall, PageScripts, BINDING, PLAYER_BINDING};
 use crate::config::BridgeMode;
 use crate::deadline::{blocking, within};
 use crate::state;
@@ -33,6 +33,13 @@ use crate::sync::lock;
 use crate::watchdog::Heartbeat;
 
 const PREAMBLE: &str = include_str!("bridge.js");
+
+/// Run in every frame of the player before the frame's own scripts: takes
+/// the frame's copy of the player's binding, so a page in a frame cannot
+/// report for the player, and tells the agent about input in the frame, at
+/// most once a second, which holds an interactive item on screen
+/// (docs/playlists.md). The player page itself keeps its binding.
+const FRAME_INPUT: &str = include_str!("frame-input.js");
 
 /// How often the settings are looked at for a change nobody announced: an
 /// address from DHCP, free space.
@@ -103,6 +110,7 @@ const READS: &[&str] = &[
     "printer.list",
     "printer.jobs",
     "scripts.list",
+    "playlist.status",
 ];
 
 /// What `main` hands over: the session's end of the page scripts, and the
@@ -122,6 +130,13 @@ struct Offer {
     /// printer.enable: window.print() is taken over and `page.print`
     /// answered, whatever the mode.
     printing: bool,
+    /// The player is on screen: its frames get the input listener, and those
+    /// from `frame_origins` the bridge too.
+    player: bool,
+    /// The origins a frame of the player is answered from: the URL items
+    /// that have `bridge`, and browser.url's, which plays as a playlist of
+    /// one. Only while the player is on screen.
+    frame_origins: Vec<String>,
 }
 
 impl Offer {
@@ -200,6 +215,11 @@ impl Control {
                     call = calls.recv() => {
                         let Some(call) = call else { return };
                         let control = Arc::clone(&control);
+                        if call.binding == PLAYER_BINDING {
+                            // naked: player_call's every wait is bounded; see there
+                            tokio::spawn(async move { control.player_call(call).await });
+                            continue;
+                        }
                         let bridge = Arc::clone(&bridge);
                         // naked: page_call's every wait is bounded; see there
                         tokio::spawn(async move { control.page_call(&bridge, call).await });
@@ -250,11 +270,22 @@ impl Control {
         let mut origins: Vec<String> = origin_of(&expanded).into_iter().collect();
         origins.extend(origin_of(&config.kiosk_url));
         origins.dedup();
+        let frame_origins = if config.player {
+            let mut frame_origins = live.playlists.bridge.clone();
+            frame_origins.extend(origin_of(&expanded));
+            frame_origins.sort();
+            frame_origins.dedup();
+            frame_origins
+        } else {
+            Vec::new()
+        };
         Offer {
             mode: config.bridge,
             script: config.inject_script.clone(),
             origins,
             printing: config.printing,
+            player: config.player,
+            frame_origins,
         }
     }
 
@@ -331,16 +362,30 @@ impl Control {
         // is on, which needs the binding even with the bridge off.
         let binding = offer.mode >= BridgeMode::Config || offer.printing;
         let mut sources = Vec::new();
+        if offer.player {
+            // First, so the frame's copy of the player's binding is taken
+            // before any of the frame's own scripts run.
+            sources.push(FRAME_INPUT.to_string());
+        }
         if binding {
             sources.push(preamble(&offer, &bridge.settle, &snapshot));
         }
         sources.extend(source.clone());
+        // A frame in a process of its own is a child session, which gets the
+        // same scripts on its own.
+        let frame_sources = if offer.player {
+            sources.clone()
+        } else {
+            Vec::new()
+        };
         let rebind =
             binding.then(|| format!("window[{0}] && window[{0}].rebind()", json!(bridge.settle)));
         bridge.scripts.send_if_modified(|scripts| {
             let before = scripts.clone();
             scripts.binding = binding;
             scripts.sources = sources;
+            scripts.player = offer.player;
+            scripts.frame_sources = frame_sources;
             scripts.rebind = rebind;
             if reload {
                 scripts.reload += 1;
@@ -427,7 +472,7 @@ impl Control {
     /// One call from the page, answered in the context it came from.
     async fn page_call(self: &Arc<Self>, bridge: &Bridge, call: BindingCall) {
         let offer = lock(&bridge.offer).clone();
-        if !call.top || !offer.origins.contains(&call.origin) {
+        if !answered(&offer, &call) {
             self.log.debug(format!(
                 "page bridge: ignored a call from {:?} (top frame: {})",
                 call.origin, call.top
@@ -473,13 +518,14 @@ impl Control {
         );
         let settled = self
             .session
-            .call(
+            .call_on(
                 &Heartbeat::detached(),
+                call.session.as_deref(),
                 "Runtime.evaluate",
                 json!({ "expression": expression, "contextId": call.context }),
                 CDP_LIMIT,
             )
-            .await; // naked: SessionHandle::call bounds itself with within()
+            .await; // naked: SessionHandle::call_on bounds itself with within()
         if let Err(err) = settled {
             self.log
                 .debug(format!("page bridge: could not answer {name}: {err}"));
@@ -533,6 +579,11 @@ impl Control {
                 (Ok(Value::Null), None)
             }
             "device.status" => plain(self.status().await.map(|status| page_status(&status))),
+            "playlist.status" => plain(
+                self.playlist_status()
+                    .await
+                    .map(|status| page_playlist(&status)),
+            ),
             "network.status" => {
                 let paths = self.paths.clone();
                 plain(
@@ -949,9 +1000,22 @@ fn preamble(offer: &Offer, settle: &str, snapshot: &BTreeMap<String, String>) ->
         .replace("__MODE__", &json!(offer.mode.name()).to_string())
         .replace("__SETTLE__", &json!(settle).to_string())
         .replace("__ORIGINS__", &json!(offer.origins).to_string())
+        .replace("__FRAME_ORIGINS__", &json!(offer.frame_origins).to_string())
         .replace("__BINDING__", &json!(BINDING).to_string())
         .replace("__CONFIG__", &json!(snapshot).to_string())
         .replace("__PRINTING__", &json!(offer.printing).to_string())
+}
+
+/// Whether a bridge call is answered: from the main frame's own world on one
+/// of the offer's origins, or - while the player is on screen - from a
+/// frame's own world on an item's origin (`Offer::frame_origins`). Where it
+/// came from is what the browser says, never the page.
+fn answered(offer: &Offer, call: &BindingCall) -> bool {
+    if call.top {
+        offer.origins.contains(&call.origin)
+    } else {
+        offer.player && call.frame && offer.frame_origins.contains(&call.origin)
+    }
 }
 
 /// The offer in the journal's words.
@@ -1109,6 +1173,32 @@ fn page_status(status: &protocol::Status) -> Value {
         "hardware": status.hardware,
         "memory": status.memory,
         "cpuPercent": status.cpu_percent,
+        "playlist": status.playlist.as_ref().map(page_playlist),
+    })
+}
+
+/// `playlist status` as the page gets it: `tessaro.playlist.status()` and
+/// `device.status().playlist`.
+fn page_playlist(status: &protocol::playlist::PlaylistStatus) -> Value {
+    json!({
+        "player": status.player,
+        "playlist": status.playlist,
+        "reason": status.reason,
+        "entry": status.entry,
+        "item": status.item.as_ref().map(|item| json!({
+            "position": item.position,
+            "kind": item.kind,
+            "src": item.src,
+            "since": item.since,
+        })),
+        "skipped": status.skipped.iter().map(|skipped| json!({
+            "position": skipped.position,
+            "src": skipped.src,
+            "reason": skipped.reason,
+            "at": skipped.at,
+        })).collect::<Vec<_>>(),
+        "nothingPlayable": status.nothing_playable,
+        "cache": status.cache,
     })
 }
 
@@ -1152,6 +1242,41 @@ fn origin_of(url: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn call(origin: &str, top: bool, frame: bool) -> BindingCall {
+        BindingCall {
+            binding: BINDING,
+            session: None,
+            context: 1,
+            origin: origin.to_string(),
+            top,
+            frame,
+            payload: String::new(),
+        }
+    }
+
+    #[test]
+    fn a_frame_is_answered_only_as_an_item_of_the_player() {
+        let mut offer = offer(BridgeMode::Config);
+        offer.frame_origins = vec!["https://menu.test".to_string()];
+        assert!(answered(&offer, &call("http://kiosk.test", true, true)));
+        assert!(
+            !answered(&offer, &call("https://menu.test", false, true)),
+            "no player"
+        );
+
+        offer.player = true;
+        assert!(answered(&offer, &call("https://menu.test", false, true)));
+        assert!(
+            !answered(&offer, &call("https://menu.test", false, false)),
+            "isolated world"
+        );
+        assert!(!answered(&offer, &call("https://ads.test", false, true)));
+        assert!(
+            !answered(&offer, &call("https://menu.test", true, true)),
+            "not the kiosk"
+        );
+    }
 
     #[tokio::test]
     async fn the_page_gets_the_hardware_but_not_the_node() {
@@ -1204,6 +1329,8 @@ mod tests {
             script: String::new(),
             origins: vec!["http://kiosk.test".to_string()],
             printing: false,
+            player: false,
+            frame_origins: Vec::new(),
         }
     }
 

@@ -88,7 +88,7 @@
     {
       "key": "browser.disable_features",
       "env": "KIOSK_DISABLE_FEATURES",
-      "value": "FallbackToSWIfGLES3NotSupported,PersistentHistograms",
+      "value": "FallbackToSWIfGLES3NotSupported,PersistentHistograms,DisableLoadExtensionCommandLineSwitch",
       "source": "default"
     },
     {
@@ -233,6 +233,12 @@
       "key": "printer.enable",
       "env": "KIOSK_PRINTING",
       "value": "0",
+      "source": "default"
+    },
+    {
+      "key": "playlist.default",
+      "env": "KIOSK_PLAYLIST",
+      "value": "",
       "source": "default"
     },
     {

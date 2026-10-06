@@ -110,6 +110,16 @@ const shots = [
     browser: true,
   },
   {
+    name: "webconfig-playlists",
+    url: "https://192.168.1.42:7400/playlists",
+    routes: webconfig,
+    ready: answered,
+    browser: true,
+    // 42 s after the item in the fixture came on screen, so its "ago" is
+    // the same in every picture.
+    clock: (1_791_270_000 + 42) * 1000,
+  },
+  {
     name: "webconfig-quick-setup",
     url: "https://192.168.1.42:7400/quick-setup",
     routes: webconfig,
@@ -133,6 +143,7 @@ for (const shot of shots) {
       ? route.fulfill({ contentType: answer[0], body: answer[1], status: answer[2] ?? 200 })
       : route.abort();
   });
+  if (shot.clock) await page.clock.setFixedTime(new Date(shot.clock));
   await page.goto(shot.url);
   if (shot.ready) await page.waitForFunction(shot.ready);
   await page.evaluate(() => document.fonts.ready);

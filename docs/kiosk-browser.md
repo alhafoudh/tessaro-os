@@ -428,6 +428,16 @@ claimed.
 * **Everything is inline**, for the reason the maintenance page's is: this is
   shown before anyone set the device up, often with no network.
 
+## The player page
+
+**While a playlist is in use the browser shows `http://127.0.0.1/player.html`
+instead of browser.url, and the page plays the playlist in frames, images and
+videos of its own** ([playlists.md](playlists.md)). What it changes for the
+browser is there: the `frame-unlock` extension loaded with
+`KIOSK_EXTENSION_ARGS`, the cookie and storage partitioning policies that keep
+its frames first-party, the interactive items' origins in the device grants,
+and the probe and periodic refresh in player mode.
+
 ## Self-test page
 
 **It is `http://127.0.0.1/selftest.html`**, beside the welcome page.

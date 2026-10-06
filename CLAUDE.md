@@ -54,6 +54,7 @@ same change as the behaviour it describes.
 | [docs/try-tessaro.md](docs/try-tessaro.md) | Try Tessaro, the Mac app with a device in a VM: what the bundle carries, the relinked QEMU runtime and its licenses, the command line, the disk overlay and reset, ports, the client store entry, the activities |
 | [docs/webconfig.md](docs/webconfig.md) | Webconfig: browser sessions, tickets and the activity rule, the handover across restarts, opening it from ctl and the GUI, the pages, the describe port and its golden fixtures, serving and caching, the frontend and its codegen, the dev proxy, the bitbake build and `bitbake-lock.json` |
 | [docs/printing.md](docs/printing.md) | the device's CUPS and why it is set up that way, the `printers` table and the reconcile, driverless and raw printers, `printer.enable` and `window.print()`, the default printer, discovery, supplies, sizes, which printers work |
+| [docs/playlists.md](docs/playlists.md) | playlists and the player page: when the player is on screen instead of browser.url, the timetable and what plays, preloading and transitions, interactive items and input from frames, the frame-unlock extension, first-party frames and their grants, the media cache |
 | [docs/quick-setup.md](docs/quick-setup.md) | the welcome page's QR code, captive portal detection, nginx's redirect to Quick Setup on the API's port, what the page uses, the online indicator |
 
 **Writing docs** (in `docs/` and in this file):
@@ -170,6 +171,8 @@ Use the mise tasks rather than calling `kas-container` directly:
 | `mise run webconfig:run` | Webconfig's dev server, the API proxied to `TESSARO_WEBCONFIG_TARGET` (default the qemu forward) |
 | `mise run webconfig:build` | Webconfig into `build/webconfig`, which `agent:integration` serves |
 | `mise run webconfig:test` / `webconfig:lint` | Its unit tests, the golden fixtures and `bitbake-lock.json`; tsc, ESLint and Prettier |
+| `mise run player:test` | The player page's unit tests (`player-core.js`), with `node --test` |
+| `mise run player:run` | The player page with a sample playlist on http://127.0.0.1:8090, for desktop development |
 | `mise run webconfig:lock` | `bitbake-lock.json` from `package-lock.json`, after any change to the dependencies |
 | `mise run sbom:build` | The `$TESSARO_MACHINE` image's SBOM bundle and license list into `build/sbom/`, from its built image |
 | `mise run sbom:check` | Every crate, npm package and vendored file against the license policy in `sbom/licenses.yml` |
@@ -453,6 +456,8 @@ same thing. Keep to these rules when adding a command or a setting:
     switching them on and off, their output, checking a calendar.
   * `printer`: the printers the device prints on. Discover, create, remove,
     the default, a test page, print, jobs.
+  * `playlist`: the screens the player shows instead of browser.url. The
+    playlists, their items, the timetable that picks one, what plays now.
   * `update`: putting an image on the device.
   * `files`: the file store in `/data/files`. Upload, download, sync, list,
     move, rm.
@@ -478,7 +483,7 @@ same thing. Keep to these rules when adding a command or a setting:
   belongs to (`device factory-reset` wipes the device, `access unclaim` only
   removes its owners).
 * **Setting keys are prefixed by the command group that acts on the same
-  thing**: `browser.*`, `screen.*`, `audio.*`, `time.*`, `network.*`, `device.*`, `access.*`, `printer.*`, `camera.*`. A key
+  thing**: `browser.*`, `screen.*`, `audio.*`, `time.*`, `network.*`, `device.*`, `access.*`, `printer.*`, `camera.*`, `playlist.*`. A key
   that no command group matches is named after the component it tunes
   (`agent.*`), and `data.*` is the user's namespace. A sub-feature with its own
   on/off gets a third level that mirrors its command (`browser maintenance on

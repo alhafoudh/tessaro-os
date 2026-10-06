@@ -1,0 +1,176 @@
+{
+  "function": "playlist::list",
+  "input": [
+    {
+      "default": true,
+      "id": "a1b2c3d4e5f60718",
+      "items": [
+        {
+          "duration_s": 10,
+          "kind": "image",
+          "src": "http://127.0.0.1/files/welcome.png"
+        },
+        {
+          "kind": "video",
+          "src": "https://cdn.test/clips/promo.mp4"
+        }
+      ],
+      "name": "lobby",
+      "playing": false,
+      "timetable": [],
+      "transition": "fade",
+      "transition_ms": 800
+    },
+    {
+      "default": false,
+      "id": "0f9e8d7c6b5a4938",
+      "items": [
+        {
+          "duration_s": 60,
+          "interactive": true,
+          "kind": "url",
+          "src": "https://menu.test/today"
+        }
+      ],
+      "name": "lunch",
+      "playing": true,
+      "timetable": [
+        "7f3a9c21e4b05d68",
+        "2b8e4f10c9a7d356"
+      ],
+      "transition": "cut",
+      "transition_ms": 0
+    },
+    {
+      "default": false,
+      "id": "5566778899aabbcc",
+      "items": [],
+      "name": "spare",
+      "playing": false,
+      "timetable": [],
+      "transition": "fade",
+      "transition_ms": 800
+    }
+  ],
+  "output": [
+    [
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "heading",
+        "lobby",
+        20
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "plain",
+        "2 items",
+        10
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "playlist.default",
+        0
+      ]
+    ],
+    [
+      [
+        "ok",
+        "*",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "heading",
+        "lunch",
+        20
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "plain",
+        "1 item",
+        10
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "2 timetable entries",
+        0
+      ]
+    ],
+    [
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "heading",
+        "spare",
+        20
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "plain",
+        "0 items",
+        0
+      ]
+    ],
+    [],
+    [
+      [
+        "muted",
+        "* on screen now; its items with",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "cmd",
+        "tessaro-ctl playlist show NAME",
+        0
+      ]
+    ]
+  ]
+}

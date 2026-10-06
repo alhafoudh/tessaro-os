@@ -81,6 +81,28 @@
       ],
       "seconds_left": 25
     },
+    "playlist": {
+      "cache": {
+        "failed": 1,
+        "pending": 0,
+        "ready": 3
+      },
+      "entry": "7f3a9c21e4b05d68",
+      "item": {
+        "kind": "video",
+        "position": 2,
+        "since": {
+          "local": "2026-09-21 16:13:20 CEST",
+          "unix": 1790000000
+        },
+        "src": "https://cdn.test/clips/promo.mp4"
+      },
+      "nothing_playable": false,
+      "player": true,
+      "playlist": "lunch",
+      "reason": "timetable",
+      "skipped": []
+    },
     "revision": 42,
     "screen_on": false,
     "time": {
@@ -409,6 +431,41 @@
       }
     ],
     "more": [
+      {
+        "label": "playlist",
+        "value": [
+          [
+            "heading",
+            "lunch",
+            0
+          ],
+          [
+            "plain",
+            " ",
+            0
+          ],
+          [
+            "muted",
+            "(timetable entry 7f3a9c21)",
+            0
+          ],
+          [
+            "plain",
+            ", item 2 video",
+            0
+          ],
+          [
+            "plain",
+            ", ",
+            0
+          ],
+          [
+            "warn",
+            "1 media copy failed",
+            0
+          ]
+        ]
+      },
       {
         "label": "audio",
         "value": [

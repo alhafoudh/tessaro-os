@@ -85,6 +85,7 @@ pub(crate) fn live() -> state::Live {
     state::Live {
         derived_name: Some(NAME.into()),
         values,
+        ..state::Live::default()
     }
 }
 
@@ -245,14 +246,122 @@ async fn answers() -> BTreeMap<&'static str, serde_json::Value> {
         timeout: 604_800,
     };
 
+    let (playlists, timetable, playing) = playlists(&ask).await;
+
     let json = |value: serde_json::Result<serde_json::Value>| value.unwrap();
     [
         ("api/v1/access/session", json(serde_json::to_value(session))),
         ("api/v1/config", json(serde_json::to_value(settings))),
         ("api/v1/config/keys", json(serde_json::to_value(keys))),
         ("api/v1/device/status", json(serde_json::to_value(status))),
+        ("api/v1/playlists", json(serde_json::to_value(playlists))),
+        (
+            "api/v1/playlists/status",
+            json(serde_json::to_value(playing)),
+        ),
+        (
+            "api/v1/playlists/timetable",
+            json(serde_json::to_value(timetable)),
+        ),
     ]
     .into()
+}
+
+/// The made-up device's playlists, as Webconfig's Playlists page shows
+/// them: made by the control plane, then shown as playing the way a device
+/// with the player on screen would report. The timetable and the player's
+/// report are made up whole: a timetable entry in the sandbox would put the
+/// player on screen, and the other pages show browser.url.
+async fn playlists<F, Fut>(
+    ask: &F,
+) -> (
+    Vec<protocol::playlist::PlaylistInfo>,
+    Vec<protocol::playlist::TimetableInfo>,
+    protocol::playlist::PlaylistStatus,
+)
+where
+    F: Fn(Command) -> Fut,
+    Fut: std::future::Future<Output = serde_json::Value>,
+{
+    use protocol::playlist::{
+        ActiveReason, CacheStatus, Day, ItemKind, PlayingItem, PlaylistInfo, PlaylistItem,
+        PlaylistSpec, PlaylistStatus, TimetableInfo, TimetableSpec, Transition,
+    };
+    let item = |kind, src: &str| PlaylistItem::new(kind, src);
+    let mut menu = item(ItemKind::Image, "https://cdn.example.com/menu/today.png");
+    menu.duration_s = Some(15);
+    let mut promo = item(ItemKind::Video, "http://127.0.0.1/files/promo.mp4");
+    promo.trim_start_ms = Some(5_000);
+    promo.trim_end_ms = Some(35_000);
+    let mut order = item(ItemKind::Url, URL);
+    order.duration_s = Some(30);
+    order.interactive = true;
+    order.idle_s = Some(60);
+    order.bridge = true;
+    let mut lunch = item(ItemKind::Image, "https://cdn.example.com/menu/lunch.png");
+    lunch.duration_s = Some(20);
+    let mut made = Vec::new();
+    for (name, transition, items) in [
+        ("lobby", Transition::Fade, vec![menu, promo, order.clone()]),
+        ("lunch", Transition::Slide, vec![lunch, order]),
+    ] {
+        let info: PlaylistInfo = serde_json::from_value(
+            ask(Command::PlaylistCreate {
+                spec: PlaylistSpec {
+                    name: name.into(),
+                    transition,
+                    transition_ms: 800,
+                    items,
+                },
+            })
+            .await,
+        )
+        .unwrap();
+        made.push(info);
+    }
+    // Ids are random in the sandbox; a picture wants the same every time.
+    for (info, id) in made.iter_mut().zip(["4f2a9c1e", "b71d03e5"]) {
+        info.id = id.into();
+    }
+    made[0].default = true;
+    made[0].playing = true;
+    made[1].timetable = vec!["e5c8a1f0".into()];
+    let timetable = vec![TimetableInfo {
+        id: "e5c8a1f0".into(),
+        spec: TimetableSpec {
+            playlist: "b71d03e5".into(),
+            days: vec![Day::Mon, Day::Tue, Day::Wed, Day::Thu, Day::Fri],
+            from: "11:30".into(),
+            to: "14:00".into(),
+            priority: 0,
+            enabled: true,
+        },
+        playlist_name: "lunch".into(),
+        active: false,
+    }];
+    let playing = PlaylistStatus {
+        player: true,
+        playlist: Some("lobby".into()),
+        reason: ActiveReason::Default,
+        entry: None,
+        item: Some(PlayingItem {
+            position: 2,
+            kind: ItemKind::Video,
+            src: "http://127.0.0.1/files/promo.mp4".into(),
+            since: protocol::Moment {
+                unix: 1_791_270_000,
+                local: "2026-10-06 09:40:00 CEST".into(),
+            },
+        }),
+        skipped: Vec::new(),
+        nothing_playable: false,
+        cache: CacheStatus {
+            ready: 2,
+            pending: 0,
+            failed: 0,
+        },
+    };
+    (made, timetable, playing)
 }
 
 #[tokio::test]

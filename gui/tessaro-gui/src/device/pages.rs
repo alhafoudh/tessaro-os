@@ -23,12 +23,16 @@ use iced::{Element, Length, Task};
 use protocol::api::{
     self, AudioTestBody, CalendarBody, CertBody, CertQuery, DeleteBody, EvalBody, FilesQuery,
     GrowBody, KeyboardBody, MoveBody, NameBody, NavigateBody, PasswordBody, PathBody, PingBody,
-    PolicyBody, PolicyPositionBody, PolicyRef, PrintJobRef, PrintJobsQuery, PrinterRef,
-    ProfileQuery, ScheduleChange, ScheduleRef, ScreenPowerBody, ScriptRef, SpeedtestBody,
-    SshKeyQuery, TokenRef, WifiJoinBody, WifiScanQuery,
+    PlaylistItemMoveBody, PlaylistItemRef, PlaylistRef, PolicyBody, PolicyPositionBody, PolicyRef,
+    PrintJobRef, PrintJobsQuery, PrinterRef, ProfileQuery, ScheduleChange, ScheduleRef,
+    ScreenPowerBody, ScriptRef, SpeedtestBody, SshKeyQuery, TimetableEntryChange, TimetableRef,
+    TokenRef, WifiJoinBody, WifiScanQuery,
 };
 use protocol::files::{self as store, FileEntry, FileKind, FilesListing};
 use protocol::keys;
+use protocol::playlist::{
+    format_days, ItemKind, PlaylistInfo, PlaylistItem, TimetableInfo, Transition,
+};
 use protocol::policy::{
     self, EffectiveEntry, PolicyDoc, PolicyInfo, PolicyMoved, PolicyRemoved, PolicySaved,
 };
@@ -44,6 +48,7 @@ use protocol::{
 use serde_json::Value;
 use tessaro_client::connect::Answer;
 use tessaro_client::describe;
+use tessaro_client::playlist::{EntryFields, ItemFields};
 use tessaro_client::script::Typed;
 use tessaro_client::text::{Fact, Line};
 use tessaro_client::transfer::date;
@@ -84,6 +89,8 @@ pub struct State {
     print_jobs: Vec<PrintJob>,
     /// What the last discovery found, for Add.
     found: Vec<PrinterFound>,
+    playlists: Vec<PlaylistInfo>,
+    timetable: Vec<TimetableInfo>,
     tokens: Vec<TokenInfo>,
     ssh_keys: Vec<SshKeyInfo>,
     files_dir: String,
@@ -181,6 +188,23 @@ enum Action {
     PrinterRemove(String),
     /// A local file to print on the printer named.
     PrinterPrint(String, PathBuf),
+    /// A new playlist, or a change to this one.
+    PlaylistSave(Option<Box<PlaylistInfo>>),
+    /// The playlist with this id.
+    PlaylistRemove(String),
+    /// A new item of the playlist with this id (`position` None), or a
+    /// change to the item at `position`, from 1.
+    ItemSave {
+        playlist: String,
+        position: Option<u32>,
+    },
+    ItemRemove {
+        playlist: String,
+        position: u32,
+    },
+    /// A new timetable entry, or a change to the one with this id.
+    EntrySave(Option<String>),
+    EntryRemove(String),
     WifiJoin,
     Hotspot,
     Grow,
@@ -295,6 +319,21 @@ pub enum Msg {
     PrinterPicked(Option<PathBuf>),
     PrinterRemove,
     PrintCancel,
+    // playlists
+    PlaylistNew,
+    PlaylistEdit,
+    PlaylistRemove,
+    /// Make the selected playlist playlist.default (`true`), or clear it.
+    PlaylistDefault(bool),
+    ItemNew,
+    ItemEdit,
+    ItemRemove,
+    /// Move the selected item one up (`true`, towards position 1) or down.
+    ItemMove(bool),
+    EntryNew,
+    EntryEdit,
+    EntryToggle,
+    EntryRemove,
     // access
     TokenNew,
     TokenRevoke,
@@ -658,6 +697,268 @@ fn printer_form(found: Option<&PrinterFound>) -> Form {
         .field(Field::text("Paper", "", "the printer's own; or iso_a4_210x297mm"))
 }
 
+/// An item form's transition choice that leaves it to the playlist's, as an
+/// empty `--transition ''` does.
+const PLAYLISTS_OWN: &str = "playlist's";
+
+/// `PLAYLISTS_OWN`, then every transition.
+fn item_transitions() -> &'static [&'static str] {
+    const CHOICES: [&str; Transition::NAMES.len() + 1] = {
+        let mut choices = [PLAYLISTS_OWN; Transition::NAMES.len() + 1];
+        let mut at = 0;
+        while at < Transition::NAMES.len() {
+            choices[at + 1] = Transition::NAMES[at];
+            at += 1;
+        }
+        choices
+    };
+    &CHOICES
+}
+
+/// The playlist dialog: new, or `existing` to rename or retime.
+fn playlist_form(existing: Option<&PlaylistInfo>) -> Form {
+    let (name, transition, ms) = existing.map_or_else(
+        || {
+            (
+                String::new(),
+                Transition::default(),
+                protocol::playlist::TRANSITION_MS_DEFAULT,
+            )
+        },
+        |info| {
+            (
+                info.spec.name.clone(),
+                info.spec.transition,
+                info.spec.transition_ms,
+            )
+        },
+    );
+    let title = existing.map_or_else(
+        || "New playlist".to_string(),
+        |info| format!("Playlist {}", info.spec.name),
+    );
+    Form::new(
+        title,
+        "Save",
+        Action::PlaylistSave(existing.map(|info| Box::new(info.clone()))),
+    )
+    .field(Field::text(
+        "Name",
+        name,
+        "lower-case letters, digits and -",
+    ))
+    .field(Field::choice(
+        "Transition",
+        transition.name(),
+        Transition::NAMES,
+    ))
+    .field(Field::text("Transition ms", ms.to_string(), "milliseconds"))
+}
+
+/// The item dialog: a new item of `playlist`, or the one at a position,
+/// filled with what it has.
+fn item_form(playlist: &PlaylistInfo, existing: Option<(u32, &PlaylistItem)>) -> Form {
+    use tessaro_client::playlist::{format_ms, format_position, format_seconds};
+    let item = existing.map_or_else(
+        || PlaylistItem::new(ItemKind::Url, ""),
+        |(_, item)| item.clone(),
+    );
+    let title = match existing {
+        Some((position, _)) => format!("Item {position} of {}", playlist.spec.name),
+        None => format!("New item of {}", playlist.spec.name),
+    };
+    let shown = |value: Option<String>| value.unwrap_or_default();
+    let mut form = Form::new(
+        title,
+        "Save",
+        Action::ItemSave {
+            playlist: playlist.id.clone(),
+            position: existing.map(|(position, _)| position),
+        },
+    )
+    .wide()
+    .field(Field::choice("Kind", item.kind.name(), ItemKind::NAMES))
+    .field(
+        Field::text(
+            "URL",
+            item.src.clone(),
+            "https://..., http://127.0.0.1/files/...",
+        )
+        .mono(),
+    )
+    .field(Field::text(
+        "Duration",
+        shown(item.duration_s.map(format_seconds)),
+        "10s; a page or an image",
+    ))
+    .field(Field::text(
+        "From",
+        shown(item.trim_start_ms.map(format_position)),
+        "0:05; where a video starts",
+    ))
+    .field(Field::text(
+        "To",
+        shown(item.trim_end_ms.map(format_position)),
+        "0:30; where a video stops",
+    ))
+    .field(Field::check("Sound", item.sound))
+    .field(Field::text(
+        "Volume",
+        shown(item.volume.map(|volume| volume.to_string())),
+        "0 to 100",
+    ))
+    .field(Field::choice(
+        "Fit",
+        item.fit.name(),
+        protocol::playlist::Fit::NAMES,
+    ))
+    .field(Field::text(
+        "Background",
+        shown(item.background.clone()),
+        "#rrggbb",
+    ))
+    .field(Field::choice(
+        "Transition",
+        item.transition.map_or(PLAYLISTS_OWN, Transition::name),
+        item_transitions(),
+    ))
+    .field(Field::text(
+        "Transition ms",
+        shown(item.transition_ms.map(|ms| ms.to_string())),
+        "the playlist's",
+    ))
+    .field(Field::check("Interactive", item.interactive))
+    .field(Field::text(
+        "Idle",
+        shown(item.idle_s.map(format_seconds)),
+        "30s",
+    ))
+    .field(Field::text(
+        "Ready delay",
+        shown(item.ready_delay_ms.map(|ms| format_ms(u64::from(ms)))),
+        "500ms; a page",
+    ))
+    .field(Field::check("Bridge", item.bridge));
+    if existing.is_none() {
+        form = form.field(Field::text("Position", "", "at the end"));
+    }
+    form
+}
+
+/// What an item form says, as the client takes it. What the kind chosen
+/// cannot carry is left out, so switching an item's kind needs no field
+/// emptied first; a volume or an idle time with its box unticked still
+/// turns it on, as `tessaro-ctl playlist items add --volume` does.
+fn item_fields(form: &Form) -> ItemFields {
+    let kind = form.value("Kind");
+    let video = kind == ItemKind::Video.name();
+    let url = kind == ItemKind::Url.name();
+    let text = |label: &str| Some(form.value(label).to_string());
+    let only = |applies: bool, value: Option<String>| value.filter(|_| applies);
+    let flag = |label: &str, turned_on_by: &str| {
+        if form.checked(label) {
+            Some(true)
+        } else if form.value(turned_on_by).trim().is_empty() {
+            Some(false)
+        } else {
+            None
+        }
+    };
+    let transition = match form.value("Transition") {
+        PLAYLISTS_OWN => String::new(),
+        name => name.to_string(),
+    };
+    ItemFields {
+        kind: text("Kind"),
+        src: text("URL"),
+        duration: only(!video, text("Duration")),
+        from: only(video, text("From")),
+        to: only(video, text("To")),
+        sound: flag("Sound", "Volume").filter(|_| video),
+        volume: only(video, text("Volume")),
+        fit: only(!url, text("Fit")),
+        background: text("Background"),
+        transition: Some(transition),
+        transition_ms: text("Transition ms"),
+        interactive: flag("Interactive", "Idle").filter(|_| !video),
+        idle: only(!video, text("Idle")),
+        ready_delay: only(url, text("Ready delay")),
+        bridge: Some(form.checked("Bridge")).filter(|_| url),
+    }
+}
+
+/// The timetable entry dialog: new, or `existing` to change. `playlists`
+/// are what it may play.
+fn entry_form(existing: Option<&TimetableInfo>, playlists: &[PlaylistInfo]) -> Form {
+    let names = choices(
+        playlists
+            .iter()
+            .map(|info| info.spec.name.clone())
+            .collect(),
+    );
+    let playlist = existing
+        .and_then(|entry| names.iter().find(|name| **name == entry.playlist_name))
+        .or(names.first())
+        .copied()
+        .unwrap_or("");
+    let (days, from, to, priority, enabled) = existing.map_or_else(
+        || {
+            (
+                String::new(),
+                String::new(),
+                String::new(),
+                "0".to_string(),
+                true,
+            )
+        },
+        |entry| {
+            let spec = &entry.spec;
+            let days = if spec.days.is_empty() {
+                String::new()
+            } else {
+                format_days(&spec.days)
+            };
+            (
+                days,
+                spec.from.clone(),
+                spec.to.clone(),
+                spec.priority.to_string(),
+                spec.enabled,
+            )
+        },
+    );
+    let title = existing.map_or_else(
+        || "New timetable entry".to_string(),
+        |entry| {
+            format!(
+                "Timetable entry {}",
+                tessaro_client::playlist::short_id(&entry.id)
+            )
+        },
+    );
+    Form::new(
+        title,
+        "Save",
+        Action::EntrySave(existing.map(|entry| entry.id.clone())),
+    )
+    .field(Field::choice("Playlist", playlist, names))
+    .field(Field::text("Days", days, "every day, or mon-fri, sat,sun"))
+    .field(Field::text("From", from, "HH:MM"))
+    .field(Field::text("To", to, "HH:MM"))
+    .field(Field::text("Priority", priority, "0"))
+    .field(Field::check("Enabled", enabled))
+}
+
+/// A timetable entry's priority as typed; empty is 0.
+fn priority(text: &str) -> Result<i32, String> {
+    match text.trim() {
+        "" => Ok(0),
+        text => text
+            .parse()
+            .map_err(|_| format!("{text:?} is not a priority: a whole number")),
+    }
+}
+
 /// Shared facts as plain text, a line each, for a text dialog.
 fn fact_text(facts: &[Fact]) -> String {
     facts
@@ -716,6 +1017,7 @@ fn page_of(tag: &str) -> &'static str {
         "scripts" | "script" => "scripts",
         "schedules" | "schedule" => "schedules",
         "printers" | "printer" => "printer",
+        "playlists" | "playlist" | "timetable" => "playlists",
         "tokens" | "token" | "password" | "claim" | "unclaim" => "access",
         "ssh" => "ssh",
         "files" => "files",
@@ -728,6 +1030,14 @@ fn page_of(tag: &str) -> &'static str {
 
 fn parse<T: serde::de::DeserializeOwned>(value: Value) -> Result<T, String> {
     serde_json::from_value(value).map_err(|err| format!("unexpected answer: {err}"))
+}
+
+/// What a client flow run on the worker got, as a call's answer.
+fn answer<T: serde::Serialize>(result: Result<T, String>) -> Answer<Value> {
+    match result.and_then(|value| serde_json::to_value(value).map_err(|err| err.to_string())) {
+        Ok(value) => Answer::Ok(value),
+        Err(error) => Answer::Refused(error),
+    }
 }
 
 /// `command` in a new terminal window of the platform's own.
@@ -948,6 +1258,10 @@ impl Device {
                     call::<api::printer::Jobs>(PrintJobsQuery { printer: None }, ()),
                 );
             }
+            Page::Playlists => {
+                self.call("playlists", fetch::<api::playlist::List>());
+                self.call("timetable", fetch::<api::playlist::TimetableList>());
+            }
             Page::Access => self.call("tokens", fetch::<api::access::Tokens>()),
             Page::Ssh => self.call("ssh.keys", fetch::<api::ssh::Keys>()),
             Page::Files => {
@@ -975,7 +1289,8 @@ impl Device {
         }
         let result = match tag {
             "script.save" | "schedule.save" | "schedule.check" | "policy.save"
-            | "printer.create" => match self.form_answer(tag, result) {
+            | "printer.create" | "playlist.create" | "playlist.change" | "playlist.item.save"
+            | "timetable.create" | "timetable.change" => match self.form_answer(tag, result) {
                 Some(result) => result,
                 None => return,
             },
@@ -999,7 +1314,8 @@ impl Device {
     }
 
     /// The answers of a form that stays open until the device takes it - a
-    /// script, a schedule, a browser policy, a new printer - belong in the form while
+    /// script, a schedule, a browser policy, a new printer, a playlist, an
+    /// item, a timetable entry - belong in the form while
     /// it is open: a refused save keeps it open with the device's reason, a
     /// check says when the calendar fires. What is left for the usual path,
     /// if anything.
@@ -1015,6 +1331,9 @@ impl Device {
                     Action::ScheduleSave(_) => tag.starts_with("schedule."),
                     Action::PolicySave { .. } => tag == "policy.save",
                     Action::PrinterCreate => tag == "printer.create",
+                    Action::PlaylistSave(_) => tag == "playlist.create" || tag == "playlist.change",
+                    Action::ItemSave { .. } => tag == "playlist.item.save",
+                    Action::EntrySave(_) => tag == "timetable.create" || tag == "timetable.change",
                     _ => false,
                 } =>
             {
@@ -1105,6 +1424,75 @@ impl Device {
                 self.log(Tone::Ok, done.message);
                 self.pages.selected.remove("printers");
                 self.refresh_page(Page::Printer);
+            }
+            "playlists" => {
+                self.pages.playlists = parse(value)?;
+                // Until one is picked, the playlist on screen is, else the
+                // first, as in Webconfig.
+                let known = self
+                    .selected("playlists")
+                    .is_some_and(|id| self.pages.playlists.iter().any(|info| &info.id == id));
+                if !known {
+                    let shown = self.pages.playlists.iter().find(|info| info.playing);
+                    match shown.or(self.pages.playlists.first()) {
+                        Some(info) => {
+                            let id = info.id.clone();
+                            self.pages.selected.insert("playlists", id);
+                        }
+                        None => {
+                            self.pages.selected.remove("playlists");
+                        }
+                    }
+                }
+            }
+            "timetable" => self.pages.timetable = parse(value)?,
+            "playlist.create" | "playlist.change" => {
+                let info: PlaylistInfo = parse(value)?;
+                let verb = if tag == "playlist.create" {
+                    "created"
+                } else {
+                    "changed"
+                };
+                self.log(Tone::Ok, format!("{verb} {}", info.spec.name));
+                self.pages.selected.insert("playlists", info.id);
+                // The timetable names its playlists: a rename shows there.
+                self.refresh_page(Page::Playlists);
+            }
+            "playlist.item" | "playlist.item.save" => {
+                let info: PlaylistInfo = parse(value)?;
+                self.log(Tone::Ok, format!("changed {}", info.spec.name));
+                match self
+                    .pages
+                    .playlists
+                    .iter_mut()
+                    .find(|known| known.id == info.id)
+                {
+                    Some(known) => *known = info,
+                    None => self.pages.playlists.push(info),
+                }
+            }
+            "playlist.remove" | "timetable.remove" => {
+                let done: Done = parse(value)?;
+                self.log(Tone::Ok, done.message);
+                if tag == "playlist.remove" {
+                    self.pages.selected.remove("playlists");
+                    self.pages.selected.remove("playlist.items");
+                } else {
+                    self.pages.selected.remove("timetable");
+                }
+                self.refresh_page(Page::Playlists);
+            }
+            "timetable.create" | "timetable.change" | "timetable.set" => {
+                let entry: TimetableInfo = parse(value)?;
+                let verb = if tag == "timetable.create" {
+                    "added"
+                } else {
+                    "changed"
+                };
+                self.log(Tone::Ok, format!("{verb} timetable entry {}", entry.id));
+                self.pages.selected.insert("timetable", entry.id);
+                // Each playlist counts the entries that play it.
+                self.refresh_page(Page::Playlists);
             }
             "net" => self.pages.net = Some(parse(value)?),
             "net.profiles" => self.pages.profiles = parse(value)?,
@@ -1382,11 +1770,9 @@ impl Device {
     pub(super) fn page_update(&mut self, message: Msg) -> Task<Message> {
         let online = self.link == Link::Online;
         match message {
-            Msg::Select(table, key) => {
-                self.pages.selected.insert(table, key);
-            }
+            Msg::Select(table, key) => self.select(table, key),
             Msg::Activate(table, key) => {
-                self.pages.selected.insert(table, key.clone());
+                self.select(table, key.clone());
                 return self.activate(table, key);
             }
             Msg::Navigate => {
@@ -1845,6 +2231,116 @@ impl Device {
                     );
                 }
             }
+            Msg::PlaylistNew => self.form(playlist_form(None)),
+            Msg::PlaylistEdit => {
+                if let Some(info) = self.selected_playlist() {
+                    self.form(playlist_form(Some(&info)));
+                }
+            }
+            Msg::PlaylistRemove => {
+                if let Some(info) = self.selected_playlist() {
+                    self.form(Form::new(
+                        format!("Remove playlist {}", info.spec.name),
+                        "Remove",
+                        Action::PlaylistRemove(info.id),
+                    ));
+                }
+            }
+            Msg::PlaylistDefault(true) => {
+                if let Some(info) = self.selected_playlist() {
+                    match super::check(keys::PLAYLIST_DEFAULT, &info.spec.name) {
+                        Ok(name) => {
+                            self.set(&[(keys::PLAYLIST_DEFAULT, &name)]);
+                            self.refresh_page(Page::Playlists);
+                        }
+                        Err(error) => self.log(Tone::Bad, error),
+                    }
+                }
+            }
+            Msg::PlaylistDefault(false) => {
+                let if_revision = self.revision();
+                self.request(Request::Unset {
+                    keys: vec![keys::PLAYLIST_DEFAULT.to_string()],
+                    if_revision,
+                });
+                self.refresh_page(Page::Playlists);
+            }
+            Msg::ItemNew => {
+                if let Some(info) = self.selected_playlist() {
+                    self.form(item_form(&info, None));
+                }
+            }
+            Msg::ItemEdit => {
+                if let Some((info, position)) = self.selected_item() {
+                    if let Ok(item) = tessaro_client::playlist::item_at(&info, position) {
+                        let form = item_form(&info, Some((position, item)));
+                        self.form(form);
+                    }
+                }
+            }
+            Msg::ItemRemove => {
+                if let Some((info, position)) = self.selected_item() {
+                    self.form(Form::new(
+                        format!("Remove item {position} of {}", info.spec.name),
+                        "Remove",
+                        Action::ItemRemove {
+                            playlist: info.id,
+                            position,
+                        },
+                    ));
+                }
+            }
+            Msg::ItemMove(up) => {
+                if let Some((info, position)) = self.selected_item() {
+                    let to = if up { position - 1 } else { position + 1 };
+                    if (1..=info.spec.items.len() as u32).contains(&to) {
+                        // Selected by place: the moved item stays selected.
+                        self.pages.selected.insert("playlist.items", to.to_string());
+                        self.call(
+                            "playlist.item",
+                            call::<api::playlist::ItemMove>(
+                                PlaylistItemRef {
+                                    playlist: info.id,
+                                    position,
+                                },
+                                PlaylistItemMoveBody { to },
+                            ),
+                        );
+                    }
+                }
+            }
+            Msg::EntryNew => self.form(entry_form(None, &self.pages.playlists)),
+            Msg::EntryEdit => {
+                if let Some(entry) = self.selected_entry() {
+                    self.form(entry_form(Some(&entry), &self.pages.playlists));
+                }
+            }
+            Msg::EntryToggle => {
+                if let Some(entry) = self.selected_entry() {
+                    self.call(
+                        "timetable.set",
+                        call::<api::playlist::TimetableChange>(
+                            TimetableRef { entry: entry.id },
+                            TimetableEntryChange {
+                                enabled: Some(!entry.spec.enabled),
+                                ..TimetableEntryChange::default()
+                            },
+                        ),
+                    );
+                }
+            }
+            Msg::EntryRemove => {
+                if let Some(entry) = self.selected_entry() {
+                    self.form(Form::new(
+                        format!(
+                            "Remove timetable entry {}",
+                            tessaro_client::playlist::short_id(&entry.id)
+                        ),
+                        "Remove",
+                        Action::EntryRemove(entry.id),
+                    ));
+                }
+            }
             Msg::WifiScan => self.call(
                 "wifi.scan",
                 call::<api::network::WifiScan>(
@@ -2253,8 +2749,20 @@ impl Device {
             "policies" => self.page_update(Msg::PolicyEdit),
             "printers" => self.page_update(Msg::PrinterShow),
             "found" => self.page_update(Msg::PrinterAdd),
+            "playlists" => self.page_update(Msg::PlaylistEdit),
+            "playlist.items" => self.page_update(Msg::ItemEdit),
+            "timetable" => self.page_update(Msg::EntryEdit),
             _ => Task::none(),
         }
+    }
+
+    /// A row picked in a table. Another playlist shows other items, so the
+    /// item picked before goes.
+    fn select(&mut self, table: &'static str, key: String) {
+        if table == "playlists" && self.selected(table) != Some(&key) {
+            self.pages.selected.remove("playlist.items");
+        }
+        self.pages.selected.insert(table, key);
     }
 
     /// The main table of the page shown, and its keys, for Up and Down.
@@ -2312,6 +2820,14 @@ impl Device {
                 "schedules",
                 self.pages
                     .schedules
+                    .iter()
+                    .map(|info| info.id.clone())
+                    .collect(),
+            ),
+            Page::Playlists => (
+                "playlists",
+                self.pages
+                    .playlists
                     .iter()
                     .map(|info| info.id.clone())
                     .collect(),
@@ -2432,6 +2948,33 @@ impl Device {
             .cloned()
     }
 
+    fn selected_playlist(&self) -> Option<PlaylistInfo> {
+        let id = self.selected("playlists")?;
+        self.pages
+            .playlists
+            .iter()
+            .find(|info| &info.id == id)
+            .cloned()
+    }
+
+    /// The selected playlist and the place of its selected item, from 1.
+    fn selected_item(&self) -> Option<(PlaylistInfo, u32)> {
+        let info = self.selected_playlist()?;
+        let position: u32 = self.selected("playlist.items")?.parse().ok()?;
+        (1..=info.spec.items.len() as u32)
+            .contains(&position)
+            .then_some((info, position))
+    }
+
+    fn selected_entry(&self) -> Option<TimetableInfo> {
+        let id = self.selected("timetable")?;
+        self.pages
+            .timetable
+            .iter()
+            .find(|entry| &entry.id == id)
+            .cloned()
+    }
+
     /// An edit in a multi-line field. An edit of a schedule's calendar asks
     /// the device when it fires, once the typing pauses.
     fn form_edit(&mut self, at: usize, action: text_editor::Action) -> Task<Message> {
@@ -2533,6 +3076,9 @@ impl Device {
                         | Action::ScheduleSave(_)
                         | Action::PolicySave { .. }
                         | Action::PrinterCreate
+                        | Action::PlaylistSave(_)
+                        | Action::ItemSave { .. }
+                        | Action::EntrySave(_)
                 ) =>
             {
                 self.dialog = Some(Dialog::Form(form));
@@ -2954,6 +3500,149 @@ impl Device {
                     }),
                 );
             }
+            Action::PlaylistSave(existing) => {
+                let name = form.value("Name").trim().to_string();
+                let transition: Transition = form.value("Transition").parse()?;
+                let ms = match form.value("Transition ms").trim() {
+                    "" => None,
+                    text => Some(tessaro_client::playlist::parse_transition_ms(text)?),
+                };
+                match existing {
+                    None => {
+                        let spec = tessaro_client::playlist::create_spec(
+                            &name,
+                            None,
+                            Some(transition),
+                            ms,
+                        )?;
+                        self.call("playlist.create", send::<api::playlist::Create>(spec));
+                    }
+                    Some(info) => {
+                        // The transition always goes, so the change is never
+                        // empty; the name only when it is a new one.
+                        let renamed = (name != info.spec.name).then_some(name);
+                        let change =
+                            tessaro_client::playlist::change(renamed, None, Some(transition), ms)?;
+                        self.call(
+                            "playlist.change",
+                            call::<api::playlist::Change>(
+                                PlaylistRef {
+                                    playlist: info.id.clone(),
+                                },
+                                change,
+                            ),
+                        );
+                    }
+                }
+            }
+            Action::PlaylistRemove(id) => self.call(
+                "playlist.remove",
+                call::<api::playlist::Remove>(
+                    PlaylistRef {
+                        playlist: id.clone(),
+                    },
+                    (),
+                ),
+            ),
+            Action::ItemSave { playlist, position } => {
+                let fields = item_fields(form);
+                let playlist = playlist.clone();
+                let save: Call = match *position {
+                    None => {
+                        let at = match form.value("Position").trim() {
+                            "" => None,
+                            text => Some(
+                                text.parse::<u32>()
+                                    .ok()
+                                    .filter(|at| *at >= 1)
+                                    .ok_or_else(|| format!("{text:?} is not a position: from 1"))?,
+                            ),
+                        };
+                        // Checked here first, so a mistake is shown before
+                        // anything is sent.
+                        tessaro_client::playlist::item_from_fields(&fields, at)?;
+                        let count = self
+                            .pages
+                            .playlists
+                            .iter()
+                            .find(|info| info.id == playlist)
+                            .map_or(0, |info| info.spec.items.len() as u32);
+                        let lands = at.unwrap_or(count + 1).min(count + 1);
+                        self.pages
+                            .selected
+                            .insert("playlist.items", lands.to_string());
+                        Box::new(move |session| {
+                            answer(tessaro_client::playlist::add_item(
+                                session, &playlist, &fields, at,
+                            ))
+                        })
+                    }
+                    Some(position) => Box::new(move |session| {
+                        answer(tessaro_client::playlist::set_item(
+                            session, &playlist, position, &fields,
+                        ))
+                    }),
+                };
+                self.call("playlist.item.save", save);
+            }
+            Action::ItemRemove { playlist, position } => {
+                self.pages.selected.remove("playlist.items");
+                self.call(
+                    "playlist.item",
+                    call::<api::playlist::ItemRemove>(
+                        PlaylistItemRef {
+                            playlist: playlist.clone(),
+                            position: *position,
+                        },
+                        (),
+                    ),
+                );
+            }
+            Action::EntrySave(id) => {
+                let playlist = form.value("Playlist").to_string();
+                let days = form.value("Days").to_string();
+                let from = form.value("From").to_string();
+                let to = form.value("To").to_string();
+                let priority = priority(form.value("Priority"))?;
+                let enabled = form.checked("Enabled");
+                match id {
+                    None => {
+                        let spec = tessaro_client::playlist::entry_spec(
+                            &playlist,
+                            Some(&days),
+                            &from,
+                            &to,
+                            priority,
+                            enabled,
+                        )?;
+                        self.call(
+                            "timetable.create",
+                            send::<api::playlist::TimetableCreate>(spec),
+                        );
+                    }
+                    Some(id) => {
+                        let change = tessaro_client::playlist::entry_change(&EntryFields {
+                            playlist: Some(playlist),
+                            days: Some(days),
+                            from: Some(from),
+                            to: Some(to),
+                            priority: Some(priority),
+                            enabled: Some(enabled),
+                        })?;
+                        self.call(
+                            "timetable.change",
+                            call::<api::playlist::TimetableChange>(
+                                TimetableRef { entry: id.clone() },
+                                change,
+                            ),
+                        );
+                    }
+                }
+            }
+            Action::EntryRemove(id) => self.call(
+                "timetable.remove",
+                call::<api::playlist::TimetableRemove>(TimetableRef { entry: id.clone() }, ()),
+            ),
             Action::Mkdir => {
                 let name = form.value("Name").trim();
                 if name.is_empty() {
@@ -3117,6 +3806,7 @@ impl Device {
             Page::Scripts => self.scripts_view(),
             Page::Schedules => self.schedules_view(),
             Page::Printer => self.printer_view(),
+            Page::Playlists => self.playlists_view(),
             Page::Access => self.access_view(),
             Page::Ssh => self.ssh_view(),
             Page::Files => self.files_view(),
@@ -3858,6 +4548,215 @@ impl Device {
                 action("Remove ...", with_one(Msg::ScheduleRemove)),
             ],
             vec![self.table("schedules", SCHEDULES, schedules, Length::Fill)],
+        )
+    }
+
+    /// The player, the playlists, the items of the one selected and the
+    /// timetable, each list with its own actions beside it.
+    fn playlists_view(&self) -> Element<'_, Message> {
+        const PLAYLISTS: &[Col] = &[
+            col("Playlist", Length::Fixed(180.0)),
+            col("Items", Length::Fixed(60.0)),
+            col("Transition", Length::Fixed(120.0)),
+            col("Default", Length::Fixed(60.0)),
+            col("Timetable", Length::Fixed(80.0)),
+            col("On screen", Length::Fill),
+        ];
+        const ITEMS: &[Col] = &[
+            col("#", Length::Fixed(40.0)),
+            col("Kind", Length::Fixed(60.0)),
+            col("Source", Length::Fixed(320.0)),
+            col("Plays", Length::Fixed(110.0)),
+            col("Options", Length::Fill),
+        ];
+        const TIMETABLE: &[Col] = &[
+            col("Entry", Length::Fixed(90.0)),
+            col("State", Length::Fixed(50.0)),
+            col("Days", Length::Fixed(130.0)),
+            col("Time", Length::Fixed(110.0)),
+            col("Playlist", Length::Fixed(160.0)),
+            col("Priority", Length::Fixed(60.0)),
+            col("Active", Length::Fill),
+        ];
+        let yes = |on: bool| if on { "yes" } else { "" };
+        let playlists = self
+            .pages
+            .playlists
+            .iter()
+            .map(|info| {
+                let entries = match info.timetable.len() {
+                    0 => String::new(),
+                    count => count.to_string(),
+                };
+                let on_screen: Cell<'_, Message> = if info.playing {
+                    cell("yes").style(text::success).into()
+                } else {
+                    cell("").into()
+                };
+                (
+                    info.id.clone(),
+                    vec![
+                        cell(info.spec.name.clone()).into(),
+                        cell(info.spec.items.len().to_string()).into(),
+                        cell(describe::playlist::transition(
+                            info.spec.transition,
+                            info.spec.transition_ms,
+                        ))
+                        .into(),
+                        cell(yes(info.default)).into(),
+                        cell(entries).into(),
+                        on_screen,
+                    ],
+                )
+            })
+            .collect();
+        let chosen = self.selected_playlist();
+        let items = chosen
+            .iter()
+            .flat_map(|info| info.spec.items.iter().zip(1u32..))
+            .map(|(item, position)| {
+                (
+                    position.to_string(),
+                    vec![
+                        cell(position.to_string()).style(theme::muted).into(),
+                        cell(item.kind.name()).into(),
+                        cell(describe::playlist::shorten(&item.src)).into(),
+                        cell(describe::playlist::timing(item)).into(),
+                        cell(describe::playlist::options(item).join(", "))
+                            .style(theme::muted)
+                            .into(),
+                    ],
+                )
+            })
+            .collect();
+        let entries = self
+            .pages
+            .timetable
+            .iter()
+            .map(|entry| {
+                let spec = &entry.spec;
+                let state: Cell<'_, Message> = if spec.enabled {
+                    cell("on").style(text::success).into()
+                } else {
+                    cell("off").style(text::danger).into()
+                };
+                (
+                    entry.id.clone(),
+                    vec![
+                        cell(tessaro_client::playlist::short_id(&entry.id))
+                            .style(theme::muted)
+                            .into(),
+                        state,
+                        cell(format_days(&spec.days)).into(),
+                        cell(format!("{}-{}", spec.from, spec.to)).into(),
+                        cell(entry.playlist_name.clone()).into(),
+                        cell(spec.priority.to_string()).into(),
+                        cell(yes(entry.active)).into(),
+                    ],
+                )
+            })
+            .collect();
+
+        let with_one = |message: Msg| chosen.as_ref().and_then(|_| self.when(message));
+        let item = self.selected_item();
+        let last = chosen
+            .as_ref()
+            .map_or(0, |info| info.spec.items.len() as u32);
+        let with_item = |message: Msg, fits: &dyn Fn(u32) -> bool| {
+            item.as_ref()
+                .filter(|(_, position)| fits(*position))
+                .and_then(|_| self.when(message))
+        };
+        let entry = self.selected_entry();
+        let with_entry = |message: Msg| entry.as_ref().and_then(|_| self.when(message));
+        let has_default = self
+            .setting(keys::PLAYLIST_DEFAULT)
+            .and_then(|setting| setting.value.as_deref())
+            .is_some_and(|value| !value.is_empty());
+        let toggle = if entry.as_ref().is_some_and(|entry| entry.spec.enabled) {
+            "Disable"
+        } else {
+            "Enable"
+        };
+
+        let mut body: Vec<Element<'_, Message>> = Vec::new();
+        if let Some(player) = self
+            .status
+            .as_ref()
+            .and_then(|(status, _)| status.playlist.as_ref())
+        {
+            body.push(self.shared_facts(
+                "playlist.status",
+                describe::playlist::status(player, tessaro_client::schedule::now()),
+            ));
+        }
+        body.push(self.table(
+            "playlists",
+            PLAYLISTS,
+            playlists,
+            Length::Fixed(TABLE_HEIGHT),
+        ));
+        body.push(
+            row![
+                self.table("playlist.items", ITEMS, items, Length::Fill),
+                column![
+                    theme::tool("Add item ...", with_one(Msg::ItemNew)),
+                    theme::tool("Edit item ...", with_item(Msg::ItemEdit, &|_| true)),
+                    theme::tool("Move up", with_item(Msg::ItemMove(true), &|at| at > 1)),
+                    theme::tool(
+                        "Move down",
+                        with_item(Msg::ItemMove(false), &|at| at < last)
+                    ),
+                    theme::tool("Remove item ...", with_item(Msg::ItemRemove, &|_| true)),
+                ]
+                .spacing(4),
+            ]
+            .spacing(6)
+            .height(Length::Fill)
+            .into(),
+        );
+        body.push(
+            row![
+                self.table("timetable", TIMETABLE, entries, Length::Fixed(TABLE_HEIGHT)),
+                column![
+                    theme::tool(
+                        "Add entry ...",
+                        (!self.pages.playlists.is_empty())
+                            .then_some(())
+                            .and_then(|()| self.when(Msg::EntryNew)),
+                    ),
+                    theme::tool("Edit entry ...", with_entry(Msg::EntryEdit)),
+                    theme::tool(toggle, with_entry(Msg::EntryToggle)),
+                    theme::tool("Remove entry ...", with_entry(Msg::EntryRemove)),
+                ]
+                .spacing(4),
+            ]
+            .spacing(6)
+            .into(),
+        );
+        self.page(
+            "playlists",
+            vec![
+                action("New playlist ...", self.when(Msg::PlaylistNew)),
+                action(
+                    "Clear default",
+                    has_default
+                        .then_some(())
+                        .and_then(|()| self.when(Msg::PlaylistDefault(false))),
+                ),
+            ],
+            vec![
+                action("Edit ...", with_one(Msg::PlaylistEdit)),
+                action(
+                    "Make default",
+                    chosen
+                        .as_ref()
+                        .filter(|info| !info.default)
+                        .and_then(|_| self.when(Msg::PlaylistDefault(true))),
+                ),
+                action("Remove ...", with_one(Msg::PlaylistRemove)),
+            ],
+            body,
         )
     }
 
@@ -4694,6 +5593,7 @@ pub(super) fn page_key(page: Page) -> &'static str {
         Page::Scripts => "scripts",
         Page::Schedules => "schedules",
         Page::Printer => "printer",
+        Page::Playlists => "playlists",
         Page::Access => "access",
         Page::Ssh => "ssh",
         Page::Files => "files",
@@ -4821,6 +5721,51 @@ mod tests {
             stream_line("net", &json!({ "x": 1 })).unwrap().to_string(),
             r#"{"x":1}"#
         );
+    }
+
+    #[test]
+    fn an_item_form_sends_only_what_its_kind_carries() {
+        let page = PlaylistInfo {
+            id: "p1".to_string(),
+            spec: protocol::playlist::PlaylistSpec {
+                name: "lobby".to_string(),
+                transition: Transition::default(),
+                transition_ms: 800,
+                items: Vec::new(),
+            },
+            default: false,
+            timetable: Vec::new(),
+            playing: false,
+        };
+        let mut form = item_form(&page, None);
+        let set = |form: &mut Form, label: &str, value: &str| {
+            let field = form.fields.iter_mut().find(|f| f.label == label).unwrap();
+            field.value = value.to_string();
+        };
+        set(&mut form, "Kind", "video");
+        set(&mut form, "URL", "https://cdn.test/a.mp4");
+        set(&mut form, "Duration", "10s");
+        set(&mut form, "Volume", "60");
+        let fields = item_fields(&form);
+        assert_eq!(fields.duration, None, "a video takes no duration");
+        assert_eq!(fields.sound, None, "the volume turns the sound on");
+        assert_eq!(fields.transition.as_deref(), Some(""));
+        let item = tessaro_client::playlist::item_from_fields(&fields, None).unwrap();
+        assert!(item.sound);
+        assert_eq!(item.volume, Some(60));
+
+        set(&mut form, "Kind", "image");
+        let fields = item_fields(&form);
+        assert_eq!(fields.volume, None);
+        assert_eq!(fields.bridge, None);
+        assert_eq!(fields.duration.as_deref(), Some("10s"));
+    }
+
+    #[test]
+    fn a_priority_is_a_whole_number_or_nothing() {
+        assert_eq!(priority(""), Ok(0));
+        assert_eq!(priority(" -2 "), Ok(-2));
+        assert!(priority("high").is_err());
     }
 
     #[test]

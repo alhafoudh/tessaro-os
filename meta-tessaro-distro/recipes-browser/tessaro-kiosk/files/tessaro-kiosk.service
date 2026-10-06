@@ -207,6 +207,11 @@ Environment=PULSE_SERVER=unix:/run/tessaro-audio/pulse/native
 #   printer.enable: window.print() goes to the CUPS default printer without
 #   the print preview dialog (docs/printing.md). Before the extra flags, so
 #   an operator's flag can follow it.
+# $KIOSK_EXTENSION_ARGS is --load-extension= with the frame unlock extension
+#   (its writable copy in /run/tessaro-kiosk/frame-unlock, see
+#   tmpfiles-tessaro-kiosk.conf), which lets the player page show
+#   sites that forbid framing. Unbraced, so emptying it in the env file or
+#   generated.env loads no extension and passes no flag at all.
 # $KIOSK_CHROMIUM_ARGS_EXTRA is deliberately *unbraced*. systemd splits $VAR at
 #   whitespace and passes ${VAR} as one argument, so this is what lets an
 #   operator add several flags (`tessaro-ctl config set browser.args_extra=...`).
@@ -265,6 +270,7 @@ ExecStart=/usr/bin/dbus-run-session -- /usr/bin/chromium \
     --disable-features=${KIOSK_DISABLE_FEATURES} \
     $KIOSK_FPS_ARGS \
     $KIOSK_PRINT_ARGS \
+    $KIOSK_EXTENSION_ARGS \
     $KIOSK_CHROMIUM_ARGS_EXTRA \
     ${KIOSK_URL}
 

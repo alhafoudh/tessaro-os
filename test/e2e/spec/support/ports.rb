@@ -28,6 +28,9 @@ module AgentE2E
     # The fake webcam's USB/IP server (support/usbcam.rb), which the guest
     # reaches as 10.0.2.2: no forward, the guest connects out.
     def self.usbip = 3240 + offset
+    # The web server the playlist lane serves pages and media from
+    # (support/host_web.rb), which the guest reaches as 10.0.2.2 the same way.
+    def self.web = 18_080 + offset
 
     # The guest side of each forward, and the host port it gets here.
     def self.forwards = { 22 => ssh, 23 => telnet, 7400 => api }

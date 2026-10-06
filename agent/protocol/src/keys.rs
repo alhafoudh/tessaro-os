@@ -15,7 +15,7 @@
 //!
 //! A key starts with the `tessaro-ctl` group that acts on the same thing
 //! (`browser.*`, `screen.*`, `network.*`, `device.*`, `access.*`, `time.*`,
-//! `printer.*`, `camera.*`); a key no
+//! `printer.*`, `camera.*`, `playlist.*`); a key no
 //! group acts on is named after the component it tunes (`agent.*`). A key
 //! that is renamed gets a migration in `tessaro-agent/migrations/device/`
 //! that moves its row and rewrites its placeholders, so devices in the field
@@ -136,6 +136,9 @@ pub enum Kind {
     /// A file in the store, `/data/files`, from its root: `inject.js` or
     /// `/inject.js`, stored without the leading `/`. Or empty.
     StoreFile,
+    /// A playlist's name, or empty. Whether the device has it is the
+    /// device's check.
+    Playlist,
     /// Where sound plays: `auto`, `off`, a kind of output (`AUDIO_OUTPUTS`),
     /// or one output's exact PipeWire name from `tessaro-ctl audio outputs`.
     AudioOutput,
@@ -215,6 +218,9 @@ impl Kind {
             Kind::Ssid => "a WiFi network name, 1 to 32 bytes".to_string(),
             Kind::StoreFile => {
                 "a file in the store from its root, e.g. inject.js, or empty".to_string()
+            }
+            Kind::Playlist => {
+                "a playlist's name from `tessaro-ctl playlist list`, or empty".to_string()
             }
             Kind::AudioOutput => format!(
                 "one of: {}, or an output's name from `tessaro-ctl audio outputs`",
@@ -415,6 +421,10 @@ pub static KEYS: &[Key] = &[
     // this only decides whether the page may use them.
     key(PRINTER_ENABLE, "KIOSK_PRINTING", Kind::Flag, BROWSER_AND_AGENT,
         "Let the page print: window.print() goes to the default printer without a dialog, and the page bridge's printer.print() to any printer. `tessaro-ctl printer` sets the printers up; it prints either way."),
+    // The playlists and the timetable are in their own tables, `tessaro-ctl
+    // playlist`; this names the one that plays when no timetable entry does.
+    key(PLAYLIST_DEFAULT, "KIOSK_PLAYLIST", Kind::Playlist, AGENT,
+        "The playlist the player shows when no timetable entry covers now. Set, or a timetable entry existing, puts the player on screen instead of browser.url. Empty for none. `tessaro-ctl playlist`."),
     key("agent.enable", "KIOSK_AGENT_ENABLE", Kind::Flag, AGENT,
         "Supervise the browser at all; 0 parks the agent."),
     key("agent.debug", "KIOSK_DEBUG", Kind::Flag, AGENT,
@@ -577,6 +587,7 @@ pub const TIMEZONE: &str = "time.timezone";
 pub const NTP_ENABLE: &str = "time.ntp.enable";
 pub const NTP_SERVERS: &str = "time.ntp.servers";
 pub const PRINTER_ENABLE: &str = "printer.enable";
+pub const PLAYLIST_DEFAULT: &str = "playlist.default";
 pub const CAMERA_FORMAT: &str = "camera.format";
 pub const CAMERA_SIZE: &str = "camera.size";
 pub const CAMERA_MIRRORS: &str = "camera.mirrors";
@@ -1027,6 +1038,14 @@ pub fn validate(key: &Key, value: &str) -> Result<String, String> {
                 Ok(path) => Ok(path),
                 Err(why) => fail(&why),
             }
+        }
+        Kind::Playlist => {
+            if value.is_empty() {
+                return Ok(String::new());
+            }
+            crate::playlist::check_playlist_name(value)
+                .map(|()| value.to_string())
+                .or_else(|why| fail(&why))
         }
         Kind::AudioOutput | Kind::AudioInput => {
             let (kinds, list) = if key.kind == Kind::AudioOutput {

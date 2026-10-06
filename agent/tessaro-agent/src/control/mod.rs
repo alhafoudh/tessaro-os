@@ -31,6 +31,7 @@ mod bridge;
 mod certs;
 mod network;
 mod page;
+mod playlists;
 mod policies;
 mod printers;
 mod schedules;
@@ -250,6 +251,16 @@ pub struct Control {
     sessions: Arc<Sessions>,
     /// access.session_timeout in seconds, as last read from the settings.
     session_timeout: AtomicU64,
+    /// What the player page last reported, and what plays (`playlists`).
+    player: Mutex<playlists::PlayerState>,
+    /// Wakes `watch_playlist` early: the playlists or the timetable changed,
+    /// or a copy of a playlist's media came in.
+    playlist_wake: tokio::sync::Notify,
+    /// Wakes `watch_media` early: the playlists changed.
+    media_wake: tokio::sync::Notify,
+    /// What the configuration was last rendered with of the playlists'
+    /// store (`playlists::Shared`): a change to it renders again.
+    live_playlists: Mutex<crate::playlists::Shared>,
 }
 
 impl Control {
@@ -271,7 +282,10 @@ impl Control {
             .get(keys::find(keys::SESSION_TIMEOUT).map_or("", |key| key.env))
             .and_then(|value| value.parse().ok())
             .unwrap_or(DEFAULT_SESSION_TIMEOUT);
+        // One small read of the store at start, before anything is served.
+        let live_playlists = Mutex::new(crate::playlists::shared(&paths.state_dir));
         Arc::new(Self {
+            live_playlists,
             sessions: Arc::new(Sessions::new(&identity.id)),
             session_timeout: AtomicU64::new(session_timeout),
             current,
@@ -305,6 +319,9 @@ impl Control {
             storage_grow: Arc::new(tokio::sync::Mutex::new(())),
             bridge: std::sync::OnceLock::new(),
             cpu: Mutex::new(None),
+            player: Mutex::new(playlists::PlayerState::default()),
+            playlist_wake: tokio::sync::Notify::new(),
+            media_wake: tokio::sync::Notify::new(),
         })
     }
 
@@ -754,6 +771,74 @@ impl Control {
             Command::ScheduleCheck { calendar, count } => {
                 self.schedule_check(calendar, count).await.into()
             }
+            Command::PlaylistList => self.playlist_list().await.into(),
+            Command::PlaylistShow { playlist } => self.playlist_show(playlist).await.into(),
+            Command::PlaylistCreate { spec } => self.playlist_create(caller, spec).await.into(),
+            Command::PlaylistSet {
+                playlist,
+                name,
+                transition,
+                transition_ms,
+                items,
+            } => {
+                let change = playlists::Change {
+                    name,
+                    transition,
+                    transition_ms,
+                    items,
+                };
+                self.playlist_set(caller, playlist, change).await.into()
+            }
+            Command::PlaylistRemove { playlist } => {
+                self.playlist_remove(caller, playlist).await.into()
+            }
+            Command::PlaylistItemAdd { playlist, item, at } => self
+                .playlist_item_add(caller, playlist, item, at)
+                .await
+                .into(),
+            Command::PlaylistItemSet {
+                playlist,
+                position,
+                item,
+            } => self
+                .playlist_item_set(caller, playlist, position, item)
+                .await
+                .into(),
+            Command::PlaylistItemRemove { playlist, position } => self
+                .playlist_item_remove(caller, playlist, position)
+                .await
+                .into(),
+            Command::PlaylistItemMove {
+                playlist,
+                position,
+                to,
+            } => self
+                .playlist_item_move(caller, playlist, position, to)
+                .await
+                .into(),
+            Command::PlaylistStatus => self.playlist_status().await.into(),
+            Command::TimetableList => self.timetable_list().await.into(),
+            Command::TimetableCreate { spec } => self.timetable_create(caller, spec).await.into(),
+            Command::TimetableSet {
+                entry,
+                playlist,
+                days,
+                from,
+                to,
+                priority,
+                enabled,
+            } => {
+                let change = playlists::EntryChange {
+                    playlist,
+                    days,
+                    from,
+                    to,
+                    priority,
+                    enabled,
+                };
+                self.timetable_set(caller, entry, change).await.into()
+            }
+            Command::TimetableRemove { entry } => self.timetable_remove(caller, entry).await.into(),
             Command::PrinterList => self.printer_list().await.into(),
             Command::PrinterShow { printer } => self.printer_show(printer).await.into(),
             Command::PrinterCreate { spec } => self.printer_create(caller, spec).await.into(),
@@ -1032,8 +1117,10 @@ impl Control {
         let screen_on = crate::power::send(&self.paths.power_socket, "status")
             .await // naked: power::send bounds itself with within()
             .ok();
+        let playlist = self.playlist_status().await.ok();
 
         Ok(Status {
+            playlist,
             screen_on,
             bridge: self.bridge_status(),
             os,
@@ -3497,5 +3584,236 @@ mod tests {
         )
         .await;
         assert_eq!(settings.settings[0].source, Source::Default);
+    }
+
+    fn image(src: &str) -> protocol::playlist::PlaylistItem {
+        let mut item =
+            protocol::playlist::PlaylistItem::new(protocol::playlist::ItemKind::Image, src);
+        item.duration_s = Some(5);
+        item
+    }
+
+    #[tokio::test]
+    async fn a_playlist_puts_the_player_on_screen_and_its_removal_takes_it_off() {
+        use protocol::playlist::{PlaylistInfo, PlaylistSpec, TimetableInfo, TimetableSpec};
+        let fx = fixture();
+        let created: PlaylistInfo = ok(
+            &fx.control,
+            &Caller::Local,
+            Command::PlaylistCreate {
+                spec: PlaylistSpec {
+                    name: "lobby".into(),
+                    transition: Default::default(),
+                    transition_ms: 800,
+                    items: vec![image("http://127.0.0.1/files/a.png")],
+                },
+            },
+        )
+        .await;
+        // A playlist alone changes nothing on screen.
+        assert_eq!(fx.follow.borrow().config.kiosk_url, "http://127.0.0.1/");
+        assert!(!fx.follow.borrow().config.player);
+
+        let _: Applied = ok(
+            &fx.control,
+            &Caller::Local,
+            set(&[(keys::PLAYLIST_DEFAULT, "lobby")]),
+        )
+        .await;
+        assert_eq!(
+            fx.follow.borrow().config.kiosk_url,
+            crate::state::PLAYER_URL
+        );
+        assert!(fx.follow.borrow().config.player);
+        let env = fs::read_to_string(fx.paths.generated_env()).unwrap();
+        assert!(
+            env.contains(&format!("KIOSK_URL={}\n", crate::state::PLAYER_URL)),
+            "{env}"
+        );
+
+        // A name that is no playlist is refused before it is saved.
+        let refused = err(
+            &fx.control,
+            &Caller::Local,
+            set(&[(keys::PLAYLIST_DEFAULT, "gone")]),
+        )
+        .await;
+        assert!(refused.contains("no playlist gone"), "{refused}");
+
+        // Items are numbered from 1, and moved and removed by number.
+        let added: PlaylistInfo = ok(
+            &fx.control,
+            &Caller::Local,
+            Command::PlaylistItemAdd {
+                playlist: "lobby".into(),
+                item: image("https://cdn.test/b.png"),
+                at: Some(1),
+            },
+        )
+        .await;
+        assert_eq!(added.spec.items[0].src, "https://cdn.test/b.png");
+        let moved: PlaylistInfo = ok(
+            &fx.control,
+            &Caller::Local,
+            Command::PlaylistItemMove {
+                playlist: created.id.clone(),
+                position: 1,
+                to: 2,
+            },
+        )
+        .await;
+        assert_eq!(moved.spec.items[1].src, "https://cdn.test/b.png");
+        let wrong = err(
+            &fx.control,
+            &Caller::Local,
+            Command::PlaylistItemRemove {
+                playlist: "lobby".into(),
+                position: 3,
+            },
+        )
+        .await;
+        assert!(wrong.contains("no item 3"), "{wrong}");
+
+        // What plays is written for the page.
+        fx.control.refresh_playlist().await.unwrap();
+        let doc: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(fx.paths.player_doc()).unwrap()).unwrap();
+        assert_eq!(doc["id"], created.id.as_str());
+        assert_eq!(doc["items"].as_array().unwrap().len(), 2);
+
+        // A rename takes playlist.default along.
+        let _: PlaylistInfo = ok(
+            &fx.control,
+            &Caller::Local,
+            Command::PlaylistSet {
+                playlist: "lobby".into(),
+                name: Some("hall".into()),
+                transition: None,
+                transition_ms: None,
+                items: None,
+            },
+        )
+        .await;
+        let shown: PlaylistInfo = ok(
+            &fx.control,
+            &Caller::Local,
+            Command::PlaylistShow {
+                playlist: "hall".into(),
+            },
+        )
+        .await;
+        assert!(shown.default);
+
+        // In use, it stays.
+        let entry: TimetableInfo = ok(
+            &fx.control,
+            &Caller::Local,
+            Command::TimetableCreate {
+                spec: TimetableSpec {
+                    playlist: "hall".into(),
+                    days: Vec::new(),
+                    from: "9:00".into(),
+                    to: "17:00".into(),
+                    priority: 0,
+                    enabled: true,
+                },
+            },
+        )
+        .await;
+        assert_eq!(entry.spec.playlist, created.id);
+        assert_eq!(entry.spec.from, "09:00");
+        assert_eq!(entry.playlist_name, "hall");
+        let in_use = err(
+            &fx.control,
+            &Caller::Local,
+            Command::PlaylistRemove {
+                playlist: "hall".into(),
+            },
+        )
+        .await;
+        assert!(in_use.contains("playlist.default"), "{in_use}");
+
+        // Without a default, the timetable alone keeps the player up.
+        let _: Applied = ok(
+            &fx.control,
+            &Caller::Local,
+            Command::Unset {
+                keys: vec![keys::PLAYLIST_DEFAULT.into()],
+                if_revision: None,
+                apply: true,
+                verify: Default::default(),
+            },
+        )
+        .await;
+        assert!(fx.follow.borrow().config.player);
+        let in_timetable = err(
+            &fx.control,
+            &Caller::Local,
+            Command::PlaylistRemove {
+                playlist: "hall".into(),
+            },
+        )
+        .await;
+        assert!(in_timetable.contains("timetable"), "{in_timetable}");
+
+        // The last entry gone, browser.url is shown directly again.
+        let _: Done = ok(
+            &fx.control,
+            &Caller::Local,
+            Command::TimetableRemove {
+                entry: entry.id[..4].to_string(),
+            },
+        )
+        .await;
+        assert!(!fx.follow.borrow().config.player);
+        assert_eq!(fx.follow.borrow().config.kiosk_url, "http://127.0.0.1/");
+        let _: Done = ok(
+            &fx.control,
+            &Caller::Local,
+            Command::PlaylistRemove {
+                playlist: "hall".into(),
+            },
+        )
+        .await;
+        let left: Vec<PlaylistInfo> = ok(&fx.control, &Caller::Local, Command::PlaylistList).await;
+        assert!(left.is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_player_reports_only_from_the_player_page() {
+        let fx = fixture();
+        let report = |origin: &str, top: bool, payload: &str| crate::cdp::session::BindingCall {
+            binding: crate::cdp::session::PLAYER_BINDING,
+            session: None,
+            context: 1,
+            origin: origin.to_string(),
+            top,
+            frame: true,
+            payload: payload.to_string(),
+        };
+        let started = r#"{"event":"started","playlist":"a","position":2,"src":"https://x.test/a.png","kind":"image"}"#;
+        fx.control
+            .player_call(report("https://evil.test", true, started))
+            .await;
+        fx.control
+            .player_call(report("http://127.0.0.1", false, started))
+            .await;
+        assert!(lock(&fx.control.player).item.is_none());
+
+        fx.control
+            .player_call(report("http://127.0.0.1", true, started))
+            .await;
+        fx.control
+            .player_call(report(
+                "http://127.0.0.1",
+                true,
+                r#"{"event":"skipped","position":3,"src":"https://x.test/gone.png","reason":"HTTP 404"}"#,
+            ))
+            .await;
+        let status = fx.control.playlist_status().await.unwrap();
+        let item = status.item.unwrap();
+        assert_eq!(item.position, 2);
+        assert_eq!(item.kind, protocol::playlist::ItemKind::Image);
+        assert_eq!(status.skipped[0].reason, "HTTP 404");
     }
 }

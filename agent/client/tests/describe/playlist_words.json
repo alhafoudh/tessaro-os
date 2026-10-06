@@ -1,0 +1,169 @@
+{
+  "function": "playlist::words",
+  "input": {
+    "ms": [
+      0,
+      250,
+      999,
+      1000,
+      1500,
+      5000,
+      62500,
+      90000,
+      3600000,
+      3723250
+    ],
+    "seconds": [
+      0,
+      1,
+      10,
+      59,
+      90,
+      3600,
+      5400,
+      86400,
+      90061
+    ],
+    "src": [
+      "https://cdn.test/a.mp4",
+      "http://menu.test/",
+      "http://127.0.0.1/files/media/promo.mp4",
+      "http://localhost",
+      "https://images.example.test/campaigns/2026/autumn/very-long-folder-name/banner-final-v3.webp",
+      "https://cdn.test/žltý-kôň/obrázok-s-dlhým-menom-na-výstave-v-hlavnej-hale.png"
+    ],
+    "transition": [
+      [
+        "cut",
+        0
+      ],
+      [
+        "fade",
+        800
+      ],
+      [
+        "slide",
+        1200
+      ]
+    ],
+    "typed": [
+      "90",
+      "1.5",
+      "1.5s",
+      "500ms",
+      "10s",
+      "1m30s",
+      "2h",
+      "1d",
+      "0:05",
+      "1:02.5",
+      "1:00:00",
+      " 10s ",
+      "0.25",
+      "",
+      "s",
+      "10x",
+      "1:5",
+      "1:60",
+      "1:61:00",
+      "1.2.3",
+      "a:05"
+    ]
+  },
+  "output": {
+    "format_ms": [
+      "0ms",
+      "250ms",
+      "999ms",
+      "1s",
+      "1.5s",
+      "5s",
+      "1m2.5s",
+      "1m30s",
+      "1h",
+      "1h2m3.25s"
+    ],
+    "format_position": [
+      "0:00",
+      "0:00.25",
+      "0:00.999",
+      "0:01",
+      "0:01.5",
+      "0:05",
+      "1:02.5",
+      "1:30",
+      "1:00:00",
+      "1:02:03.25"
+    ],
+    "format_seconds": [
+      "0s",
+      "1s",
+      "10s",
+      "59s",
+      "1m30s",
+      "1h",
+      "1h30m",
+      "1d",
+      "1d1h1m1s"
+    ],
+    "parse_ms": [
+      90000,
+      1500,
+      1500,
+      500,
+      10000,
+      90000,
+      7200000,
+      86400000,
+      5000,
+      62500,
+      3600000,
+      10000,
+      250,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "parse_seconds": [
+      90,
+      null,
+      null,
+      null,
+      10,
+      90,
+      7200,
+      86400,
+      5,
+      null,
+      3600,
+      10,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "shorten": [
+      "cdn.test/a.mp4",
+      "menu.test/",
+      "/files/media/promo.mp4",
+      "/",
+      "images.example.test/ca...me/banner-final-v3.webp",
+      "cdn.test/žltý-kôň/obrá...tave-v-hlavnej-hale.png"
+    ],
+    "transition": [
+      "cut",
+      "fade 800 ms",
+      "slide 1200 ms"
+    ]
+  }
+}

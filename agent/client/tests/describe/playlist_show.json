@@ -1,0 +1,255 @@
+{
+  "function": "playlist::show",
+  "input": {
+    "default": true,
+    "id": "0f9e8d7c6b5a4938",
+    "items": [
+      {
+        "bridge": true,
+        "duration_s": 60,
+        "idle_s": 45,
+        "interactive": true,
+        "kind": "url",
+        "src": "https://menu.test/today"
+      },
+      {
+        "duration_s": 8,
+        "fit": "cover",
+        "kind": "image",
+        "src": "http://127.0.0.1/files/dish.jpg"
+      },
+      {
+        "kind": "video",
+        "sound": true,
+        "src": "https://cdn.test/clips/kitchen.mp4",
+        "trim_end_ms": 12500,
+        "trim_start_ms": 5000,
+        "volume": 60
+      }
+    ],
+    "name": "lunch",
+    "playing": true,
+    "timetable": [
+      "7f3a9c21e4b05d68"
+    ],
+    "transition": "slide",
+    "transition_ms": 500
+  },
+  "output": {
+    "facts": [
+      {
+        "label": "name",
+        "value": [
+          [
+            "heading",
+            "lunch",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "id",
+        "value": [
+          [
+            "muted",
+            "0f9e8d7c6b5a4938",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "transition",
+        "value": [
+          [
+            "plain",
+            "slide 500 ms",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "default",
+        "value": [
+          [
+            "ok",
+            "yes",
+            0
+          ],
+          [
+            "plain",
+            " ",
+            0
+          ],
+          [
+            "muted",
+            "(playlist.default)",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "timetable",
+        "value": [
+          [
+            "plain",
+            "entries 7f3a9c21",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "playing",
+        "value": [
+          [
+            "ok",
+            "yes",
+            0
+          ]
+        ]
+      }
+    ],
+    "items": [
+      [
+        [
+          "muted",
+          "  1",
+          3
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "label",
+          "url",
+          5
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "plain",
+          "menu.test/today",
+          40
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "plain",
+          "1m",
+          11
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "interactive, idle 45s, bridge",
+          0
+        ]
+      ],
+      [
+        [
+          "muted",
+          "  2",
+          3
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "label",
+          "image",
+          5
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "plain",
+          "/files/dish.jpg",
+          40
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "plain",
+          "8s",
+          11
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "cover",
+          0
+        ]
+      ],
+      [
+        [
+          "muted",
+          "  3",
+          3
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "label",
+          "video",
+          5
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "plain",
+          "cdn.test/clips/kitchen.mp4",
+          40
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "plain",
+          "0:05-0:12.5",
+          11
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "sound 60%",
+          0
+        ]
+      ]
+    ]
+  }
+}

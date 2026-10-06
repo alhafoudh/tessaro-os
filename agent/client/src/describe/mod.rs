@@ -7,5 +7,6 @@ pub mod browser;
 pub mod camera;
 pub mod device;
 pub mod net;
+pub mod playlist;
 pub mod printer;
 pub mod time;

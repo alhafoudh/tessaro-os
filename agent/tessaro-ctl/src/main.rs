@@ -16,6 +16,7 @@ mod connect;
 mod devtools;
 mod files;
 mod net;
+mod playlist;
 mod policies;
 mod printer;
 mod progress;
@@ -104,6 +105,10 @@ const HELP_STYLES: Styles = Styles::styled()
         \x20 tessaro-ctl browser debug on                   name and addresses full screen; `off` goes back\n\
         \x20 tessaro-ctl browser zoom 125                   page zoom, like Ctrl+/- in Chrome\n\
         \x20 tessaro-ctl -n brave-otter-3fa2 browser devtools   the kiosk tab in chrome://inspect, over ssh\n\
+        \x20 tessaro-ctl playlist create lobby && tessaro-ctl playlist items add lobby --video https://cdn.test/promo.mp4 --from 5s --to 30s\n\
+        \x20 tessaro-ctl config set playlist.default=lobby  the player shows lobby instead of browser.url\n\
+        \x20 tessaro-ctl playlist timetable add lunch --from 11:30 --to 14:00 --days mon-fri\n\
+        \x20 tessaro-ctl playlist status                    what plays now and why, what was skipped\n\
         \x20 tessaro-ctl audio show                         where sound plays, how loud, what is plugged in\n\
         \x20 tessaro-ctl audio output hdmi && tessaro-ctl audio volume 60 && tessaro-ctl audio test\n\
         \x20 tessaro-ctl camera list                        every USB camera, what it captures, its virtual cameras\n\
@@ -179,6 +184,10 @@ enum Cmd {
     /// what the page runs: the injected script, the page bridge, eval.
     #[command(subcommand)]
     Browser(BrowserCmd),
+    /// Playlists of pages, images and videos shown in turn instead of
+    /// browser.url, and the timetable that picks which plays when.
+    #[command(subcommand)]
+    Playlist(playlist::PlaylistCmd),
     /// The device's file store, served to the kiosk at
     /// http://127.0.0.1/files/: upload, download, sync, list, remove.
     #[command(subcommand)]
@@ -975,6 +984,7 @@ fn run(cli: Cli) -> Result<(), String> {
         Cmd::Script(command) => script::run(&mut session, command, json),
         Cmd::Schedule(command) => schedule::run(&mut session, command, json),
         Cmd::Printer(command) => printer::run(&mut session, command, json),
+        Cmd::Playlist(command) => playlist::run(&mut session, command, json),
         Cmd::Device(DeviceCmd::Restart { what }) => {
             done::<api::device::Restart>(&mut session, Empty {}, api::RestartBody { what }, json)
         }

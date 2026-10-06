@@ -81,6 +81,16 @@ start.
   `cups` package) in the guest on a loopback port, keeping every job as a
   file: a job reached the printer when a file appears. A printer that does
   not answer is a URI with nothing listening, where a job waits.
+* **The playlist lane serves a site from the host.** A page that forbids
+  framing and an image for the media cache have to come from somewhere that
+  is not the device, so `playlist_spec.rb` runs a small server
+  (`support/host_web.rb`) on the worker's `web` port (18080 plus the
+  worker's offset) on the host's loopback, which the guest reaches as
+  `http://10.0.2.2:<port>/` through slirp, like the camera lane's USB/IP
+  server. The server keeps every path it was asked for: the framed page
+  asks for `/e2e-rendered` from its script, which only a document the
+  browser rendered does, so that request proves the frame unlock extension
+  let it in.
 * **It boots its own VM, not through `mise run qemu:run`.** The guest is driven over
   SSH, and runqemu's slirp forwards the loopback inside the kas container's
   network namespace, where `-p` publishing cannot reach it, so the harness

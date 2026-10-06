@@ -16,6 +16,7 @@ import { Files } from "./Files";
 import { Log } from "./Log";
 import { Network } from "./Network";
 import { Overview } from "./Overview";
+import { Playlists } from "./Playlists";
 import { Policies } from "./Policies";
 import { Printer } from "./Printer";
 import { QuickSetup } from "./QuickSetup";
@@ -52,6 +53,7 @@ export const PAGES: PageInfo[] = [
   { path: "screen", title: "Screen", section: KIOSK, scope: { prefix: "screen" }, component: Screen },
   { path: "browser", title: "Browser", section: KIOSK, scope: { prefix: "browser" }, component: Browser },
   { path: "policies", title: "Policies", section: KIOSK, component: Policies },
+  { path: "playlists", title: "Playlists", section: KIOSK, scope: { prefix: "playlist" }, component: Playlists },
   { path: "files", title: "Files", section: KIOSK, component: Files },
   { path: "audio", title: "Audio", section: PERIPHERALS, scope: { prefix: "audio" }, component: Audio },
   { path: "camera", title: "Camera", section: PERIPHERALS, scope: { prefix: "camera" }, component: Camera },

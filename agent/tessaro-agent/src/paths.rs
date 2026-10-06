@@ -336,6 +336,18 @@ impl Paths {
         self.state_dir.join("script-runs")
     }
 
+    /// The copies of the playlists' remote media (`media.rs`), served by
+    /// nginx at `http://127.0.0.1/media-cache/`.
+    pub fn media_cache_dir(&self) -> PathBuf {
+        self.state_dir.join("media-cache")
+    }
+
+    /// What the player page plays (`playlists::PlayerDoc`), served by nginx
+    /// at `http://127.0.0.1/playlist.json`.
+    pub fn player_doc(&self) -> PathBuf {
+        self.run_dir.join("playlist.json")
+    }
+
     /// The scripts' bodies, `<id>-<hash>.sh`, rendered from the `scripts`
     /// table at every start like their units.
     pub fn script_body_dir(&self) -> PathBuf {

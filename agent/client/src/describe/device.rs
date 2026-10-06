@@ -6,7 +6,7 @@ use protocol::keys::Consumer;
 use protocol::{Applied, EvalResult, Hardware, KeyInfo, NodeInfo, Pending, Status};
 use serde_json::Value;
 
-use crate::describe::{audio, time};
+use crate::describe::{audio, playlist, time};
 use crate::storage::{free_line, usage_line};
 use crate::text::{unit_state, usage_level, yes_no, Fact, Line, Tone};
 
@@ -158,6 +158,9 @@ pub fn status(status: &Status) -> StatusText {
         .collect();
 
     let mut more = Vec::new();
+    if let Some(player) = status.playlist.as_ref().filter(|player| player.player) {
+        more.push(Fact::new("playlist", playlist::summary(player)));
+    }
     if let Some(summary) = &status.audio {
         more.push(Fact::new("audio", audio::summary(summary)));
     }

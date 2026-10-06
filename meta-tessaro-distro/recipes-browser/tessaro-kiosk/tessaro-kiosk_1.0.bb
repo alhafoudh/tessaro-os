@@ -29,6 +29,8 @@ SRC_URI = " \
     file://70-tessaro-devices.rules \
     file://tmpfiles-tessaro-kiosk.conf \
     file://offline.html \
+    file://frame-unlock/manifest.json \
+    file://frame-unlock/rules.json \
 "
 
 # Every crate in Cargo.lock, as crate:// entries with their checksums. Do not
@@ -178,6 +180,16 @@ do_install:append() {
 
     install -Dm0644 ${WORKDIR}/offline.html \
         ${D}${datadir}/tessaro-kiosk/offline.html
+
+    # The frame unlock extension, loaded by tessaro-kiosk.service through
+    # KIOSK_EXTENSION_ARGS. Rules only, no code: frames the player page at
+    # http://127.0.0.1 opens get their X-Frame-Options and CSP headers
+    # removed, so a playlist can show a site that forbids framing. Nothing
+    # else the browser loads is touched.
+    install -Dm0644 ${WORKDIR}/frame-unlock/manifest.json \
+        ${D}${datadir}/tessaro-kiosk/frame-unlock/manifest.json
+    install -m0644 ${WORKDIR}/frame-unlock/rules.json \
+        ${D}${datadir}/tessaro-kiosk/frame-unlock/rules.json
 
     # bash-completion loads this file on the first Tab after `tessaro-ctl`. It
     # asks the binary for its script rather than shipping a generated copy:

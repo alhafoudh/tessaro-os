@@ -1,0 +1,420 @@
+{
+  "function": "playlist::item",
+  "input": [
+    {
+      "duration_s": 90,
+      "kind": "url",
+      "src": "https://menu.test/"
+    },
+    {
+      "bridge": true,
+      "duration_s": 30,
+      "idle_s": 20,
+      "interactive": true,
+      "kind": "url",
+      "ready_delay_ms": 1500,
+      "src": "https://menu.test/order",
+      "transition": "cut"
+    },
+    {
+      "background": "#102030",
+      "duration_s": 3600,
+      "fit": "stretch",
+      "kind": "image",
+      "src": "http://127.0.0.1/files/welcome.png",
+      "transition_ms": 300
+    },
+    {
+      "duration_s": 15,
+      "kind": "image",
+      "src": "https://images.example.test/campaigns/2026/autumn/very-long-folder-name/banner-final-v3.webp",
+      "transition": "slide",
+      "transition_ms": 1200
+    },
+    {
+      "kind": "video",
+      "src": "https://cdn.test/clips/promo.mp4"
+    },
+    {
+      "kind": "video",
+      "sound": true,
+      "src": "https://cdn.test/clips/promo.mp4",
+      "trim_start_ms": 65250
+    },
+    {
+      "fit": "cover",
+      "kind": "video",
+      "sound": true,
+      "src": "http://localhost/files/loop.webm",
+      "trim_end_ms": 3600000,
+      "volume": 80
+    }
+  ],
+  "output": [
+    {
+      "line": [
+        [
+          "muted",
+          "  1",
+          3
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "label",
+          "url",
+          5
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "plain",
+          "menu.test/",
+          40
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "plain",
+          "1m30s",
+          0
+        ]
+      ],
+      "options": [],
+      "timing": "1m30s"
+    },
+    {
+      "line": [
+        [
+          "muted",
+          "  2",
+          3
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "label",
+          "url",
+          5
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "plain",
+          "menu.test/order",
+          40
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "plain",
+          "30s",
+          11
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "cut in, interactive, idle 20s, ready 1.5s after load, bridge",
+          0
+        ]
+      ],
+      "options": [
+        "cut in",
+        "interactive, idle 20s",
+        "ready 1.5s after load",
+        "bridge"
+      ],
+      "timing": "30s"
+    },
+    {
+      "line": [
+        [
+          "muted",
+          "  3",
+          3
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "label",
+          "image",
+          5
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "plain",
+          "/files/welcome.png",
+          40
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "plain",
+          "1h",
+          11
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "stretch, on #102030, in 300 ms",
+          0
+        ]
+      ],
+      "options": [
+        "stretch",
+        "on #102030",
+        "in 300 ms"
+      ],
+      "timing": "1h"
+    },
+    {
+      "line": [
+        [
+          "muted",
+          "  4",
+          3
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "label",
+          "image",
+          5
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "plain",
+          "images.example.test/ca...me/banner-final-v3.webp",
+          40
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "plain",
+          "15s",
+          11
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "slide in 1200 ms",
+          0
+        ]
+      ],
+      "options": [
+        "slide in 1200 ms"
+      ],
+      "timing": "15s"
+    },
+    {
+      "line": [
+        [
+          "muted",
+          "  5",
+          3
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "label",
+          "video",
+          5
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "plain",
+          "cdn.test/clips/promo.mp4",
+          40
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "plain",
+          "whole",
+          11
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "muted",
+          0
+        ]
+      ],
+      "options": [
+        "muted"
+      ],
+      "timing": "whole"
+    },
+    {
+      "line": [
+        [
+          "muted",
+          "  6",
+          3
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "label",
+          "video",
+          5
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "plain",
+          "cdn.test/clips/promo.mp4",
+          40
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "plain",
+          "1:05.25-end",
+          11
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "sound",
+          0
+        ]
+      ],
+      "options": [
+        "sound"
+      ],
+      "timing": "1:05.25-end"
+    },
+    {
+      "line": [
+        [
+          "muted",
+          "  7",
+          3
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "label",
+          "video",
+          5
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "plain",
+          "/files/loop.webm",
+          40
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "plain",
+          "0:00-1:00:00",
+          11
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "sound 80%, cover",
+          0
+        ]
+      ],
+      "options": [
+        "sound 80%",
+        "cover"
+      ],
+      "timing": "0:00-1:00:00"
+    }
+  ]
+}

@@ -5,6 +5,7 @@ import type { Schemas } from "../api/client";
 import { fact, Line, unitState, usageLevel, yesNo, type Fact } from "../text/line";
 import * as audio from "./audio";
 import { freeLine, memUsedPercent, previousOrDefault, usageLine } from "./common";
+import * as playlist from "./playlist";
 import * as time from "./time";
 
 export const CONFIRM_COMMAND = "tessaro-ctl screen confirm";
@@ -106,6 +107,7 @@ export function status(status: Schemas["Status"]): StatusText {
     .map(([unit, state]) => fact(unit, Line.of(unitState(state), state)));
 
   const more: Fact[] = [];
+  if (status.playlist?.player) more.push(fact("playlist", playlist.summary(status.playlist)));
   if (status.audio) more.push(fact("audio", audio.summary(status.audio)));
   if (status.time) more.push(fact("time", time.summary(status.time)));
   if (status.screen_on === false) {

@@ -8,15 +8,21 @@
   const PRINTING = __PRINTING__;
   const SETTLE = __SETTLE__;
   const ORIGINS = __ORIGINS__;
+  const FRAME_ORIGINS = __FRAME_ORIGINS__;
   const BINDING = __BINDING__;
 
   // The binding exists in every frame. Take it before any page script can,
-  // and give an iframe or another origin nothing at all.
+  // and give another origin nothing at all. A frame is answered only as an
+  // item of the player page, directly in it, from an item's origin.
   let raw = window[BINDING];
   try {
     delete window[BINDING];
   } catch (_) {}
-  if (window !== window.top || !ORIGINS.includes(location.origin)) {
+  const allowed =
+    window === window.top
+      ? ORIGINS.includes(location.origin)
+      : window.parent === window.top && FRAME_ORIGINS.includes(location.origin);
+  if (!allowed) {
     return;
   }
 
@@ -97,6 +103,7 @@
       jobs: (printer) => call("printer.jobs", printer),
     },
     scripts: { list: () => call("scripts.list") },
+    playlist: { status: () => call("playlist.status") },
   };
 
   // A document for printer.print: text as UTF-8, or bytes, as base64.

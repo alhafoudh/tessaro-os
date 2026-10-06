@@ -788,6 +788,25 @@ pub(crate) fn local_clock(usec: u64) -> Option<Local> {
     }
 }
 
+/// The weekday (Monday 0), the minute of the day and the second of that
+/// minute `usec` falls on in the device's timezone, for the playlists'
+/// timetable. Reads a file, like `local_clock`: call it from `blocking`.
+pub(crate) fn local_minute(usec: u64) -> Option<(usize, u32, u32)> {
+    let seconds = libc::time_t::try_from(usec / 1_000_000).ok()?;
+    // SAFETY: as in `local_clock`.
+    unsafe {
+        tzset();
+        let mut tm: libc::tm = std::mem::zeroed();
+        if libc::localtime_r(&seconds, &mut tm).is_null() {
+            return None;
+        }
+        let weekday = usize::try_from((tm.tm_wday + 6) % 7).ok()?;
+        let minute = u32::try_from(tm.tm_hour * 60 + tm.tm_min).ok()?;
+        let second = u32::try_from(tm.tm_sec.clamp(0, 59)).ok()?;
+        Some((weekday, minute, second))
+    }
+}
+
 /// A wall-clock time in the device's timezone, as microseconds since the
 /// epoch; `None` for one that does not exist there (skipped by a DST
 /// change) or that mktime cannot place.

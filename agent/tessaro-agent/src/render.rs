@@ -162,6 +162,11 @@ pub fn device_origins(effective: &state::Effective, selftest_origin: &str) -> Ve
         add(origin);
     }
     add(selftest_origin);
+    // The playlists' interactive items, in a frame of the player: every
+    // playlist's, so a timetable switch never moves the policy.
+    for origin in effective.player_origins() {
+        add(origin);
+    }
     for origin in effective
         .get("KIOSK_DEVICE_ORIGINS")
         .unwrap_or_default()
@@ -759,6 +764,7 @@ pub fn live(paths: &Paths) -> state::Live {
     state::Live {
         derived_name: derived_name(paths),
         values,
+        playlists: crate::playlists::shared(&paths.state_dir),
     }
 }
 

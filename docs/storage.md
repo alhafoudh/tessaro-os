@@ -10,7 +10,7 @@ touch one row instead of rewriting a whole document.
 
 | Store | Opened by | Tables | Why there |
 | --- | --- | --- | --- |
-| `/data/tessaro/tessaro.db` | `tessaro-agent` and `tessaro-agent boot` (`db.rs`) | `settings`, `state`, `pending`, `tokens`, `secrets`, `scripts`, `schedules`, `browser_policies`, `printers`, `net_txn`, `net_last` | on `/data`, so it survives reboots and updates |
+| `/data/tessaro/tessaro.db` | `tessaro-agent` and `tessaro-agent boot` (`db.rs`) | `settings`, `state`, `pending`, `tokens`, `secrets`, `scripts`, `schedules`, `browser_policies`, `printers`, `playlists`, `timetable`, `media_cache`, `net_txn`, `net_last` | on `/data`, so it survives reboots and updates |
 | `/run/tessaro-kiosk/sessions.db` | `tessaro-agent` (`api/sessions.rs`) | `sessions` | on tmpfs, so a reboot ends every browser session |
 | `<config dir>/tessaro.db` | `tessaro-ctl`, `tessaro-gui` (`agent/client/src/store.rs`) | `nodes`, `gui_prefs` | the config dir is `TESSARO_CONFIG_DIR`, else `$XDG_CONFIG_HOME/tessaro`, else `~/.config/tessaro` |
 
@@ -52,7 +52,8 @@ look at.
 implements `Stored`: it loads itself from its tables and saves itself back,
 whole, inside the transaction it is given (`State` in `state.rs`, `Auth` in
 `auth.rs`, `Secrets` in `secrets.rs`, `Scripts` in `scripts.rs`, `Schedules` in `schedules.rs`,
-`Policies` in `policies.rs`, `Printers` in `printer.rs`).
+`Policies` in `policies.rs`, `Printers` in `printer.rs`, `Playlists` and
+`Timetable` in `playlists.rs`, `MediaCache` in `media.rs`).
 
 * **`read` never fails.** Whatever goes wrong is logged and the default comes
   back, so the boot oneshot always renders something and the agent always
@@ -72,7 +73,8 @@ whole, inside the transaction it is given (`State` in `state.rs`, `Auth` in
   `previous` is what a revert goes back to, NULL for a key that was not set
   (see **Display scaling** in [display.md](display.md)).
 * **A factory reset clears rows, not the file**: `tokens`, `settings`,
-  `state`, `pending`, `secrets`, `scripts`, `schedules`, `browser_policies`, `printers`. The store
+  `state`, `pending`, `secrets`, `scripts`, `schedules`, `browser_policies`, `printers`,
+  `playlists`, `timetable`, `media_cache`. The store
   and its migration history stay.
 * **`printers` is what CUPS is reconciled with**, one row per queue by name,
   and the row with `is_default` is the printer `window.print()` uses; a

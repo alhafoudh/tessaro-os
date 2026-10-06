@@ -9,6 +9,12 @@ pub fn request(id: u64, method: &str, params: &Value) -> String {
     json!({ "id": id, "method": method, "params": params }).to_string()
 }
 
+/// A command for a child session on the same connection: an iframe in a
+/// process of its own, attached with `Target.setAutoAttach` and `flatten`.
+pub fn request_on(id: u64, session: &str, method: &str, params: &Value) -> String {
+    json!({ "id": id, "sessionId": session, "method": method, "params": params }).to_string()
+}
+
 #[derive(Debug, PartialEq)]
 pub enum Incoming {
     /// The answer to a command we sent: its `result`, or the protocol's error.
@@ -20,6 +26,8 @@ pub enum Incoming {
     Event {
         method: String,
         params: Value,
+        /// The child session it comes from; `None` for the page's own.
+        session: Option<String>,
     },
     Other,
 }
@@ -41,6 +49,7 @@ pub fn parse(text: &str) -> Incoming {
         Some(method) => Incoming::Event {
             method: method.to_string(),
             params: value["params"].clone(),
+            session: value["sessionId"].as_str().map(str::to_string),
         },
         None => Incoming::Other,
     }
@@ -103,6 +112,15 @@ mod tests {
             Incoming::Event {
                 method: "Page.frameNavigated".to_string(),
                 params: json!({ "frame": { "id": "F" } }),
+                session: None,
+            }
+        );
+        assert_eq!(
+            parse(r#"{"method": "Runtime.bindingCalled", "params": {}, "sessionId": "S1"}"#),
+            Incoming::Event {
+                method: "Runtime.bindingCalled".to_string(),
+                params: json!({}),
+                session: Some("S1".to_string()),
             }
         );
         assert_eq!(parse("garbage"), Incoming::Other);

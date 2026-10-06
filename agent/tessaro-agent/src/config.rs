@@ -80,6 +80,7 @@ pub const IMAGE_ONLY: &[&str] = &[
     "KIOSK_OFFLINE_DIR",
     "KIOSK_OFFLINE_MAX_BYTES",
     "KIOSK_PROXY_LISTEN",
+    "KIOSK_PLAYER_URL",
 ];
 
 /// The configuration as the running agent applies it, and the settings it
@@ -136,6 +137,9 @@ pub struct Config {
     pub bridge: BridgeMode,
     /// `printer.enable`: the bridge takes window.print() over.
     pub printing: bool,
+    /// The player page is on screen, `kiosk_url` is it
+    /// (`state::Effective::player`).
+    pub player: bool,
 
     pub cdp_url: String,
     /// The whole budget for one DevTools command. Used to be
@@ -197,6 +201,7 @@ impl Config {
                 .to_string(),
             bridge: BridgeMode::parse(&string(env, "KIOSK_BRIDGE_MODE", "off")),
             printing: flag(env, "KIOSK_PRINTING", false),
+            player: flag(env, crate::state::PLAYER_MODE, false),
 
             cdp_url: string(env, "KIOSK_CDP_URL", "http://127.0.0.1:9222"),
             cdp_timeout: int(env, "KIOSK_CDP_TIMEOUT", 5),

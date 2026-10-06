@@ -1,0 +1,19 @@
+[
+  {
+    "id": "e5c8a1f0",
+    "playlist": "b71d03e5",
+    "days": [
+      "mon",
+      "tue",
+      "wed",
+      "thu",
+      "fri"
+    ],
+    "from": "11:30",
+    "to": "14:00",
+    "priority": 0,
+    "enabled": true,
+    "playlist_name": "lunch",
+    "active": false
+  }
+]
