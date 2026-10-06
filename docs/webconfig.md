@@ -110,6 +110,11 @@ are on WiFi, not Network), and only where the scope has settings.
   camera on the Camera page opens it on that camera until Close. Live
   snapshots are taken only while it is open, the way the Screen panel's are.
   It is not remembered across reloads.
+* **Tags are badges, in the GUI's colours** (`ui/Badge.tsx`, its `BADGES`
+  the list in `theme.rs`, picked by the ported `describe/tags.ts`, which the
+  `tags_colour` fixture keeps equal). Overview's Tags and Quick Setup's
+  Device section edit `device.tags` with them; Webconfig has no node list,
+  so there is no tag filter here.
 * **Row actions act on the selected row**; double-click or Enter opens it,
   as in the GUI. A page never asks for the name of something its table
   already shows.

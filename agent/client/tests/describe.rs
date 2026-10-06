@@ -77,6 +77,18 @@ fn render(function: &str, input: &Value) -> Value {
             Ok(shown) => json!({ "line": line(&shown), "thrown": false }),
             Err(thrown) => json!({ "line": line(&thrown), "thrown": true }),
         },
+        "device::tags" => {
+            let cases: Vec<Vec<String>> = from(input);
+            Value::Array(cases.iter().map(|tags| line(&device::tags(tags))).collect())
+        }
+        "tags::colour" => {
+            let tags: Vec<String> = from(input);
+            Value::Array(
+                tags.iter()
+                    .map(|tag| json!(tessaro_client::tags::colour(tag)))
+                    .collect(),
+            )
+        }
         "device::restarts" => {
             let consumers: Vec<protocol::keys::Consumer> = from(input);
             Value::Array(

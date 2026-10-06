@@ -102,6 +102,7 @@ fn the_readme_screenshots() {
         id: Some(info.id.clone()),
         fingerprint: Some(info.fingerprint.clone()),
         claimed: Some(false),
+        tags: info.tags.clone(),
     })));
     app.open(Node {
         id: info.id.clone(),
@@ -109,6 +110,7 @@ fn the_readme_screenshots() {
         address: address.into(),
         fingerprint: String::new(),
         token: None,
+        tags: info.tags.clone(),
     });
     let id = *app.devices.keys().next().unwrap();
 

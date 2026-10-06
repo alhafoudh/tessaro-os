@@ -85,6 +85,8 @@ pub struct Found {
     pub id: Option<String>,
     pub fingerprint: Option<String>,
     pub claimed: Option<bool>,
+    /// device.tags, as announced; empty from a device that announces none.
+    pub tags: Vec<String>,
 }
 
 pub fn resolve(node: Option<&str>, nodes: &Nodes) -> Result<Target, String> {
@@ -193,6 +195,7 @@ pub fn found_service(service: &ResolvedService) -> Option<Found> {
         id: txt("id"),
         fingerprint: txt("fp"),
         claimed: txt("claimed").map(|value| value == "1"),
+        tags: crate::tags::split(&txt("tags").unwrap_or_default()),
     })
 }
 
@@ -691,6 +694,7 @@ impl Session {
                 machine: String::new(),
                 fingerprint: String::new(),
                 claimed: false,
+                tags: Vec::new(),
             },
             remote: None,
             timing: None,
@@ -1029,6 +1033,7 @@ mod tests {
                 address: "10.0.0.5:7400".to_string(),
                 fingerprint: "f".repeat(64),
                 token: None,
+                tags: Vec::new(),
             });
         }
         nodes
@@ -1041,6 +1046,7 @@ mod tests {
             id: id.map(str::to_string),
             fingerprint: None,
             claimed: Some(false),
+            tags: Vec::new(),
         }
     }
 

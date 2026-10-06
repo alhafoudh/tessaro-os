@@ -24,7 +24,32 @@ pub fn node(node: &NodeInfo) -> Vec<Fact> {
         Fact::new("agent", node.version.as_str()),
         Fact::new("fingerprint", Line::of(Tone::Muted, &node.fingerprint)),
         Fact::new("claimed", yes_no(node.claimed)),
+        Fact::new(
+            "tags",
+            tags(&crate::tags::effective(&node.tags, Some(node.claimed))),
+        ),
     ]
+}
+
+/// A device's tags, comma separated: `unclaimed` as a warning, `(none)`
+/// for no tag at all.
+pub fn tags(tags: &[String]) -> Line {
+    if tags.is_empty() {
+        return Line::of(Tone::Muted, "(none)");
+    }
+    let mut line = Line::new();
+    for (at, tag) in tags.iter().enumerate() {
+        if at > 0 {
+            line = line.add(Tone::Plain, ", ");
+        }
+        let tone = if crate::tags::is_reserved(tag) {
+            Tone::Warn
+        } else {
+            Tone::Plain
+        };
+        line = line.add(tone, tag);
+    }
+    line
 }
 
 /// What the device is, one fact per thing the firmware says; a field it

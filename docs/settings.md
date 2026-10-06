@@ -184,8 +184,8 @@ and how a client authenticates are in [api.md](api.md).
 machine id itself never leaves the device. **Never change that app id**: it
 would rename every device. The name is `adjective-noun-xxxx` from the id, or
 `device.name`. The agent announces `NAME.local` and `_tessaro._tcp` over mDNS
-(`mdns-sd`, TXT `id`, `fp`, `ver`, `machine`, `claimed`; `access.mdns=off`
-stops it). `tessaro-ctl --node NAME` goes to the address it last saw that
+(`mdns-sd`, TXT `id`, `fp`, `ver`, `machine`, `claimed`, `tags`;
+`access.mdns=off` stops it). `tessaro-ctl --node NAME` goes to the address it last saw that
 device at first - instant, no scan - and scans mDNS only when nothing answers
 there, or when a different certificate or node id does (then with a warning:
 the device most likely moved and its old address went to someone else). A
@@ -199,6 +199,45 @@ Wiping `/data` or the `/etc` overlay re-identifies a device.
 `tessaro-ctl --node NAME access claim` (or `access login --token` with a token someone
 issued). Pins and tokens are kept in the `nodes` table of
 `~/.config/tessaro/tessaro.db` (under `TESSARO_CONFIG_DIR` when set), 0600.
+
+## Tags
+
+**`device.tags` lets a device be found again, and picked as one of a group,
+by tags the user gives it; `unclaimed` is reserved and follows the claim.**
+The tags are a setting on the device, not on a client, so every client sees
+the same ones and they survive moving to another workstation.
+
+* **What a tag is**: `keys::parse_tags`. Each is a DNS label (`is_label`, the
+  rule of `device.name`), lower-cased; the list is stored sorted, without
+  repeats, comma separated. All of it together stays within
+  `TAGS_MAX_LEN` (200), because it goes into one mDNS TXT entry, `tags=...`,
+  and an entry holds 255 bytes.
+* **Nothing restarts.** The key's consumer is `Agent`; `converge` in
+  `control/settings.rs` hands the new tags to `Mdns::set_tags`, which
+  announces again, the way a claim does (`set_claimed`). `device status` and
+  `device id` carry them in `NodeInfo.tags`.
+* **`unclaimed` is never stored.** `parse_tags` refuses it, and every client
+  adds it to a device whose `claimed` is false (`tags::effective` in
+  `agent/client`), so it appears on a fresh or reset device and goes with the
+  claim without anyone keeping it in step. `nodes list --tag unclaimed` picks
+  every fresh device on the segment at once.
+* **A client keeps the tags it last saw** in the `tags` column of its
+  `nodes` table, written when a known device is announced
+  (`Nodes::note_found`) or answers (`refresh`, `remember`). An announcement is
+  not checked against the pin, so it updates only the tags of a device, never
+  its address. A known device that is offline still shows its last tags.
+* **Filters want every tag named** (`tags::matches`): `nodes list --tag lobby
+  --tag floor-2` lists devices that have both.
+* **A tag has the same colour on every client**: `tags::colour`, FNV-1a over
+  its bytes into the badge palette (`BADGES` in `tessaro-style`, `ui/Badge.tsx`
+  in Webconfig); `unclaimed` is the warning colour. The `tags_colour` golden
+  fixture keeps the TypeScript port equal.
+* **The tags are as public as the name**: anyone on the segment reads them
+  from the announcement. Do not put anything secret in them.
+
+`{device.tags}` works in templated URLs like any key. Doing something to
+every device with a tag is a bulk operation on the client, not a property of
+the tag: a tag carries no settings of its own.
 
 ## Shell completion
 

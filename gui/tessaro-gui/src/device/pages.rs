@@ -161,6 +161,7 @@ enum Action {
     Maintenance,
     DebugScreen,
     Zoom,
+    Tags,
     Inject,
     Bridge,
     Rotation,
@@ -236,6 +237,7 @@ pub enum Msg {
     Maintenance(bool),
     DebugScreen(bool),
     Zoom,
+    Tags,
     DevTools,
     Reload,
     ClearCache,
@@ -1828,6 +1830,18 @@ impl Device {
                         .field(Field::text("Percent", zoom, "100")),
                 );
             }
+            Msg::Tags => {
+                let tags = self
+                    .setting(keys::TAGS)
+                    .and_then(|setting| setting.value.clone())
+                    .unwrap_or_default()
+                    .replace(',', ", ");
+                self.form(
+                    Form::new("Tags", "Save", Action::Tags)
+                        .intro("Comma separated: letters, digits and dashes. The node list shows them and filters by them, and `tessaro-ctl nodes list --tag` finds the device by them. unclaimed is not one to set: it follows the claim.")
+                        .field(Field::text("Tags", tags, "lobby, floor-2")),
+                );
+            }
             Msg::DevTools => {
                 if !self.devtools_open() {
                     self.start_job("browser", "DevTools tunnel", jobs::Kind::DevTools);
@@ -3149,6 +3163,10 @@ impl Device {
                 super::check(keys::ZOOM, zoom)?;
                 self.set(&[(keys::ZOOM, zoom)]);
             }
+            Action::Tags => {
+                let tags = super::check(keys::TAGS, form.value("Tags"))?;
+                self.set(&[(keys::TAGS, &tags)]);
+            }
             Action::Inject => {
                 let script = form.value("Script").trim();
                 let script = super::check(keys::INJECT_SCRIPT, script)?;
@@ -4037,6 +4055,7 @@ impl Device {
             "overview",
             vec![
                 action("Ping", self.when(Msg::ControlPing)),
+                action("Tags", self.when(Msg::Tags)),
                 action("Factory reset", self.when(Msg::FactoryReset)),
             ],
             Vec::new(),

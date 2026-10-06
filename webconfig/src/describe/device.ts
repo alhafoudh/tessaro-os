@@ -6,6 +6,7 @@ import { fact, Line, unitState, usageLevel, yesNo, type Fact } from "../text/lin
 import * as audio from "./audio";
 import { freeLine, memUsedPercent, previousOrDefault, usageLine } from "./common";
 import * as playlist from "./playlist";
+import * as tags from "./tags";
 import * as time from "./time";
 
 export const CONFIRM_COMMAND = "tessaro-ctl screen confirm";
@@ -19,7 +20,23 @@ export function node(info: Schemas["NodeInfo"]): Fact[] {
     fact("agent", info.version),
     fact("fingerprint", Line.of("muted", info.fingerprint)),
     fact("claimed", yesNo(info.claimed)),
+    fact("tags", tagsLine(tags.effective(info.tags ?? [], info.claimed))),
   ];
+}
+
+/** A device's tags, comma separated: `unclaimed` as a warning, `(none)` for none. */
+export function tagsLine(list: string[]): Line {
+  if (list.length === 0) {
+    return Line.of("muted", "(none)");
+  }
+  let line = new Line();
+  list.forEach((tag, at) => {
+    if (at > 0) {
+      line = line.add("plain", ", ");
+    }
+    line = line.add(tags.isReserved(tag) ? "warn" : "plain", tag);
+  });
+  return line;
 }
 
 function machine(hardware: Schemas["Hardware"]): string | null {

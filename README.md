@@ -60,6 +60,7 @@ or from [Webconfig](#webconfig) in any browser:
 - 🌐 **Network changes you cannot get wrong**: a new address or WiFi that loses the network rolls itself back.
 - 🔑 **Secure from the first boot**: claim it and it is yours, with TLS, pinned certificates, tokens and a random root password.
 - 🖥️ **Manage it your way**: a scriptable CLI, a desktop app, or Webconfig in any browser, with Quick Setup from a phone.
+- 🏷️ **Tags to find devices by**: `lobby`, `floor-2`, shown as coloured badges in the desktop app; every fresh device carries `unclaimed` until it is claimed.
 - 🏢 **Enterprise networks welcome**: HTTP and SOCKS proxies, your own certificate authorities, your own NTP servers.
 - ⏰ **Scripts and schedules**: screens off at night, a different page at the weekend, anything a shell can do.
 - 🧰 **Maintenance and debug screens** at the flip of a switch, with your own message.
@@ -254,6 +255,11 @@ know or that answers on the network starts the same way.
 
 Set `TESSARO_NODE=golden-thistle-5731` and the `-n` can go; the tour below
 leaves it out.
+
+Tags find devices again: `tessaro-ctl device tags add lobby`, then
+`tessaro-ctl nodes list --tag lobby`. A device nobody has claimed yet always
+carries `unclaimed`, so `nodes list --tag unclaimed` lists the fresh devices
+on the network.
 
 ## A quick tour
 

@@ -182,6 +182,16 @@ the whole list, so the app's long-lived copy cannot overwrite what
   disabled instead: the device does not refuse it, and the node would be
   forgotten here for nothing. The claim state comes from each status poll.
 
+**A device's tags are badges in the Tags column, and pressing one filters the
+list by it** (`tag_cell`, `Message::TagFilter`). Each tag keeps its colour
+(`theme::badge_colour`, see **Tags** in [settings.md](settings.md)), and
+`unclaimed` is the warning colour. The tags picked show as badges over the
+list, each pressed again to drop it, with Clear for all; a row has to carry
+every one of them, and the Find box matches tags too. A badge is a button
+inside the cell, so the press is the badge's and does not select the row
+(`grid::widget`). A known device that is not seen shows the tags the store
+last kept for it.
+
 Discovery runs for as long as the app does (`discovery.rs`). Rescan starts a
 new browse. A device mDNS cannot see (another subnet, a VM) is added by
 address. Both are actions on the node list's own toolbar, since they act on
@@ -313,7 +323,7 @@ applies and stays, Default unsets.**
 
 | Page | Covers |
 | --- | --- |
-| Overview | `device status` and `id`, systemd units, `device ping`, `device factory-reset` |
+| Overview | `device status` and `id`, systemd units, `device ping`, `device tags` (Tags: one comma-separated field, `device.tags`), `device factory-reset` |
 | Screen | `screen modes` with "use this mode", "Rotate" (`screen.rotation`), `screen screenshot` with a 3s live refresh and Save, `screen power`, `screen keyboard` |
 | Browser | what the browser shows, `browser navigate`, `reload`, `clear-cache`, `maintenance`, `debug`, `zoom`, `devtools` (a job holding the tunnel until Cancel), `inject`, `bridge`, `eval` (results in Messages) |
 | Policies | `browser policies list` in priority order with its `#` column, `set` and `edit` in one wide editor (from the template, a file, or the stored text, checked as you type, saved against the revision it opened), `move` as Move up and Move down (the moved row stays selected), `show` (the effective policy), `remove` |

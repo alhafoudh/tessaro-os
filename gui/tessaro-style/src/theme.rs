@@ -209,6 +209,58 @@ pub fn success_button(_: &Theme, status: button::Status) -> button::Style {
     }
 }
 
+/// The colours a tag's badge is drawn in, picked by `tags::colour` so a tag
+/// has the same one everywhere (Webconfig keeps the same list). No yellow:
+/// that is `unclaimed`'s, `WARNING`.
+pub const BADGES: [Color; tessaro_client::tags::COLOURS] = [
+    PRIMARY,
+    ACCENT,
+    SUCCESS,
+    rgb(0xf0_a6_ff),
+    rgb(0x6b_e0_e0),
+    rgb(0xb8_e0_5f),
+    rgb(0x7d_9b_ff),
+    rgb(0xe8_b4_a0),
+];
+
+/// The colour of `tag`'s badge.
+pub fn badge_colour(tag: &str) -> Color {
+    if tessaro_client::tags::is_reserved(tag) {
+        WARNING
+    } else {
+        BADGES[tessaro_client::tags::colour(tag)]
+    }
+}
+
+/// A tag as a pill: its colour as text and outline over a faint fill of it.
+/// With a message it is a button; without, it only shows.
+pub fn badge<'a, M: Clone + 'a>(
+    label: impl text::IntoFragment<'a>,
+    colour: Color,
+    on_press: Option<M>,
+) -> Element<'a, M> {
+    button(text(label).size(SMALL - 1.0))
+        .padding([0, 6])
+        .style(move |_: &Theme, status| {
+            let fill = match status {
+                button::Status::Hovered | button::Status::Pressed => 0.32,
+                _ => 0.16,
+            };
+            button::Style {
+                background: Some(Color { a: fill, ..colour }.into()),
+                text_color: colour,
+                border: Border {
+                    color: Color { a: 0.6, ..colour },
+                    width: 1.0,
+                    radius: border::radius(8),
+                },
+                ..button::Style::default()
+            }
+        })
+        .on_press_maybe(on_press)
+        .into()
+}
+
 /// A toolbar button. `None` shows it disabled.
 pub fn tool<'a, M: Clone + 'a>(label: &'a str, on_press: Option<M>) -> Element<'a, M> {
     button(text(label).size(SMALL))

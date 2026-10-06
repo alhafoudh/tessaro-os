@@ -37,6 +37,7 @@ pub mod speedtest;
 pub mod ssh;
 pub mod storage;
 pub mod store;
+pub mod tags;
 pub mod text;
 pub mod transfer;
 pub mod tunnel;

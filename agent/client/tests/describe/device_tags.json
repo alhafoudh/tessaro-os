@@ -1,0 +1,57 @@
+{
+  "function": "device::tags",
+  "input": [
+    [],
+    [
+      "lobby"
+    ],
+    [
+      "unclaimed",
+      "floor-2",
+      "lobby"
+    ]
+  ],
+  "output": [
+    [
+      [
+        "muted",
+        "(none)",
+        0
+      ]
+    ],
+    [
+      [
+        "plain",
+        "lobby",
+        0
+      ]
+    ],
+    [
+      [
+        "warn",
+        "unclaimed",
+        0
+      ],
+      [
+        "plain",
+        ", ",
+        0
+      ],
+      [
+        "plain",
+        "floor-2",
+        0
+      ],
+      [
+        "plain",
+        ", ",
+        0
+      ],
+      [
+        "plain",
+        "lobby",
+        0
+      ]
+    ]
+  ]
+}

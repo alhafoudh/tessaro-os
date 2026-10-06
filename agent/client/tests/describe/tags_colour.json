@@ -1,0 +1,23 @@
+{
+  "function": "tags::colour",
+  "input": [
+    "lobby",
+    "floor-2",
+    "menu-board",
+    "entrance",
+    "kitchen",
+    "a",
+    "z9",
+    "ward-14-east"
+  ],
+  "output": [
+    3,
+    6,
+    3,
+    3,
+    7,
+    4,
+    4,
+    7
+  ]
+}

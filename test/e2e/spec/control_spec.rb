@@ -65,6 +65,23 @@ module AgentE2E
       expect(guest.run("tessaro-ctl config keys")).not_to include("device.gpu_mem")
     end
 
+    # The tags are only announced over mDNS, which qemu cannot test; what
+    # the device keeps and reports of them is tested here.
+    it "tags: device tags are kept sorted, shown with unclaimed, and change without restarting anything" do
+      agent = guest.agent_pid
+      browser = guest.kiosk_pid
+      expect(guest.run("tessaro-ctl device tags add Lobby floor-2").strip).to eq("floor-2, lobby")
+      expect(guest.run("tessaro-ctl device tags list").strip).to eq("floor-2, lobby")
+      expect(guest.run("tessaro-ctl device status")).to match(/^tags\s+unclaimed, floor-2, lobby$/)
+
+      refused = guest.run("tessaro-ctl device tags add unclaimed 2>&1", allow_failure: true)
+      expect(refused).to include("unclaimed is reserved")
+
+      expect(guest.run("tessaro-ctl device tags remove lobby floor-2").strip).to eq("(none)")
+      expect(guest.agent_pid).to eq(agent), "the agent was restarted"
+      expect(guest.kiosk_pid).to eq(browser), "the browser was restarted"
+    end
+
     # qemu fills DMI in with its own name, so the VM says it is one. CPU use
     # needs the agent's second sample, and the lane's setup has just
     # restarted it: its first navigation can come before that.

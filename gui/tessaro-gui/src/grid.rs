@@ -751,6 +751,15 @@ impl<'a, M: 'a> From<CellText<'a>> for Element<'a, M> {
     }
 }
 
+/// Any widget, sorted by `value` as a text cell would be: badges, buttons.
+/// A widget that takes a press (a button) keeps it from selecting the row.
+pub fn widget<'a, M>(value: impl Into<String>, content: impl Into<Element<'a, M>>) -> Cell<'a, M> {
+    Cell {
+        value: SortValue::Text(value.into().to_lowercase()),
+        content: content.into(),
+    }
+}
+
 /// Small, single-line text with a natural, case-insensitive sorting key.
 pub fn cell<'a>(value: impl Into<String>) -> CellText<'a> {
     let value = value.into();

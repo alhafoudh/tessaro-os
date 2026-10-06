@@ -149,6 +149,8 @@ pub enum Kind {
     Timezone,
     /// Host names or IP addresses, comma separated, or empty.
     Hosts,
+    /// Tags, comma separated, or empty. See `parse_tags`.
+    Tags,
     /// An upstream proxy: `http://host:port` or `socks5://host:port`, with
     /// an optional `user:password@`, or empty for none. See `parse_proxy`.
     ProxyUrl,
@@ -234,6 +236,7 @@ impl Kind {
                 "a timezone, e.g. Europe/Bratislava or UTC, from `tessaro-ctl time zones`".to_string()
             }
             Kind::Hosts => "host names or IP addresses, comma separated, or empty".to_string(),
+            Kind::Tags => "tags of letters, digits and dashes, comma separated, or empty".to_string(),
             Kind::ProxyUrl => {
                 "http://[user:password@]host:port or socks5://[user:password@]host:port, or empty; percent-encode $ \" ' \\ ` @ in a password"
                     .to_string()
@@ -461,6 +464,8 @@ pub static KEYS: &[Key] = &[
         "Ceiling on the DevTools reconnect backoff, seconds."),
     key(NAME, "KIOSK_NODE_NAME", Kind::Name, AGENT_AND_NETWORK,
         "The device's name on the network (NAME.local, and the hotspot tessaro-NAME); empty derives one from the node id."),
+    key(TAGS, "KIOSK_DEVICE_TAGS", Kind::Tags, AGENT,
+        "Tags to find the device by and to act on a group of devices (`tessaro-ctl nodes list --tag`), announced over mDNS; `unclaimed` is reserved, every client adds it to a device nobody has claimed."),
     Key {
         only: Some(Hardware::PiFirmware),
         ..key(GPU_MEM, "KIOSK_GPU_MEM", Kind::Int { min: 16, max: 512 }, FIRMWARE,
@@ -570,6 +575,7 @@ pub const INPUT_TOUCH: &str = "screen.input.touch";
 pub const RESOLUTION: &str = "screen.resolution";
 pub const ROTATION: &str = "screen.rotation";
 pub const NAME: &str = "device.name";
+pub const TAGS: &str = "device.tags";
 pub const ID: &str = "device.id";
 pub const GPU_MEM: &str = "device.gpu_mem";
 pub const PUBLIC_IP: &str = "network.public_ip";
@@ -1083,6 +1089,9 @@ pub fn validate(key: &Key, value: &str) -> Result<String, String> {
         Kind::Hosts => parse_hosts(value)
             .map(|hosts| hosts.join(","))
             .or_else(|why| fail(&why)),
+        Kind::Tags => parse_tags(value)
+            .map(|tags| tags.join(","))
+            .or_else(|why| fail(&why)),
         Kind::ProxyUrl => {
             if value.is_empty() {
                 return Ok(String::new());
@@ -1357,6 +1366,46 @@ pub fn parse_hosts(value: &str) -> Result<Vec<String>, String> {
         }
     }
     Ok(hosts)
+}
+
+/// The tag every client adds to a device nobody has claimed. It follows the
+/// claim, so it is never stored in device.tags.
+pub const UNCLAIMED_TAG: &str = "unclaimed";
+
+/// How long device.tags may be, joined by commas: it goes into one mDNS TXT
+/// entry, `tags=...`, and an entry holds at most 255 bytes.
+pub const TAGS_MAX_LEN: usize = 200;
+
+/// Tags, comma or space separated: each a DNS label (`is_label`),
+/// lower-cased, sorted and without repeats. Empty for none.
+pub fn parse_tags(value: &str) -> Result<Vec<String>, String> {
+    let mut tags: Vec<String> = Vec::new();
+    for item in value.split(|ch: char| ch == ',' || ch.is_whitespace()) {
+        if item.is_empty() {
+            continue;
+        }
+        let tag = item.to_ascii_lowercase();
+        if !is_label(&tag) {
+            return Err(format!(
+                "{item} is not a tag: letters, digits and dashes, at most 40, not starting or ending with a dash"
+            ));
+        }
+        if tag == UNCLAIMED_TAG {
+            return Err(format!(
+                "{UNCLAIMED_TAG} is reserved: it follows the claim, every client adds it to a device nobody has claimed"
+            ));
+        }
+        if !tags.contains(&tag) {
+            tags.push(tag);
+        }
+    }
+    tags.sort();
+    if tags.join(",").len() > TAGS_MAX_LEN {
+        return Err(format!(
+            "too many tags: at most {TAGS_MAX_LEN} characters together, commas included"
+        ));
+    }
+    Ok(tags)
 }
 
 /// A DNS name: dot-separated labels of letters, digits and dashes, at most
@@ -2057,6 +2106,33 @@ mod tests {
         for bad in ["-bad.test", "a..b", "ntp_1.test", "host.test."] {
             assert!(check(NTP_SERVERS, bad).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn tags_are_labels_sorted_without_repeats() {
+        assert_eq!(
+            check(TAGS, "Lobby, floor-2 menu-board,lobby").unwrap(),
+            "floor-2,lobby,menu-board"
+        );
+        assert_eq!(check(TAGS, " , ").unwrap(), "");
+        for bad in ["-lobby", "floor_2", "a.b", &"x".repeat(41)] {
+            assert!(check(TAGS, bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn unclaimed_is_not_a_tag_anyone_can_set() {
+        let err = check(TAGS, "lobby,Unclaimed").unwrap_err();
+        assert!(err.contains("reserved"), "{err}");
+    }
+
+    #[test]
+    fn tags_fit_one_mdns_txt_entry() {
+        let fits: Vec<String> = (0..20).map(|n| format!("tag-{n:05}")).collect();
+        assert!(check(TAGS, &fits.join(",")).is_ok());
+        let too_many: Vec<String> = (0..30).map(|n| format!("tag-{n:05}")).collect();
+        let err = check(TAGS, &too_many.join(",")).unwrap_err();
+        assert!(err.contains("too many tags"), "{err}");
     }
 
     #[test]

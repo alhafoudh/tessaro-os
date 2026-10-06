@@ -19,7 +19,8 @@ there is one copy, and both clients call it.
   around its requests:
   * the connection: discovery and the pinned session (`connect.rs`),
     the known nodes in the client's `tessaro.db` (`nodes.rs`, `store.rs`),
-    claim and login (`access.rs`);
+    claim and login (`access.rs`), a device's tags with the reserved
+    `unclaimed`, the tag filter and a tag's badge colour (`tags.rs`);
   * flows that take several requests: an image update (`update.rs`), whole
     trees to and from the file store and `files sync` (`files.rs`), device
     ping (`ping.rs`), growing `/data` (`storage.rs`), the DevTools forward

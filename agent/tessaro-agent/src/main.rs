@@ -338,16 +338,7 @@ async fn start_control(
     }
 
     if let (true, Some(port)) = (device.mdns, port) {
-        let node = control.node();
-        control.set_mdns(mdns::Mdns::start(
-            log,
-            &node.name,
-            port,
-            &node.id,
-            &node.fingerprint,
-            &node.machine,
-            node.claimed,
-        ));
+        control.set_mdns(mdns::Mdns::start(log, port, control.node()));
     }
 
     control.arm_if_pending().await; // naked: a disk read under blocking()'s within()

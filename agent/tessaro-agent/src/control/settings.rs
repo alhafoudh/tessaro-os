@@ -355,6 +355,12 @@ impl Control {
             // Before any browser restart below, so the browser comes back to
             // the new page with the new scripts.
             self.publish(config, &state.settings);
+            // The tags restart nothing: mDNS announces them again.
+            if changed.iter().any(|(_, key)| key.name == keys::TAGS) {
+                if let Some(mdns) = lock(&self.mdns).as_ref() {
+                    mdns.set_tags(self.tags(), &self.log);
+                }
+            }
         }
         // The bridge, and the page's copy of the settings, follow.
         self.poke_bridge();

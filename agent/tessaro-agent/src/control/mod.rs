@@ -532,7 +532,15 @@ impl Control {
             machine: self.identity.machine.clone(),
             fingerprint: self.identity.fingerprint.clone(),
             claimed: self.claimed(),
+            tags: self.tags(),
         }
+    }
+
+    /// device.tags as the running agent has them, sorted.
+    pub fn tags(&self) -> Vec<String> {
+        let current = self.current.borrow();
+        let value = current.settings.get(keys::TAGS).map(String::as_str);
+        keys::parse_tags(value.unwrap_or_default()).unwrap_or_default()
     }
 
     pub async fn handle(self: &Arc<Self>, caller: &Caller, command: Command) -> Reply {
@@ -1769,6 +1777,20 @@ mod tests {
             apply: true,
             verify: Default::default(),
         }
+    }
+
+    #[tokio::test]
+    async fn tags_reach_the_status_at_once_and_restart_nothing() {
+        let fx = fixture();
+        let applied: protocol::Applied = ok(
+            &fx.control,
+            &Caller::Local,
+            set(&[(keys::TAGS, "Lobby, floor-2")]),
+        )
+        .await;
+        assert!(applied.restarted.is_empty(), "{:?}", applied.restarted);
+        let status: Status = ok(&fx.control, &Caller::Local, Command::Status).await;
+        assert_eq!(status.node.tags, ["floor-2", "lobby"]);
     }
 
     #[tokio::test]

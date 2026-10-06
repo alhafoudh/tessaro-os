@@ -16,8 +16,9 @@ use std::path::{Path, PathBuf};
 
 use tessaro_db::rusqlite::{params, Connection};
 
-use crate::connect::Session;
+use crate::connect::{Found, Session};
 use crate::store;
+use crate::tags;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Node {
@@ -28,6 +29,8 @@ pub struct Node {
     /// SHA-256 of its TLS certificate, pinned on first use.
     pub fingerprint: String,
     pub token: Option<String>,
+    /// device.tags as it last announced or reported them.
+    pub tags: Vec<String>,
 }
 
 #[derive(Debug, Default)]
@@ -80,16 +83,17 @@ pub fn write_private(path: &Path, body: &[u8]) -> Result<(), String> {
 /// Write `node`'s row: insert it, or replace the one with its id in place.
 fn store_row(db: &Connection, node: &Node) -> Result<(), String> {
     db.execute(
-        "INSERT INTO nodes (id, name, address, fingerprint, token) \
-         VALUES (?1, ?2, ?3, ?4, ?5) \
+        "INSERT INTO nodes (id, name, address, fingerprint, token, tags) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
          ON CONFLICT (id) DO UPDATE SET name = excluded.name, address = excluded.address, \
-         fingerprint = excluded.fingerprint, token = excluded.token",
+         fingerprint = excluded.fingerprint, token = excluded.token, tags = excluded.tags",
         params![
             node.id,
             node.name,
             node.address,
             node.fingerprint,
-            node.token
+            node.token,
+            node.tags.join(",")
         ],
     )
     .map(drop)
@@ -116,7 +120,7 @@ impl Nodes {
     fn load_from(db: &Connection) -> Result<Self, String> {
         let fail = |err: tessaro_db::rusqlite::Error| format!("{}: {err}", store::path().display());
         let mut rows = db
-            .prepare("SELECT id, name, address, fingerprint, token FROM nodes ORDER BY rowid")
+            .prepare("SELECT id, name, address, fingerprint, token, tags FROM nodes ORDER BY rowid")
             .map_err(fail)?;
         let nodes = rows
             .query_map([], |row| {
@@ -126,6 +130,7 @@ impl Nodes {
                     address: row.get(2)?,
                     fingerprint: row.get(3)?,
                     token: row.get(4)?,
+                    tags: tags::split(&row.get::<_, String>(5)?),
                 })
             })
             .map_err(fail)?
@@ -183,8 +188,9 @@ impl Nodes {
 
     /// A known device that answered, pin and id checked, somewhere other
     /// than its cached address has moved: remember where, so the next
-    /// connection by name goes straight there instead of scanning. Returns
-    /// the address it was at, when it moved.
+    /// connection by name goes straight there instead of scanning. Its tags
+    /// are kept as it reports them too. Returns the address it was at, when
+    /// it moved.
     pub fn refresh(&mut self, session: &Session) -> Result<Option<String>, String> {
         let Some((address, _)) = &session.remote else {
             return Ok(None);
@@ -193,16 +199,38 @@ impl Nodes {
         let Some(known) = self.by_id(&session.node.id) else {
             return Ok(None);
         };
-        if known.address == address {
+        if known.address == address && known.tags == session.node.tags {
             return Ok(None);
         }
-        let was = known.address.clone();
+        let was = (known.address != address).then(|| known.address.clone());
         let moved = Node {
             address,
+            tags: session.node.tags.clone(),
             ..known.clone()
         };
         self.keep(moved)?;
-        Ok(Some(was))
+        Ok(was)
+    }
+
+    /// Keep the tags a known device announced, so it shows them while it
+    /// is offline. Only the tags: an announcement is not checked against the
+    /// pin, so it moves nothing else. Whether anything changed.
+    pub fn note_found(&mut self, found: &Found) -> Result<bool, String> {
+        let Some(id) = &found.id else {
+            return Ok(false);
+        };
+        let Some(known) = self.by_id(id) else {
+            return Ok(false);
+        };
+        if known.tags == found.tags {
+            return Ok(false);
+        }
+        let tagged = Node {
+            tags: found.tags.clone(),
+            ..known.clone()
+        };
+        self.keep(tagged)?;
+        Ok(true)
     }
 
     /// Pin the device this remote session talks to, with `token`, and store
@@ -218,6 +246,7 @@ impl Nodes {
             address: address.to_string(),
             fingerprint,
             token,
+            tags: session.node.tags.clone(),
         })
     }
 
@@ -242,6 +271,7 @@ mod tests {
             address: address.to_string(),
             fingerprint: "f".repeat(64),
             token: None,
+            tags: Vec::new(),
         }
     }
 
@@ -293,11 +323,27 @@ mod tests {
             .unwrap();
         nodes.keep(node("b", "10.0.0.6:7400")).unwrap();
 
+        // An announcement keeps the tags of a known device, and only them.
+        let seen = Found {
+            name: "elsewhere".to_string(),
+            address: "10.0.0.99:7400".parse().unwrap(),
+            id: Some("b".to_string()),
+            fingerprint: None,
+            claimed: Some(true),
+            tags: vec!["floor-2".to_string(), "lobby".to_string()],
+        };
+        assert!(nodes.note_found(&seen).unwrap());
+        assert!(!nodes.note_found(&seen).unwrap());
+
         let loaded = Nodes::load().unwrap();
         assert_eq!(
             loaded.by_name("name-a").unwrap().token.as_deref(),
             Some("tsr_x")
         );
+        let b = loaded.by_id("b").unwrap();
+        assert_eq!(b.tags, ["floor-2", "lobby"]);
+        assert_eq!(b.address, "10.0.0.6:7400");
+        assert!(loaded.by_id("a").unwrap().tags.is_empty());
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;

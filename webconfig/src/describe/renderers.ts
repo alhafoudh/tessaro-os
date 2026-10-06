@@ -18,6 +18,7 @@ import * as net from "./net";
 import * as ping from "./ping";
 import * as playlist from "./playlist";
 import * as printer from "./printer";
+import * as tags from "./tags";
 import * as transfer from "./transfer";
 import * as update from "./update";
 import * as time from "./time";
@@ -52,6 +53,8 @@ export const renderers: Record<string, (input: any) => unknown> = {
     const shown = device.evalResult(input);
     return { line: spans(shown.line), thrown: shown.thrown };
   },
+  "device::tags": (input) => input.map((list: string[]) => spans(device.tagsLine(list))),
+  "tags::colour": (input) => input.map((tag: string) => tags.colour(tag)),
   "device::restarts": (input) =>
     input.map((consumer: any) => ({ long: device.restarts(consumer), short: device.restartsShort(consumer) })),
   "audio::summary": (input) => spans(audio.summary(input)),

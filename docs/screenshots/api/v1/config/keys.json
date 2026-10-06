@@ -941,6 +941,21 @@
     }
   },
   {
+    "name": "device.tags",
+    "env": "KIOSK_DEVICE_TAGS",
+    "applies": [
+      "agent"
+    ],
+    "guarded": false,
+    "doc": "Tags to find the device by and to act on a group of devices (`tessaro-ctl nodes list --tag`), announced over mDNS; `unclaimed` is reserved, every client adds it to a device nobody has claimed.",
+    "values": "tags of letters, digits and dashes, comma separated, or empty",
+    "default": null,
+    "value": null,
+    "input": {
+      "kind": "text"
+    }
+  },
+  {
     "name": "access.listen",
     "env": "KIOSK_API_LISTEN",
     "applies": [

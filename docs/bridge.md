@@ -83,7 +83,7 @@ answers everything:
 | Call | Mode | Does what `tessaro-ctl` does with |
 | --- | --- | --- |
 | `log(level, message)` | config | the journal, as `page (level): message`; `debug` only with `agent.debug` |
-| `device.status()` | config | `device status`, without the node's fingerprint and claim, whether remote DevTools is open (it tells a page it can be driven) and the settings revision (`tessaro:config` says when they change): its `name`, the hardware and its serial, memory, `cpuPercent`, the clock (`time`), the changes on probation (`pending`: `changes`, each a `key`, `value` and `previous`, and `secondsLeft`) and why the injected script is not in the page (`bridge.scriptProblem`) included |
+| `device.status()` | config | `device status`, without the node's fingerprint and claim, whether remote DevTools is open (it tells a page it can be driven) and the settings revision (`tessaro:config` says when they change): its `name`, its `tags` (device.tags, never the `unclaimed` a client adds, which would tell the claim), the hardware and its serial, memory, `cpuPercent`, the clock (`time`), the changes on probation (`pending`: `changes`, each a `key`, `value` and `previous`, and `secondsLeft`) and why the injected script is not in the page (`bridge.scriptProblem`) included |
 | `network.status()` | config | `network show`, without the public address |
 | `audio.status()` | config | `audio show` |
 | `printer.list()` | config | `printer list`, without each printer's URI |

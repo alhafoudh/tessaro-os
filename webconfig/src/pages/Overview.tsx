@@ -1,6 +1,7 @@
 // The GUI's Overview (pages.rs overview): the change on probation, the
 // device's status in facts, its units; Ping measures round trips from this
-// browser, Factory reset wants the device's name typed.
+// browser, Tags edits device.tags, Factory reset wants the device's name
+// typed.
 
 import { useState } from "react";
 
@@ -9,6 +10,7 @@ import * as describe from "../describe/device";
 import * as ping from "../describe/ping";
 import { useDevice } from "../device/DeviceContext";
 import { PageFrame } from "../shell/PageFrame";
+import { TagInput } from "../ui/Badge";
 import { Button, Facts, Heading, LineView, Output } from "../ui/controls";
 import { Dialog, Field, Intro } from "../ui/Dialog";
 import { ConfirmTyped } from "../ui/dialogs";
@@ -20,7 +22,7 @@ const FACTORY_RESET_LOSES = "erase every setting, remove every token and ssh key
 
 export function Overview({ info }: { info: PageInfo }) {
   const { status, log } = useDevice();
-  const [dialog, setDialog] = useState<"ping" | "reset" | null>(null);
+  const [dialog, setDialog] = useState<"ping" | "tags" | "reset" | null>(null);
   const [output, setOutput] = useState<Line[]>([]);
   const [pinging, setPinging] = useState(false);
   const [resetting, setResetting] = useState(false);
@@ -72,6 +74,9 @@ export function Overview({ info }: { info: PageInfo }) {
           <Button disabled={pinging} onClick={() => setDialog("ping")}>
             {pinging ? "Pinging ..." : "Ping"}
           </Button>
+          <Button disabled={!status} onClick={() => setDialog("tags")}>
+            Tags
+          </Button>
           <Button disabled={!status} onClick={() => setDialog("reset")}>
             Factory reset
           </Button>
@@ -95,6 +100,7 @@ export function Overview({ info }: { info: PageInfo }) {
       )}
       <Output lines={output} />
       {dialog === "ping" && <PingDialog onClose={() => setDialog(null)} onPing={(count) => void runPing(count)} />}
+      {dialog === "tags" && status && <TagsDialog current={status.node.tags ?? []} onClose={() => setDialog(null)} />}
       {dialog === "reset" && status && (
         <ConfirmTyped
           title={`Factory reset ${status.node.name}`}
@@ -107,6 +113,38 @@ export function Overview({ info }: { info: PageInfo }) {
         />
       )}
     </PageFrame>
+  );
+}
+
+/** device.tags, as the GUI's Tags form: the device checks them at save. */
+function TagsDialog({ current, onClose }: { current: string[]; onClose: () => void }) {
+  const { set, log } = useDevice();
+  const [tags, setTags] = useState(current);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const save = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await set({ "device.tags": tags.join(",") });
+      log("tags saved", "ok");
+      onClose();
+    } catch (failed) {
+      setError(failure(failed).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Dialog title="Tags" onClose={onClose} submit="Save" busy={busy} onSubmit={() => void save()}>
+      <Intro>
+        Letters, digits and dashes. tessaro-gui's node list shows them and filters by them, and tessaro-ctl nodes list
+        --tag finds the device by them. unclaimed is not one to set: it follows the claim.
+      </Intro>
+      <Field label="Tags" hint={error ?? undefined}>
+        <TagInput value={tags} onChange={setTags} />
+      </Field>
+    </Dialog>
   );
 }
 

@@ -7,17 +7,18 @@
 //! certificate's fingerprint, and pinning accepts exactly that fingerprint -
 //! if another one answers by the time the token goes out, nothing is sent.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::net::SocketAddr;
 
-use iced::widget::{column, container, text, text_input};
+use iced::widget::{column, container, row, text, text_input};
 use iced::{Element, Length, Task};
 use protocol::{Claimed, NodeInfo};
 use tessaro_client::connect::{self, Found, PinAsk, Target, Trust};
 use tessaro_client::nodes::{Node, Nodes};
+use tessaro_client::tags;
 
 use crate::dialog::{self, field};
-use crate::grid::{cell, col, grid, Col};
+use crate::grid::{cell, col, grid, widget, Cell, Col};
 use crate::section::{self, action};
 use crate::{blocking, discovery, theme, CLIENT};
 
@@ -46,6 +47,15 @@ pub struct Row {
     /// Announced by mDNS, or answered a peek this session. False only means
     /// nobody has heard from it, not that it is down.
     pub online: bool,
+    /// device.tags: as announced, else as the store last kept them.
+    pub tags: Vec<String>,
+}
+
+impl Row {
+    /// What the list shows and filters by: `unclaimed` too, when it is.
+    pub fn all_tags(&self) -> Vec<String> {
+        tags::effective(&self.tags, self.claimed)
+    }
 }
 
 /// The known nodes, overlaid with what is seen on the network: a known
@@ -64,6 +74,7 @@ pub fn merge<'a>(known: &Nodes, found: impl IntoIterator<Item = &'a Found>) -> V
             pin: Pin::Known,
             token: node.token.is_some(),
             online: false,
+            tags: node.tags.clone(),
         })
         .collect();
 
@@ -87,6 +98,7 @@ pub fn merge<'a>(known: &Nodes, found: impl IntoIterator<Item = &'a Found>) -> V
                     pin: Pin::New,
                     token: false,
                     online: false,
+                    tags: Vec::new(),
                 });
                 rows.len() - 1
             }
@@ -96,6 +108,7 @@ pub fn merge<'a>(known: &Nodes, found: impl IntoIterator<Item = &'a Found>) -> V
         row.name.clone_from(&found.name);
         row.address = found.address.to_string();
         row.claimed = found.claimed.or(row.claimed);
+        row.tags.clone_from(&found.tags);
         let pinned = row.id.as_deref().and_then(|id| known.by_id(id));
         if let (Some(node), Some(fingerprint)) = (pinned, &found.fingerprint) {
             if &node.fingerprint != fingerprint {
@@ -105,6 +118,20 @@ pub fn merge<'a>(known: &Nodes, found: impl IntoIterator<Item = &'a Found>) -> V
     }
     rows.sort_by(|a, b| a.name.cmp(&b.name).then(a.key.cmp(&b.key)));
     rows
+}
+
+/// A row's tags as badges; pressing one filters the list by it.
+fn tag_cell<'a>(tags: Vec<String>) -> Cell<'a, Message> {
+    let sort = tags.join(" ");
+    let badges = row(tags.into_iter().map(|tag| {
+        theme::badge(
+            tag.clone(),
+            theme::badge_colour(&tag),
+            Some(Message::TagFilter(tag)),
+        )
+    }))
+    .spacing(3);
+    widget(sort, badges)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -170,6 +197,9 @@ pub enum Message {
     Select(String),
     Activate(String),
     Filter(String),
+    /// A tag's badge: add it to the tag filter, or take it out.
+    TagFilter(String),
+    ClearTags,
     Open,
     Login,
     Claim,
@@ -203,6 +233,8 @@ pub struct NodesView {
     added: Vec<Found>,
     selected: Option<String>,
     filter: String,
+    /// Only rows with every one of these tags, besides the text filter.
+    tag_filter: BTreeSet<String>,
     dialog: Option<Dialog>,
     /// Each dialog here has one field to type in, at 0.
     fields: dialog::Fields,
@@ -225,6 +257,7 @@ impl NodesView {
             added: Vec::new(),
             selected: None,
             filter: String::new(),
+            tag_filter: BTreeSet::new(),
             dialog: None,
             fields: dialog::Fields::default(),
             discovery: None,
@@ -268,6 +301,7 @@ impl NodesView {
                 address: row.address.clone(),
                 fingerprint: String::new(),
                 token: None,
+                tags: row.tags.clone(),
             }),
             _ => None,
         }
@@ -276,6 +310,9 @@ impl NodesView {
     pub fn discovered(&mut self, event: discovery::Event) {
         match event {
             discovery::Event::Seen(found) => {
+                // A known device keeps the tags it announced, for while it
+                // is offline; a store that cannot be written only costs that.
+                let _ = self.known.note_found(&found);
                 self.seen.insert(found.name.clone(), found);
             }
             discovery::Event::Gone(name) => {
@@ -317,6 +354,16 @@ impl NodesView {
             }
             Message::Filter(filter) => {
                 self.filter = filter;
+                none
+            }
+            Message::TagFilter(tag) => {
+                if !self.tag_filter.remove(&tag) {
+                    self.tag_filter.insert(tag);
+                }
+                none
+            }
+            Message::ClearTags => {
+                self.tag_filter.clear();
                 none
             }
             Message::Open => {
@@ -549,6 +596,7 @@ impl NodesView {
             id: Some(peek.node.id.clone()),
             fingerprint: Some(peek.fingerprint.clone()),
             claimed: Some(peek.node.claimed),
+            tags: peek.node.tags.clone(),
         };
         self.added.retain(|added| added.id != found.id);
         self.added.push(found);
@@ -576,6 +624,7 @@ impl NodesView {
                 address,
                 fingerprint: peek.fingerprint.clone(),
                 token: None,
+                tags: peek.node.tags.clone(),
             },
         };
         self.known.keep(node)
@@ -613,17 +662,50 @@ impl NodesView {
         )
     }
 
-    /// The rows the filter lets through, as the table shows them.
+    /// The rows the filters let through, as the table shows them: the text
+    /// in any cell, tags included, and every tag of the tag filter.
     fn visible_rows(&self) -> Vec<Row> {
+        let wanted: Vec<String> = self.tag_filter.iter().cloned().collect();
         self.rows()
             .into_iter()
             .filter(|row| {
+                let all = row.all_tags();
+                let tags = all.join(" ");
                 section::matches(
                     &self.filter,
-                    &[&row.name, &row.address, row.id.as_deref().unwrap_or("")],
-                )
+                    &[
+                        &row.name,
+                        &row.address,
+                        row.id.as_deref().unwrap_or(""),
+                        &tags,
+                    ],
+                ) && tags::matches(&all, &wanted)
             })
             .collect()
+    }
+
+    /// The tag filter over the list, each tag a badge that takes it out
+    /// again. Nothing while no tag is picked.
+    fn tag_bar(&self) -> Option<Element<'_, Message>> {
+        if self.tag_filter.is_empty() {
+            return None;
+        }
+        let mut bar = row![text("Only devices tagged")
+            .size(theme::SMALL)
+            .style(theme::muted)]
+        .spacing(4)
+        .align_y(iced::alignment::Vertical::Center);
+        for tag in &self.tag_filter {
+            bar = bar.push(theme::badge(
+                format!("{tag} ×"),
+                theme::badge_colour(tag),
+                Some(Message::TagFilter(tag.clone())),
+            ));
+        }
+        Some(
+            bar.push(theme::tool("Clear", Some(Message::ClearTags)))
+                .into(),
+        )
     }
 
     /// Enter: the open dialog's default button, else open the selected row.
@@ -655,7 +737,8 @@ impl NodesView {
             col("Claimed", Length::Fixed(90.0)),
             col("Pin", Length::Fixed(80.0)),
             col("Token", Length::Fixed(60.0)),
-            col("Seen", Length::Fill),
+            col("Seen", Length::Fixed(80.0)),
+            col("Tags", Length::Fill),
         ];
         let cells = rows.iter().map(|row| {
             vec![
@@ -682,6 +765,7 @@ impl NodesView {
                 } else {
                     cell("not seen").style(theme::muted).into()
                 },
+                tag_cell(row.all_tags()),
             ]
         });
         let keys: Vec<String> = rows.iter().map(|row| row.key.clone()).collect();
@@ -735,6 +819,10 @@ impl NodesView {
                 text(format!("not browsing the network: {why}")).style(text::warning)
             }
             (None, None) => text("browsing the network for devices (mDNS)").style(theme::muted),
+        };
+        let list: Element<'_, Message> = match self.tag_bar() {
+            Some(bar) => column![bar, list].spacing(4).into(),
+            None => list,
         };
         let page = column![
             container(list).padding(6).height(Length::Fill),
@@ -999,6 +1087,7 @@ mod tests {
             address: "10.0.0.5:7400".to_string(),
             fingerprint: "a".repeat(64),
             token: token.then(|| "tsr_x".to_string()),
+            tags: Vec::new(),
         }
     }
 
@@ -1009,7 +1098,91 @@ mod tests {
             id: Some(id.to_string()),
             fingerprint: Some(fingerprint.to_string()),
             claimed: Some(true),
+            tags: Vec::new(),
         }
+    }
+
+    fn tagged(list: &[&str]) -> Vec<String> {
+        list.iter().map(|tag| tag.to_string()).collect()
+    }
+
+    #[test]
+    fn a_silent_node_keeps_its_stored_tags_and_an_announcement_wins() {
+        let known = Nodes {
+            nodes: vec![
+                Node {
+                    tags: tagged(&["lobby"]),
+                    ..node("n1", "kiosk-1", true)
+                },
+                Node {
+                    tags: tagged(&["old"]),
+                    ..node("n2", "kiosk-2", true)
+                },
+            ],
+        };
+        let seen = [Found {
+            tags: tagged(&["floor-2"]),
+            claimed: Some(false),
+            ..found("n2", "kiosk-2", &"a".repeat(64))
+        }];
+        let rows = merge(&known, &seen);
+        assert_eq!(rows[0].all_tags(), tagged(&["lobby"]));
+        assert_eq!(rows[1].all_tags(), tagged(&["unclaimed", "floor-2"]));
+    }
+
+    #[test]
+    fn badges_filter_the_list_by_every_tag_picked() {
+        let pin = "a".repeat(64);
+        let mut view = NodesView {
+            tables: crate::grid::Tables::default(),
+            known: Nodes::default(),
+            seen: [
+                (
+                    "kiosk-1".to_string(),
+                    Found {
+                        tags: tagged(&["floor-2", "lobby"]),
+                        ..found("n1", "kiosk-1", &pin)
+                    },
+                ),
+                (
+                    "kiosk-2".to_string(),
+                    Found {
+                        tags: tagged(&["lobby"]),
+                        claimed: Some(false),
+                        ..found("n2", "kiosk-2", &pin)
+                    },
+                ),
+            ]
+            .into(),
+            added: Vec::new(),
+            selected: None,
+            filter: String::new(),
+            tag_filter: BTreeSet::new(),
+            dialog: None,
+            fields: dialog::Fields::default(),
+            discovery: None,
+            message: None,
+            generation: 0,
+        };
+        let names = |view: &NodesView| {
+            view.visible_rows()
+                .into_iter()
+                .map(|row| row.name)
+                .collect::<Vec<_>>()
+        };
+
+        let _ = view.update(Message::TagFilter("lobby".to_string()));
+        assert_eq!(names(&view), ["kiosk-1", "kiosk-2"]);
+        let _ = view.update(Message::TagFilter("floor-2".to_string()));
+        assert_eq!(names(&view), ["kiosk-1"]);
+        // A second press takes a tag out again.
+        let _ = view.update(Message::TagFilter("floor-2".to_string()));
+        let _ = view.update(Message::TagFilter("unclaimed".to_string()));
+        assert_eq!(names(&view), ["kiosk-2"]);
+        let _ = view.update(Message::ClearTags);
+        // The text filter finds tags too.
+        let _ = view.update(Message::Filter("floor".to_string()));
+        assert_eq!(names(&view), ["kiosk-1"]);
     }
 
     #[test]
@@ -1067,6 +1240,7 @@ mod tests {
             added: Vec::new(),
             selected: None,
             filter: String::new(),
+            tag_filter: BTreeSet::new(),
             dialog: None,
             fields: dialog::Fields::default(),
             discovery: None,

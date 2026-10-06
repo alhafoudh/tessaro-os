@@ -350,6 +350,12 @@
       "source": "default"
     },
     {
+      "key": "device.tags",
+      "env": "KIOSK_DEVICE_TAGS",
+      "value": null,
+      "source": "default"
+    },
+    {
       "key": "access.listen",
       "env": "KIOSK_API_LISTEN",
       "value": "0.0.0.0:7400",

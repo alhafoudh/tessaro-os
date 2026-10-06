@@ -8,8 +8,10 @@ import { useQuery } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
 
 import { answer, client, failure, type Schemas } from "../api/client";
+import { split } from "../describe/tags";
 import { useDevice } from "../device/DeviceContext";
 import { PageFrame } from "../shell/PageFrame";
+import { TagInput } from "../ui/Badge";
 import { Button, Facts } from "../ui/controls";
 import { Field } from "../ui/Dialog";
 import { fact, Line } from "../text/line";
@@ -135,7 +137,12 @@ export function QuickSetup({ info }: { info: PageInfo }) {
         <WifiSection hotspot={w?.hotspot} />
         <EthernetSection value={value} save={save} />
         <PageSection url={value("browser.url")} save={save} />
-        <DeviceSection name={value("device.name") || w?.node || ""} timezone={value("time.timezone")} save={save} />
+        <DeviceSection
+          name={value("device.name") || w?.node || ""}
+          tags={split(value("device.tags"))}
+          timezone={value("time.timezone")}
+          save={save}
+        />
       </div>
     </PageFrame>
   );
@@ -415,9 +422,10 @@ function PageSection({ url, save }: { url: string; save: Save }) {
   );
 }
 
-function DeviceSection({ name, timezone, save }: { name: string; timezone: string; save: Save }) {
+function DeviceSection({ name, tags, timezone, save }: { name: string; tags: string[]; timezone: string; save: Save }) {
   const [open, setOpen] = useState(false);
   const [typedName, setName] = useState<string | null>(null);
+  const [typedTags, setTags] = useState<string[] | null>(null);
   const [typedZone, setZone] = useState<string | null>(null);
   const [said, say] = useState<Said>(null);
   const zones = useQuery({
@@ -445,6 +453,20 @@ function DeviceSection({ name, timezone, save }: { name: string; timezone: strin
           onClick={() => void save({ "device.name": (typedName ?? name).trim() }, "Name saved.", say)}
         >
           Save name
+        </Button>
+      </div>
+      <Field
+        label="Tags"
+        hint="Letters, digits and dashes, to find the device by: tessaro-gui's node list and tessaro-ctl nodes list --tag. unclaimed is not one to set: it follows the claim."
+      >
+        <TagInput value={typedTags ?? tags} onChange={setTags} />
+      </Field>
+      <div>
+        <Button
+          kind="primary"
+          onClick={() => void save({ "device.tags": (typedTags ?? tags).join(",") }, "Tags saved.", say)}
+        >
+          Save tags
         </Button>
       </div>
       <Field label="Timezone">

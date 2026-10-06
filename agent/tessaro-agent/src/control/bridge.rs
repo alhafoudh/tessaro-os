@@ -1144,6 +1144,7 @@ fn page_printers(list: &protocol::PrinterList) -> Value {
 fn page_status(status: &protocol::Status) -> Value {
     json!({
         "name": status.node.name,
+        "tags": status.node.tags,
         "os": status.os,
         "imageVersion": status.image_version,
         "version": status.node.version,
@@ -1285,7 +1286,14 @@ mod tests {
         assert_eq!(status["hardware"]["vendor"], "QEMU");
         assert_eq!(status["memory"]["total"], 4_000_000u64 * 1024);
         assert!(status.get("cpuPercent").is_some());
-        for shown in ["name", "time", "pending", "bridge", "browserAnswering"] {
+        for shown in [
+            "name",
+            "tags",
+            "time",
+            "pending",
+            "bridge",
+            "browserAnswering",
+        ] {
             assert!(
                 status.get(shown).is_some(),
                 "{shown} did not reach the page"

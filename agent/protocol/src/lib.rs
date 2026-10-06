@@ -48,6 +48,10 @@ pub struct NodeInfo {
     /// SHA-256 of the device's TLS certificate, lower-case hex.
     pub fingerprint: String,
     pub claimed: bool,
+    /// device.tags, sorted. Never `unclaimed`: a client adds that from
+    /// `claimed`.
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 /// What `restart` restarts.

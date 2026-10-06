@@ -170,6 +170,7 @@ async fn answers() -> BTreeMap<&'static str, serde_json::Value> {
         machine: "raspberrypi5".into(),
         fingerprint: FINGERPRINT.into(),
         claimed: false,
+        tags: vec!["floor-2".into(), "lobby".into()],
         ..status.node
     };
     status.current_url = Some(URL.into());

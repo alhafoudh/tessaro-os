@@ -44,7 +44,7 @@ use serde_json::Value;
 use tessaro_client::access;
 use tessaro_client::describe::device as describe;
 use tessaro_client::nodes::Nodes;
-use tessaro_client::{sections, webconfig};
+use tessaro_client::{sections, tags, webconfig};
 
 use connect::{Answer, Session, Target, Trust};
 use style::{pad, paint};
@@ -248,6 +248,14 @@ enum DeviceCmd {
     Status,
     /// Who the device is: node id, name, TLS fingerprint, claim state.
     Id,
+    /// The device's tags, which `nodes list --tag` finds it by. `unclaimed`
+    /// is not one to set: every client adds it to a device nobody has
+    /// claimed.
+    ///
+    ///   tessaro-ctl device tags add lobby floor-2
+    ///   tessaro-ctl nodes list --tag lobby
+    #[command(subcommand)]
+    Tags(TagsCmd),
     /// How fast the device answers this client: the TCP connect, the TLS
     /// handshake, then round trips over the API connection. Needs no
     /// token, like `id`.
@@ -540,6 +548,10 @@ enum NodesCmd {
         /// Seconds to listen.
         #[arg(long, default_value_t = 3)]
         wait: u64,
+        /// Only devices with this tag; repeat it for devices with every one
+        /// of them. `unclaimed` picks the devices nobody has claimed.
+        #[arg(long = "tag", value_name = "TAG")]
+        tags: Vec<String>,
     },
     /// Forget a device: its pin and token on this machine.
     Forget { node: String },
@@ -574,6 +586,21 @@ enum TokenCmd {
     /// Revoke a token. Revoking the last one unclaims the device.
     Revoke {
         id: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum TagsCmd {
+    List,
+    /// Add tags: letters, digits and dashes.
+    Add {
+        #[arg(required = true)]
+        tags: Vec<String>,
+    },
+    /// Remove tags. One the device does not have is not an error.
+    Remove {
+        #[arg(required = true)]
+        tags: Vec<String>,
     },
 }
 
@@ -688,7 +715,9 @@ fn run(cli: Cli) -> Result<(), String> {
 
     // The commands that do not need a device conversation at all.
     match &cli.command {
-        Cmd::Nodes(NodesCmd::List { wait }) => return list_nodes(&nodes, *wait, cli.json),
+        Cmd::Nodes(NodesCmd::List { wait, tags }) => {
+            return list_nodes(&mut nodes, *wait, tags, cli.json)
+        }
         Cmd::Nodes(NodesCmd::Forget { node }) => return forget(&mut nodes, node),
         Cmd::Browser(BrowserCmd::Policies(policies::PoliciesCmd::Check { file })) => {
             return policies::check(file, cli.json)
@@ -717,6 +746,18 @@ fn run(cli: Cli) -> Result<(), String> {
         Cmd::Device(DeviceCmd::Id) => {
             let node = session.fetch::<api::device::Id>()?;
             print(json, &node, || show_node(&node))
+        }
+        Cmd::Device(DeviceCmd::Tags(command)) => {
+            let tags = match command {
+                TagsCmd::List => tags::read(&mut session)?.1,
+                TagsCmd::Add { tags } => tags::apply(&mut session, &tags::Edit::Add(tags))?.tags,
+                TagsCmd::Remove { tags } => {
+                    tags::apply(&mut session, &tags::Edit::Remove(tags))?.tags
+                }
+            };
+            print(json, &tags, || {
+                println!("{}", style::line(&describe::tags(&tags)))
+            })
         }
         Cmd::Config(ConfigCmd::Keys { key }) => {
             let mut keys = session.fetch::<api::config::Keys>()?;
@@ -1489,8 +1530,15 @@ fn forget(nodes: &mut Nodes, node: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn list_nodes(nodes: &Nodes, wait: u64, json: bool) -> Result<(), String> {
-    let found = connect::browse(std::time::Duration::from_secs(wait));
+fn list_nodes(nodes: &mut Nodes, wait: u64, wanted: &[String], json: bool) -> Result<(), String> {
+    let mut found = connect::browse(std::time::Duration::from_secs(wait));
+    for seen in &found {
+        // Only a known device's tags, in a store that is there already; a
+        // store that cannot be written costs the cached tags, not the list.
+        let _ = nodes.note_found(seen);
+    }
+    let answered = found.len();
+    found.retain(|seen| tags::matches(&tags::effective(&seen.tags, seen.claimed), wanted));
     if json {
         let list: Vec<Value> = found
             .iter()
@@ -1500,6 +1548,7 @@ fn list_nodes(nodes: &Nodes, wait: u64, json: bool) -> Result<(), String> {
                     "address": found.address.to_string(),
                     "id": found.id,
                     "claimed": found.claimed,
+                    "tags": found.tags,
                     "known": found.id.as_deref().is_some_and(|id| nodes.by_id(id).is_some()),
                 })
             })
@@ -1507,12 +1556,20 @@ fn list_nodes(nodes: &Nodes, wait: u64, json: bool) -> Result<(), String> {
         return print_json(&list);
     }
 
-    if found.is_empty() {
+    if answered == 0 {
         println!(
             "{}",
             paint(
                 style::MUTED,
                 format!("no Tessaro devices answered within {wait}s")
+            )
+        );
+    } else if found.is_empty() {
+        println!(
+            "{}",
+            paint(
+                style::MUTED,
+                format!("{answered} answered, none tagged {}", wanted.join(" and "))
             )
         );
     }
@@ -1524,12 +1581,20 @@ fn list_nodes(nodes: &Nodes, wait: u64, json: bool) -> Result<(), String> {
             None => pad(style::MUTED, "?", 10),
         };
         let pin = match (known, &found.fingerprint) {
-            (Some(node), Some(fp)) if &node.fingerprint != fp => paint(style::BAD, "PIN MISMATCH"),
-            (Some(_), _) => paint(style::OK, "known"),
-            (None, _) => String::new(),
+            (Some(node), Some(fp)) if &node.fingerprint != fp => {
+                pad(style::BAD, "PIN MISMATCH", 12)
+            }
+            (Some(_), _) => pad(style::OK, "known", 12),
+            (None, _) => pad(style::MUTED, "", 12),
+        };
+        // The claim has its column: the tags are the device's own.
+        let tags = if found.tags.is_empty() {
+            String::new()
+        } else {
+            style::line(&describe::tags(&found.tags))
         };
         println!(
-            "{} {} {claimed} {pin}",
+            "{} {} {claimed} {pin} {tags}",
             pad(style::HEADING, &found.name, 28),
             pad(style::MUTED, found.address, 22)
         );

@@ -5,7 +5,11 @@
     "version": "1.0.0",
     "machine": "raspberrypi5",
     "fingerprint": "9c41e0d8b7a35f2e6c1d4b8a0f73e5d29a6c8b1e4f07d3a5c2b9e6f1a8d4c731",
-    "claimed": false
+    "claimed": false,
+    "tags": [
+      "floor-2",
+      "lobby"
+    ]
   },
   "revision": 1,
   "kiosk_url": "https://menu.example.com/",
