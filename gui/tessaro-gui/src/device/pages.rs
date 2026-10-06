@@ -486,6 +486,11 @@ impl Form {
         })
     }
 
+    /// How many fields it has, as `dialog::Fields` numbers them.
+    pub(super) fn len(&self) -> usize {
+        self.fields.len()
+    }
+
     fn wide(mut self) -> Self {
         self.wide = true;
         self
@@ -1017,7 +1022,8 @@ fn page_of(tag: &str) -> &'static str {
         "scripts" | "script" => "scripts",
         "schedules" | "schedule" => "schedules",
         "printers" | "printer" => "printer",
-        "playlists" | "playlist" | "timetable" => "playlists",
+        "playlists" | "playlist" => "playlists",
+        "timetable" => "timetables",
         "tokens" | "token" | "password" | "claim" | "unclaim" => "access",
         "ssh" => "ssh",
         "files" => "files",
@@ -1258,9 +1264,11 @@ impl Device {
                     call::<api::printer::Jobs>(PrintJobsQuery { printer: None }, ()),
                 );
             }
-            Page::Playlists => {
-                self.call("playlists", fetch::<api::playlist::List>());
+            Page::Playlists => self.call("playlists", fetch::<api::playlist::List>()),
+            Page::Timetables => {
                 self.call("timetable", fetch::<api::playlist::TimetableList>());
+                // For the form's choice of playlist.
+                self.call("playlists", fetch::<api::playlist::List>());
             }
             Page::Access => self.call("tokens", fetch::<api::access::Tokens>()),
             Page::Ssh => self.call("ssh.keys", fetch::<api::ssh::Keys>()),
@@ -1456,7 +1464,8 @@ impl Device {
                 self.log(Tone::Ok, format!("{verb} {}", info.spec.name));
                 self.pages.selected.insert("playlists", info.id);
                 // The timetable names its playlists: a rename shows there.
-                self.refresh_page(Page::Playlists);
+                // Its refresh takes the playlists too.
+                self.refresh_page(Page::Timetables);
             }
             "playlist.item" | "playlist.item.save" => {
                 let info: PlaylistInfo = parse(value)?;
@@ -1480,7 +1489,7 @@ impl Device {
                 } else {
                     self.pages.selected.remove("timetable");
                 }
-                self.refresh_page(Page::Playlists);
+                self.refresh_page(Page::Timetables);
             }
             "timetable.create" | "timetable.change" | "timetable.set" => {
                 let entry: TimetableInfo = parse(value)?;
@@ -1492,7 +1501,7 @@ impl Device {
                 self.log(Tone::Ok, format!("{verb} timetable entry {}", entry.id));
                 self.pages.selected.insert("timetable", entry.id);
                 // Each playlist counts the entries that play it.
-                self.refresh_page(Page::Playlists);
+                self.refresh_page(Page::Timetables);
             }
             "net" => self.pages.net = Some(parse(value)?),
             "net.profiles" => self.pages.profiles = parse(value)?,
@@ -2832,6 +2841,14 @@ impl Device {
                     .map(|info| info.id.clone())
                     .collect(),
             ),
+            Page::Timetables => (
+                "timetable",
+                self.pages
+                    .timetable
+                    .iter()
+                    .map(|entry| entry.id.clone())
+                    .collect(),
+            ),
             Page::Printer => (
                 "printers",
                 self.pages
@@ -3807,6 +3824,7 @@ impl Device {
             Page::Schedules => self.schedules_view(),
             Page::Printer => self.printer_view(),
             Page::Playlists => self.playlists_view(),
+            Page::Timetables => self.timetables_view(),
             Page::Access => self.access_view(),
             Page::Ssh => self.ssh_view(),
             Page::Files => self.files_view(),
@@ -4551,8 +4569,8 @@ impl Device {
         )
     }
 
-    /// The player, the playlists, the items of the one selected and the
-    /// timetable, each list with its own actions beside it.
+    /// The player, the playlists and the items of the one selected, with
+    /// the items' actions beside them.
     fn playlists_view(&self) -> Element<'_, Message> {
         const PLAYLISTS: &[Col] = &[
             col("Playlist", Length::Fixed(180.0)),
@@ -4568,15 +4586,6 @@ impl Device {
             col("Source", Length::Fixed(320.0)),
             col("Plays", Length::Fixed(110.0)),
             col("Options", Length::Fill),
-        ];
-        const TIMETABLE: &[Col] = &[
-            col("Entry", Length::Fixed(90.0)),
-            col("State", Length::Fixed(50.0)),
-            col("Days", Length::Fixed(130.0)),
-            col("Time", Length::Fixed(110.0)),
-            col("Playlist", Length::Fixed(160.0)),
-            col("Priority", Length::Fixed(60.0)),
-            col("Active", Length::Fill),
         ];
         let yes = |on: bool| if on { "yes" } else { "" };
         let playlists = self
@@ -4629,33 +4638,6 @@ impl Device {
                 )
             })
             .collect();
-        let entries = self
-            .pages
-            .timetable
-            .iter()
-            .map(|entry| {
-                let spec = &entry.spec;
-                let state: Cell<'_, Message> = if spec.enabled {
-                    cell("on").style(text::success).into()
-                } else {
-                    cell("off").style(text::danger).into()
-                };
-                (
-                    entry.id.clone(),
-                    vec![
-                        cell(tessaro_client::playlist::short_id(&entry.id))
-                            .style(theme::muted)
-                            .into(),
-                        state,
-                        cell(format_days(&spec.days)).into(),
-                        cell(format!("{}-{}", spec.from, spec.to)).into(),
-                        cell(entry.playlist_name.clone()).into(),
-                        cell(spec.priority.to_string()).into(),
-                        cell(yes(entry.active)).into(),
-                    ],
-                )
-            })
-            .collect();
 
         let with_one = |message: Msg| chosen.as_ref().and_then(|_| self.when(message));
         let item = self.selected_item();
@@ -4667,17 +4649,10 @@ impl Device {
                 .filter(|(_, position)| fits(*position))
                 .and_then(|_| self.when(message))
         };
-        let entry = self.selected_entry();
-        let with_entry = |message: Msg| entry.as_ref().and_then(|_| self.when(message));
         let has_default = self
             .setting(keys::PLAYLIST_DEFAULT)
             .and_then(|setting| setting.value.as_deref())
             .is_some_and(|value| !value.is_empty());
-        let toggle = if entry.as_ref().is_some_and(|entry| entry.spec.enabled) {
-            "Disable"
-        } else {
-            "Enable"
-        };
 
         let mut body: Vec<Element<'_, Message>> = Vec::new();
         if let Some(player) = self
@@ -4715,25 +4690,6 @@ impl Device {
             .height(Length::Fill)
             .into(),
         );
-        body.push(
-            row![
-                self.table("timetable", TIMETABLE, entries, Length::Fixed(TABLE_HEIGHT)),
-                column![
-                    theme::tool(
-                        "Add entry ...",
-                        (!self.pages.playlists.is_empty())
-                            .then_some(())
-                            .and_then(|()| self.when(Msg::EntryNew)),
-                    ),
-                    theme::tool("Edit entry ...", with_entry(Msg::EntryEdit)),
-                    theme::tool(toggle, with_entry(Msg::EntryToggle)),
-                    theme::tool("Remove entry ...", with_entry(Msg::EntryRemove)),
-                ]
-                .spacing(4),
-            ]
-            .spacing(6)
-            .into(),
-        );
         self.page(
             "playlists",
             vec![
@@ -4757,6 +4713,68 @@ impl Device {
                 action("Remove ...", with_one(Msg::PlaylistRemove)),
             ],
             body,
+        )
+    }
+
+    /// The timetable that picks which playlist plays when.
+    fn timetables_view(&self) -> Element<'_, Message> {
+        const TIMETABLE: &[Col] = &[
+            col("Entry", Length::Fixed(90.0)),
+            col("State", Length::Fixed(50.0)),
+            col("Days", Length::Fixed(130.0)),
+            col("Time", Length::Fixed(110.0)),
+            col("Playlist", Length::Fixed(160.0)),
+            col("Priority", Length::Fixed(60.0)),
+            col("Active", Length::Fill),
+        ];
+        let entries = self
+            .pages
+            .timetable
+            .iter()
+            .map(|entry| {
+                let spec = &entry.spec;
+                let state: Cell<'_, Message> = if spec.enabled {
+                    cell("on").style(text::success).into()
+                } else {
+                    cell("off").style(text::danger).into()
+                };
+                (
+                    entry.id.clone(),
+                    vec![
+                        cell(tessaro_client::playlist::short_id(&entry.id))
+                            .style(theme::muted)
+                            .into(),
+                        state,
+                        cell(format_days(&spec.days)).into(),
+                        cell(format!("{}-{}", spec.from, spec.to)).into(),
+                        cell(entry.playlist_name.clone()).into(),
+                        cell(spec.priority.to_string()).into(),
+                        cell(if entry.active { "yes" } else { "" }).into(),
+                    ],
+                )
+            })
+            .collect();
+        let entry = self.selected_entry();
+        let with_entry = |message: Msg| entry.as_ref().and_then(|_| self.when(message));
+        let toggle = if entry.as_ref().is_some_and(|entry| entry.spec.enabled) {
+            "Disable"
+        } else {
+            "Enable"
+        };
+        self.page(
+            "timetables",
+            vec![action(
+                "New entry ...",
+                (!self.pages.playlists.is_empty())
+                    .then_some(())
+                    .and_then(|()| self.when(Msg::EntryNew)),
+            )],
+            vec![
+                action("Edit ...", with_entry(Msg::EntryEdit)),
+                action(toggle, with_entry(Msg::EntryToggle)),
+                action("Remove ...", with_entry(Msg::EntryRemove)),
+            ],
+            vec![self.table("timetable", TIMETABLE, entries, Length::Fill)],
         )
     }
 
@@ -5594,6 +5612,7 @@ pub(super) fn page_key(page: Page) -> &'static str {
         Page::Schedules => "schedules",
         Page::Printer => "printer",
         Page::Playlists => "playlists",
+        Page::Timetables => "timetables",
         Page::Access => "access",
         Page::Ssh => "ssh",
         Page::Files => "files",

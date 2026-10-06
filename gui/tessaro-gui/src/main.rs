@@ -234,6 +234,8 @@ enum Key {
     Enter,
     Up,
     Down,
+    /// Tab, or Shift-Tab (true).
+    Tab(bool),
     Zoom(i32),
     ZoomReset,
 }
@@ -535,6 +537,7 @@ impl App {
                 Key::Enter => nodes_view::Message::Enter,
                 Key::Up => nodes_view::Message::Step(-1),
                 Key::Down => nodes_view::Message::Step(1),
+                Key::Tab(back) => return self.nodes.tab(back),
                 Key::Zoom(_) | Key::ZoomReset => return Task::none(),
             };
             return self.nodes_update(message);
@@ -551,6 +554,7 @@ impl App {
                 Key::Enter => cfg(device::Cfg::Enter),
                 Key::Up => cfg(device::Cfg::Step(-1)),
                 Key::Down => cfg(device::Cfg::Step(1)),
+                Key::Tab(back) => device::Message::Tab(back),
                 Key::Zoom(_) | Key::ZoomReset => return Task::none(),
             };
             return self.device_update(id, message);
@@ -565,6 +569,7 @@ impl App {
             Key::Enter => device::Message::Enter,
             Key::Up => device::Message::Step(-1),
             Key::Down => device::Message::Step(1),
+            Key::Tab(back) => device::Message::Tab(back),
             Key::Zoom(_) | Key::ZoomReset => return Task::none(),
         };
         self.device_update(top, message)
@@ -792,6 +797,9 @@ fn keys(event: iced::Event, status: event::Status, id: window::Id) -> Option<Mes
                 keyboard::Key::Named(key::Named::Enter) => Key::Enter,
                 keyboard::Key::Named(key::Named::ArrowUp) => Key::Up,
                 keyboard::Key::Named(key::Named::ArrowDown) => Key::Down,
+                // No iced field takes Tab, so it comes here from the one
+                // with the cursor.
+                keyboard::Key::Named(key::Named::Tab) => Key::Tab(modifiers.shift()),
                 _ => return None,
             };
             Some(Message::Key(key))

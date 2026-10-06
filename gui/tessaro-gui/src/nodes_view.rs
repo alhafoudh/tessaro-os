@@ -237,6 +237,12 @@ impl NodesView {
         self.dialog.is_some()
     }
 
+    /// Tab in a dialog: each has its one field, which takes the cursor back.
+    pub fn tab<T: Send + 'static>(&self, back: bool) -> Task<T> {
+        let count = if self.has_dialog() { 1 } else { 0 };
+        self.fields.step(count, back)
+    }
+
     pub fn rows(&self) -> Vec<Row> {
         merge(&self.known, self.seen.values().chain(&self.added))
     }

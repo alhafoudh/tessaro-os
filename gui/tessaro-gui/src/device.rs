@@ -289,6 +289,8 @@ pub enum Message {
     /// Up (-1) or Down (1) in the table.
     Step(i32),
     Enter,
+    /// Tab in a dialog, or Shift-Tab (true): its next or previous field.
+    Tab(bool),
     TakeShot,
     LiveShot,
     SaveShot,
@@ -343,6 +345,7 @@ pub enum Page {
     Browser,
     Policies,
     Playlists,
+    Timetables,
     Network,
     Wifi,
     Certs,
@@ -367,8 +370,9 @@ impl Page {
         (Page::Screen, "Screen", sections::KIOSK),
         (Page::Browser, "Browser", sections::KIOSK),
         (Page::Policies, "Policies", sections::KIOSK),
-        (Page::Playlists, "Playlists", sections::KIOSK),
         (Page::Files, "Files", sections::KIOSK),
+        (Page::Playlists, "Playlists", sections::PLAYER),
+        (Page::Timetables, "Timetables", sections::PLAYER),
         (Page::Audio, "Audio", sections::PERIPHERALS),
         (Page::Camera, "Camera", sections::PERIPHERALS),
         (Page::Printer, "Printer", sections::PERIPHERALS),
@@ -405,6 +409,7 @@ impl Page {
             | Page::Certs
             | Page::Scripts
             | Page::Schedules
+            | Page::Timetables
             | Page::Ssh
             | Page::Files
             | Page::Update
@@ -1260,6 +1265,14 @@ impl Device {
                 if let Some(next) = next {
                     return self.update(next);
                 }
+            }
+            Message::Tab(back) => {
+                let count = match &self.dialog {
+                    Some(Dialog::Edit(_)) => Edit::VALUE + 1,
+                    Some(Dialog::Form(form)) => form.len(),
+                    _ => 0,
+                };
+                return self.fields.step(count, back);
             }
             Message::TakeShot => {
                 self.request(Request::Screenshot);

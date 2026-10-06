@@ -4,6 +4,7 @@
 //! subjects - the device itself, Quick Setup - come before any section.
 
 pub const KIOSK: &str = "Kiosk";
+pub const PLAYER: &str = "Player";
 pub const PERIPHERALS: &str = "Peripherals";
 pub const NETWORK: &str = "Network";
 pub const AUTOMATION: &str = "Automation";
@@ -18,7 +19,8 @@ pub const CLIENT: &str = "Client";
 /// The first is under clap's own heading, as a plain command list would be.
 pub const GROUPS: &[(&str, &[&str])] = &[
     ("Commands", &["device"]),
-    (KIOSK, &["screen", "browser", "playlist", "files"]),
+    (KIOSK, &["screen", "browser", "files"]),
+    (PLAYER, &["playlist"]),
     (PERIPHERALS, &["audio", "camera", "printer"]),
     (NETWORK, &["network"]),
     (AUTOMATION, &["script", "schedule"]),

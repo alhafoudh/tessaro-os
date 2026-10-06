@@ -135,6 +135,13 @@ buttons focuses nothing. Each window numbers its own fields, because every
 inner window shares one widget tree, where the same id twice would focus
 both.
 
+**Tab and Shift-Tab move the cursor between a dialog's fields**, round at
+the ends (`Fields::step`). No iced field takes Tab, so it reaches `keys` in
+`main.rs` and goes to the window on top. The step walks only that window's
+dialog fields: iced's own `focus_next` walks the whole tree, every inner
+window and the page under the dialog with it. A box or a choice takes no
+focus in iced, so Tab passes over it.
+
 **One dark look, in the welcome page's colours** (`theme.rs` in
 `gui/tessaro-style`, the crate the GUI shares with Try Tessaro along with
 `icon.rs` and the fonts; `main.rs` imports both as `theme` and `icon`), so the
@@ -310,7 +317,8 @@ applies and stays, Default unsets.**
 | Screen | `screen modes` with "use this mode", "Rotate" (`screen.rotation`), `screen screenshot` with a 3s live refresh and Save, `screen power`, `screen keyboard` |
 | Browser | what the browser shows, `browser navigate`, `reload`, `clear-cache`, `maintenance`, `debug`, `zoom`, `devtools` (a job holding the tunnel until Cancel), `inject`, `bridge`, `eval` (results in Messages) |
 | Policies | `browser policies list` in priority order with its `#` column, `set` and `edit` in one wide editor (from the template, a file, or the stored text, checked as you type, saved against the revision it opened), `move` as Move up and Move down (the moved row stays selected), `show` (the effective policy), `remove` |
-| Playlists | `playlist status` as facts above the lists, `playlist list` with "Make default" and "Clear default" (`playlist.default`), `create` and `set` in one dialog (name, transition and its length), `remove`; the selected playlist's items (`playlist show`) beside `items add` and `items set` in one dialog (an edit opens filled in, and what the chosen kind cannot carry is left out), `items move` as Move up and Move down (the moved item stays selected), `items remove`; `playlist timetable list` beside `timetable add` and `set` in one dialog (a choice of playlist), Enable/Disable, `timetable remove` |
+| Playlists | `playlist status` as facts above the lists, `playlist list` with "Make default" and "Clear default" (`playlist.default`), `create` and `set` in one dialog (name, transition and its length), `remove`; the selected playlist's items (`playlist show`) beside `items add` and `items set` in one dialog (an edit opens filled in, and what the chosen kind cannot carry is left out), `items move` as Move up and Move down (the moved item stays selected), `items remove` |
+| Timetables | `playlist timetable list`, `timetable add` and `set` in one dialog (a choice of playlist), Enable/Disable, `timetable remove` |
 | Network | `network show` and interfaces, `network last`, `network ping`, `network speedtest` (with "Bypass the proxy"), `network proxy set`, `off` and `test`, `network profiles list` and `show` |
 | WiFi | `network wifi status`, `scan`, `join`, `hotspot-password` |
 | Certificates | `network certs list`, `add` (a file picker) and `revoke` |

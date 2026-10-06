@@ -26,6 +26,7 @@ import { Scripts } from "./Scripts";
 import { Ssh } from "./Ssh";
 import { Storage } from "./Storage";
 import { Time } from "./Time";
+import { Timetables } from "./Timetables";
 import { Update } from "./Update";
 import { Wifi } from "./Wifi";
 
@@ -39,6 +40,7 @@ export interface PageInfo {
 }
 
 const KIOSK = "Kiosk";
+const PLAYER = "Player";
 const PERIPHERALS = "Peripherals";
 const NETWORK = "Network";
 const AUTOMATION = "Automation";
@@ -53,8 +55,9 @@ export const PAGES: PageInfo[] = [
   { path: "screen", title: "Screen", section: KIOSK, scope: { prefix: "screen" }, component: Screen },
   { path: "browser", title: "Browser", section: KIOSK, scope: { prefix: "browser" }, component: Browser },
   { path: "policies", title: "Policies", section: KIOSK, component: Policies },
-  { path: "playlists", title: "Playlists", section: KIOSK, scope: { prefix: "playlist" }, component: Playlists },
   { path: "files", title: "Files", section: KIOSK, component: Files },
+  { path: "playlists", title: "Playlists", section: PLAYER, scope: { prefix: "playlist" }, component: Playlists },
+  { path: "timetables", title: "Timetables", section: PLAYER, component: Timetables },
   { path: "audio", title: "Audio", section: PERIPHERALS, scope: { prefix: "audio" }, component: Audio },
   { path: "camera", title: "Camera", section: PERIPHERALS, scope: { prefix: "camera" }, component: Camera },
   { path: "printer", title: "Printer", section: PERIPHERALS, scope: { prefix: "printer" }, component: Printer },

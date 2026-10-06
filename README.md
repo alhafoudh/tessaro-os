@@ -332,7 +332,7 @@ Images and videos from anywhere but the device itself are copied to it first,
 so they keep playing when the network drops.
 
 <p align="center">
-  <img src="docs/images/webconfig-playlists.jpg" width="70%" alt="Webconfig's Playlists page: what plays now, the playlists, the items of the one on screen and the timetable">
+  <img src="docs/images/webconfig-playlists.jpg" width="70%" alt="Webconfig's Playlists page: what plays now, the playlists and the items of the one on screen">
 </p>
 
 **Scripts and schedules**

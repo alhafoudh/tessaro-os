@@ -1,11 +1,10 @@
 // The GUI's Playlists page (pages.rs playlists_view): what the player is
-// doing, every playlist with the one on screen marked, the selected one's
-// items and the timetable. A new playlist, and on the selected one Show,
-// Rename, Transition, Make default or Clear default (playlist.default,
-// through config set) and Remove; its items added, edited, moved and
-// removed, a file from the store picked as an item's source; timetable
-// entries added, edited, switched on and off and removed. playlist.default
-// is its Configure.
+// doing, every playlist with the one on screen marked and the selected one's
+// items. A new playlist, and on the selected one Show, Rename, Transition,
+// Make default or Clear default (playlist.default, through config set) and
+// Remove; its items added, edited, moved and removed, a file from the store
+// picked as an item's source. playlist.default is its Configure. The
+// timetable is on Timetables.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
@@ -15,7 +14,6 @@ import * as playlist from "../describe/playlist";
 import * as schedule from "../describe/schedule";
 import { useDevice } from "../device/DeviceContext";
 import { PageFrame } from "../shell/PageFrame";
-import { Line } from "../text/line";
 import { Button, ErrorLine, Facts, Heading, LineView, Toolbar } from "../ui/controls";
 import { Dialog, Field, Intro } from "../ui/Dialog";
 import { Confirm } from "../ui/dialogs";
@@ -24,13 +22,12 @@ import type { PageInfo } from "./registry";
 
 /** How often the player's status is asked, as the device status is. */
 const STATUS_MS = 2000;
-/** How often the playlists and the timetable are, for the marks of what plays now. */
+/** How often the playlists are, for the mark of what plays now. */
 const LIST_MS = 5000;
 /** Where the device serves its file store to its own browser. */
 const FILES_ORIGIN = "http://127.0.0.1/files/";
 
 type Info = Schemas["PlaylistInfo"];
-type Entry = Schemas["TimetableInfo"];
 
 type Asking =
   | { kind: "new" }
@@ -39,16 +36,13 @@ type Asking =
   | { kind: "show"; info: Info }
   | { kind: "remove"; info: Info }
   | { kind: "item"; info: Info; position: number | null }
-  | { kind: "remove-item"; info: Info; position: number }
-  | { kind: "entry"; entry: Entry | null }
-  | { kind: "remove-entry"; entry: Entry };
+  | { kind: "remove-item"; info: Info; position: number };
 
 export function Playlists({ info }: { info: PageInfo }) {
   const { log, set, unset } = useDevice();
   const queries = useQueryClient();
   const [selected, setSelected] = useState<string | null>(null);
   const [item, setItem] = useState<number | null>(null);
-  const [entry, setEntry] = useState<string | null>(null);
   const [asking, setAsking] = useState<Asking | null>(null);
   const [now, setNow] = useState(schedule.now);
 
@@ -62,11 +56,6 @@ export function Playlists({ info }: { info: PageInfo }) {
     queryFn: () => answer(client.GET("/api/v1/playlists")),
     refetchInterval: LIST_MS,
   });
-  const table = useQuery({
-    queryKey: ["playlists", "timetable"],
-    queryFn: () => answer(client.GET("/api/v1/playlists/timetable")),
-    refetchInterval: LIST_MS,
-  });
   // The relative times move on with the clock.
   useEffect(() => {
     const timer = setInterval(() => setNow(schedule.now()), 1000);
@@ -74,13 +63,11 @@ export function Playlists({ info }: { info: PageInfo }) {
   }, []);
 
   const list = shown.data ?? [];
-  const entries = table.data ?? [];
   // Until one is picked, the playlist on screen is, else the first.
   const chosen =
     selected === null ? (list.find((one) => one.playing) ?? list[0]) : list.find((one) => one.id === selected);
   const items = chosen?.items ?? [];
   const chosenItem = item !== null && item <= items.length ? item : null;
-  const chosenEntry = entries.find((one) => one.id === entry);
   const refresh = () => void queries.invalidateQueries({ queryKey: ["playlists"] });
 
   const act = async (what: () => Promise<string>) => {
@@ -113,17 +100,6 @@ export function Playlists({ info }: { info: PageInfo }) {
       );
       setItem(to);
       return `item ${position} of ${target.name} moved to ${to}`;
-    });
-
-  const toggle = (target: Entry) =>
-    void act(async () => {
-      const saved = await answer(
-        client.PATCH("/api/v1/playlists/timetable/{entry}", {
-          params: { path: { entry: target.id } },
-          body: playlist.entryChange({ enabled: !target.enabled }),
-        }),
-      );
-      return `timetable entry ${playlist.shortId(saved.id)} ${saved.enabled ? "on" : "off"}`;
     });
 
   const statusFacts = status.data ? playlist.status(status.data, now) : [];
@@ -251,65 +227,8 @@ export function Playlists({ info }: { info: PageInfo }) {
         selected={chosenItem === null ? null : String(chosenItem)}
         onSelect={(key) => setItem(Number(key))}
         onActivate={(key) => chosen && setAsking({ kind: "item", info: chosen, position: Number(key) })}
-        maxHeight="240px"
         empty={chosen ? "no items yet" : "select a playlist"}
       />
-      <Heading>Timetable</Heading>
-      <Toolbar>
-        <Button disabled={list.length === 0} onClick={() => setAsking({ kind: "entry", entry: null })}>
-          Add entry ...
-        </Button>
-        <Button disabled={!chosenEntry} onClick={() => chosenEntry && setAsking({ kind: "entry", entry: chosenEntry })}>
-          Edit ...
-        </Button>
-        <Button disabled={!chosenEntry} onClick={() => chosenEntry && toggle(chosenEntry)}>
-          {chosenEntry && !chosenEntry.enabled ? "Enable" : "Disable"}
-        </Button>
-        <Button
-          disabled={!chosenEntry}
-          onClick={() => chosenEntry && setAsking({ kind: "remove-entry", entry: chosenEntry })}
-        >
-          Remove ...
-        </Button>
-      </Toolbar>
-      <ErrorLine error={table.error ? failure(table.error).message : null} />
-      <Table
-        columns={[
-          { title: "", width: "16px" },
-          { title: "Entry", width: "80px" },
-          { title: "Days", width: "120px" },
-          { title: "Time", width: "100px" },
-          { title: "Playlist", width: "160px" },
-          { title: "Priority", width: "60px" },
-          { title: "State" },
-        ]}
-        rows={entries.map((one) => ({
-          key: one.id,
-          muted: !one.enabled,
-          cells: [
-            one.active ? <span className="text-success">*</span> : "",
-            <span className="text-muted">{playlist.shortId(one.id)}</span>,
-            playlist.formatDays(one.days),
-            `${one.from}-${one.to}`,
-            one.playlist_name,
-            String(one.priority),
-            one.enabled ? <span className="text-success">on</span> : <span className="text-danger">off</span>,
-          ],
-        }))}
-        selected={entry}
-        onSelect={setEntry}
-        onActivate={(key) => {
-          const one = entries.find((each) => each.id === key);
-          if (one) setAsking({ kind: "entry", entry: one });
-        }}
-        maxHeight="200px"
-        empty={table.isPending ? "asking the device ..." : "no timetable entries; the default plays"}
-      />
-      {entries.length > 0 && (
-        <p className="text-sm text-muted">
-          * decides what plays now; where entries overlap the highest priority wins, then the one listed first
-        </p>
-      )}
       {(asking?.kind === "new" || asking?.kind === "rename" || asking?.kind === "transition") && (
         <PlaylistDialog
           mode={asking.kind}
@@ -379,39 +298,6 @@ export function Playlists({ info }: { info: PageInfo }) {
               );
               setItem(null);
               return `item ${asking.position} of ${asking.info.name} removed`;
-            })
-          }
-          onClose={() => setAsking(null)}
-        />
-      )}
-      {asking?.kind === "entry" && (
-        <EntryDialog
-          existing={asking.entry}
-          playlists={list}
-          initial={chosen?.name ?? list[0]?.name ?? ""}
-          onClose={() => setAsking(null)}
-          onSaved={(saved) => {
-            log(Line.plain("timetable entry saved: ").join(playlist.entry(saved)));
-            setEntry(saved.id);
-            refresh();
-          }}
-        />
-      )}
-      {asking?.kind === "remove-entry" && (
-        <Confirm
-          title={`Remove timetable entry ${playlist.shortId(asking.entry.id)}`}
-          body={`${playlist.formatDays(asking.entry.days)} ${asking.entry.from}-${asking.entry.to} stops playing ${asking.entry.playlist_name}; the playlist stays.`}
-          action="Remove"
-          danger
-          onConfirm={() =>
-            void act(async () => {
-              const done = await answer(
-                client.DELETE("/api/v1/playlists/timetable/{entry}", {
-                  params: { path: { entry: asking.entry.id } },
-                }),
-              );
-              setEntry(null);
-              return done.message;
             })
           }
           onClose={() => setAsking(null)}
@@ -854,124 +740,6 @@ function ItemDialog({
           <input value={form.at} onChange={(event) => change("at", event.target.value)} inputMode="numeric" />
         </Field>
       )}
-      {error && <p className="text-sm text-danger">{error}</p>}
-    </Dialog>
-  );
-}
-
-function EntryDialog({
-  existing,
-  playlists,
-  initial,
-  onClose,
-  onSaved,
-}: {
-  existing: Entry | null;
-  playlists: Info[];
-  initial: string;
-  onClose: () => void;
-  onSaved: (saved: Entry) => void;
-}) {
-  // Taken once: a refresh of the table underneath does not touch them.
-  const [name, setName] = useState(existing?.playlist_name ?? initial);
-  const [days, setDays] = useState<Schemas["Day"][]>(existing?.days ?? []);
-  const [from, setFrom] = useState(existing?.from ?? "");
-  const [to, setTo] = useState(existing?.to ?? "");
-  const [priority, setPriority] = useState(String(existing?.priority ?? 0));
-  const [enabled, setEnabled] = useState(existing?.enabled ?? true);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const names = playlists.map((one) => one.name);
-
-  const save = async () => {
-    setError(null);
-    try {
-      const typed = priority.trim();
-      if (!/^[+-]?\d+$/.test(typed) || Math.abs(Number(typed)) > 0x7fff_ffff) {
-        throw new Error(`${JSON.stringify(typed)} is not a priority: a whole number`);
-      }
-      const ranked = Number(typed);
-      const dayText = days.join(",");
-      setBusy(true);
-      const saved = existing
-        ? await answer(
-            client.PATCH("/api/v1/playlists/timetable/{entry}", {
-              params: { path: { entry: existing.id } },
-              body: playlist.entryChange({ playlist: name, days: dayText, from, to, priority: ranked, enabled }),
-            }),
-          )
-        : await answer(
-            client.POST("/api/v1/playlists/timetable", {
-              body: playlist.entrySpec(name, dayText, from, to, ranked, enabled),
-            }),
-          );
-      onSaved(saved);
-      onClose();
-    } catch (problem) {
-      // A refused save keeps the dialog open with the reason.
-      setError(failure(problem).message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const toggleDay = (day: Schemas["Day"], on: boolean) =>
-    setDays((now) => playlist.DAYS.filter((each) => (each === day ? on : now.includes(each))));
-
-  return (
-    <Dialog
-      title={existing ? `Timetable entry ${playlist.shortId(existing.id)}` : "New timetable entry"}
-      onClose={onClose}
-      submit="Save"
-      busy={busy}
-      onSubmit={() => void save()}
-    >
-      <Intro>
-        While an entry covers now, its playlist plays instead of playlist.default. A window past midnight runs into the
-        next morning; the same time twice is the whole day.
-      </Intro>
-      <Field label="Playlist">
-        <select value={name} onChange={(event) => setName(event.target.value)} data-autofocus>
-          {name !== "" && !names.includes(name) && <option value={name}>{name}</option>}
-          {names.map((choice) => (
-            <option key={choice} value={choice}>
-              {choice}
-            </option>
-          ))}
-        </select>
-      </Field>
-      <Field label="Days" hint={`${playlist.formatDays(days)}; none ticked is every day`}>
-        <span className="flex flex-wrap gap-2">
-          {playlist.DAYS.map((day) => (
-            <label key={day} className="inline-flex items-center gap-1 text-sm">
-              <input
-                type="checkbox"
-                checked={days.includes(day)}
-                onChange={(event) => toggleDay(day, event.target.checked)}
-                className="h-4 w-4"
-              />
-              {day}
-            </label>
-          ))}
-        </span>
-      </Field>
-      <Field label="From" hint="HH:MM">
-        <input value={from} onChange={(event) => setFrom(event.target.value)} placeholder="11:30" spellCheck={false} />
-      </Field>
-      <Field label="To" hint="HH:MM; 24:00 for the end of the day">
-        <input value={to} onChange={(event) => setTo(event.target.value)} placeholder="14:00" spellCheck={false} />
-      </Field>
-      <Field label="Priority" hint="where entries overlap the highest wins">
-        <input value={priority} onChange={(event) => setPriority(event.target.value)} inputMode="numeric" />
-      </Field>
-      <Field label="Enabled">
-        <input
-          type="checkbox"
-          checked={enabled}
-          onChange={(event) => setEnabled(event.target.checked)}
-          className="h-4 w-4 self-start"
-        />
-      </Field>
       {error && <p className="text-sm text-danger">{error}</p>}
     </Dialog>
   );

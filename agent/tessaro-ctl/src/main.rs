@@ -184,14 +184,14 @@ enum Cmd {
     /// what the page runs: the injected script, the page bridge, eval.
     #[command(subcommand)]
     Browser(BrowserCmd),
-    /// Playlists of pages, images and videos shown in turn instead of
-    /// browser.url, and the timetable that picks which plays when.
-    #[command(subcommand)]
-    Playlist(playlist::PlaylistCmd),
     /// The device's file store, served to the kiosk at
     /// http://127.0.0.1/files/: upload, download, sync, list, remove.
     #[command(subcommand)]
     Files(files::FilesCmd),
+    /// Playlists of pages, images and videos shown in turn instead of
+    /// browser.url, and the timetable that picks which plays when.
+    #[command(subcommand)]
+    Playlist(playlist::PlaylistCmd),
     /// Sound: which output plays and which input records, volume, a test.
     #[command(subcommand)]
     Audio(audio::AudioCmd),
