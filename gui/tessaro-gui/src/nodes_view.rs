@@ -10,6 +10,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::net::SocketAddr;
 
+use iced::keyboard::Modifiers;
 use iced::widget::{column, container, row, text, text_input};
 use iced::{Element, Length, Task};
 use protocol::{Claimed, NodeInfo};
@@ -18,7 +19,7 @@ use tessaro_client::nodes::{Node, Nodes};
 use tessaro_client::tags;
 
 use crate::dialog::{self, field};
-use crate::grid::{cell, col, grid, widget, Cell, Col};
+use crate::grid::{cell, col, grid_marked, widget, Cell, Col};
 use crate::section::{self, action};
 use crate::{blocking, discovery, theme, CLIENT};
 
@@ -220,7 +221,26 @@ pub enum Message {
     Cancel,
     /// Up (-1) or Down (1) in the table.
     Step(i32),
+    /// Shift-Up or Shift-Down: the row there is marked too.
+    Extend(i32),
+    /// Cmd-A: every row shown, marked.
+    MarkAll,
+    /// The keys held down, for what a click on a row does.
+    Modifiers(Modifiers),
+    /// Run something on every marked device, in a bulk window.
+    Bulk,
     Enter,
+}
+
+/// Several rows marked for a bulk run: Cmd-click adds or takes out one,
+/// Shift-click marks every row from the selected one, Cmd-A every row the
+/// filters show. Plain clicks select one row and drop the marks.
+#[derive(Debug, Default)]
+pub struct Marks {
+    rows: BTreeSet<String>,
+    modifiers: Modifiers,
+    /// Asked for by Run on, for the app to open a bulk window with.
+    opening: Option<Vec<Node>>,
 }
 
 pub struct NodesView {
@@ -232,6 +252,7 @@ pub struct NodesView {
     /// live address and claimed state, kept for the session.
     added: Vec<Found>,
     selected: Option<String>,
+    marks: Marks,
     filter: String,
     /// Only rows with every one of these tags, besides the text filter.
     tag_filter: BTreeSet<String>,
@@ -256,6 +277,7 @@ impl NodesView {
             seen: BTreeMap::new(),
             added: Vec::new(),
             selected: None,
+            marks: Marks::default(),
             filter: String::new(),
             tag_filter: BTreeSet::new(),
             dialog: None,
@@ -264,6 +286,71 @@ impl NodesView {
             message,
             generation: 0,
         }
+    }
+
+    /// The devices Run on asked a bulk window for, once.
+    pub fn take_bulk(&mut self) -> Option<Vec<Node>> {
+        self.marks.opening.take()
+    }
+
+    /// The rows shown, in the order the table shows them.
+    fn shown_keys(&self) -> Vec<String> {
+        let keys: Vec<String> = self.visible_rows().into_iter().map(|row| row.key).collect();
+        self.tables.ordered("nodes", &keys)
+    }
+
+    /// Marks only on rows the filters still show.
+    fn prune_marks(&mut self) {
+        let shown: BTreeSet<String> = self.shown_keys().into_iter().collect();
+        self.marks.rows.retain(|key| shown.contains(key));
+    }
+
+    /// The marked rows' devices that can be opened, and how many marked
+    /// rows cannot.
+    fn marked_nodes(&self) -> (Vec<Node>, usize) {
+        let rows: Vec<Row> = self
+            .rows()
+            .into_iter()
+            .filter(|row| self.marks.rows.contains(&row.key))
+            .collect();
+        let nodes: Vec<Node> = rows.iter().filter_map(|row| self.openable(row)).collect();
+        let left_out = rows.len() - nodes.len();
+        (nodes, left_out)
+    }
+
+    /// A click on the row `key`, with what is held down.
+    fn click(&mut self, key: String) {
+        let modifiers = self.marks.modifiers;
+        if modifiers.shift() {
+            let shown = self.shown_keys();
+            let anchor = self
+                .selected
+                .as_ref()
+                .and_then(|selected| shown.iter().position(|shown| shown == selected));
+            let at = shown.iter().position(|shown| *shown == key);
+            if let (Some(anchor), Some(at)) = (anchor, at) {
+                let (from, to) = (anchor.min(at), anchor.max(at));
+                if !modifiers.command() {
+                    self.marks.rows.clear();
+                }
+                self.marks.rows.extend(shown[from..=to].iter().cloned());
+                return;
+            }
+        } else if modifiers.command() {
+            // The row selected so far is the first of the marks.
+            if self.marks.rows.is_empty() {
+                if let Some(selected) = self.selected.clone() {
+                    self.marks.rows.insert(selected);
+                }
+            }
+            if !self.marks.rows.remove(&key) {
+                self.marks.rows.insert(key.clone());
+            }
+            self.selected = Some(key);
+            return;
+        }
+        self.marks.rows.clear();
+        self.selected = Some(key);
     }
 
     pub fn has_dialog(&self) -> bool {
@@ -335,7 +422,43 @@ impl NodesView {
         match message {
             Message::Table(event) => (self.tables.update("nodes", event), None),
             Message::Select(key) => {
-                self.selected = Some(key);
+                self.click(key);
+                none
+            }
+            Message::Modifiers(modifiers) => {
+                self.marks.modifiers = modifiers;
+                none
+            }
+            Message::MarkAll => {
+                if self.dialog.is_none() {
+                    self.marks.rows = self.shown_keys().into_iter().collect();
+                }
+                none
+            }
+            Message::Extend(by) => {
+                if self.dialog.is_none() {
+                    let shown = self.shown_keys();
+                    if let Some(selected) = self.selected.clone() {
+                        self.marks.rows.insert(selected);
+                    }
+                    self.selected = section::step(&shown, self.selected.as_ref(), by);
+                    if let Some(selected) = self.selected.clone() {
+                        self.marks.rows.insert(selected);
+                    }
+                }
+                none
+            }
+            Message::Bulk => {
+                let (nodes, left_out) = self.marked_nodes();
+                if left_out > 0 {
+                    self.message = Some(Err(format!(
+                        "left out {left_out} marked {}: log in or claim first",
+                        if left_out == 1 { "device" } else { "devices" }
+                    )));
+                }
+                if !nodes.is_empty() {
+                    self.marks.opening = Some(nodes);
+                }
                 none
             }
             Message::Activate(key) => {
@@ -354,12 +477,14 @@ impl NodesView {
             }
             Message::Filter(filter) => {
                 self.filter = filter;
+                self.prune_marks();
                 none
             }
             Message::TagFilter(tag) => {
                 if !self.tag_filter.remove(&tag) {
                     self.tag_filter.insert(tag);
                 }
+                self.prune_marks();
                 none
             }
             Message::ClearTags => {
@@ -568,10 +693,9 @@ impl NodesView {
             Message::Copy(value) => (iced::clipboard::write(value), None),
             Message::Step(by) => {
                 if self.dialog.is_none() {
-                    let keys: Vec<String> =
-                        self.visible_rows().into_iter().map(|row| row.key).collect();
-                    let keys = self.tables.ordered("nodes", &keys);
+                    let keys = self.shown_keys();
                     self.selected = section::step(&keys, self.selected.as_ref(), by);
+                    self.marks.rows.clear();
                 }
                 none
             }
@@ -770,12 +894,23 @@ impl NodesView {
         });
         let keys: Vec<String> = rows.iter().map(|row| row.key.clone()).collect();
         let keys_too = keys.clone();
-        let table = grid(
+        let marked: Vec<bool> = rows
+            .iter()
+            .map(|row| self.marks.rows.contains(&row.key))
+            .collect();
+        let marking = !self.marks.rows.is_empty();
+        let table = grid_marked(
             self.tables.state("nodes"),
             Message::Table,
             COLUMNS,
             cells.collect(),
-            selected_at,
+            move |at| {
+                if marking {
+                    marked[at]
+                } else {
+                    Some(at) == selected_at
+                }
+            },
             move |at| Message::Select(keys[at].clone()),
             move |at| Message::Activate(keys_too[at].clone()),
         );
@@ -811,6 +946,10 @@ impl NodesView {
                         .map(|_| Message::Claim),
                 ),
                 action("Forget", known.then_some(Message::Forget)),
+                action(
+                    "Run on marked",
+                    (self.marks.rows.len() > 1).then_some(Message::Bulk),
+                ),
             ],
             &self.filter,
             Message::Filter,
@@ -1157,6 +1296,7 @@ mod tests {
             .into(),
             added: Vec::new(),
             selected: None,
+            marks: Marks::default(),
             filter: String::new(),
             tag_filter: BTreeSet::new(),
             dialog: None,
@@ -1184,6 +1324,95 @@ mod tests {
         // The text filter finds tags too.
         let _ = view.update(Message::Filter("floor".to_string()));
         assert_eq!(names(&view), ["kiosk-1"]);
+    }
+
+    #[test]
+    fn rows_are_marked_by_cmd_and_shift_and_run_on_the_openable_ones() {
+        let pin = "a".repeat(64);
+        let mut view = NodesView {
+            tables: crate::grid::Tables::default(),
+            known: Nodes {
+                nodes: (1..=4)
+                    .map(|at| node(&format!("n{at}"), &format!("kiosk-{at}"), at != 4))
+                    .collect(),
+            },
+            seen: (1..=4)
+                .map(|at| {
+                    let name = format!("kiosk-{at}");
+                    let found = Found {
+                        tags: if at == 3 {
+                            tagged(&["lobby"])
+                        } else {
+                            Vec::new()
+                        },
+                        ..found(&format!("n{at}"), &name, &pin)
+                    };
+                    (name, found)
+                })
+                .collect(),
+            added: Vec::new(),
+            selected: None,
+            marks: Marks::default(),
+            filter: String::new(),
+            tag_filter: BTreeSet::new(),
+            dialog: None,
+            fields: dialog::Fields::default(),
+            discovery: None,
+            message: None,
+            generation: 0,
+        };
+        let key = |view: &NodesView, name: &str| {
+            view.rows()
+                .into_iter()
+                .find(|row| row.name == name)
+                .unwrap()
+                .key
+        };
+        let marked = |view: &NodesView| {
+            let mut names: Vec<String> = view
+                .rows()
+                .into_iter()
+                .filter(|row| view.marks.rows.contains(&row.key))
+                .map(|row| row.name)
+                .collect();
+            names.sort();
+            names
+        };
+        let held = |view: &mut NodesView, modifiers: Modifiers| {
+            let _ = view.update(Message::Modifiers(modifiers));
+        };
+
+        let first = key(&view, "kiosk-1");
+        let _ = view.update(Message::Select(first));
+        held(&mut view, Modifiers::SHIFT);
+        let third = key(&view, "kiosk-3");
+        let _ = view.update(Message::Select(third));
+        assert_eq!(marked(&view), ["kiosk-1", "kiosk-2", "kiosk-3"]);
+        held(&mut view, Modifiers::COMMAND);
+        let second = key(&view, "kiosk-2");
+        let _ = view.update(Message::Select(second));
+        assert_eq!(marked(&view), ["kiosk-1", "kiosk-3"]);
+
+        // A plain click is one row again.
+        held(&mut view, Modifiers::empty());
+        let fourth = key(&view, "kiosk-4");
+        let _ = view.update(Message::Select(fourth));
+        assert!(marked(&view).is_empty());
+
+        // Cmd-A marks what the filters show, and a filter drops the rest.
+        let _ = view.update(Message::MarkAll);
+        assert_eq!(marked(&view).len(), 4);
+        let _ = view.update(Message::TagFilter("lobby".to_string()));
+        assert_eq!(marked(&view), ["kiosk-3"]);
+        let _ = view.update(Message::ClearTags);
+        let _ = view.update(Message::MarkAll);
+
+        // kiosk-4 has no token: it is left out of the run, and said so.
+        let _ = view.update(Message::Bulk);
+        let opened = view.take_bulk().unwrap();
+        assert_eq!(opened.len(), 3);
+        assert!(matches!(view.message, Some(Err(_))));
+        assert!(view.take_bulk().is_none());
     }
 
     #[test]
@@ -1240,6 +1469,7 @@ mod tests {
             .into(),
             added: Vec::new(),
             selected: None,
+            marks: Marks::default(),
             filter: String::new(),
             tag_filter: BTreeSet::new(),
             dialog: None,

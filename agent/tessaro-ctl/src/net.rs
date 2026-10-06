@@ -18,7 +18,9 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use anstream::{eprintln, print, println};
+// `print!` comes with `crate::print` below: main.rs has the function and
+// the macro under that one name.
+use crate::out::{eprintln, println};
 use clap::{Args, Subcommand, ValueEnum};
 use protocol::api::{self, Empty};
 use protocol::{

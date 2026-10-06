@@ -59,8 +59,8 @@ their tones (`theme::text_line`, `theme::toned`, and the highlighter in
 ## One window, inner windows
 
 **The app is one window: the node list fills its desk, and every opened
-device and its settings windows float over it as inner windows, WinBox
-style** (`mdi.rs`). The node list is the main screen, not a window, so it
+device, its settings windows and the bulk windows float over it as inner
+windows, WinBox style** (`mdi.rs`). The node list is the main screen, not a window, so it
 cannot be closed or lost behind anything but the windows opened from it.
 The inner windows drag by the title bar, resize from the bottom-right
 corner, maximize with the title-bar button or a double-click, and close
@@ -118,7 +118,9 @@ node list when no window is open or the list was clicked last:
 * Enter presses the dialog's default button, else opens or edits the
   selected row.
 * Up and Down move the selection in the page's main table, or in a
-  settings window's table.
+  settings window's table. In the node list Shift-Up and Shift-Down mark
+  the rows they pass, and Cmd-A (outside a text field) marks every row
+  shown (**The node list**).
 * Cmd + / Cmd - / Cmd 0 (Ctrl elsewhere) zoom every window, in tenths from
   0.6 to 2.0, and the zoom is kept in `gui_prefs`.
 
@@ -191,6 +193,17 @@ row has to carry every one of them, and the Find box matches tags too. A badge i
 inside the cell, so the press is the badge's and does not select the row
 (`grid::widget`). A known device that is not seen shows the tags the store
 last kept for it.
+
+**Several rows are marked for a run on all of them: Cmd-click adds or takes
+out one, Shift-click marks every row from the selected one, Cmd-A every row
+the filters show** (`NodesView::click`, `Marks`). With the tag filter that
+is every device of a tag. A plain click or Up and Down select one row again
+and drop the marks; a filter drops the marks it hides. The modifiers come
+from the keyboard's `ModifiersChanged`, since a row's press carries none.
+Open, Login, Claim and Forget act on the selected row as before; **Run on
+marked** opens a bulk window for the marked devices that can be opened
+(`openable`), and says how many it left out (**The bulk window**). The grid
+paints every marked row as selected (`grid::grid_marked`).
 
 Discovery runs for as long as the app does (`discovery.rs`). Rescan starts a
 new browse. A device mDNS cannot see (another subnet, a VM) is added by
@@ -398,6 +411,35 @@ The transfers are `tessaro_client::files` and `update`, the same code as
 resumes where the device says it got to, and a symlink is skipped, never
 followed. Files and images are chosen with the system's own dialogs
 (`rfd`).
+
+## The bulk window
+
+**One action on every marked device, each device's run a job on a
+connection of its own** (`bulk_view.rs`, an inner window of kind `bulk`).
+It is `tessaro-ctl --tag` / `-n a,b` for the desktop: how the devices are
+picked and run is **Running on several devices** in [clients.md](clients.md).
+
+* The actions: reload the page, restart the browser, the display or the
+  agent, reboot, set a setting (checked with `device::check` before
+  anything runs, sent without a revision, since each device has its own),
+  run a script, upload files into a directory of the file store, and update
+  the image with the Update page's options. Each is a `jobs::Kind`; reload,
+  the restarts, reboot and set are kinds of their own for this window, the
+  others are the device windows'.
+* The restarts, the reboot and the update are confirmed first in a dialog
+  that lists the devices, as a device window confirms them. An update that
+  erases `/data` or rewrites the disk wants the number of devices typed
+  where a device window wants the name.
+* At most `bulk::PARALLEL` jobs run at once, the next starting as one ends
+  (`BulkView::fill`). The app's subscriptions take each running device's job
+  from `BulkView::active_jobs`, keyed by the window and the device's place;
+  the window's job ids start far above a device window's, which count from 1
+  for the same nodes.
+* A row per device says waiting, running with its last progress or line,
+  done or failed with the message, and the ctl's summary goes under them
+  once all have ended. Stop, or closing the window, drops what runs, as a
+  device window's Cancel does, and leaves the waiting ones unrun. An update
+  that erases `/data` forgets the node here, as a device window does.
 
 ## The camera panel
 

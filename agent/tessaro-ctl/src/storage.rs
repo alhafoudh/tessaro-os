@@ -7,7 +7,7 @@
 //! mounted and the kiosk running, and makes its plan from the disk every
 //! time, so the command is safe to run again.
 
-use anstream::{eprintln, println};
+use crate::out::{eprintln, println};
 use clap::Subcommand;
 use protocol::api::{self, GrowBody};
 use protocol::{size_label, FsUsage, Partition, Storage, StorageGrowEvent};

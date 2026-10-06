@@ -20,7 +20,8 @@ there is one copy, and both clients call it.
   * the connection: discovery and the pinned session (`connect.rs`),
     the known nodes in the client's `tessaro.db` (`nodes.rs`, `store.rs`),
     claim and login (`access.rs`), a device's tags with the reserved
-    `unclaimed`, the tag filter and a tag's badge colour (`tags.rs`);
+    `unclaimed`, the tag filter and a tag's badge colour (`tags.rs`),
+    the devices a run on several stands for and running it (`bulk.rs`);
   * flows that take several requests: an image update (`update.rs`), whole
     trees to and from the file store and `files sync` (`files.rs`), device
     ping (`ping.rs`), growing `/data` (`storage.rs`), the DevTools forward
@@ -33,7 +34,8 @@ there is one copy, and both clients call it.
   * what an answer says, in words: `describe/` per subject, and the job
     steps of `ping.rs`, `speedtest.rs`, `storage.rs` and `script.rs`.
 * `agent/tessaro-ctl` - clap, `--json`, prompts at the keyboard, painting
-  the text for a terminal (`style.rs`, `progress.rs`).
+  the text for a terminal (`style.rs`, `progress.rs`) and where it goes
+  (`out.rs`).
 * `gui/tessaro-gui` - iced: pages, tables, forms and dialogs, jobs on their
   own connections, painting the text with the theme (`theme.rs` in
   `gui/tessaro-style`).
@@ -128,13 +130,58 @@ webconfig` and the GUI's Access page both call it.
 A check that only one client needs - a GUI form's field being empty - stays
 in that client. A second copy of anything in step 2 is the thing to avoid.
 
+## Running on several devices
+
+**One command on several devices is the client's work, not the device's:
+`bulk.rs` picks the devices and runs on each, and nothing on a device or in
+the API knows about it.** A tag is only what finds the devices.
+
+* **Picking them** (`bulk::select`): every name of a comma-separated
+  `--node`, each resolved as `connect::resolve` does, and every device with
+  all of the `--tag`s, known or found on the network. At most one scan is
+  made, and only when a tag is given or a name is not a known device's; its
+  results are shared by every name and tag. A device the scan found is
+  reached where it announced itself, held to its pin when known, so no
+  device scans again when its session opens. `unclaimed` only comes from the
+  scan, as in `nodes list --tag`: the known nodes' cached tags never carry
+  it. A name that stands for nothing, or no device at all, fails before
+  anything runs.
+* **Running** (`bulk::each`): a thread and a session per device, at most
+  `--parallel` (`bulk::PARALLEL` by default) at once, the outcomes in the
+  order the devices were picked. `describe::bulk` has the words: the
+  heading over a device's output, the device list a confirmation shows, the
+  summary of who failed. They are native-only, so they have no golden
+  fixture.
+* **The ctl** runs the parsed command on each device through the same code
+  as for one (`run_on` in `main.rs`), with its output kept apart per thread
+  (`out.rs`: every module prints through its `println!` and friends, which
+  write to the thread's buffer during a run on several), and prints each
+  device's output whole, one after the other, then the summary. With
+  `--json` it prints one array, a `{name, id, address, ok, result, error}`
+  per device, `result` being what the command printed as JSON. Any device
+  failing fails the run.
+* **What the ctl refuses on several devices** (`bulk_refused`): anything
+  that holds the terminal for one device (`ssh connect`, `browser
+  devtools`, `device logs -f`, `browser policies edit`, a watched `camera
+  snapshot`), opens something on this machine (`access webconfig`), writes
+  one local file every device would overwrite (`files download`, a named
+  screenshot or snapshot), or reads stdin, which there is one of. A prompt
+  that is reached anyway fails that device (`prompt::keyboard`).
+* **Asking first**: a command with `-y` lists the devices, and runs on them
+  only with `-y`; without it the run stops before any device is touched.
+* **The GUI** marks rows in the node list and runs one action on them in a
+  bulk window (**The node list** and **The bulk window** in
+  [gui.md](gui.md)), each device's run a job like a device window's.
+
 ## What differs on purpose
 
 **Some things are each client's own, because the medium differs.** Keep
 them apart; do not pull them into the client.
 
 * How to confirm: the ctl asks y/N or wants the device's name typed, and
-  takes `-y`; the GUI's forms want the name typed.
+  takes `-y`; the GUI's forms want the name typed. On several devices the
+  ctl wants `-y`, and the GUI's bulk window wants the number of devices
+  typed where one device's name would be.
 * The GUI asks before a restart or a reboot; the ctl, a typed command, does
   not.
 * The GUI browses for devices for good and streams what it finds

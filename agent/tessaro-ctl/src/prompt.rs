@@ -3,14 +3,28 @@
 
 use std::io::{Read, Write};
 
-// Shadow the std macros: these strip colors when stderr is not a terminal.
-use anstream::{eprint, eprintln};
-
 use crate::connect::Session;
+// Shadow the std macros: these strip colors when stderr is not a terminal.
+use crate::out::{self, eprint, eprintln};
 use crate::style::{self, paint};
+
+/// Nobody can answer at the keyboard for one of several devices: stdin is
+/// one, and the devices run at once. (A command with `-y` is refused before
+/// it runs on any of them without it, `run_several` in main.rs.)
+fn keyboard() -> Result<(), String> {
+    if out::capturing() {
+        return Err(
+            "this reads the keyboard or stdin, which a run on several devices \
+                    cannot share; name one device"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
 
 /// `question [y/N]`, and whether the answer was yes.
 pub fn ask(question: &str) -> Result<bool, String> {
+    keyboard()?;
     eprint!("{question} {} ", paint(style::LABEL, "[y/N]"));
     std::io::stderr().flush().ok();
     let mut answer = String::new();
@@ -34,6 +48,7 @@ pub fn confirm_destructive(session: &Session, yes: bool, what: &str) -> Result<(
     if yes {
         return Ok(());
     }
+    keyboard()?;
     eprintln!(
         "{} {}.",
         paint(style::WARN, format!("This will {what} on")),
@@ -57,6 +72,7 @@ pub fn confirm_destructive(session: &Session, yes: bool, what: &str) -> Result<(
 /// A password: all of stdin with `--password-stdin` (less the line end), else
 /// typed at `prompt` without echo.
 pub fn password(from_stdin: bool, prompt: &str) -> Result<String, String> {
+    keyboard()?;
     if from_stdin {
         let mut text = String::new();
         std::io::stdin()

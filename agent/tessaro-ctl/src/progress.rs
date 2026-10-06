@@ -7,28 +7,37 @@ use std::io::{IsTerminal, Write};
 use tessaro_client::report::Report;
 use tessaro_client::text::Line;
 
+use crate::out::{self, eprint, eprintln};
 use crate::style;
 
 /// Progress on stderr. On a terminal one line redraws itself; otherwise,
-/// and with `--json`, a line per tenth, so a log stays readable.
+/// and with `--json`, a line per tenth, so a log stays readable. For one of
+/// several devices only the end of each step is kept: the output is printed
+/// whole afterwards, when the progress is over (`out::capture`).
 ///
 /// The text goes through anstream, which drops its colors when they are
 /// off; the `\r` and clear-to-end-of-line around it go straight to stderr,
 /// since the redraw needs them even under `--color never`.
 pub(crate) struct Progress {
     redraw: bool,
+    kept: bool,
     shown: Option<u64>,
 }
 
 impl Progress {
     pub(crate) fn new(json: bool) -> Self {
+        let kept = out::capturing();
         Self {
-            redraw: !json && std::io::stderr().is_terminal(),
+            redraw: !json && !kept && std::io::stderr().is_terminal(),
+            kept,
             shown: None,
         }
     }
 
     pub(crate) fn show(&mut self, line: &str, done: u64, total: u64) {
+        if self.kept {
+            return;
+        }
         if self.redraw {
             Self::redraw(line, "");
             return;
@@ -36,7 +45,7 @@ impl Progress {
         let tenth = done * 10 / total.max(1);
         if self.shown != Some(tenth) {
             self.shown = Some(tenth);
-            let _ = writeln!(anstream::stderr(), "{line}");
+            eprintln!("{line}");
         }
     }
 
@@ -45,7 +54,7 @@ impl Progress {
         if self.redraw {
             Self::redraw(line, "\n");
         } else {
-            let _ = writeln!(anstream::stderr(), "{line}");
+            eprintln!("{line}");
         }
         self.shown = None;
     }
@@ -54,7 +63,7 @@ impl Progress {
     fn redraw(line: &str, end: &str) {
         let mut raw = std::io::stderr();
         let _ = write!(raw, "\r");
-        let _ = write!(anstream::stderr(), "{line}");
+        eprint!("{line}");
         let _ = write!(raw, "\x1b[K{end}");
         let _ = raw.flush();
     }

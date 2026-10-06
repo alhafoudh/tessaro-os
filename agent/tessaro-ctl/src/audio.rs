@@ -8,7 +8,7 @@
 
 use std::collections::BTreeMap;
 
-use anstream::println;
+use crate::out::println;
 use clap::Subcommand;
 use protocol::api;
 use protocol::{keys, AudioSide, AudioStatus};

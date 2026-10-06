@@ -6,7 +6,7 @@
 
 use std::path::PathBuf;
 
-use anstream::println;
+use crate::out::println;
 use serde_json::json;
 use tessaro_client::devtools as shared;
 use tessaro_client::report::Report;

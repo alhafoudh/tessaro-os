@@ -160,6 +160,9 @@ The other commands no call mirrors are the operator's too:
 * **`device logs`, `ping` and `restart`** of anything but the browser: the
   journal carries every caller's actions, and the agent's restart is the
   operator's.
+* **A run on several devices** (`--tag`, `-n a,b`): it is a client's, on
+  devices the client knows; every call here acts on the device the page is
+  on, and a page is no manager of other devices.
 
 * **`data.set` leaves the page alone when no template uses the key.** A `data.*` is
   read by the templates and by this bridge only, so a value no template names

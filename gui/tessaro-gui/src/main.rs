@@ -6,6 +6,7 @@
 //! is in docs/gui.md.
 
 mod blocking;
+mod bulk_view;
 mod copy_menu;
 mod device;
 mod dialog;
@@ -45,6 +46,7 @@ pub const CLIENT: &str = concat!("tessaro-gui ", env!("CARGO_PKG_VERSION"));
 const WINDOW: Size = Size::new(1400.0, 860.0);
 const DEVICE_SIZE: Size = Size::new(1060.0, 640.0);
 const CONFIG_SIZE: Size = Size::new(760.0, 440.0);
+const BULK_SIZE: Size = Size::new(820.0, 520.0);
 /// How far the header's title starts from the window's left edge, in the
 /// screen's points: past the macOS traffic lights, which the zoom does not
 /// scale.
@@ -52,6 +54,7 @@ const TRAFFIC_LIGHTS: f32 = if cfg!(target_os = "macos") { 78.0 } else { 0.0 };
 /// The kinds of inner window, each remembering where it was left.
 const DEVICE: mdi::Kind = "device";
 const SETTINGS: mdi::Kind = "settings";
+const BULK: mdi::Kind = "bulk";
 
 fn main() -> iced::Result {
     let prefs = Prefs::load();
@@ -201,6 +204,8 @@ struct App {
     devices: BTreeMap<mdi::Id, Device>,
     /// The settings windows: each one's device window and prefix.
     configs: BTreeMap<mdi::Id, (mdi::Id, String)>,
+    /// The bulk windows: one action on several marked devices.
+    bulks: BTreeMap<mdi::Id, bulk_view::BulkView>,
     desk: mdi::Desk,
     next: mdi::Id,
     zoom: Zoom,
@@ -234,6 +239,10 @@ enum Key {
     Enter,
     Up,
     Down,
+    /// Shift-Up (-1) or Shift-Down (1).
+    Extend(i32),
+    /// Cmd-A outside a text field.
+    MarkAll,
     /// Tab, or Shift-Tab (true).
     Tab(bool),
     Zoom(i32),
@@ -254,6 +263,11 @@ enum Message {
     /// raise the window on every frame.
     VncUploaded(mdi::Id, device::VncUploaded),
     Job(mdi::Id, u64, jobs::Event),
+    Bulk(mdi::Id, bulk_view::Message),
+    /// A job of a bulk window, for the device at that place in its list.
+    BulkJob(mdi::Id, usize, jobs::Event),
+    /// The keys held down changed: the node list's clicks read them.
+    Modifiers(keyboard::Modifiers),
     Desk(mdi::Message),
     Key(Key),
     /// Escape, taken by a text field to let go of the cursor.
@@ -283,6 +297,7 @@ impl App {
             table_preferences: prefs.tables.clone(),
             devices: BTreeMap::new(),
             configs: BTreeMap::new(),
+            bulks: BTreeMap::new(),
             desk: mdi::Desk::new(prefs.window_size(), prefs.windows.clone()),
             next: 1,
             zoom: Zoom::from_scale(prefs.scale),
@@ -385,6 +400,29 @@ impl App {
                 }
                 Task::none()
             }
+            Message::Bulk(id, message) => {
+                self.desk.raise(id);
+                match self.bulks.get_mut(&id) {
+                    Some(bulk) => bulk
+                        .update(message)
+                        .map(move |message| Message::Bulk(id, message)),
+                    None => Task::none(),
+                }
+            }
+            Message::BulkJob(id, at, event) => {
+                let wiped = matches!(event, jobs::Event::Wiped);
+                if let Some(bulk) = self.bulks.get_mut(&id) {
+                    bulk.job_event(at, event);
+                }
+                if wiped {
+                    self.nodes.reload();
+                }
+                Task::none()
+            }
+            Message::Modifiers(modifiers) => {
+                let _ = self.nodes.update(nodes_view::Message::Modifiers(modifiers));
+                Task::none()
+            }
             Message::Desk(message) => {
                 match self.desk.update(message) {
                     Some(mdi::Event::Close(id)) => self.close(id),
@@ -466,6 +504,12 @@ impl App {
         if let Some(node) = open {
             self.open(node);
         }
+        if let Some(nodes) = self.nodes.take_bulk() {
+            let id = self.next;
+            self.next += 1;
+            self.bulks.insert(id, bulk_view::BulkView::new(nodes));
+            self.desk.open(id, BULK, BULK_SIZE);
+        }
         task
     }
 
@@ -510,6 +554,9 @@ impl App {
         let Some(top) = self.desk.top() else {
             return self.nodes.has_dialog();
         };
+        if let Some(bulk) = self.bulks.get(&top) {
+            return bulk.has_dialog();
+        }
         let id = self.configs.get(&top).map_or(top, |(id, _)| *id);
         self.devices.get(&id).is_some_and(Device::has_dialog)
     }
@@ -537,11 +584,25 @@ impl App {
                 Key::Enter => nodes_view::Message::Enter,
                 Key::Up => nodes_view::Message::Step(-1),
                 Key::Down => nodes_view::Message::Step(1),
+                Key::Extend(by) => nodes_view::Message::Extend(by),
+                Key::MarkAll => nodes_view::Message::MarkAll,
                 Key::Tab(back) => return self.nodes.tab(back),
                 Key::Zoom(_) | Key::ZoomReset => return Task::none(),
             };
             return self.nodes_update(message);
         };
+        if let Some(bulk) = self.bulks.get_mut(&top) {
+            let task = match key {
+                Key::Escape if bulk.has_dialog() => bulk.update(bulk_view::Message::Cancel),
+                Key::Escape => {
+                    self.close(top);
+                    return Task::none();
+                }
+                Key::Enter => bulk.enter(),
+                _ => Task::none(),
+            };
+            return task.map(move |message| Message::Bulk(top, message));
+        }
         if let Some((id, prefix)) = self.configs.get(&top).cloned() {
             let dialog = self.devices.get(&id).is_some_and(Device::has_dialog);
             let cfg = |cfg| device::Message::Cfg(prefix.clone(), cfg);
@@ -552,10 +613,10 @@ impl App {
                     return Task::none();
                 }
                 Key::Enter => cfg(device::Cfg::Enter),
-                Key::Up => cfg(device::Cfg::Step(-1)),
-                Key::Down => cfg(device::Cfg::Step(1)),
+                Key::Up | Key::Extend(-1) => cfg(device::Cfg::Step(-1)),
+                Key::Down | Key::Extend(_) => cfg(device::Cfg::Step(1)),
                 Key::Tab(back) => device::Message::Tab(back),
-                Key::Zoom(_) | Key::ZoomReset => return Task::none(),
+                Key::MarkAll | Key::Zoom(_) | Key::ZoomReset => return Task::none(),
             };
             return self.device_update(id, message);
         }
@@ -567,10 +628,10 @@ impl App {
                 return Task::none();
             }
             Key::Enter => device::Message::Enter,
-            Key::Up => device::Message::Step(-1),
-            Key::Down => device::Message::Step(1),
+            Key::Up | Key::Extend(-1) => device::Message::Step(-1),
+            Key::Down | Key::Extend(_) => device::Message::Step(1),
             Key::Tab(back) => device::Message::Tab(back),
-            Key::Zoom(_) | Key::ZoomReset => return Task::none(),
+            Key::MarkAll | Key::Zoom(_) | Key::ZoomReset => return Task::none(),
         };
         self.device_update(top, message)
     }
@@ -618,6 +679,10 @@ impl App {
     /// thread, its journal stream and their sessions. Its settings windows
     /// close with it.
     fn close(&mut self, id: mdi::Id) {
+        // Its jobs go with it, as a device window's do.
+        if self.bulks.remove(&id).is_some() {
+            return self.desk.close(id);
+        }
         if let Some((device, prefix)) = self.configs.remove(&id) {
             if let Some(device) = self.devices.get_mut(&device) {
                 let _ = device.update(device::Message::Unconfigure(prefix));
@@ -678,7 +743,14 @@ impl App {
         let desk = self.desk.view(
             self.nodes.view().map(Message::Nodes),
             |id| {
-                if let Some((device, prefix)) = self.configs.get(&id) {
+                if let Some(bulk) = self.bulks.get(&id) {
+                    mdi::Window {
+                        title: bulk.title(),
+                        closable: true,
+                        tools: None,
+                        content: bulk.view().map(move |message| Message::Bulk(id, message)),
+                    }
+                } else if let Some((device, prefix)) = self.configs.get(&id) {
                     match self.devices.get(device) {
                         Some(device) => mdi::Window {
                             title: device.config_title(prefix),
@@ -741,6 +813,17 @@ impl App {
                 })
             })
             .collect();
+        let bulk_work: Vec<Subscription<Message>> = self
+            .bulks
+            .iter()
+            .flat_map(|(&id, bulk)| {
+                bulk.active_jobs().map(move |(at, node, job, kind)| {
+                    jobs::subscription(node, job, kind)
+                        .with((id, at))
+                        .map(|((id, at), event)| Message::BulkJob(id, at, event))
+                })
+            })
+            .collect();
         let mut all = vec![
             discovery::subscription(self.nodes.generation).map(Message::Discovery),
             event::listen_with(keys),
@@ -759,7 +842,8 @@ impl App {
                 .chain(workers)
                 .chain(journals)
                 .chain(viewers)
-                .chain(work),
+                .chain(work)
+                .chain(bulk_work),
         )
     }
 }
@@ -779,12 +863,19 @@ fn keys(event: iced::Event, status: event::Status, id: window::Id) -> Option<Mes
             Some(Message::Geometry(id, None, Some(size)))
         }
         iced::Event::Window(window::Event::Rescaled(dpi)) => Some(Message::Rescaled(dpi)),
+        iced::Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) => {
+            Some(Message::Modifiers(modifiers))
+        }
         iced::Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => {
             if modifiers.command() {
                 return match key.as_ref() {
                     keyboard::Key::Character("=" | "+") => Some(Message::Key(Key::Zoom(1))),
                     keyboard::Key::Character("-") => Some(Message::Key(Key::Zoom(-1))),
                     keyboard::Key::Character("0") => Some(Message::Key(Key::ZoomReset)),
+                    // A text field's Cmd-A selects its text.
+                    keyboard::Key::Character("a") if status != event::Status::Captured => {
+                        Some(Message::Key(Key::MarkAll))
+                    }
                     _ => None,
                 };
             }
@@ -795,6 +886,8 @@ fn keys(event: iced::Event, status: event::Status, id: window::Id) -> Option<Mes
             let key = match key {
                 keyboard::Key::Named(key::Named::Escape) => Key::Escape,
                 keyboard::Key::Named(key::Named::Enter) => Key::Enter,
+                keyboard::Key::Named(key::Named::ArrowUp) if modifiers.shift() => Key::Extend(-1),
+                keyboard::Key::Named(key::Named::ArrowDown) if modifiers.shift() => Key::Extend(1),
                 keyboard::Key::Named(key::Named::ArrowUp) => Key::Up,
                 keyboard::Key::Named(key::Named::ArrowDown) => Key::Down,
                 // No iced field takes Tab, so it comes here from the one

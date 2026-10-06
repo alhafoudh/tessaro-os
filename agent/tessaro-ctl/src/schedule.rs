@@ -5,7 +5,7 @@
 //! systemd does the timing, so a schedule keeps firing while the agent is
 //! down. Times are the device's wall clock.
 
-use anstream::println;
+use crate::out::println;
 use clap::{Args, Subcommand};
 use protocol::api::{self, CalendarBody, LogsQuery, ScheduleChange, ScheduleRef};
 use protocol::{CalendarCheck, Moment, ScheduleInfo, ScheduleSpec};

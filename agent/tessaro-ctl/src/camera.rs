@@ -10,7 +10,7 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use anstream::{eprintln, println};
+use crate::out::{eprintln, println};
 use clap::builder::PossibleValuesParser;
 use clap::Subcommand;
 use protocol::api;

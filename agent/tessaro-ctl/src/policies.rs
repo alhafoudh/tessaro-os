@@ -10,7 +10,9 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use anstream::{eprintln, println};
+// `print!` comes with `crate::print` below: main.rs has the function and
+// the macro under that one name.
+use crate::out::{eprintln, println};
 use clap::Subcommand;
 use protocol::api::{self, PolicyBody, PolicyPositionBody, PolicyRef};
 use protocol::policy;
@@ -107,7 +109,7 @@ pub fn run(session: &mut Session, what: PoliciesCmd, json: bool) -> Result<(), S
         PoliciesCmd::Show { name: Some(name) } => {
             let doc = session.call::<api::browser::Policy>(PolicyRef { name }, ())?;
             // The document itself, unstyled, so it can be saved and set again.
-            print(json, &doc, || anstream::print!("{}", doc.text))
+            print(json, &doc, || print!("{}", doc.text))
         }
         PoliciesCmd::Set {
             name,

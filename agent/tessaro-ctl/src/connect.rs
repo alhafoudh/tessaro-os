@@ -4,7 +4,7 @@
 //!
 //! How a device is found and pinned is in `tessaro_client::connect`.
 
-use anstream::{eprintln, println};
+use crate::out::{eprintln, println};
 use protocol::api::Endpoint;
 use protocol::JobStarted;
 use serde::de::DeserializeOwned;

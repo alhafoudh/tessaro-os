@@ -10,7 +10,7 @@
 
 use std::path::PathBuf;
 
-use anstream::{eprintln, println};
+use crate::out::{eprintln, println};
 use clap::Subcommand;
 use protocol::api::{self, DeleteBody, Empty, FilesQuery, MoveBody};
 use protocol::files::{self as store, FileKind, FilesListing};

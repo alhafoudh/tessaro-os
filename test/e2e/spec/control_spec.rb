@@ -339,6 +339,34 @@ module AgentE2E
       expect(connect["command"].grep(/HostKeyAlias/)).to be_empty
     end
 
+    # One command on several devices. qemu has one device per lane, so the
+    # second is an address nothing answers on: the run goes on past it,
+    # prints each device's output under its name and fails at the end.
+    it "several: a command runs on each device named, with a summary and a failing exit" do
+      guest.run(<<~SH)
+        set -e
+        export TESSARO_CONFIG_DIR=/tmp/e2e-several
+        rm -rf "$TESSARO_CONFIG_DIR"
+        ! tessaro-ctl -n 127.0.0.1,127.0.0.1:1 config get browser.url >/tmp/e2e-several.out 2>/tmp/e2e-several.err
+        grep -q '^== 127.0.0.1 127.0.0.1:7400$' /tmp/e2e-several.out
+        grep -q '^== 127.0.0.1:1$' /tmp/e2e-several.out
+        grep -q 'failed:' /tmp/e2e-several.out
+        grep -q '1 ok, 1 failed: 127.0.0.1:1' /tmp/e2e-several.err
+        ! tessaro-ctl -n 127.0.0.1,127.0.0.1:1 device factory-reset 2>/tmp/e2e-several.err
+        grep -q 'add -y' /tmp/e2e-several.err
+        ! tessaro-ctl -n 127.0.0.1,127.0.0.1:1 ssh connect 2>/dev/null
+      SH
+
+      out = guest.run(
+        "TESSARO_CONFIG_DIR=/tmp/e2e-several tessaro-ctl -n 127.0.0.1,127.0.0.1:1 --json config get browser.url 2>/dev/null",
+        allow_failure: true
+      )
+      results = JSON.parse(out)
+      expect(results.map { |result| result["ok"] }).to eq([true, false])
+      expect(results.first["result"]).not_to be_nil
+      expect(results.last["error"]).to be_a(String)
+    end
+
     # Claimed, the root password is not empty any more, and this suite logs
     # in with an empty one - so the whole round trip is one guest command,
     # with a local-socket unclaim on the way out whatever happens.

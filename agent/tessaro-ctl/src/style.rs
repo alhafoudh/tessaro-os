@@ -1,14 +1,14 @@
 //! The palette, by meaning rather than by color.
 //!
-//! Everything printed goes through anstream's `println!` and friends, which
-//! strip these codes again when the stream is not a terminal, under
-//! `NO_COLOR` or `TERM=dumb`, or with `--color never`. So a call site only
-//! says what a piece of text *is*; whether it ends up colored is decided in
-//! one place. Styles decorate the text, never change it: the plain output is
-//! byte for byte what it was before there were colors.
+//! Everything printed goes through anstream (`out.rs`'s `println!` and
+//! friends), which strips these codes again when the stream is not a
+//! terminal, under `NO_COLOR` or `TERM=dumb`, or with `--color never`. So a
+//! call site only says what a piece of text *is*; whether it ends up colored
+//! is decided in one place. Styles decorate the text, never change it: the
+//! plain output is byte for byte what it was before there were colors.
 
 // Shadow the std macro: this strips colors when stdout is not a terminal.
-use anstream::println;
+use crate::out::println;
 use anstyle::{AnsiColor, Style};
 use tessaro_client::text::{self, Line, Tone};
 

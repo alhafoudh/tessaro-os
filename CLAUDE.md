@@ -49,8 +49,8 @@ same change as the behaviour it describes.
 | [docs/e2e.md](docs/e2e.md) | the qemu RSpec suite: running it, lanes, ports, harness quirks |
 | [docs/ci.md](docs/ci.md) | GitHub Actions: the per-push checks, the image jobs shared by the manual e2e run and the manual image build with release, the Try Tessaro DMG built around the run's genericarm64 image, the self-hosted runner and its cache used in place |
 | [docs/sbom.md](docs/sbom.md) | the SBOM: what each component is read from (bitbake's SPDX, cargo, npm, vendored files), the bundle and license list a release carries, the license policy and its exceptions, what is not covered |
-| [docs/clients.md](docs/clients.md) | what `tessaro-ctl` and `tessaro-gui` share in `agent/client` and what each keeps, reporting without printing, tones, lines and facts, adding a command, the differences on purpose |
-| [docs/gui.md](docs/gui.md) | `tessaro-gui`: inner windows, keyboard, the node list, device pages per command group, workers and jobs, the VNC viewer |
+| [docs/clients.md](docs/clients.md) | what `tessaro-ctl` and `tessaro-gui` share in `agent/client` and what each keeps, reporting without printing, tones, lines and facts, adding a command, running one on several devices (`--tag`, `-n a,b`), the differences on purpose |
+| [docs/gui.md](docs/gui.md) | `tessaro-gui`: inner windows, keyboard, the node list and marking rows, device pages per command group, workers and jobs, the bulk window, the VNC viewer |
 | [docs/try-tessaro.md](docs/try-tessaro.md) | Try Tessaro, the Mac app with a device in a VM: what the bundle carries, the relinked QEMU runtime and its licenses, the command line, the disk overlay and reset, ports, the client store entry, the activities |
 | [docs/webconfig.md](docs/webconfig.md) | Webconfig: browser sessions, tickets and the activity rule, the handover across restarts, opening it from ctl and the GUI, the pages, the describe port and its golden fixtures, serving and caching, the frontend and its codegen, the dev proxy, the bitbake build and `bitbake-lock.json` |
 | [docs/printing.md](docs/printing.md) | the device's CUPS and why it is set up that way, the `printers` table and the reconcile, driverless and raw printers, `printer.enable` and `window.print()`, the default printer, discovery, supplies, sizes, which printers work |
@@ -410,7 +410,9 @@ recipe.
   refused (`guard` in `api/mod.rs`); do not add CORS.
 
 **Command-line output is colored, and any new CLI must be too.** Print through
-anstream's `println!`/`eprintln!` (imported to shadow the std macros) with the
+anstream's `println!`/`eprintln!` (imported to shadow the std macros; in
+`tessaro-ctl` from `crate::out`, which keeps each device's output apart in a
+run on several, so never `anstream::` or std directly there) with the
 palette in `tessaro-ctl/src/style.rs` (`LABEL`, `HEADING`, `OK`, `WARN`,
 `BAD`, `MUTED`, `SECRET`, `CMD`, `SOURCE`), never raw colors. Styles never
 change the text, `--json` is never styled, and aligned columns use

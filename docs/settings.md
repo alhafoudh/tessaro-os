@@ -236,8 +236,10 @@ the same ones and they survive moving to another workstation.
   from the announcement. Do not put anything secret in them.
 
 `{device.tags}` works in templated URLs like any key. Doing something to
-every device with a tag is a bulk operation on the client, not a property of
-the tag: a tag carries no settings of its own.
+every device with a tag is a bulk operation on the client (`tessaro-ctl
+--tag`, the GUI's marked rows; **Running on several devices** in
+[clients.md](clients.md)), not a property of the tag: a tag carries no
+settings of its own.
 
 ## Shell completion
 

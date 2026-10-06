@@ -7,7 +7,7 @@
 
 use std::path::PathBuf;
 
-use anstream::println;
+use crate::out::{eprintln, println};
 use serde_json::json;
 use tessaro_client::ssh::{self, shell_words};
 
@@ -40,7 +40,7 @@ pub fn run(session: &mut Session, options: Options, json: bool) -> Result<(), St
         return crate::print_json(&json!({ "access": &authorized.access, "command": argv }));
     }
     for line in authorized.lines(&session.node.name, options.key.is_some()) {
-        anstream::eprintln!("{}", style::line(&line));
+        eprintln!("{}", style::line(&line));
     }
     if options.print {
         println!("{}", paint(style::CMD, shell_words(&argv)));

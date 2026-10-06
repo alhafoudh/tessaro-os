@@ -10,7 +10,7 @@ use std::cell::Cell;
 use std::io::Read;
 use std::path::PathBuf;
 
-use anstream::println;
+use crate::out::println;
 use clap::builder::{PossibleValuesParser, TypedValueParser};
 use clap::{Args, Subcommand};
 use protocol::api::{self, ScriptChange, ScriptRef};

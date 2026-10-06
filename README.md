@@ -60,7 +60,7 @@ or from [Webconfig](#webconfig) in any browser:
 - 🌐 **Network changes you cannot get wrong**: a new address or WiFi that loses the network rolls itself back.
 - 🔑 **Secure from the first boot**: claim it and it is yours, with TLS, pinned certificates, tokens and a random root password.
 - 🖥️ **Manage it your way**: a scriptable CLI, a desktop app, or Webconfig in any browser, with Quick Setup from a phone.
-- 🏷️ **Tags to find devices by**: `lobby`, `floor-2`, shown as coloured badges in the desktop app; every fresh device carries `unclaimed` until it is claimed.
+- 🏷️ **Tags to find devices by**: `lobby`, `floor-2`, shown as coloured badges in the desktop app; every fresh device carries `unclaimed` until it is claimed. One command runs on every device with a tag, from the CLI or the desktop app.
 - 🏢 **Enterprise networks welcome**: HTTP and SOCKS proxies, your own certificate authorities, your own NTP servers.
 - ⏰ **Scripts and schedules**: screens off at night, a different page at the weekend, anything a shell can do.
 - 🧰 **Maintenance and debug screens** at the flip of a switch, with your own message.
@@ -261,6 +261,19 @@ Tags find devices again: `tessaro-ctl device tags add lobby`, then
 carries `unclaimed`, so `nodes list --tag unclaimed` lists the fresh devices
 on the network.
 
+The same `--tag` runs a command on every one of them, or `-n` takes several
+names:
+
+```sh
+tessaro-ctl --tag lobby config set browser.url=https://example.com/menu
+tessaro-ctl -n lobby-1,lobby-2 browser reload
+tessaro-ctl --tag lobby device reboot -y
+```
+
+Each device's output comes whole, one after the other, then which failed;
+`--parallel N` sets how many run at once. A command that asks first runs on
+several only with `-y`, after listing them.
+
 ## A quick tour
 
 **See what a device is doing**
@@ -377,6 +390,9 @@ on the network in one list, a page per area, a file manager, printers,
 policies, a live journal, and a live VNC view of the screen to control it
 from. It shares the
 CLI's devices and tokens, so a device claimed in one is open in the other.
+Cmd-click or Shift-click several devices in the list (Cmd-A for every one a
+tag filter shows) and **Run on marked** reloads, restarts, reboots, sets a
+setting, runs a script, uploads files or updates them all at once.
 
 <p align="center">
   <img src="docs/images/gui-overview.jpg" width="49%" alt="tessaro-gui with a device window open on its Overview">

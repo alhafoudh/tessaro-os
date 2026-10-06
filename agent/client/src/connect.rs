@@ -620,7 +620,11 @@ fn open_named(
 /// known and found is one device. The start of several is an error; the
 /// start of none is the name itself, for `open_named` to report. Hands back
 /// the device's name and its known entry, if it has one.
-fn pick(start: &str, nodes: &Nodes, found: &[Found]) -> Result<(String, Option<Node>), String> {
+pub(crate) fn pick(
+    start: &str,
+    nodes: &Nodes,
+    found: &[Found],
+) -> Result<(String, Option<Node>), String> {
     let known_as = |found: &Found| found.id.as_deref().and_then(|id| nodes.by_id(id)).cloned();
     if let Some(exact) = found.iter().find(|found| found.name == start) {
         return Ok((exact.name.clone(), known_as(exact)));

@@ -16,6 +16,7 @@ mod connect;
 mod devtools;
 mod files;
 mod net;
+mod out;
 mod playlist;
 mod policies;
 mod printer;
@@ -32,21 +33,25 @@ mod update;
 use std::collections::BTreeMap;
 use std::process::ExitCode;
 
-// Shadow the std macros: these strip colors when stdout is not a terminal.
-use anstream::{eprintln, println};
 use clap::builder::styling::Styles;
 use clap::builder::{PossibleValuesParser, TypedValueParser};
-use clap::{Args, ColorChoice, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum};
+use clap::{
+    ArgMatches, Args, ColorChoice, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum,
+};
 use protocol::api::{self, Empty, Endpoint};
 use protocol::keys;
 use protocol::{Applied, Done, EvalResult, KeyInfo, NodeInfo, RestartTarget, Source, Status};
 use serde_json::Value;
 use tessaro_client::access;
+use tessaro_client::describe::bulk as bulk_words;
 use tessaro_client::describe::device as describe;
 use tessaro_client::nodes::Nodes;
-use tessaro_client::{sections, tags, webconfig};
+use tessaro_client::{bulk, sections, tags, webconfig};
 
 use connect::{Answer, Session, Target, Trust};
+// Shadow the std macros: these strip colors when stdout is not a terminal,
+// and keep a device's output apart in a run on several (`out.rs`).
+use out::{eprint, eprintln, print, println};
 use style::{pad, paint};
 
 /// `--help` in the same palette as everything else.
@@ -137,6 +142,7 @@ const HELP_STYLES: Styles = Styles::styled()
         \x20 tessaro-ctl ssh keys list                      keys that can log in as root\n\
         \x20 tessaro-ctl ssh keys revoke user@laptop        by comment or fingerprint\n\
         \x20 tessaro-ctl network certs add corp-root-ca.pem trust an intranet or TLS-inspecting CA\n\
+        \x20 tessaro-ctl --tag lobby browser reload         on every device tagged lobby; -n a,b for named ones\n\
         \x20 source <(tessaro-ctl completion bash)          tab completion; also zsh, powershell\n\n\
         ENVIRONMENT:\n\
         \x20 TESSARO_NODE        default for --node\n\
@@ -147,9 +153,21 @@ const HELP_STYLES: Styles = Styles::styled()
 struct Cli {
     /// The device: IP, ip:port, NAME, NAME.local, a host name, or `local`.
     /// NAME may be the start of the name or id of one device, known or on the network.
-    /// Without it, the local socket on the device itself.
+    /// Without it, the local socket on the device itself. Several, comma-separated,
+    /// run the command on each of them.
     #[arg(long, short = 'n', global = true, env = "TESSARO_NODE")]
     node: Option<String>,
+
+    /// Every device with this tag, known or found on the network; repeat it for
+    /// devices with every one of them. `unclaimed` picks the devices nobody has
+    /// claimed. With a command for a device, runs it on each of them.
+    #[arg(long = "tag", global = true, value_name = "TAG")]
+    tags: Vec<String>,
+
+    /// How many devices a run on several works on at once.
+    #[arg(long, global = true, value_name = "N", default_value_t = bulk::PARALLEL,
+          value_parser = clap::value_parser!(usize))]
+    parallel: usize,
 
     /// Print the raw JSON the device answered.
     #[arg(long, global = true)]
@@ -543,15 +561,12 @@ enum BrowserCmd {
 
 #[derive(Subcommand)]
 enum NodesCmd {
-    /// Devices answering on the local network.
+    /// Devices answering on the local network; with --tag, only those with
+    /// every tag given.
     List {
         /// Seconds to listen.
         #[arg(long, default_value_t = 3)]
         wait: u64,
-        /// Only devices with this tag; repeat it for devices with every one
-        /// of them. `unclaimed` picks the devices nobody has claimed.
-        #[arg(long = "tag", value_name = "TAG")]
-        tags: Vec<String>,
     },
     /// Forget a device: its pin and token on this machine.
     Forget { node: String },
@@ -696,7 +711,7 @@ fn main() -> ExitCode {
         ColorChoice::Always => anstream::ColorChoice::Always.write_global(),
         ColorChoice::Never => anstream::ColorChoice::Never.write_global(),
     }
-    match run(cli) {
+    match run(cli, &matches) {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
             eprintln!("{} {err}", paint(style::BAD, "tessaro-ctl:"));
@@ -705,18 +720,23 @@ fn main() -> ExitCode {
     }
 }
 
-fn run(cli: Cli) -> Result<(), String> {
+fn run(cli: Cli, matches: &ArgMatches) -> Result<(), String> {
     if let Cmd::Completion { shell } = cli.command {
         print!("{}", completion(shell));
         return Ok(());
     }
 
     let mut nodes = Nodes::load()?;
+    let names = cli.node.as_deref().map(bulk::names).unwrap_or_default();
+    let several = !cli.tags.is_empty() || names.len() > 1;
 
     // The commands that do not need a device conversation at all.
     match &cli.command {
-        Cmd::Nodes(NodesCmd::List { wait, tags }) => {
-            return list_nodes(&mut nodes, *wait, tags, cli.json)
+        Cmd::Nodes(NodesCmd::List { wait }) => {
+            return list_nodes(&mut nodes, *wait, &cli.tags, cli.json)
+        }
+        Cmd::Nodes(NodesCmd::Forget { .. }) if several => {
+            return Err("tessaro-ctl nodes forget takes one device".to_string())
         }
         Cmd::Nodes(NodesCmd::Forget { node }) => return forget(&mut nodes, node),
         Cmd::Browser(BrowserCmd::Policies(policies::PoliciesCmd::Check { file })) => {
@@ -725,7 +745,169 @@ fn run(cli: Cli) -> Result<(), String> {
         _ => {}
     }
 
+    if several {
+        return run_several(cli, matches, &names, nodes);
+    }
     let target = connect::resolve(cli.node.as_deref(), &nodes)?;
+    run_on(cli, target, nodes)
+}
+
+/// Why a command cannot run on several devices at once, if it cannot: it
+/// holds the terminal (a shell, a tunnel, a followed journal, an editor),
+/// opens something on this machine, writes one local file every device
+/// would overwrite, or reads stdin, which there is one of. `path` is the
+/// command's names (`device logs`), `leaf` its arguments.
+fn bulk_refused(path: &str, leaf: &ArgMatches) -> Option<&'static str> {
+    let flag = |id: &str| matches!(leaf.try_get_one::<bool>(id), Ok(Some(true)));
+    let given = |id: &str| matches!(leaf.try_contains_id(id), Ok(true));
+    let stdin = leaf.ids().any(|id| {
+        leaf.get_raw(id.as_str())
+            .is_some_and(|mut raw| raw.any(|value| value == "-"))
+    });
+    match path {
+        "ssh connect" | "browser devtools" => Some("holds the terminal for one device"),
+        "browser policies edit" => Some("opens an editor for one device"),
+        "device logs" if flag("follow") => Some("follows one device's journal"),
+        "camera snapshot" if given("watch") => Some("watches one camera until Ctrl-C"),
+        "access webconfig" if !flag("print") => Some("opens a browser for one device"),
+        "files download" => Some("writes one local file or directory"),
+        "screen screenshot" | "camera snapshot" if given("output") => {
+            Some("writes one local file; leave out the file name for one per device")
+        }
+        _ if stdin || flag("password_stdin") => Some("reads stdin, which there is one of"),
+        _ => None,
+    }
+}
+
+/// The command's names under the root, and its own arguments.
+fn leaf(matches: &ArgMatches) -> (String, &ArgMatches) {
+    let mut names = Vec::new();
+    let mut leaf = matches;
+    while let Some((name, sub)) = leaf.subcommand() {
+        names.push(name);
+        leaf = sub;
+    }
+    (names.join(" "), leaf)
+}
+
+/// One command on every device `names` and `--tag` stand for, at most
+/// `--parallel` at once, each on a thread and a session of its own with its
+/// output kept apart (`out::capture`), then printed device by device with a
+/// summary. Any device failing fails the whole run.
+fn run_several(
+    cli: Cli,
+    matches: &ArgMatches,
+    names: &[String],
+    mut nodes: Nodes,
+) -> Result<(), String> {
+    let (path, leaf) = leaf(matches);
+    if let Some(why) = bulk_refused(&path, leaf) {
+        return Err(format!(
+            "tessaro-ctl {path} {why}; it does not run on several devices"
+        ));
+    }
+    let selection = bulk::select(names, &cli.tags, &nodes, || {
+        connect::browse(tessaro_client::connect::BROWSE)
+    })?;
+    for found in &selection.found {
+        nodes.note_found(found)?;
+    }
+    let members = selection.members;
+
+    // A command that asks first asks once, for all of them: -y, with the
+    // devices listed either way.
+    if let Ok(Some(yes)) = leaf.try_get_one::<bool>("yes") {
+        let intro = if *yes { "running" } else { "would run" };
+        eprintln!(
+            "{} {} on:",
+            paint(style::LABEL, intro),
+            paint(style::CMD, format!("tessaro-ctl {path}"))
+        );
+        for line in bulk_words::devices(&members) {
+            eprintln!("{}", style::line(&line));
+        }
+        if !*yes {
+            return Err(format!(
+                "add -y to run tessaro-ctl {path} on every one of them"
+            ));
+        }
+    }
+
+    let json = cli.json;
+    let outcomes = bulk::each(members, cli.parallel, |member| {
+        let (result, captured) = out::capture(|| {
+            let cli = Cli::from_arg_matches(matches).map_err(|err| err.to_string())?;
+            run_on(cli, member.target.clone(), Nodes::load()?)
+        });
+        Ok((result, captured))
+    });
+
+    let mut results = Vec::new();
+    let mut ran = Vec::new();
+    for outcome in outcomes {
+        let (result, captured) = outcome
+            .result
+            .unwrap_or_else(|err| (Err(err), Default::default()));
+        if json {
+            if !captured.err.is_empty() {
+                eprintln!("{}", style::line(&bulk_words::heading(&outcome.member)));
+                eprint!("{}", captured.err);
+            }
+            results.push(serde_json::json!({
+                "name": outcome.member.name,
+                "id": outcome.member.id,
+                "address": outcome.member.address,
+                "ok": result.is_ok(),
+                "result": captured_json(&captured.out),
+                "error": result.as_ref().err(),
+            }));
+        } else {
+            println!("{}", style::line(&bulk_words::heading(&outcome.member)));
+            print!("{}", captured.out);
+            eprint!("{}", captured.err);
+            if let Err(err) = &result {
+                println!("{} {err}", paint(style::BAD, "failed:"));
+            }
+            println!();
+        }
+        ran.push(bulk::Outcome {
+            member: outcome.member,
+            result,
+        });
+    }
+    if json {
+        print_json(&results)?;
+    }
+    let summary = bulk_words::summary(&ran);
+    if ran.iter().any(|outcome| outcome.result.is_err()) {
+        return Err(summary.to_string());
+    }
+    if !json {
+        println!("{}", style::line(&summary));
+    }
+    Ok(())
+}
+
+/// What a command printed under `--json`, as JSON again: one value, every
+/// value of a stream (a followed job's steps) as an array, or nothing.
+fn captured_json(out: &str) -> Value {
+    if out.trim().is_empty() {
+        return Value::Null;
+    }
+    if let Ok(value) = serde_json::from_str(out) {
+        return value;
+    }
+    let values: Result<Vec<Value>, _> = serde_json::Deserializer::from_str(out)
+        .into_iter::<Value>()
+        .collect();
+    match values {
+        Ok(values) => Value::Array(values),
+        Err(_) => Value::String(out.to_string()),
+    }
+}
+
+/// The command, on the one device `target` is.
+fn run_on(cli: Cli, target: Target, mut nodes: Nodes) -> Result<(), String> {
     let local = matches!(target, Target::Local(_));
     let trust = match &cli.command {
         Cmd::Device(DeviceCmd::Id | DeviceCmd::Ping { .. }) => Trust::Peek,
@@ -1677,5 +1859,66 @@ mod tests {
         assert!(parse(&["secret", "--password-stdin"]).is_err());
         assert!(parse(&["secret", "--random"]).is_err());
         assert!(parse(&["--password-stdin", "--random"]).is_err());
+    }
+
+    /// Why `args` would be refused on several devices, if it would.
+    fn refused(args: &[&str]) -> Option<&'static str> {
+        let matches = cli()
+            .try_get_matches_from(["tessaro-ctl"].iter().chain(args))
+            .unwrap();
+        let (path, leaf) = leaf(&matches);
+        bulk_refused(&path, leaf)
+    }
+
+    #[test]
+    fn what_holds_the_terminal_or_stdin_runs_on_one_device_only() {
+        assert!(refused(&["ssh", "connect"]).is_some());
+        assert!(refused(&["device", "logs", "-f"]).is_some());
+        assert!(refused(&["device", "logs"]).is_none());
+        assert!(refused(&["browser", "eval", "-"]).is_some());
+        assert!(refused(&["browser", "eval", "document.title"]).is_none());
+        assert!(refused(&["access", "password", "set", "--password-stdin"]).is_some());
+        assert!(refused(&["files", "download", "/a"]).is_some());
+        assert!(refused(&["screen", "screenshot", "-o", "a.jpg"]).is_some());
+        assert!(refused(&["screen", "screenshot"]).is_none());
+        assert!(refused(&["config", "set", "browser.url=https://example.com"]).is_none());
+    }
+
+    #[test]
+    fn tags_and_parallel_go_anywhere_on_the_line() {
+        let cli = Cli::try_parse_from([
+            "tessaro-ctl",
+            "browser",
+            "reload",
+            "--tag",
+            "lobby",
+            "--tag",
+            "floor-2",
+            "--parallel",
+            "2",
+            "-n",
+            "a,b",
+        ])
+        .unwrap();
+        assert_eq!(cli.tags, ["lobby", "floor-2"]);
+        assert_eq!(cli.parallel, 2);
+        assert_eq!(bulk::names(cli.node.as_deref().unwrap()), ["a", "b"]);
+        // nodes list filters by the same --tag.
+        let cli = Cli::try_parse_from(["tessaro-ctl", "nodes", "list", "--tag", "x"]).unwrap();
+        assert_eq!(cli.tags, ["x"]);
+    }
+
+    #[test]
+    fn json_a_command_printed_comes_back_as_json() {
+        assert_eq!(captured_json(""), Value::Null);
+        assert_eq!(
+            captured_json("{\n  \"a\": 1\n}\n"),
+            serde_json::json!({ "a": 1 })
+        );
+        assert_eq!(
+            captured_json("{\"s\":1}\n{\"s\":2}\n"),
+            serde_json::json!([{ "s": 1 }, { "s": 2 }])
+        );
+        assert_eq!(captured_json("plain"), Value::String("plain".to_string()));
     }
 }

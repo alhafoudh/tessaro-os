@@ -6,8 +6,10 @@ agent at `/` on the API's port, `https://<device>:7400/`. It looks and works
 like the GUI's device window - its menu, pages, toolbars, tables, dialogs,
 Messages and status bar - so a user of one finds their way in the other.
 What only a native client can do stays there: the VNC viewer, the SSH
-terminal, DevTools over SSH and finding devices on the network. The SSH
-keys and every setting behind those remain on Webconfig's pages.
+terminal, DevTools over SSH, finding devices on the network, and running
+one command on several of them (Webconfig manages the one device that
+serves it). The SSH keys and every setting behind those remain on
+Webconfig's pages.
 
 ## Sessions
 

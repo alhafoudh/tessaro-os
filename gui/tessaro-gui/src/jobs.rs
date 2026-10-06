@@ -12,6 +12,7 @@
 //! `ping`, `storage`, `devtools`, `printer`, `script`), the same as
 //! `tessaro-ctl`'s.
 
+use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
 use std::net::Shutdown;
 use std::path::PathBuf;
@@ -21,17 +22,19 @@ use std::time::Duration;
 
 use iced::futures::channel::mpsc as ui;
 use iced::Subscription;
-use protocol::api::{self, Endpoint, GrowBody, PingBody, SpeedtestBody};
+use protocol::api::{
+    self, Empty, Endpoint, GrowBody, PingBody, RestartBody, SetConfig, SpeedtestBody,
+};
 use protocol::files::{self as store, FileEntry};
-use protocol::{JobStarted, PingEvent, ScriptEvent};
+use protocol::{JobStarted, PingEvent, RestartTarget, ScriptEvent, Verify};
 use serde_json::Value;
-use tessaro_client::connect::Session;
+use tessaro_client::connect::{Answer, Session};
 use tessaro_client::nodes::Node;
 use tessaro_client::report::{self, Report as _};
 use tessaro_client::text::{Line, Tone};
 use tessaro_client::tunnel::{self, Prompts, Tunnel};
 use tessaro_client::update::{self, Plan, Sent};
-use tessaro_client::{describe, devtools, files, ping, printer, script, ssh, storage};
+use tessaro_client::{describe, devtools, files, network, ping, printer, script, ssh, storage};
 
 use crate::worker;
 
@@ -56,6 +59,16 @@ pub enum Kind {
     /// `tessaro-ctl script run`: the script's output as the job's lines,
     /// then how the run ended.
     Script(String),
+    /// `tessaro-ctl browser reload`, for the bulk window: the device
+    /// windows send it through their worker.
+    Reload,
+    /// `tessaro-ctl device restart`, for the bulk window.
+    Restart(RestartTarget),
+    /// `tessaro-ctl device reboot`, for the bulk window.
+    Reboot,
+    /// `tessaro-ctl config set`, for the bulk window: no revision to hold
+    /// it to, each device has its own.
+    Set(BTreeMap<String, String>),
 }
 
 /// The device's jobs, each with what starts it.
@@ -170,6 +183,16 @@ fn run(spec: &Spec, out: &ui::UnboundedSender<Event>) -> Result<String, String> 
         Kind::DevTools => open_devtools(&mut session, &mut report),
         Kind::Discover => discover(&mut session, out),
         Kind::Script(name) => script_run(&mut session, name, out),
+        Kind::Reload => session
+            .call::<api::browser::Reload>(Empty {}, ())
+            .map(|done| done.message),
+        Kind::Restart(what) => session
+            .call::<api::device::Restart>(Empty {}, RestartBody { what: *what })
+            .map(|done| done.message),
+        Kind::Reboot => session
+            .call::<api::device::Reboot>(Empty {}, ())
+            .map(|done| done.message),
+        Kind::Set(values) => set(&mut session, values, &mut report),
     };
     done.store(true, Ordering::Relaxed);
     if out.is_closed() {
@@ -270,6 +293,38 @@ fn script_run(
         Some(run) => Err(script::ended(&run).to_string()),
         None => Err("the run's end was not seen".to_string()),
     }
+}
+
+/// `tessaro-ctl config set`, applied: what it did as the job's lines. A
+/// network key gets the time a network change takes, as in the worker.
+fn set(
+    session: &mut Session,
+    values: &BTreeMap<String, String>,
+    report: &mut Report,
+) -> Result<String, String> {
+    let network = values.keys().any(|key| network::is_network_key(key));
+    let body = SetConfig {
+        values: values.clone(),
+        if_revision: None,
+        apply: true,
+        verify: Verify::default(),
+    };
+    let request = |session: &mut Session| session.request::<api::config::Set>(Empty {}, body);
+    let answer = if network {
+        network::apply(session, request)
+    } else {
+        request(session)
+    };
+    let applied = match answer {
+        Answer::Ok(applied) => applied,
+        Answer::Refused(error) => return Err(error),
+        Answer::Lost(why) if network => return Err(network::lost(&why)),
+        Answer::Lost(why) => return Err(format!("lost the connection: {why}")),
+    };
+    for line in describe::device::applied(&applied, false) {
+        report.line(line);
+    }
+    Ok("set".to_string())
 }
 
 /// Each local path into `into`: a file as `into/NAME`, a directory as

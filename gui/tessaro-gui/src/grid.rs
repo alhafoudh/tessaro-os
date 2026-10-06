@@ -257,6 +257,28 @@ pub fn grid<'a, M: Clone + 'a>(
     on_select: impl Fn(usize) -> M,
     on_activate: impl Fn(usize) -> M,
 ) -> Element<'a, M> {
+    grid_marked(
+        state,
+        on_change,
+        columns,
+        rows,
+        |at| Some(at) == selected,
+        on_select,
+        on_activate,
+    )
+}
+
+/// `grid`, with every row `chosen` says drawn as selected: several rows
+/// marked at once (the node list's Cmd- and Shift-click).
+pub fn grid_marked<'a, M: Clone + 'a>(
+    state: State,
+    on_change: impl Fn(Event) -> M + 'a,
+    columns: &[Col],
+    rows: Vec<Vec<Cell<'a, M>>>,
+    chosen: impl Fn(usize) -> bool,
+    on_select: impl Fn(usize) -> M,
+    on_activate: impl Fn(usize) -> M,
+) -> Element<'a, M> {
     let rows = rows
         .into_iter()
         .enumerate()
@@ -280,7 +302,7 @@ pub fn grid<'a, M: Clone + 'a>(
                 .collect()
         })
         .collect();
-    frame(state, on_change, columns, rows, selected, false)
+    frame(state, on_change, columns, rows, chosen, false)
 }
 
 /// Follow the journal only while it was already scrolled to the bottom.
@@ -309,7 +331,7 @@ pub fn grid_following<'a, M: Clone + 'a>(
                 .collect()
         })
         .collect();
-    frame(state, on_change, columns, rows, None, follow)
+    frame(state, on_change, columns, rows, |_| false, follow)
 }
 
 #[derive(Clone)]
@@ -412,7 +434,7 @@ fn frame<'a, M: Clone + 'a>(
     on_change: impl Fn(Event) -> M + 'a,
     columns: &[Col],
     rows: Vec<Vec<Cell<'a, M>>>,
-    selected: Option<usize>,
+    selected: impl Fn(usize) -> bool,
     follow: bool,
 ) -> Element<'a, M> {
     let body = state.body.clone();
@@ -433,9 +455,9 @@ fn frame<'a, M: Clone + 'a>(
     let row_count = rows.len();
     for (at, cells) in rows {
         assert_eq!(cells.len(), columns.len(), "one cell per column");
-        // iced_table styles a row by its index alone, so the selected row's
+        // iced_table styles a row by its index alone, so a selected row's
         // own cells carry the selection color.
-        let chosen = Some(at) == selected;
+        let chosen = selected(at);
         for (column, cell) in columns.iter_mut().zip(cells) {
             let mut cell = cell.content;
             if chosen {
