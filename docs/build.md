@@ -249,6 +249,57 @@ is how Chromium's `PACKAGECONFIG` and `CHROMIUM_EXTRA_ARGS` are set.
 * **Moonforge's `STRUCTURE.md` is stale in places.** Trust the layer sources
   over upstream docs.
 
+## Several devices in QEMU
+
+**`mise run qemu:run --count N` (and `qemu:vnc`, `qemu:run:arm64`,
+`qemu:vnc:arm64`) boots N devices on one network the host shares with them,
+so `tessaro-ctl nodes list` and tessaro-gui's node list find every one over
+mDNS.** One device stays on slirp with the 127.0.0.1 forwards, and nothing
+about it changes; slirp carries no multicast, so it can never show up there.
+`scripts/qemu-devices.sh` runs the devices; on Linux `scripts/qemu-net.sh`
+builds the network.
+
+* **On Linux, QEMU is still bitbake's, in one kas container**, x86 through
+  runqemu (`nonetwork`, so it adds no slirp NIC of its own) and arm64
+  through `qemu-arm64.sh`. Only the network is on the host, where the
+  container sees it through `--network=host`.
+* **The network is built under sudo when the run starts and removed when it
+  ends**, Ctrl-C included: the bridge `tessaro0` at 10.77.77.1/24, a tap per
+  device owned by you (`tessaro-tap<n>`), busybox `udhcpd` handing out
+  .100-.200 with the host's IPv4 DNS servers, and NAT out. A run that was
+  killed leaves it behind; the next run removes it first, and `sudo sh
+  scripts/qemu-net.sh down` does by hand.
+* **The host's firewall needs rules of its own for the bridge.** Docker sets
+  `FORWARD` to DROP and loads br_netfilter, so even frames between two taps
+  go through `FORWARD`. ufw's `INPUT` policy is DROP and would eat the
+  devices' DHCP requests. Every rule `qemu-net.sh` adds carries the comment
+  `tessaro-qemu`, which is how `down` finds exactly those again.
+* **udhcpd writes its leases every 5 s** (`auto_time`). Its default is 2
+  hours, and the device table reads them back with `dumpleases`.
+* **Each device has one NIC, the shared one.** NetworkManager in the image
+  puts its one ethernet profile on whichever device comes up first
+  (`no-auto-default=*`), so a second NIC would get no address.
+* **Each device gets its own MAC and SMBIOS UUID**:
+  `52:54:00:77:00:<n>` and a fresh random UUID. Every QEMU otherwise has the
+  same MAC (runqemu's slirp `52:54:00:12:35:02`, QEMU's own
+  `52:54:00:12:34:56`), which a shared network cannot take. The machine id,
+  and with it the node id and name, is each device's own: the image ships
+  an empty `/etc/machine-id` and every device boots `-snapshot`.
+* **Device n's serial console goes to `build/qemu-devices/vm<n>.serial.log`**,
+  and in vnc mode its screen is on 127.0.0.1:590n with the password
+  `tessaro`. A device is reached at its 10.77.77.x address: `tessaro-ctl -n
+  10.77.77.126 ...`, or SSH as root while it is unclaimed.
+* **Stopping signals every process in the container**
+  (`docker exec ... sh -c 'kill -TERM -1'`). The TERM `docker stop` sends
+  goes through the kas entrypoint and does not reach QEMU, so on its own
+  every stop would wait out its timeout. procps' `kill` cannot parse `-1`,
+  so it is the shell's.
+* **On a Mac the devices are on vmnet-shared**, which already puts every
+  guest on bridge100 with the Mac's own DHCP. There is no setup; sudo is asked
+  once for all of them, and the table reads `/var/db/dhcpd_leases`, where
+  macOS writes a MAC without leading zeros. `--no-vmnet` cannot take
+  `--count`.
+
 ## Pi storage boot
 
 **Each Pi image boots from its board's supported storage without changing

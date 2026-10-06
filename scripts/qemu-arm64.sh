@@ -32,6 +32,15 @@
 # * user: slirp, which carries no multicast, with the forwards qemu:run has
 #   on qemux86-64: 127.0.0.1:2222 to SSH and 127.0.0.1:7401 to the API,
 #   Webconfig included (https://127.0.0.1:7401).
+# * tap (Linux only): the tap TESSARO_QEMU_TAP names, on the bridge
+#   scripts/qemu-net.sh built, for several devices at once
+#   (scripts/qemu-devices.sh).
+#
+# One of several devices sets these too, so no two share a MAC, an SMBIOS
+# UUID, a VNC display or a terminal: TESSARO_QEMU_MAC, TESSARO_QEMU_UUID,
+# TESSARO_QEMU_VNC (the display number, 1 by default) and
+# TESSARO_QEMU_SERIAL (a file the serial console goes to instead of this
+# terminal).
 set -eu
 
 mode=${1:-window}
@@ -54,8 +63,20 @@ case "$net" in
         }
         netdev=vmnet-shared,id=net0
         ;;
-    *) echo "TESSARO_QEMU_NET must be user or vmnet-shared" >&2; exit 64 ;;
+    tap)
+        [ "$(uname -s)" != Darwin ] && [ -n "${TESSARO_QEMU_TAP:-}" ] || {
+            echo "TESSARO_QEMU_NET=tap needs Linux and TESSARO_QEMU_TAP" >&2
+            exit 64
+        }
+        netdev=tap,id=net0,ifname=$TESSARO_QEMU_TAP,script=no,downscript=no
+        ;;
+    *) echo "TESSARO_QEMU_NET must be user, vmnet-shared or tap" >&2; exit 64 ;;
 esac
+
+nic=virtio-net-pci,netdev=net0
+[ -n "${TESSARO_QEMU_MAC:-}" ] && nic=$nic,mac=$TESSARO_QEMU_MAC
+serial=mon:stdio
+[ -n "${TESSARO_QEMU_SERIAL:-}" ] && serial=file:$TESSARO_QEMU_SERIAL
 
 set -- \
     -machine virt -smp 4 -m 4096 \
@@ -63,10 +84,12 @@ set -- \
     -device qemu-xhci -device usb-kbd -device usb-tablet \
     -device intel-hda \
     -netdev "$netdev" \
-    -device virtio-net-pci,netdev=net0 \
-    -serial mon:stdio
+    -device "$nic" \
+    -serial "$serial"
+[ -n "${TESSARO_QEMU_UUID:-}" ] && set -- "$@" -uuid "$TESSARO_QEMU_UUID"
 if [ "$mode" = vnc ]; then
-    set -- "$@" -object secret,id=vncpw,data=tessaro -vnc 127.0.0.1:1,password-secret=vncpw
+    set -- "$@" -object secret,id=vncpw,data=tessaro \
+        -vnc "127.0.0.1:${TESSARO_QEMU_VNC:-1},password-secret=vncpw"
 fi
 
 if [ "$(uname -s)" = Darwin ]; then
@@ -119,7 +142,7 @@ if [ "${KAS_CONTAINER_INSIDE:-}" != 1 ]; then
         gpu_runtime=""
     fi
     exec kas-container --runtime-args "$gpu_runtime --network=host" shell $KAS_CONFIG \
-        -c "KAS_CONTAINER_INSIDE=1 WIC=$WIC sh /repo/scripts/qemu-arm64.sh $mode"
+        -c "KAS_CONTAINER_INSIDE=1 WIC=$WIC TESSARO_QEMU_NET=$net sh /repo/scripts/qemu-arm64.sh $mode"
 fi
 
 # Inside the container; cwd is the build dir. The Mesa drivers QEMU's EGL
