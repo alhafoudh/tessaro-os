@@ -79,6 +79,7 @@ or from [Webconfig](#webconfig) in any browser:
 - 📸 **See what every screen shows**: a screenshot or a live VNC view, from anywhere.
 - 🖼️ **Portrait displays and totems**: `screen.rotation` turns the picture for a panel mounted on its side or upside down, boot splash included, and reverts on its own unless you confirm it.
 - 🔊 **Sound and screen power, managed remotely.**
+- 📺 **TVs that really switch off**: over HDMI-CEC the TV goes to standby with the screen and wakes on its input, its remote's keys reach your page, and scripts run when someone switches the TV on, off or to another input. `tessaro-ctl screen show` names the TV or monitor plugged in, from its EDID ([docs/cec.md](docs/cec.md)).
 
 ### For developers
 

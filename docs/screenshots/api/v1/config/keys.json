@@ -437,6 +437,101 @@
     }
   },
   {
+    "name": "screen.cec.enable",
+    "env": "KIOSK_CEC",
+    "applies": [
+      "agent"
+    ],
+    "guarded": false,
+    "doc": "Talk to the TV over HDMI-CEC: `tessaro-ctl screen power off` also puts it in standby, `on` and every boot wake it, and its state shows in `tessaro-ctl screen show`. 0 leaves the CEC bus alone.",
+    "values": "1 or 0 (on/off, true/false, yes/no)",
+    "default": "0",
+    "value": null,
+    "input": {
+      "kind": "flag"
+    }
+  },
+  {
+    "name": "screen.cec.source",
+    "env": "KIOSK_CEC_SOURCE",
+    "applies": [
+      "agent"
+    ],
+    "guarded": false,
+    "doc": "Whether the TV switches to the device's input: off (it wakes on the input it had), wake (every wake switches it), always (also takes the input back when someone switches away while the screen is on).",
+    "values": "one of: off, wake, always",
+    "default": "wake",
+    "value": null,
+    "input": {
+      "kind": "choice",
+      "choices": [
+        "off",
+        "wake",
+        "always"
+      ]
+    }
+  },
+  {
+    "name": "screen.cec.name",
+    "env": "KIOSK_CEC_NAME",
+    "applies": [
+      "agent"
+    ],
+    "guarded": false,
+    "doc": "The name the TV shows for the device in its menus, at most 14 characters; {key} placeholders as in browser.url, e.g. {device.name}.",
+    "values": "letters, digits, spaces and punctuation, up to 14 once filled in; {key} placeholders as in browser.url",
+    "default": "{device.name}",
+    "value": null,
+    "input": {
+      "kind": "text"
+    }
+  },
+  {
+    "name": "screen.cec.keys",
+    "env": "KIOSK_CEC_KEYS",
+    "applies": [
+      "agent"
+    ],
+    "guarded": false,
+    "doc": "The TV remote's arrows, OK, Back, digits, colour and media keys reach the page as key presses. Its keys are events (screen.cec.page, screen.cec.scripts) either way.",
+    "values": "1 or 0 (on/off, true/false, yes/no)",
+    "default": "0",
+    "value": null,
+    "input": {
+      "kind": "flag"
+    }
+  },
+  {
+    "name": "screen.cec.page",
+    "env": "KIOSK_CEC_PAGE",
+    "applies": [
+      "agent"
+    ],
+    "guarded": false,
+    "doc": "Tell the page what happens on the CEC bus: a tessaro:cec event on window for the TV switching on or to standby, its input switching to or away from the device, and every remote key. Needs browser.bridge.mode config or actions.",
+    "values": "1 or 0 (on/off, true/false, yes/no)",
+    "default": "1",
+    "value": null,
+    "input": {
+      "kind": "flag"
+    }
+  },
+  {
+    "name": "screen.cec.scripts",
+    "env": "KIOSK_CEC_SCRIPTS",
+    "applies": [
+      "agent"
+    ],
+    "guarded": false,
+    "doc": "Run the scripts that run on CEC events (`tessaro-ctl script set --cec`). 0 runs none of them.",
+    "values": "1 or 0 (on/off, true/false, yes/no)",
+    "default": "1",
+    "value": null,
+    "input": {
+      "kind": "flag"
+    }
+  },
+  {
     "name": "audio.output",
     "env": "KIOSK_AUDIO_OUTPUT",
     "applies": [

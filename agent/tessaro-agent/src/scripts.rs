@@ -62,12 +62,16 @@ impl Stored for Scripts {
 
     fn load(db: &Connection) -> rusqlite::Result<Self> {
         let mut rows = db.prepare(
-            "SELECT id, name, description, body, on_error, timeout_s, concurrency, bridge \
+            "SELECT id, name, description, body, on_error, timeout_s, concurrency, bridge, cec \
              FROM scripts ORDER BY position",
         )?;
         let scripts = rows
             .query_map([], |row| {
                 let timeout_s: Option<i64> = row.get(5)?;
+                let cec: String = row.get(8)?;
+                let cec: Vec<String> = serde_json::from_str(&cec).map_err(|err| {
+                    rusqlite::Error::FromSqlConversionFailure(8, Type::Text, err.into())
+                })?;
                 Ok(Script {
                     id: row.get(0)?,
                     spec: ScriptSpec {
@@ -78,6 +82,7 @@ impl Stored for Scripts {
                         timeout_s: timeout_s.map(|seconds| seconds as u64),
                         concurrency: parsed(6, row.get(6)?)?,
                         bridge: row.get(7)?,
+                        cec,
                     },
                 })
             })?
@@ -89,8 +94,9 @@ impl Stored for Scripts {
         db.execute("DELETE FROM scripts", [])?;
         let mut insert = db.prepare(
             "INSERT INTO scripts \
-             (id, position, name, description, body, on_error, timeout_s, concurrency, bridge) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+             (id, position, name, description, body, on_error, timeout_s, concurrency, bridge, \
+              cec) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         )?;
         for (position, script) in self.scripts.iter().enumerate() {
             let spec = &script.spec;
@@ -104,6 +110,7 @@ impl Stored for Scripts {
                 spec.timeout_s.map(|seconds| seconds as i64),
                 spec.concurrency.name(),
                 spec.bridge,
+                serde_json::to_string(&spec.cec).unwrap_or_else(|_| "[]".to_string()),
             ])?;
         }
         Ok(())
@@ -155,6 +162,7 @@ pub fn validate(mut spec: ScriptSpec, others: &[&Script]) -> Result<ScriptSpec, 
     if spec.timeout_s == Some(0) {
         spec.timeout_s = None;
     }
+    spec.cec = protocol::cec::triggers(&spec.cec.join(","))?;
     Ok(spec)
 }
 
@@ -195,8 +203,8 @@ pub fn new_id(taken: impl Fn(&str) -> bool) -> Result<String, String> {
 }
 
 /// 8 hex characters of SHA-256 over everything a run is made of: a change to
-/// any of it is a new run template and body. The description and the
-/// bridge flag change no run.
+/// any of it is a new run template and body. The description, the bridge
+/// flag and the CEC events change no run.
 pub fn content_hash(spec: &ScriptSpec) -> String {
     let content = serde_json::json!([
         spec.name,
@@ -314,10 +322,7 @@ pub fn render(
         OnError::Stop => " -e",
         OnError::Continue => "",
     };
-    // The trigger is the instance's first word, which systemd has no
-    // specifier for.
-    let exec =
-        format!("export TESSARO_TRIGGER=\"${{TESSARO_RUN%%-*}}\"; exec /bin/sh{strict} \"$0\"");
+    let exec = run_shell(strict);
     let run = format!(
         "{HEADER}[Unit]\nDescription=tessaro script {name} (run)\n\
          CollectMode=inactive-or-failed\n\n\
@@ -335,6 +340,21 @@ pub fn render(
     (
         vec![(fire_template(id), fire), (template, run)],
         (body, spec.body.clone()),
+    )
+}
+
+/// What a run's `/bin/sh -c` runs before the body, which is its `$0`. The
+/// trigger is the instance's first word, which systemd has no specifier
+/// for. A CEC run's event is what lies between it and the start time:
+/// `cec-tv-on-<unix>-<hex>`, `cec-key:red-<unix>-<hex>`.
+fn run_shell(strict: &str) -> String {
+    format!(
+        "export TESSARO_TRIGGER=\"${{TESSARO_RUN%%-*}}\"; \
+         if [ \"$TESSARO_TRIGGER\" = cec ]; then \
+         e=\"${{TESSARO_RUN#cec-}}\"; e=\"${{e%-*}}\"; export TESSARO_CEC_EVENT=\"${{e%-*}}\"; \
+         case \"$TESSARO_CEC_EVENT\" in key:*) \
+         export TESSARO_CEC_KEY=\"${{TESSARO_CEC_EVENT#key:}}\" TESSARO_CEC_EVENT=key;; esac; fi; \
+         exec /bin/sh{strict} \"$0\""
     )
 }
 
@@ -374,6 +394,8 @@ pub struct Ended {
     pub trigger: String,
     /// The schedule that started it, by id.
     pub schedule: Option<String>,
+    /// The CEC event that started it: `tv-on`, `key:red`.
+    pub event: Option<String>,
     pub started: i64,
     pub finished: i64,
     pub result: String,
@@ -392,10 +414,12 @@ pub fn parse_ended(run: &str, text: &str) -> Option<Ended> {
     let schedule = (trigger == "schedule")
         .then(|| words.get(1).map(|id| id.to_string()))
         .flatten();
+    let event = (trigger == "cec" && words.len() > 3).then(|| words[1..words.len() - 2].join("-"));
     Some(Ended {
         run: run.to_string(),
         trigger,
         schedule,
+        event,
         started,
         finished,
         result,
@@ -487,6 +511,7 @@ mod tests {
             timeout_s: None,
             concurrency: Concurrency::Overlap,
             bridge: false,
+            cec: Vec::new(),
         }
     }
 
@@ -582,9 +607,11 @@ mod tests {
         assert!(run.contains("TimeoutStartSec=600s\n"));
         assert!(run.contains("CollectMode=inactive-or-failed\n"));
         assert!(run.contains("Environment=TESSARO_SCRIPT=morning TESSARO_RUN=%i\n"));
+        assert!(run.contains(
+            "ExecStart=/bin/sh -c \"export TESSARO_TRIGGER=\\\"$${TESSARO_RUN%%%%-*}\\\"; "
+        ));
         assert!(run.contains(&format!(
-            "ExecStart=/bin/sh -c \"export TESSARO_TRIGGER=\\\"$${{TESSARO_RUN%%%%-*}}\\\"; \
-             exec /bin/sh \\\"$$0\\\"\" \"/run/tessaro-kiosk/scripts/ab12cd34-{hash}.sh\"\n"
+            "exec /bin/sh \\\"$$0\\\"\" \"/run/tessaro-kiosk/scripts/ab12cd34-{hash}.sh\"\n"
         )));
         assert!(run.contains(
             "ExecStopPost=/bin/sh -c \"mkdir -p '/data/tessaro/script-runs/ab12cd34' && \
@@ -650,6 +677,32 @@ mod tests {
     }
 
     #[test]
+    fn a_run_learns_its_trigger_and_cec_event_from_its_instance() {
+        let dir = tempfile::tempdir().unwrap();
+        let body = dir.path().join("body");
+        fs::write(
+            &body,
+            "echo \"$TESSARO_TRIGGER|${TESSARO_CEC_EVENT-}|${TESSARO_CEC_KEY-}\"\n",
+        )
+        .unwrap();
+        let run = |instance: &str| {
+            let out = std::process::Command::new("/bin/sh")
+                .arg("-c")
+                .arg(run_shell(""))
+                .arg(&body)
+                .env("TESSARO_RUN", instance)
+                .env_remove("TESSARO_CEC_EVENT")
+                .env_remove("TESSARO_CEC_KEY")
+                .output()
+                .unwrap();
+            String::from_utf8(out.stdout).unwrap().trim().to_string()
+        };
+        assert_eq!(run("manual-1700000000-4f2a"), "manual||");
+        assert_eq!(run("cec-tv-standby-1700000000-4f2a"), "cec|tv-standby|");
+        assert_eq!(run("cec-key:red-1700000000-4f2a"), "cec|key|red");
+    }
+
+    #[test]
     fn runs_are_read_back_newest_first_and_pruned() {
         assert_eq!(
             parse_ended(
@@ -660,6 +713,7 @@ mod tests {
                 run: "schedule-ef56ab78-1700000000-42".into(),
                 trigger: "schedule".into(),
                 schedule: Some("ef56ab78".into()),
+                event: None,
                 started: 1_700_000_000,
                 finished: 1_700_000_012,
                 result: "exit-code".into(),
@@ -671,6 +725,11 @@ mod tests {
         assert_eq!(manual.status, "");
         assert_eq!(parse_ended("manual-1700000000-4f2a", "garbage"), None);
         assert_eq!(parse_ended("x", "1700000001 success 0"), None);
+        let cec = parse_ended("cec-tv-standby-1700000000-4f2a", "1700000001 success 0").unwrap();
+        assert_eq!(
+            (cec.trigger.as_str(), cec.event.as_deref(), cec.started),
+            ("cec", Some("tv-standby"), 1_700_000_000)
+        );
 
         let dir = tempfile::tempdir().unwrap();
         let runs = dir.path().join("ab12cd34");

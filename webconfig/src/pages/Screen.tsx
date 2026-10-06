@@ -1,20 +1,27 @@
 // The GUI's Screen page (pages.rs modes_view, device.rs screenshot_view):
 // the display modes, the rotation and the screen's own controls, with the
 // green Confirm that keeps a change on probation counting down beside them;
-// below, what is on screen now, once or every few seconds while Live is on.
+// under the modes, what each display says it is and the HDMI-CEC bus
+// (`tessaro-ctl screen show`); below, what is on screen now, once or every
+// few seconds while Live is on.
 
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { answer, client, failure } from "../api/client";
+import * as screen from "../describe/screen";
 import { useDevice } from "../device/DeviceContext";
 import { PageFrame } from "../shell/PageFrame";
 import { useSecondsLeft } from "../shell/StatusBar";
 import { LIVE_MS, saveShot, takeScreenshot, useAge, useShots } from "../shell/useScreenshot";
-import { Button, ErrorLine } from "../ui/controls";
+import type { Line } from "../text/line";
+import { Button, ErrorLine, LineView } from "../ui/controls";
 import { Dialog, Field, Intro } from "../ui/Dialog";
 import { Table } from "../ui/Table";
 import type { PageInfo } from "./registry";
+
+/** How often the displays and the HDMI-CEC bus are asked for again. */
+const SHOW_MS = 5000;
 
 /** protocol::keys::ROTATIONS. */
 const ROTATIONS = ["0", "90", "180", "270", "flipped", "flipped-90", "flipped-180", "flipped-270"];
@@ -32,6 +39,17 @@ export function Screen({ info }: { info: PageInfo }) {
     queryFn: () => answer(client.GET("/api/v1/screen/modes")),
   });
   const current = settings?.settings.find((setting) => setting.key === "screen.resolution")?.value ?? "";
+  // What is plugged in and the HDMI-CEC bus: asked again when a setting
+  // moves or the TV changes in the status, and every few seconds for the
+  // rest of the bus.
+  const tv = status?.tv;
+  const shown = useQuery({
+    queryKey: ["screen", "show", status?.revision, tv?.power, tv?.showing],
+    queryFn: () => answer(client.GET("/api/v1/screen")),
+    refetchInterval: SHOW_MS,
+    placeholderData: (previous) => previous,
+    enabled: online,
+  });
 
   const rows = (modes.data ?? []).flatMap((connector) =>
     connector.modes.map((mode, at) => ({
@@ -121,6 +139,8 @@ export function Screen({ info }: { info: PageInfo }) {
         maxHeight="170px"
       />
       <ErrorLine error={modes.error ? failure(modes.error).message : null} />
+      {shown.data && <ShowLines lines={screen.show(shown.data)} />}
+      <ErrorLine error={shown.error ? failure(shown.error).message : null} />
       <Screenshot name={status?.node.name ?? "screen"} online={online} />
       {rotating && (
         <RotationDialog
@@ -130,6 +150,17 @@ export function Screen({ info }: { info: PageInfo }) {
         />
       )}
     </PageFrame>
+  );
+}
+
+/** `screen show` in its columns: the displays, then the HDMI-CEC bus. */
+function ShowLines({ lines }: { lines: Line[] }) {
+  return (
+    <div className="overflow-x-auto border border-border bg-panel px-1.5 py-1 font-mono text-sm whitespace-pre">
+      {lines.map((line, at) => (
+        <div key={at}>{line.isEmpty() ? " " : <LineView line={line} />}</div>
+      ))}
+    </div>
   );
 }
 

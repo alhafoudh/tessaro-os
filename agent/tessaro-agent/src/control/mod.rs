@@ -28,6 +28,7 @@
 
 mod access;
 mod bridge;
+mod cec;
 mod certs;
 mod network;
 mod page;
@@ -261,6 +262,14 @@ pub struct Control {
     /// What the configuration was last rendered with of the playlists'
     /// store (`playlists::Shared`): a change to it renders again.
     live_playlists: Mutex<crate::playlists::Shared>,
+    /// What every HDMI-CEC adapter's worker is asked: wake the TV, put it
+    /// in standby (`cec::Request`).
+    cec_requests: tokio::sync::broadcast::Sender<crate::cec::Request>,
+    /// Every adapter in use and its bus, by device path, as its worker last
+    /// saw it.
+    cec_adapters: Mutex<BTreeMap<String, protocol::CecAdapter>>,
+    /// When each script last started on CEC events, within `CEC_WINDOW`.
+    cec_runs: Mutex<HashMap<String, Vec<std::time::Instant>>>,
 }
 
 impl Control {
@@ -322,6 +331,9 @@ impl Control {
             player: Mutex::new(playlists::PlayerState::default()),
             playlist_wake: tokio::sync::Notify::new(),
             media_wake: tokio::sync::Notify::new(),
+            cec_requests: tokio::sync::broadcast::channel(8).0,
+            cec_adapters: Mutex::new(BTreeMap::new()),
+            cec_runs: Mutex::new(HashMap::new()),
         })
     }
 
@@ -549,6 +561,7 @@ impl Control {
             Command::Status => self.status().await.into(),
             Command::Keys => self.keys().await.into(),
             Command::Modes => self.modes().await.into(),
+            Command::ScreenShow => self.screen_show().await.into(),
             Command::Net => self.net().await.into(),
             Command::Get { key } => self.get(key).await.into(),
             Command::Set {
@@ -743,6 +756,7 @@ impl Control {
                 timeout_s,
                 concurrency,
                 bridge,
+                cec,
             } => {
                 let change = scripts::Change {
                     name,
@@ -752,6 +766,7 @@ impl Control {
                     timeout_s,
                     concurrency,
                     bridge,
+                    cec,
                 };
                 self.script_set(caller, script, change).await.into()
             }
@@ -1130,6 +1145,7 @@ impl Control {
         Ok(Status {
             playlist,
             screen_on,
+            tv: self.tv_status(),
             bridge: self.bridge_status(),
             os,
             image_version,
@@ -2109,6 +2125,7 @@ mod tests {
             timeout_s: None,
             concurrency: protocol::Concurrency::Overlap,
             bridge: false,
+            cec: Vec::new(),
         }
     }
 
@@ -2158,12 +2175,14 @@ mod tests {
                 timeout_s: Some(60),
                 concurrency: Some(protocol::Concurrency::Skip),
                 bridge: Some(true),
+                cec: Some(vec!["TV-standby".into(), "key:red".into()]),
             },
         )
         .await;
         assert_eq!(changed.id, created.id);
         assert_eq!(changed.spec.body, "true\nfalse\n");
         assert!(changed.spec.bridge);
+        assert_eq!(changed.spec.cec, vec!["tv-standby", "key:red"]);
         // A new run template and body replace the old ones; nothing runs to
         // keep them.
         let rendered = units();
@@ -2175,6 +2194,7 @@ mod tests {
             .unwrap();
         assert!(template.contains("TimeoutStartSec=60s\n"));
         assert!(template.contains("exec /bin/sh \\\"$$0\\\""));
+        assert!(template.contains("export TESSARO_CEC_EVENT="));
         assert_eq!(
             bodies().into_values().collect::<Vec<_>>(),
             [b"true\nfalse\n".to_vec()]
@@ -2200,6 +2220,21 @@ mod tests {
             (1_790_409_110, 1_790_409_135)
         );
         assert!(!run.succeeded());
+        assert_eq!(run.event, None);
+
+        // A run a CEC event started says which.
+        fs::write(
+            runs.join("cec-key:red-1790409200-ab12"),
+            "1790409201 success 0\n",
+        )
+        .unwrap();
+        let listed: Vec<protocol::ScriptInfo> =
+            ok(&fx.control, &Caller::Local, Command::ScriptList).await;
+        let run = listed[0].runs[0].clone();
+        assert_eq!(
+            (run.trigger.as_str(), run.event.as_deref()),
+            ("cec", Some("key:red"))
+        );
 
         // Not managed here: nothing to start. The page may run only what
         // has bridge on.
@@ -2224,6 +2259,7 @@ mod tests {
                 timeout_s: None,
                 concurrency: None,
                 bridge: Some(false),
+                cec: None,
             },
         )
         .await;

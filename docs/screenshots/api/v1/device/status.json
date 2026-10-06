@@ -71,6 +71,7 @@
     "available": 7626000000
   },
   "screen_on": true,
+  "tv": null,
   "bridge": null,
   "time": {
     "timezone": "Europe/Bratislava",

@@ -164,6 +164,42 @@
       "source": "default"
     },
     {
+      "key": "screen.cec.enable",
+      "env": "KIOSK_CEC",
+      "value": "0",
+      "source": "default"
+    },
+    {
+      "key": "screen.cec.source",
+      "env": "KIOSK_CEC_SOURCE",
+      "value": "wake",
+      "source": "default"
+    },
+    {
+      "key": "screen.cec.name",
+      "env": "KIOSK_CEC_NAME",
+      "value": "{device.name}",
+      "source": "default"
+    },
+    {
+      "key": "screen.cec.keys",
+      "env": "KIOSK_CEC_KEYS",
+      "value": "0",
+      "source": "default"
+    },
+    {
+      "key": "screen.cec.page",
+      "env": "KIOSK_CEC_PAGE",
+      "value": "1",
+      "source": "default"
+    },
+    {
+      "key": "screen.cec.scripts",
+      "env": "KIOSK_CEC_SCRIPTS",
+      "value": "1",
+      "source": "default"
+    },
+    {
       "key": "audio.output",
       "env": "KIOSK_AUDIO_OUTPUT",
       "value": "auto",

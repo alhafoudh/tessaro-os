@@ -310,6 +310,7 @@ mod tests {
                 timeout_s: None,
                 concurrency: Concurrency::Overlap,
                 bridge: false,
+                cec: Vec::new(),
             },
         }]
     }

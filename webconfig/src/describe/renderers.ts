@@ -8,6 +8,7 @@ import type { Fact, Line } from "../text/line";
 import * as audio from "./audio";
 import * as browser from "./browser";
 import * as camera from "./camera";
+import * as cec from "./cec";
 import * as clock from "./clock";
 import * as schedule from "./schedule";
 import * as script from "./script";
@@ -18,6 +19,7 @@ import * as net from "./net";
 import * as ping from "./ping";
 import * as playlist from "./playlist";
 import * as printer from "./printer";
+import * as screen from "./screen";
 import * as tags from "./tags";
 import * as transfer from "./transfer";
 import * as update from "./update";
@@ -60,7 +62,20 @@ export const renderers: Record<string, (input: any) => unknown> = {
   "audio::summary": (input) => spans(audio.summary(input)),
   "time::summary": (input) => spans(time.summary(input)),
   "ping::event_line": (input) => input.map((event: any) => spans(ping.eventLine(event))),
+  "cec::triggers": (input) => ({
+    events: cec.EVENTS,
+    keys: cec.KEYS,
+    typed: input.map((typed: string) => {
+      try {
+        return { ok: cec.triggers(typed) };
+      } catch (error) {
+        return { err: (error as Error).message };
+      }
+    }),
+  }),
   // --- screen and browser ---
+  "screen::show": (input) =>
+    Array.isArray(input) ? input.map((one) => lines(screen.show(one))) : lines(screen.show(input)),
   "browser::policies": (input) => lines(browser.policies(input)),
   "browser::policy_saved": (input) => input.map((one: any) => lines(browser.policySaved(one))),
   "browser::policy_removed": (input) => input.map((one: any) => lines(browser.policyRemoved(one))),

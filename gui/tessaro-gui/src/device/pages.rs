@@ -41,9 +41,9 @@ use protocol::{
     CertInfo, CertsAdded, Claimed, Concurrency, Connector, Done, HotspotCredentials, Net,
     NetChange, NetProfile, NetProfileDetail, OnError, Password, PingEvent, PrintJob, PrintQueued,
     PrinterFound, PrinterInfo, PrinterKind, PrinterList, PrinterSpec, ProxyTested, ScheduleInfo,
-    ScheduleSpec, ScriptInfo, SpeedtestEvent, SshKeyInfo, SshKeyRevoked, Storage, StorageGrowEvent,
-    TimeStatus, TokenCreated, TokenInfo, UpdatePhase, UpdateStatus, Verify, WifiNetwork,
-    WifiSecurity, WifiStatus,
+    ScheduleSpec, ScreenShow, ScriptInfo, SpeedtestEvent, SshKeyInfo, SshKeyRevoked, Storage,
+    StorageGrowEvent, TimeStatus, TokenCreated, TokenInfo, UpdatePhase, UpdateStatus, Verify,
+    WifiNetwork, WifiSecurity, WifiStatus,
 };
 use serde_json::Value;
 use tessaro_client::connect::Answer;
@@ -96,7 +96,9 @@ pub struct State {
     files_dir: String,
     files: Vec<FileEntry>,
     update: Option<UpdateStatus>,
-    modes: Vec<Connector>,
+    /// `screen show`: the connectors with their displays and modes, and
+    /// the HDMI-CEC bus.
+    screen: Option<ScreenShow>,
     /// The selected row of each table, by table.
     selected: BTreeMap<&'static str, String>,
     /// The last error a page's refresh got, by page.
@@ -564,6 +566,8 @@ const CONCURRENCY: &[&str] = Concurrency::NAMES;
 
 /// The label of a script form's bridge check.
 const PAGE_MAY_RUN: &str = "Page may run it";
+/// The script dialog's CEC events: comma separated, as `--cec` takes them.
+const CEC_EVENTS: &str = "Run on CEC events";
 
 /// The script dialog: new, or `existing` to change.
 fn script_form(existing: Option<&ScriptInfo>) -> Form {
@@ -622,6 +626,11 @@ fn script_form(existing: Option<&ScriptInfo>) -> Form {
         "Concurrency",
         pick(CONCURRENCY, &typed.concurrency),
         CONCURRENCY,
+    ))
+    .field(Field::text(
+        CEC_EVENTS,
+        typed.cec,
+        "tv-on, tv-standby, source-gained, source-lost, key, key:NAME",
     ))
     .field(Field::check(PAGE_MAY_RUN, typed.bridge))
 }
@@ -1030,7 +1039,7 @@ fn page_of(tag: &str) -> &'static str {
         "ssh" => "ssh",
         "files" => "files",
         "update" => "update",
-        "modes" | "screen" => "screen",
+        "screen" => "screen",
         "browser" => "browser",
         _ => "overview",
     }
@@ -1229,7 +1238,7 @@ impl Device {
             return;
         }
         match page {
-            Page::Screen => self.call("modes", fetch::<api::screen::Modes>()),
+            Page::Screen => self.call("screen", fetch::<api::screen::Show>()),
             Page::Network => {
                 self.call("net", fetch::<api::network::Show>());
                 self.call("net.profiles", fetch::<api::network::Profiles>());
@@ -1377,7 +1386,7 @@ impl Device {
 
     fn take_answer(&mut self, tag: &'static str, value: Value) -> Result<(), String> {
         match tag {
-            "modes" => self.pages.modes = parse(value)?,
+            "screen" => self.pages.screen = Some(parse(value)?),
             "scripts" => self.pages.scripts = parse(value)?,
             "script.save" => {
                 let info: ScriptInfo = parse(value)?;
@@ -2911,8 +2920,7 @@ impl Device {
             ),
             Page::Screen => (
                 "modes",
-                self.pages
-                    .modes
+                self.connectors()
                     .iter()
                     .flat_map(|connector| {
                         connector
@@ -3393,6 +3401,7 @@ impl Device {
                     timeout: form.value("Timeout").to_string(),
                     concurrency: form.value("Concurrency").to_string(),
                     bridge: form.checked(PAGE_MAY_RUN),
+                    cec: form.value(CEC_EVENTS).to_string(),
                 };
                 let save = match id {
                     None => send::<api::script::Create>(typed.spec()?),
@@ -4145,7 +4154,17 @@ impl Device {
         )
     }
 
-    /// The display modes, under the screenshot on the Screen page.
+    /// The connectors `screen show` reported; none before it answers.
+    fn connectors(&self) -> &[Connector] {
+        self.pages
+            .screen
+            .as_ref()
+            .map_or(&[], |show| show.connectors.as_slice())
+    }
+
+    /// The top of the Screen page, above the screenshot: its tools, what
+    /// `tessaro-ctl screen show` says about the displays and the HDMI-CEC
+    /// bus, and the display modes.
     pub(super) fn modes_view(&self) -> Element<'_, Message> {
         const COLUMNS: &[Col] = &[
             col("Output", Length::Fixed(140.0)),
@@ -4157,8 +4176,7 @@ impl Device {
             .and_then(|setting| setting.value.clone())
             .unwrap_or_default();
         let rows = self
-            .pages
-            .modes
+            .connectors()
             .iter()
             .flat_map(|connector| {
                 connector.modes.iter().enumerate().map(|(at, mode)| {
@@ -4213,8 +4231,18 @@ impl Device {
                 ));
             }
         }
+        let show = Column::with_children(
+            self.pages
+                .screen
+                .as_ref()
+                .map(describe::screen::show)
+                .unwrap_or_default()
+                .iter()
+                .map(|line| theme::text_line(line, iced::Font::MONOSPACE)),
+        );
         column![
             toolbar,
+            show,
             self.table("modes", COLUMNS, rows, Length::Fixed(TABLE_HEIGHT)),
         ]
         .spacing(4)

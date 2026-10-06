@@ -74,6 +74,36 @@
         },
         "status": "0",
         "trigger": "hook"
+      },
+      {
+        "event": "tv-standby",
+        "finished": {
+          "local": "",
+          "unix": 1789999990
+        },
+        "result": "success",
+        "run": "cec-tv-standby-1789999989-0a0b",
+        "started": {
+          "local": "",
+          "unix": 1789999989
+        },
+        "status": "0",
+        "trigger": "cec"
+      },
+      {
+        "event": "key:red",
+        "finished": {
+          "local": "",
+          "unix": 1789999995
+        },
+        "result": "exit-code",
+        "run": "cec-key:red-1789999994-0c0d",
+        "started": {
+          "local": "",
+          "unix": 1789999994
+        },
+        "status": "1",
+        "trigger": "cec"
       }
     ]
   },
@@ -111,6 +141,20 @@
         [
           "ok",
           "run hook-boot-1789900000-44 succeeded after 1s",
+          0
+        ]
+      ],
+      [
+        [
+          "ok",
+          "run cec-tv-standby-1789999989-0a0b succeeded after 1s",
+          0
+        ]
+      ],
+      [
+        [
+          "bad",
+          "run cec-key:red-1789999994-0c0d failed: exit-code 1, after 1s",
           0
         ]
       ]
@@ -200,6 +244,40 @@
           " (1s)",
           0
         ]
+      ],
+      [
+        [
+          "ok",
+          "success",
+          0
+        ],
+        [
+          "plain",
+          ", 10s ago, by the TV going to standby",
+          0
+        ],
+        [
+          "muted",
+          " (1s)",
+          0
+        ]
+      ],
+      [
+        [
+          "bad",
+          "exit-code 1",
+          0
+        ],
+        [
+          "plain",
+          ", 5s ago, by the remote's red key",
+          0
+        ],
+        [
+          "muted",
+          " (1s)",
+          0
+        ]
       ]
     ],
     "started_by": [
@@ -207,7 +285,9 @@
       "from the page",
       "by schedule night",
       "by a removed schedule",
-      "by hook"
+      "by hook",
+      "by the TV going to standby",
+      "by the remote's red key"
     ]
   }
 }

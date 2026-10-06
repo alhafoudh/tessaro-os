@@ -6,7 +6,7 @@ use protocol::keys::Consumer;
 use protocol::{Applied, EvalResult, Hardware, KeyInfo, NodeInfo, Pending, Status};
 use serde_json::Value;
 
-use crate::describe::{audio, playlist, time};
+use crate::describe::{audio, playlist, screen, time};
 use crate::storage::{free_line, usage_line};
 use crate::text::{unit_state, usage_level, yes_no, Fact, Line, Tone};
 
@@ -201,6 +201,9 @@ pub fn status(status: &Status) -> StatusText {
                 .text(" ")
                 .add(Tone::Cmd, "tessaro-ctl screen power on"),
         ));
+    }
+    if let Some(tv) = &status.tv {
+        more.push(Fact::new("tv", screen::tv(tv)));
     }
     if let Some(bridge) = &status.bridge {
         if bridge.mode != "off" {

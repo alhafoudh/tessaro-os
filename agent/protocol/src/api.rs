@@ -37,10 +37,10 @@ use crate::{
     Command, Concurrency, Connector, Done, EvalResult, HotspotCredentials, ImageUpload, JobPage,
     JobStarted, KeyInfo, LogPage, Net, NetChange, NetProfile, NetProfileDetail, NodeInfo, OnError,
     PrintJob, PrintQueued, PrinterInfo, PrinterList, PrinterSpec, ProxyStatus, ProxyTested,
-    Received, RestartTarget, ScheduleInfo, ScheduleSpec, ScreenPower, ScriptInfo, ScriptSpec,
-    Secret, Settings, SshAccess, SshKeyInfo, SshKeyRevoked, Storage, Ticket, TimeStatus,
-    TokenCreated, TokenInfo, UpdateBegun, UpdateStatus, Verify, WebSession, WelcomeInfo,
-    WifiNetwork, WifiSecurity, WifiStatus,
+    Received, RestartTarget, ScheduleInfo, ScheduleSpec, ScreenPower, ScreenShow, ScriptInfo,
+    ScriptSpec, Secret, Settings, SshAccess, SshKeyInfo, SshKeyRevoked, Storage, Ticket,
+    TimeStatus, TokenCreated, TokenInfo, UpdateBegun, UpdateStatus, Verify, WebSession,
+    WelcomeInfo, WifiNetwork, WifiSecurity, WifiStatus,
 };
 
 /// The API's version, in every path. A change a client of this version
@@ -683,6 +683,9 @@ pub struct ScriptChange {
     pub concurrency: Option<Concurrency>,
     #[serde(default)]
     pub bridge: Option<bool>,
+    /// Replaces the CEC events it runs on; empty for none.
+    #[serde(default)]
+    pub cec: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -1104,6 +1107,12 @@ pub mod screen {
     use super::*;
 
     endpoints! {
+        /// The connected displays with what each says it is (EDID), and
+        /// the HDMI-CEC bus: the TV's power, whether it shows the device,
+        /// and every other device on it.
+        Show: Get "/api/v1/screen" (Empty, ()) -> ScreenShow
+            = |_, _| Action::Run(Command::ScreenShow);
+
         /// The output modes every connected connector advertises.
         Modes: Get "/api/v1/screen/modes" (Empty, ()) -> Vec<Connector>
             = |_, _| Action::Run(Command::Modes);
@@ -1404,6 +1413,7 @@ pub mod script {
                 timeout_s: change.timeout_s,
                 concurrency: change.concurrency,
                 bridge: change.bridge,
+                cec: change.cec,
             });
 
         /// Remove a script no schedule runs, and its units.

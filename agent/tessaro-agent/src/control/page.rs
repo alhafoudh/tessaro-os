@@ -16,6 +16,43 @@ use crate::watchdog::Heartbeat;
 const SELECTOR_MAX: usize = 1024;
 
 impl Control {
+    /// A TV remote's key into the page as a key press (`screen.cec.keys`):
+    /// down, or up when `down` is false. A key that types (digits, Enter)
+    /// carries its text, so a focused field gets it.
+    pub(super) async fn dispatch_key(
+        &self,
+        press: &protocol::cec::Press,
+        down: bool,
+        repeat: bool,
+    ) -> Result<(), String> {
+        let kind = match (down, press.text) {
+            (false, _) => "keyUp",
+            (true, Some(_)) => "keyDown",
+            (true, None) => "rawKeyDown",
+        };
+        let mut params = json!({
+            "type": kind,
+            "key": press.key,
+            "code": press.code,
+            "windowsVirtualKeyCode": press.virtual_key,
+            "nativeVirtualKeyCode": press.virtual_key,
+            "autoRepeat": repeat,
+        });
+        if let (true, Some(text)) = (down, press.text) {
+            params["text"] = json!(text);
+            params["unmodifiedText"] = json!(text);
+        }
+        self.session
+            .call(
+                &Heartbeat::detached(),
+                "Input.dispatchKeyEvent",
+                params,
+                CDP_LIMIT,
+            )
+            .await // naked: SessionHandle::call bounds itself with within()
+            .map(drop)
+    }
+
     pub(super) async fn reload(&self) -> Result<Done, String> {
         self.session
             .call(

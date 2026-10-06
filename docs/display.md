@@ -290,6 +290,23 @@ installed plugin headers (`weston.pc`), so changing it never rebuilds Weston.
   freezes on the last frame meanwhile.
 * **`device status` shows a `screen off` row**, and the page bridge offers the
   same as `tessaro.screen.off()` and `on()`.
+* **With `screen.cec.enable` the TV follows over HDMI-CEC**: standby on
+  `off`, a wake on `on`. See [cec.md](cec.md).
+
+## Connected displays
+
+**`tessaro-ctl screen show` says what is plugged in, from each connected
+connector's EDID** (`/sys/class/drm/card0-HDMI-A-1/edid`, read by
+`edid.rs` next to the `modes` `display.rs` already reads): the maker's PNP
+id and its name for the makers in `edid.rs`, the product code, the name the
+display gives itself, its serial, when it was made, its size, and from the
+HDMI vendor block of a CTA-861 extension its CEC physical address, which
+names the TV input it is plugged into. Only identity is parsed; modes stay
+DRM's. What a TV fills in varies: many give a placeholder serial
+(`0x01010101`, shown as none) and a generic name, rarely the model number on
+the sticker. Webconfig and `tessaro-gui` show the same on their Screen
+pages, and the page has it as `tessaro.screen.show()`; the HDMI-CEC part of
+it is [cec.md](cec.md).
 
 ## Input devices
 

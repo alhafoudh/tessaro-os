@@ -142,6 +142,13 @@ are on WiFi, not Network), and only where the scope has settings.
   printed by its path (`tessaro-ctl printer print NAME --stored PATH`).
   Discover is a job whose finds fill a table of their own, each added with
   the URI it was found by ([printing.md](printing.md)).
+* **The Screen page shows `screen show` under the modes table**: each
+  display's EDID identity and the HDMI-CEC bus, from the ported
+  `describe/screen.ts`. It is asked every 5 s while the device answers, and
+  again when the revision or the status's TV moves ([cec.md](cec.md)).
+* **The script dialog checks "Run on CEC events" before it sends**, with
+  `describe/cec.ts`, a port of `protocol::cec::triggers` that the
+  `cec_triggers` fixture keeps equal, its event and key names included.
 
 **The words are the Rust's.** A result the clients describe in words - a
 status, what a change did, a job's steps - is a port of `agent/client`'s

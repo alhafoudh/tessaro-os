@@ -34,7 +34,8 @@ same change as the behaviour it describes.
 | [docs/settings.md](docs/settings.md) | the saved settings, templates and placeholders, read-only keys, the claim model, names, completion, maintenance mode, debug screen |
 | [docs/storage.md](docs/storage.md) | the SQLite stores: the device's `tessaro.db` and `sessions.db`, a client's `tessaro.db`, their tables, the pragmas, migrations, a broken store set aside, the `sqlite3` shell |
 | [docs/api.md](docs/api.md) | the HTTP API: endpoint types, the OpenAPI document and Swagger UI, the socket and TLS, pinning and Bearer tokens, errors, jobs and log pages, connections |
-| [docs/display.md](docs/display.md) | Weston scaling and resolution, hotplug, on-screen keyboard, screen power, boot splash and wallpaper |
+| [docs/display.md](docs/display.md) | Weston scaling and resolution, hotplug, on-screen keyboard, screen power, the connected displays' EDID, boot splash and wallpaper |
+| [docs/cec.md](docs/cec.md) | HDMI-CEC: which adapters, the claim and the OSD name, standby, wake and the input, following the bus, the events for the page, key presses and scripts, the vivid bus in qemu, what does not work |
 | [docs/bridge.md](docs/bridge.md) | the injected script, `window.tessaro` and its modes, who may call, `browser eval` |
 | [docs/remote-access.md](docs/remote-access.md) | VNC mirror and its PAM auth, SSH and `ssh connect` keys |
 | [docs/audio.md](docs/audio.md) | PipeWire units, how `audio.*` is applied, `auto` |
@@ -441,8 +442,9 @@ same thing. Keep to these rules when adding a command or a setting:
     speed test.
   * `storage`: the disk the device runs from. Partitions, free space,
     growing `/data`.
-  * `screen`: the physical display. Screenshot, modes, confirming a mode,
-    power, the on-screen keyboard.
+  * `screen`: the physical display. What is plugged in and the TV over
+    HDMI-CEC, screenshot, modes, confirming a mode, power, the on-screen
+    keyboard.
   * `browser`: what the browser shows. Navigate, reload, maintenance, debug
     screen, zoom, remote DevTools, the injected script, the page bridge,
     `eval`, the extra Chromium policies.

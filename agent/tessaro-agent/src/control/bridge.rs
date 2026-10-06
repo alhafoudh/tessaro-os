@@ -111,6 +111,7 @@ const READS: &[&str] = &[
     "printer.jobs",
     "scripts.list",
     "playlist.status",
+    "screen.show",
 ];
 
 /// What `main` hands over: the session's end of the page scripts, and the
@@ -245,6 +246,33 @@ impl Control {
         if let Some(bridge) = self.bridge.get() {
             bridge.poke.notify_one();
         }
+    }
+
+    /// What happened on the HDMI-CEC bus, as a `tessaro:cec` event on the
+    /// page - when the page has the bridge - in the main frame, like
+    /// `tessaro:config`.
+    pub(super) async fn bridge_cec(&self, detail: Value) {
+        let Some(bridge) = self.bridge.get() else {
+            return;
+        };
+        if lock(&bridge.offer).mode < BridgeMode::Config {
+            return;
+        }
+        let expression = format!(
+            "window[{0}] && window[{0}].cec({1})",
+            json!(bridge.settle),
+            detail
+        );
+        // A page that is loading misses it, as it misses a click.
+        let _ = self
+            .session
+            .call(
+                &Heartbeat::detached(),
+                "Runtime.evaluate",
+                json!({ "expression": expression }),
+                CDP_LIMIT,
+            )
+            .await; // naked: SessionHandle::call bounds itself with within()
     }
 
     pub(super) fn bridge_status(&self) -> Option<BridgeStatus> {
@@ -596,6 +624,7 @@ impl Control {
                 )
             }
             "audio.status" => plain(self.audio_status().await.and_then(to_value)),
+            "screen.show" => plain(self.screen_show().await.and_then(to_value)),
             "network.publicIp" => (self.page_public_ip(bridge).await, None),
             // The same lookup and cache as publicIp, as a plain yes or no: a
             // device that cannot reach the internet resolves `false`, it does
@@ -1155,6 +1184,7 @@ fn page_status(status: &protocol::Status) -> Value {
         "maintenance": status.maintenance,
         "debugScreen": status.debug_screen,
         "screenOn": status.screen_on,
+        "tv": status.tv,
         "pending": status.pending.as_ref().map(|pending| json!({
             "changes": pending.changes.iter().map(|change| json!({
                 "key": change.key,

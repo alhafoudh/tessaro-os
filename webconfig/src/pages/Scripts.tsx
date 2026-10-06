@@ -202,7 +202,16 @@ function ScriptDialog({
   const [typed, setTyped] = useState<script.Typed>(() =>
     existing
       ? script.typedOf(existing)
-      : { name: "", description: "", body: "", onError: "stop", timeout: "", concurrency: "overlap", bridge: false },
+      : {
+          name: "",
+          description: "",
+          body: "",
+          onError: "stop",
+          timeout: "",
+          concurrency: "overlap",
+          bridge: false,
+          cec: "",
+        },
   );
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -246,7 +255,7 @@ function ScriptDialog({
     >
       <Intro>
         The body runs with /bin/sh as root, from /; write tessaro-ctl commands out in full. Run it now from this page,
-        on calendar times from Schedules, or from the kiosk page when it may.
+        on calendar times from Schedules, from the kiosk page when it may, or on the TV's HDMI-CEC events.
       </Intro>
       <Field label="Name">
         <input
@@ -307,6 +316,17 @@ function ScriptDialog({
           checked={typed.bridge}
           onChange={(event) => edit({ bridge: event.target.checked })}
           className="h-4 w-4 self-start"
+        />
+      </Field>
+      <Field
+        label="Run on CEC events"
+        hint="comma separated: tv-on, tv-standby, source-gained, source-lost, key (any remote key) or key:NAME (one, e.g. key:red); empty for none. Needs screen.cec.enable."
+      >
+        <input
+          value={typed.cec}
+          onChange={(event) => edit({ cec: event.target.value })}
+          placeholder="none, or tv-standby, key:red"
+          spellCheck={false}
         />
       </Field>
       {error && <p className="text-sm text-danger">{error}</p>}

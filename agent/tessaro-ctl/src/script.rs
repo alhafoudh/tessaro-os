@@ -1,6 +1,6 @@
 //! `tessaro-ctl script ...`: shell scripts the device keeps and runs as
-//! root, now (`run`), for a schedule (`tessaro-ctl schedule`) or for the
-//! kiosk page (`--bridge`).
+//! root, now (`run`), for a schedule (`tessaro-ctl schedule`), for the
+//! kiosk page (`--bridge`) or on the TV's HDMI-CEC events (`--cec`).
 //!
 //! A body runs with `/bin/sh` from `/`, so a `tessaro-ctl` command in it is
 //! written out in full. `run` follows the run to its end and prints what it
@@ -34,6 +34,7 @@ pub enum ScriptCmd {
     ///   tessaro-ctl script create dim --body 'tessaro-ctl screen power off'
     ///   tessaro-ctl script create cleanup --file cleanup.sh --on-error continue --timeout 10m
     ///   tessaro-ctl script create restock --file restock.sh --bridge --concurrency skip
+    ///   tessaro-ctl script create back-off --body 'tessaro-ctl screen power off' --cec key:red
     Create {
         /// Lower-case letters, digits and -.
         name: String,
@@ -114,6 +115,25 @@ pub struct Fields {
     /// The kiosk page may list it and run it (tessaro.scripts).
     #[arg(long)]
     bridge: bool,
+    /// Run it on HDMI-CEC events, comma separated: tv-on, tv-standby,
+    /// source-gained, source-lost, key (any remote key) or key:NAME (one,
+    /// e.g. key:red); empty for none. Needs screen.cec.enable.
+    #[arg(long, value_name = "EVENTS", value_parser = cec_events)]
+    cec: Option<String>,
+}
+
+/// `--cec` checked, as the comma-separated list it is stored as.
+fn cec_events(typed: &str) -> Result<String, String> {
+    protocol::cec::triggers(typed).map(|events| events.join(","))
+}
+
+/// The events `--cec` gave, one by one.
+fn cec_list(checked: String) -> Vec<String> {
+    checked
+        .split(',')
+        .filter(|event| !event.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 impl Fields {
@@ -158,6 +178,7 @@ pub fn run(session: &mut Session, command: ScriptCmd, json: bool) -> Result<(), 
                 timeout_s: fields.timeout.filter(|seconds| *seconds > 0),
                 concurrency: fields.concurrency.unwrap_or_default(),
                 bridge: fields.bridge,
+                cec: fields.cec.map(cec_list).unwrap_or_default(),
             };
             let info = session.send::<api::script::Create>(spec)?;
             print(json, &info, || {
@@ -189,6 +210,7 @@ pub fn run(session: &mut Session, command: ScriptCmd, json: bool) -> Result<(), 
                 timeout_s: fields.timeout,
                 concurrency: fields.concurrency,
                 bridge,
+                cec: fields.cec.map(cec_list),
             };
             let info = session.call::<api::script::Change>(ScriptRef { script }, change)?;
             print(json, &info, || {

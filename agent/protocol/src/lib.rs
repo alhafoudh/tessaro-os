@@ -8,6 +8,7 @@
 //! one, and so does the page bridge. It never crosses the network.
 
 pub mod api;
+pub mod cec;
 pub mod files;
 pub mod keys;
 pub mod openapi;
@@ -200,6 +201,8 @@ pub enum Command {
     Keys,
     /// Output modes every connected connector advertises.
     Modes,
+    /// The connected displays, what each says it is, and the HDMI-CEC bus.
+    ScreenShow,
     /// The network as the device sees it: addresses, route, DNS,
     /// interfaces. Read-only.
     Net,
@@ -560,6 +563,9 @@ pub enum Command {
         concurrency: Option<Concurrency>,
         #[serde(default)]
         bridge: Option<bool>,
+        /// The CEC events it runs on; empty for none.
+        #[serde(default)]
+        cec: Option<Vec<String>>,
     },
     /// Refused while a schedule runs it.
     ScriptRemove {
@@ -910,6 +916,10 @@ pub struct Status {
     /// Whether the display is on; `None` when the compositor cannot say.
     #[serde(default)]
     pub screen_on: Option<bool>,
+    /// The TV as HDMI-CEC reports it; `None` with screen.cec.enable off or
+    /// before the TV answered.
+    #[serde(default)]
+    pub tv: Option<TvStatus>,
     /// The page bridge: `browser.bridge.mode`, and the injected script with
     /// its state. Defaulted the same way.
     #[serde(default)]
@@ -1356,6 +1366,140 @@ impl From<&keys::Key> for KeyInfo {
 pub struct Connector {
     pub name: String,
     pub modes: Vec<String>,
+    /// What the display says it is, from its EDID. `None` when it sent
+    /// none, and from a device that predates it.
+    #[serde(default)]
+    pub display: Option<DisplayIdentity>,
+}
+
+/// A display's EDID: who made it, which model, which one. What a TV fills
+/// in varies: many leave the serial empty or give a placeholder.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct DisplayIdentity {
+    /// The maker's three-letter PNP id: `SAM`, `GSM`, `DEL`.
+    pub vendor_id: String,
+    /// The maker's name, when the id is a known one: `Samsung`, `LG`.
+    #[serde(default)]
+    pub vendor: Option<String>,
+    /// The maker's own number for the model.
+    pub product_code: u16,
+    /// The name the display gives itself: `SAMSUNG`, `DELL U2720Q`.
+    #[serde(default)]
+    pub model: Option<String>,
+    /// The serial number: its text, else the number when it is not 0.
+    #[serde(default)]
+    pub serial: Option<String>,
+    /// The year it was made, or the model year.
+    #[serde(default)]
+    pub year: Option<u16>,
+    /// The week of `year` it was made, when it says.
+    #[serde(default)]
+    pub week: Option<u8>,
+    /// The picture's width and height in centimetres; `None` for a
+    /// projector or when unknown.
+    #[serde(default)]
+    pub width_cm: Option<u8>,
+    #[serde(default)]
+    pub height_cm: Option<u8>,
+    /// Its HDMI-CEC physical address, `1.0.0.0`: which input of what the
+    /// device is plugged into.
+    #[serde(default)]
+    pub hdmi_address: Option<String>,
+}
+
+/// A device's power as HDMI-CEC reports it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum CecPower {
+    On,
+    Standby,
+    TurningOn,
+    TurningOff,
+}
+
+impl CecPower {
+    pub fn name(self) -> &'static str {
+        match self {
+            CecPower::On => "on",
+            CecPower::Standby => "standby",
+            CecPower::TurningOn => "turning on",
+            CecPower::TurningOff => "turning off",
+        }
+    }
+}
+
+/// A device on the HDMI-CEC bus.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct CecDevice {
+    /// Its logical address, 0 to 15.
+    pub address: u8,
+    /// What that address makes it: `tv`, `recorder`, `tuner`, `playback`,
+    /// `audio`...
+    pub kind: String,
+    /// Its physical address, `2.0.0.0`.
+    #[serde(default)]
+    pub physical: Option<String>,
+    /// The name it gives itself.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Its maker: a name for a known IEEE OUI, else the OUI in hex.
+    #[serde(default)]
+    pub vendor: Option<String>,
+    #[serde(default)]
+    pub power: Option<CecPower>,
+}
+
+/// One HDMI-CEC adapter of the device and the bus behind it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct CecAdapter {
+    /// `/dev/cec0`.
+    pub device: String,
+    /// The connector it belongs to, `HDMI-A-1`, when the driver says.
+    #[serde(default)]
+    pub connector: Option<String>,
+    /// The logical address the device claimed; `None` while it has none,
+    /// as when the TV dropped hot-plug in standby.
+    #[serde(default)]
+    pub address: Option<u8>,
+    /// The device's physical address, `1.0.0.0`.
+    #[serde(default)]
+    pub physical: Option<String>,
+    /// The name the TV shows for the device.
+    pub name: String,
+    /// The TV is showing the device's input.
+    pub active: bool,
+    /// The TV's power; `None` until it answered.
+    #[serde(default)]
+    pub tv: Option<CecPower>,
+    /// Everything else on the bus that answered, the TV first.
+    #[serde(default)]
+    pub devices: Vec<CecDevice>,
+    /// Why the adapter is not in use, when it is not.
+    #[serde(default)]
+    pub problem: Option<String>,
+}
+
+/// `screen show`: what is plugged in.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ScreenShow {
+    pub connectors: Vec<Connector>,
+    /// screen.cec.enable.
+    pub cec: bool,
+    /// The HDMI-CEC adapters in use; empty with `cec` off.
+    #[serde(default)]
+    pub adapters: Vec<CecAdapter>,
+}
+
+/// The TV in `device status`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct TvStatus {
+    #[serde(default)]
+    pub power: Option<CecPower>,
+    /// It is showing the device's input.
+    pub showing: bool,
+    /// The name the TV gives itself.
+    #[serde(default)]
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -2036,6 +2180,11 @@ pub struct ScriptSpec {
     /// The kiosk page may list it and run it (`tessaro.scripts`).
     #[serde(default)]
     pub bridge: bool,
+    /// The HDMI-CEC events it runs on: `tv-on`, `tv-standby`,
+    /// `source-gained`, `source-lost`, `key` for every remote key, or
+    /// `key:<name>` for one (`protocol::cec`).
+    #[serde(default)]
+    pub cec: Vec<String>,
 }
 
 /// What a schedule is: when it fires and which script it runs.
@@ -2068,12 +2217,15 @@ pub struct ScriptRun {
     /// The run's systemd instance, `manual-1700000000-4f2a`: what
     /// `logs --unit` takes after the script's template.
     pub run: String,
-    /// What started it: `manual`, `bridge` (the kiosk page) or
-    /// `schedule`, the first word of `run`.
+    /// What started it: `manual`, `bridge` (the kiosk page), `schedule` or
+    /// `cec`, the first word of `run`.
     pub trigger: String,
     /// The schedule that started it, by name, while that schedule exists.
     #[serde(default)]
     pub schedule: Option<String>,
+    /// The CEC event that started it: `tv-standby`, `key:red`.
+    #[serde(default)]
+    pub event: Option<String>,
     pub started: Moment,
     pub finished: Moment,
     /// systemd's `$SERVICE_RESULT`: `success`, `exit-code`, `timeout`,

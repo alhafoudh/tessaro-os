@@ -123,6 +123,10 @@ pub enum Kind {
     /// `\n` - a literal backslash and `n` - for a line break, the one
     /// backslash any value may carry.
     Template,
+    /// The name the TV shows for the device over HDMI-CEC: printable ASCII
+    /// with `{key}` placeholders like browser.url, cut to `cec::NAME_MAX`
+    /// once filled in.
+    CecName,
     /// An interface name, or `auto`.
     Interface,
     /// An IPv4 address with its prefix: `192.168.1.50/24`, or empty.
@@ -213,6 +217,10 @@ impl Kind {
                 "text; \\n breaks a line; {key} placeholders as in browser.url, plus {browser.url}"
                     .to_string()
             }
+            Kind::CecName => format!(
+                "letters, digits, spaces and punctuation, up to {} once filled in; {{key}} placeholders as in browser.url",
+                crate::cec::NAME_MAX
+            ),
             Kind::Interface => "an interface name (eth0, enp1s0, wlan0), or auto".to_string(),
             Kind::Cidr => "ADDRESS/PREFIX, e.g. 192.168.1.50/24, or empty".to_string(),
             Kind::Address => "an IPv4 address, or empty".to_string(),
@@ -391,6 +399,20 @@ pub static KEYS: &[Key] = &[
         "Use touchscreens; 0 ignores them. Remote management and the VNC mirror keep working."),
     key("screen.vnc", "KIOSK_VNC", Kind::Choice(&["on", "view-only", "off"]), WESTON,
         "Mirror the screen to VNC on 127.0.0.1:5900: on to view and control it, view-only to watch only, off for no mirror."),
+    // HDMI-CEC, on the running agent; see `tessaro-ctl screen show` and
+    // docs/cec.md.
+    key(CEC_ENABLE, "KIOSK_CEC", Kind::Flag, AGENT,
+        "Talk to the TV over HDMI-CEC: `tessaro-ctl screen power off` also puts it in standby, `on` and every boot wake it, and its state shows in `tessaro-ctl screen show`. 0 leaves the CEC bus alone."),
+    key(CEC_SOURCE, "KIOSK_CEC_SOURCE", Kind::Choice(CEC_SOURCES), AGENT,
+        "Whether the TV switches to the device's input: off (it wakes on the input it had), wake (every wake switches it), always (also takes the input back when someone switches away while the screen is on)."),
+    key(CEC_NAME, "KIOSK_CEC_NAME", Kind::CecName, AGENT,
+        "The name the TV shows for the device in its menus, at most 14 characters; {key} placeholders as in browser.url, e.g. {device.name}."),
+    key(CEC_KEYS, "KIOSK_CEC_KEYS", Kind::Flag, AGENT,
+        "The TV remote's arrows, OK, Back, digits, colour and media keys reach the page as key presses. Its keys are events (screen.cec.page, screen.cec.scripts) either way."),
+    key(CEC_PAGE, "KIOSK_CEC_PAGE", Kind::Flag, AGENT,
+        "Tell the page what happens on the CEC bus: a tessaro:cec event on window for the TV switching on or to standby, its input switching to or away from the device, and every remote key. Needs browser.bridge.mode config or actions."),
+    key(CEC_SCRIPTS, "KIOSK_CEC_SCRIPTS", Kind::Flag, AGENT,
+        "Run the scripts that run on CEC events (`tessaro-ctl script set --cec`). 0 runs none of them."),
     // Sound, on PipeWire. Applied to the running sound server at once; see
     // `tessaro-ctl audio show`.
     key(AUDIO_OUTPUT, "KIOSK_AUDIO_OUTPUT", Kind::AudioOutput, AUDIO,
@@ -574,6 +596,12 @@ pub const INPUT_KEYBOARD: &str = "screen.input.keyboard";
 pub const INPUT_TOUCH: &str = "screen.input.touch";
 pub const RESOLUTION: &str = "screen.resolution";
 pub const ROTATION: &str = "screen.rotation";
+pub const CEC_ENABLE: &str = "screen.cec.enable";
+pub const CEC_SOURCE: &str = "screen.cec.source";
+pub const CEC_NAME: &str = "screen.cec.name";
+pub const CEC_KEYS: &str = "screen.cec.keys";
+pub const CEC_PAGE: &str = "screen.cec.page";
+pub const CEC_SCRIPTS: &str = "screen.cec.scripts";
 pub const NAME: &str = "device.name";
 pub const TAGS: &str = "device.tags";
 pub const ID: &str = "device.id";
@@ -616,6 +644,9 @@ pub const ROTATIONS: &[&str] = &[
     "flipped-180",
     "flipped-270",
 ];
+
+/// What screen.cec.source may be.
+pub const CEC_SOURCES: &[&str] = &["off", "wake", "always"];
 
 /// The timezone of a device where time.timezone was never set.
 pub const DEFAULT_TIMEZONE: &str = "UTC";
@@ -724,10 +755,11 @@ pub enum Expansion {
 
 /// The keys whose values are templates, expanded before anyone sees them.
 /// No template may name another one as a placeholder.
-pub const TEMPLATES: [(&str, Expansion); 3] = [
+pub const TEMPLATES: [(&str, Expansion); 4] = [
     (URL, Expansion::Url),
     (MAINTENANCE_URL, Expansion::Url),
     (DEBUG_TEMPLATE, Expansion::Text),
+    (CEC_NAME, Expansion::Text),
 ];
 
 /// Is `name` one of the `TEMPLATES`?
@@ -881,6 +913,23 @@ pub fn validate(key: &Key, value: &str) -> Result<String, String> {
                 .or_else(|why| fail(&why))
         }
         Kind::Param | Kind::Template => Ok(value.to_string()),
+        Kind::CecName => {
+            if let Some(bad) = value
+                .chars()
+                .find(|ch| !ch.is_ascii_graphic() && *ch != ' ')
+            {
+                return fail(&format!(
+                    "{bad:?} is not shown by a TV; letters, digits, spaces and punctuation only"
+                ));
+            }
+            // What is typed around the placeholders has to fit already;
+            // what they fill in is cut to fit.
+            let (literal, _) = expand(value, |_| Some(String::new()));
+            if literal.len() > crate::cec::NAME_MAX {
+                return fail(&format!("at most {} characters", crate::cec::NAME_MAX));
+            }
+            Ok(value.to_string())
+        }
         Kind::ReadOnly => fail("is read-only: the device reports it, it cannot be set"),
         Kind::OptionalUrl => {
             if value.is_empty() {
@@ -1616,6 +1665,16 @@ mod tests {
 
     fn check(name: &str, value: &str) -> Result<String, String> {
         validate(find(name).expect(name), value)
+    }
+
+    #[test]
+    fn a_cec_name_is_printable_and_fits_around_its_placeholders() {
+        assert_eq!(check(CEC_NAME, "{device.name}").unwrap(), "{device.name}");
+        assert_eq!(check(CEC_NAME, "Lobby {data.n}").unwrap(), "Lobby {data.n}");
+        assert!(check(CEC_NAME, "a name far too long for a TV").is_err());
+        assert!(check(CEC_NAME, "Kávovar").is_err());
+        assert_eq!(check(CEC_SOURCE, "Always").unwrap(), "always");
+        assert!(check(CEC_SOURCE, "never").is_err());
     }
 
     #[test]

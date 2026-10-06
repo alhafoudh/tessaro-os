@@ -1,0 +1,98 @@
+{
+  "function": "screen::show",
+  "input": [
+    {
+      "cec": false,
+      "connectors": []
+    },
+    {
+      "adapters": [],
+      "cec": true,
+      "connectors": []
+    }
+  ],
+  "output": [
+    [
+      [
+        [
+          "warn",
+          "no display is connected",
+          0
+        ]
+      ],
+      [
+        [
+          "heading",
+          "HDMI-CEC",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "off -",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "cmd",
+          "tessaro-ctl config set screen.cec.enable=1",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "talks to the TV",
+          0
+        ]
+      ]
+    ],
+    [
+      [
+        [
+          "warn",
+          "no display is connected",
+          0
+        ]
+      ],
+      [
+        [
+          "heading",
+          "HDMI-CEC",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "warn",
+          "on, but no adapter on a display connector",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "- this hardware has no CEC, or the TV is not plugged in",
+          0
+        ]
+      ]
+    ]
+  ]
+}

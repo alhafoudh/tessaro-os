@@ -158,7 +158,49 @@ pub struct Config {
     /// Judge the loop's pledges before pinging the systemd watchdog. Off still
     /// pings - see `watchdog::spawn` for why going quiet is not an option.
     pub watchdog: bool,
+    /// `screen.cec.*`, which the CEC worker follows (`crate::cec`).
+    pub cec: Cec,
 }
+
+/// HDMI-CEC as the settings have it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Cec {
+    /// `screen.cec.enable`.
+    pub enable: bool,
+    /// `screen.cec.source`.
+    pub source: CecSource,
+    /// `screen.cec.name` filled in and cut to what the TV shows.
+    pub name: String,
+    /// `screen.cec.keys`: remote keys as key presses in the page.
+    pub keys: bool,
+    /// `screen.cec.page`: `tessaro:cec` events.
+    pub page: bool,
+    /// `screen.cec.scripts`: the scripts that run on CEC events.
+    pub scripts: bool,
+}
+
+/// `screen.cec.source`: whether the TV is switched to the device's input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CecSource {
+    Off,
+    /// Whenever the device wakes the TV.
+    Wake,
+    /// That, and taken back whenever someone switches away.
+    Always,
+}
+
+impl CecSource {
+    fn parse(value: &str) -> Self {
+        match value.trim() {
+            "off" => CecSource::Off,
+            "always" => CecSource::Always,
+            _ => CecSource::Wake,
+        }
+    }
+}
+
+/// The name the TV shows when screen.cec.name fills in to nothing.
+pub const CEC_NAME_FALLBACK: &str = "Tessaro";
 
 impl Config {
     pub fn load(env: &dyn Env) -> Self {
@@ -209,6 +251,16 @@ impl Config {
             cdp_reconnect_max: int(env, "KIOSK_CDP_RECONNECT_MAX", 15),
             device_access: flag(env, "KIOSK_DEVICE_ACCESS", false),
             watchdog: flag(env, "KIOSK_WATCHDOG", true),
+            cec: Cec {
+                enable: flag(env, "KIOSK_CEC", false),
+                source: CecSource::parse(&string(env, "KIOSK_CEC_SOURCE", "wake")),
+                name: Some(protocol::cec::osd_name(&string(env, "KIOSK_CEC_NAME", "")))
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or_else(|| CEC_NAME_FALLBACK.to_string()),
+                keys: flag(env, "KIOSK_CEC_KEYS", false),
+                page: flag(env, "KIOSK_CEC_PAGE", true),
+                scripts: flag(env, "KIOSK_CEC_SCRIPTS", true),
+            },
         }
     }
 

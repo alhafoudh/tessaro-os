@@ -227,6 +227,7 @@ mod tests {
             run: "manual-0-1".to_string(),
             trigger: "manual".to_string(),
             schedule: None,
+            event: None,
             started: protocol::Moment {
                 unix: 0,
                 local: String::new(),

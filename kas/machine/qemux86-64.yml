@@ -51,6 +51,10 @@ local_conf_header:
     # reader - with mmap, since v4l2loopback gives read() to one reader only.
     # See docs/camera.md, Testing in qemu.
     MACHINE_EXTRA_RRECOMMENDS:append = " kernel-module-usbip-core kernel-module-vhci-hcd kernel-module-uvcvideo usbip-tools v4l-utils"
+    # The emulated HDMI-CEC bus of the e2e suite's CEC lane: vivid, whose
+    # adapters the agent and cec-follower (v4l-utils, above) talk over
+    # (tessaro-qemu-cec.cfg, docs/cec.md).
+    MACHINE_EXTRA_RRECOMMENDS:append = " kernel-module-vivid"
     # qemu:vnc puts a password on the display, and VNC's password auth is
     # DES, which QEMU takes from a crypto library it is built without by
     # default ("Cipher backend does not support DES algorithm"). Only the

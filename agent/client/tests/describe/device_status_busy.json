@@ -114,6 +114,11 @@
       "synchronized": false,
       "timezone": "Europe/Bratislava"
     },
+    "tv": {
+      "name": "TV",
+      "power": "standby",
+      "showing": false
+    },
     "units": {
       "nginx.service": "activating",
       "tessaro-kiosk.service": "failed",
@@ -561,6 +566,26 @@
           [
             "cmd",
             "tessaro-ctl screen power on",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "tv",
+        "value": [
+          [
+            "muted",
+            "standby",
+            0
+          ],
+          [
+            "plain",
+            " ",
+            0
+          ],
+          [
+            "muted",
+            "(TV)",
             0
           ]
         ]

@@ -75,6 +75,13 @@ await tessaro.device.status();
   the agent replaces `tessaro.config` with a new frozen object and fires a
   `tessaro:config` event on `window` whose `detail.changed` lists the keys. The
   preamble registered for the next document carries the new snapshot too.
+* **What happens on the HDMI-CEC bus is a `tessaro:cec` event on `window`**,
+  with `screen.cec.page` on: the TV switching on or to standby, its input
+  switching to or away from the device, and every key of its remote, with
+  `detail.event`, `connector`, `tv` and `showing`, and for a key `key`,
+  `pressed` and `repeat` ([cec.md](cec.md)). The agent fires it the way it
+  fires `tessaro:config`, through the same hidden object; a page that is
+  loading misses it.
 
 **Calls return Promises.** A refusal rejects with an `Error` whose message is
 the control plane's own. `config` mode answers the reads; `actions` mode
@@ -83,9 +90,10 @@ answers everything:
 | Call | Mode | Does what `tessaro-ctl` does with |
 | --- | --- | --- |
 | `log(level, message)` | config | the journal, as `page (level): message`; `debug` only with `agent.debug` |
-| `device.status()` | config | `device status`, without the node's fingerprint and claim, whether remote DevTools is open (it tells a page it can be driven) and the settings revision (`tessaro:config` says when they change): its `name`, its `tags` (device.tags, never the `unclaimed` a client adds, which would tell the claim), the hardware and its serial, memory, `cpuPercent`, the clock (`time`), the changes on probation (`pending`: `changes`, each a `key`, `value` and `previous`, and `secondsLeft`) and why the injected script is not in the page (`bridge.scriptProblem`) included |
+| `device.status()` | config | `device status`, without the node's fingerprint and claim, whether remote DevTools is open (it tells a page it can be driven) and the settings revision (`tessaro:config` says when they change): its `name`, its `tags` (device.tags, never the `unclaimed` a client adds, which would tell the claim), the hardware and its serial, memory, `cpuPercent`, the clock (`time`), the TV over HDMI-CEC (`tv`: `power`, `showing`, `name`), the changes on probation (`pending`: `changes`, each a `key`, `value` and `previous`, and `secondsLeft`) and why the injected script is not in the page (`bridge.scriptProblem`) included |
 | `network.status()` | config | `network show`, without the public address |
 | `audio.status()` | config | `audio show` |
+| `screen.show()` | config | `screen show`: the connected displays with their EDID identity, and the HDMI-CEC bus |
 | `printer.list()` | config | `printer list`, without each printer's URI |
 | `printer.jobs(printer)` | config | `printer jobs`: every printer's, or the one named |
 | `scripts.list()` | config | `script list`, only the scripts with `--bridge`, without their bodies: name, description, concurrency, runs going, the last run |

@@ -1,0 +1,767 @@
+{
+  "function": "screen::show",
+  "input": {
+    "adapters": [
+      {
+        "active": true,
+        "address": 4,
+        "connector": "HDMI-A-1",
+        "device": "/dev/cec0",
+        "devices": [
+          {
+            "address": 0,
+            "kind": "tv",
+            "name": "TV",
+            "physical": "0.0.0.0",
+            "power": "on",
+            "vendor": "Samsung"
+          },
+          {
+            "address": 5,
+            "kind": "audio",
+            "name": "Soundbar",
+            "physical": "2.0.0.0",
+            "vendor": "Sony"
+          },
+          {
+            "address": 8,
+            "kind": "playback",
+            "vendor": "123456"
+          }
+        ],
+        "name": "lobby",
+        "physical": "1.0.0.0",
+        "tv": "on"
+      },
+      {
+        "active": false,
+        "connector": "HDMI-A-2",
+        "device": "/dev/cec1",
+        "name": "lobby",
+        "tv": null
+      }
+    ],
+    "cec": true,
+    "connectors": [
+      {
+        "display": {
+          "hdmi_address": "1.0.0.0",
+          "height_cm": 68,
+          "model": "SAMSUNG",
+          "product_code": 29554,
+          "vendor": "Samsung",
+          "vendor_id": "SAM",
+          "week": 12,
+          "width_cm": 121,
+          "year": 2023
+        },
+        "modes": [
+          "1920x1080",
+          "1280x720"
+        ],
+        "name": "HDMI-A-1"
+      },
+      {
+        "display": {
+          "hdmi_address": "2.1.0.0",
+          "product_code": 16808,
+          "serial": "7XJ3K23",
+          "vendor_id": "ZZZ"
+        },
+        "modes": [],
+        "name": "HDMI-A-2"
+      },
+      {
+        "modes": [
+          "1024x768"
+        ],
+        "name": "Virtual-1"
+      }
+    ]
+  },
+  "output": [
+    [
+      [
+        "heading",
+        "HDMI-A-1",
+        0
+      ]
+    ],
+    [
+      [
+        "plain",
+        "    ",
+        0
+      ],
+      [
+        "label",
+        "display",
+        9
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "plain",
+        "Samsung SAMSUNG",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "(SAM 7372)",
+        0
+      ]
+    ],
+    [
+      [
+        "plain",
+        "    ",
+        0
+      ],
+      [
+        "label",
+        "serial",
+        9
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "(none)",
+        0
+      ]
+    ],
+    [
+      [
+        "plain",
+        "    ",
+        0
+      ],
+      [
+        "label",
+        "made",
+        9
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "plain",
+        "2023, week 12",
+        0
+      ]
+    ],
+    [
+      [
+        "plain",
+        "    ",
+        0
+      ],
+      [
+        "label",
+        "size",
+        9
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "plain",
+        "121 x 68 cm",
+        0
+      ]
+    ],
+    [
+      [
+        "plain",
+        "    ",
+        0
+      ],
+      [
+        "label",
+        "input",
+        9
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "plain",
+        "HDMI 1",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "(physical address 1.0.0.0)",
+        0
+      ]
+    ],
+    [
+      [
+        "plain",
+        "    ",
+        0
+      ],
+      [
+        "label",
+        "modes",
+        9
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "plain",
+        "2, preferred 1920x1080",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "- tessaro-ctl screen modes lists them",
+        0
+      ]
+    ],
+    [],
+    [
+      [
+        "heading",
+        "HDMI-A-2",
+        0
+      ]
+    ],
+    [
+      [
+        "plain",
+        "    ",
+        0
+      ],
+      [
+        "label",
+        "display",
+        9
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "plain",
+        "ZZZ",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "(ZZZ 41a8)",
+        0
+      ]
+    ],
+    [
+      [
+        "plain",
+        "    ",
+        0
+      ],
+      [
+        "label",
+        "serial",
+        9
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "plain",
+        "7XJ3K23",
+        0
+      ]
+    ],
+    [
+      [
+        "plain",
+        "    ",
+        0
+      ],
+      [
+        "label",
+        "input",
+        9
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "plain",
+        "physical address 2.1.0.0",
+        0
+      ]
+    ],
+    [
+      [
+        "plain",
+        "    ",
+        0
+      ],
+      [
+        "label",
+        "modes",
+        9
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "(none)",
+        0
+      ]
+    ],
+    [],
+    [
+      [
+        "heading",
+        "Virtual-1",
+        0
+      ]
+    ],
+    [
+      [
+        "plain",
+        "    ",
+        0
+      ],
+      [
+        "label",
+        "display",
+        9
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "(it does not say what it is)",
+        0
+      ]
+    ],
+    [
+      [
+        "plain",
+        "    ",
+        0
+      ],
+      [
+        "label",
+        "modes",
+        9
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "plain",
+        "1, preferred 1024x768",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "- tessaro-ctl screen modes lists them",
+        0
+      ]
+    ],
+    [],
+    [
+      [
+        "heading",
+        "HDMI-CEC",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "/dev/cec0",
+        0
+      ],
+      [
+        "muted",
+        " on HDMI-A-1",
+        0
+      ]
+    ],
+    [
+      [
+        "plain",
+        "    ",
+        0
+      ],
+      [
+        "label",
+        "name",
+        9
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "plain",
+        "lobby",
+        0
+      ]
+    ],
+    [
+      [
+        "plain",
+        "    ",
+        0
+      ],
+      [
+        "label",
+        "address",
+        9
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "plain",
+        "logical 4, physical 1.0.0.0",
+        0
+      ]
+    ],
+    [
+      [
+        "plain",
+        "    ",
+        0
+      ],
+      [
+        "label",
+        "tv",
+        9
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "ok",
+        "on",
+        0
+      ],
+      [
+        "plain",
+        ", showing this device",
+        0
+      ]
+    ],
+    [
+      [
+        "plain",
+        "    ",
+        0
+      ],
+      [
+        "label",
+        "bus",
+        9
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "plain",
+        "0",
+        3
+      ],
+      [
+        "label",
+        "tv",
+        10
+      ],
+      [
+        "plain",
+        "TV",
+        15
+      ],
+      [
+        "plain",
+        "Samsung",
+        14
+      ],
+      [
+        "muted",
+        "0.0.0.0",
+        9
+      ],
+      [
+        "ok",
+        "on",
+        0
+      ]
+    ],
+    [
+      [
+        "plain",
+        "    ",
+        0
+      ],
+      [
+        "label",
+        "",
+        9
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "plain",
+        "5",
+        3
+      ],
+      [
+        "label",
+        "audio",
+        10
+      ],
+      [
+        "plain",
+        "Soundbar",
+        15
+      ],
+      [
+        "plain",
+        "Sony",
+        14
+      ],
+      [
+        "muted",
+        "2.0.0.0",
+        9
+      ]
+    ],
+    [
+      [
+        "plain",
+        "    ",
+        0
+      ],
+      [
+        "label",
+        "",
+        9
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "plain",
+        "8",
+        3
+      ],
+      [
+        "label",
+        "playback",
+        10
+      ],
+      [
+        "plain",
+        "-",
+        15
+      ],
+      [
+        "plain",
+        "123456",
+        14
+      ],
+      [
+        "muted",
+        "-",
+        9
+      ]
+    ],
+    [],
+    [
+      [
+        "heading",
+        "HDMI-CEC",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "/dev/cec1",
+        0
+      ],
+      [
+        "muted",
+        " on HDMI-A-2",
+        0
+      ]
+    ],
+    [
+      [
+        "plain",
+        "    ",
+        0
+      ],
+      [
+        "label",
+        "name",
+        9
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "plain",
+        "lobby",
+        0
+      ]
+    ],
+    [
+      [
+        "plain",
+        "    ",
+        0
+      ],
+      [
+        "label",
+        "address",
+        9
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "warn",
+        "none yet",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "- the TV gives none: off, or dropping hot-plug in standby",
+        0
+      ]
+    ],
+    [
+      [
+        "plain",
+        "    ",
+        0
+      ],
+      [
+        "label",
+        "tv",
+        9
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "(not answered yet)",
+        0
+      ]
+    ],
+    [
+      [
+        "plain",
+        "    ",
+        0
+      ],
+      [
+        "label",
+        "bus",
+        9
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "(none)",
+        0
+      ]
+    ]
+  ]
+}

@@ -243,6 +243,8 @@ mod tests {
             "src/control/bridge.rs",
             "src/control/page.rs",
             "src/control/screen.rs",
+            "src/control/cec.rs",
+            "src/cec/io.rs",
             "src/control/schedules.rs",
             "src/control/playlists.rs",
             "src/media.rs",

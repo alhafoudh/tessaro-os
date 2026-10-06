@@ -431,6 +431,12 @@ impl Env for Effective<'_> {
             PLAYER_MODE => Some(if self.player() { "1" } else { "0" }.to_string()),
             "KIOSK_URL" if self.player() => Some(self.player_url()),
             "KIOSK_URL" => self.kiosk_url(),
+            // What the TV can show of the filled-in name.
+            "KIOSK_CEC_NAME" => self.raw(key).map(|template| {
+                protocol::cec::osd_name(
+                    &expand_text(&template, &self.settings, self.base, &self.live).0,
+                )
+            }),
             // The player is the device's own page, always there: the probe
             // checks it, and a source that is down is the player's to skip.
             "KIOSK_PROBE_URL" if self.maintenance() || self.player() => Some(String::new()),
@@ -533,6 +539,20 @@ mod tests {
         let effective =
             Effective::new(&base, &named, &log).with_derived_name(Some("brave-otter-3fa2".into()));
         assert_eq!(effective.get("KIOSK_URL").unwrap(), "https://lobby.test/");
+    }
+
+    #[test]
+    fn the_cec_name_is_filled_in_raw_and_cut_to_what_a_tv_shows() {
+        let log = Log::buffered(true);
+        let base: HashMap<String, String> =
+            [("KIOSK_CEC_NAME".to_string(), "{device.name}".to_string())].into();
+        let effective = Effective::new(&base, &BTreeMap::new(), &log)
+            .with_derived_name(Some("brave-otter-3fa2".into()));
+        assert_eq!(effective.get("KIOSK_CEC_NAME").unwrap(), "brave-otter-3f");
+
+        let set = settings(&[("screen.cec.name", "Lobby {data.n}"), ("data.n", "7")]);
+        let effective = Effective::new(&base, &set, &log);
+        assert_eq!(effective.get("KIOSK_CEC_NAME").unwrap(), "Lobby 7");
     }
 
     #[test]

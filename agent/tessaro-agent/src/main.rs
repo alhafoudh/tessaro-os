@@ -25,6 +25,7 @@ mod auth;
 mod boot;
 mod camera;
 mod cdp;
+mod cec;
 mod certs;
 mod config;
 mod control;
@@ -32,6 +33,7 @@ mod db;
 mod deadline;
 mod debug;
 mod display;
+mod edid;
 mod error;
 mod files;
 mod hardware;
@@ -355,6 +357,7 @@ async fn start_control(
     control.watch_printers();
     control.watch_welcome();
     control.watch_screen_power();
+    control.watch_cec();
     control.watch_playlist();
     control.watch_media();
     // Before the agent's first navigation, so the page it opens already

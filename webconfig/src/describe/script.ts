@@ -4,6 +4,7 @@
 
 import type { Schemas } from "../api/client";
 import { Line } from "../text/line";
+import { triggers } from "./cec";
 import { duration, formatTimeout, outcome, parseTimeout, relative, runs, succeeded } from "./schedule";
 
 /** The most output lines a run answers with (`SCRIPT_OUTPUT_MAX`). */
@@ -21,6 +22,8 @@ export interface Typed {
   timeout: string;
   concurrency: string;
   bridge: boolean;
+  /** The CEC events it runs on, comma separated, as `cec.ts` reads them; empty for none. */
+  cec: string;
 }
 
 /** What a form shows for `spec`: saving it unchanged changes nothing. */
@@ -33,6 +36,7 @@ export function typedOf(spec: Schemas["ScriptSpec"]): Typed {
     timeout: formatTimeout(spec.timeout_s ?? 0),
     concurrency: spec.concurrency ?? "overlap",
     bridge: spec.bridge ?? false,
+    cec: (spec.cec ?? []).join(", "),
   };
 }
 
@@ -66,6 +70,7 @@ export function specOf(typed: Typed): Schemas["ScriptSpec"] {
     timeout_s: timeout > 0 ? timeout : null,
     concurrency: concurrency(typed),
     bridge: typed.bridge,
+    cec: triggers(typed.cec),
   };
 }
 
@@ -79,6 +84,7 @@ export function changeOf(typed: Typed): Schemas["ScriptChange"] {
     timeout_s: timeoutS(typed),
     concurrency: concurrency(typed),
     bridge: typed.bridge,
+    cec: triggers(typed.cec),
   };
 }
 
@@ -87,13 +93,38 @@ export function lastRun(info: Schemas["ScriptInfo"], now: number): Line {
   return runs(info.runs?.[0] ?? null, info.running ?? 0, now);
 }
 
-/** Who started a run: `by hand`, `from the page`, `by schedule night`. */
+/**
+ * Who started a run: `by hand`, `from the page`, `by schedule night`, `by
+ * the TV going to standby`, `by the remote's red key`.
+ */
 export function startedBy(run: Schemas["ScriptRun"]): string {
   const schedule = run.schedule ?? null;
   if (run.trigger === "manual") return "by hand";
   if (run.trigger === "bridge") return "from the page";
   if (run.trigger === "schedule") return schedule !== null ? `by schedule ${schedule}` : "by a removed schedule";
+  if (run.trigger === "cec") return run.event != null ? `by ${cecEvent(run.event)}` : "by HDMI-CEC";
   return `by ${run.trigger}`;
+}
+
+/**
+ * A CEC event a script runs on, in words: `the TV switching on`, `the
+ * remote's red key`, `any remote key`.
+ */
+export function cecEvent(event: string): string {
+  switch (event) {
+    case "tv-on":
+      return "the TV switching on";
+    case "tv-standby":
+      return "the TV going to standby";
+    case "source-gained":
+      return "the TV switching to this device";
+    case "source-lost":
+      return "the TV switching away";
+    case "key":
+      return "any remote key";
+    default:
+      return event.startsWith("key:") ? `the remote's ${event.slice("key:".length)} key` : event;
+  }
 }
 
 function took(run: Schemas["ScriptRun"]): number {
@@ -141,5 +172,6 @@ export function behaviour(spec: Schemas["ScriptSpec"]): string {
   ];
   if (spec.timeout_s !== null && spec.timeout_s !== undefined) words.push(`${duration(spec.timeout_s)} timeout`);
   if (spec.bridge) words.push("page may run it");
+  if (spec.cec && spec.cec.length > 0) words.push(`runs on ${spec.cec.join(" ")}`);
   return words.join(", ");
 }

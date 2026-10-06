@@ -8,6 +8,10 @@
     {
       "body": "true\n",
       "bridge": true,
+      "cec": [
+        "tv-on",
+        "key:red"
+      ],
       "concurrency": "skip",
       "name": "restock",
       "on_error": "continue",
@@ -16,6 +20,6 @@
   ],
   "output": [
     "stop on error, overlap",
-    "continue on error, skip if running, 1h 30min timeout, page may run it"
+    "continue on error, skip if running, 1h 30min timeout, page may run it, runs on tv-on key:red"
   ]
 }

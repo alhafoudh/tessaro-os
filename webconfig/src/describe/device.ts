@@ -6,6 +6,7 @@ import { fact, Line, unitState, usageLevel, yesNo, type Fact } from "../text/lin
 import * as audio from "./audio";
 import { freeLine, memUsedPercent, previousOrDefault, usageLine } from "./common";
 import * as playlist from "./playlist";
+import * as screen from "./screen";
 import * as tags from "./tags";
 import * as time from "./time";
 
@@ -135,6 +136,7 @@ export function status(status: Schemas["Status"]): StatusText {
       ),
     );
   }
+  if (status.tv) more.push(fact("tv", screen.tv(status.tv)));
   if (status.bridge) {
     if (status.bridge.mode !== "off") more.push(fact("page bridge", status.bridge.mode));
     if (status.bridge.script) {

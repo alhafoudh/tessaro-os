@@ -61,6 +61,10 @@
         config = Object.freeze(values);
         window.dispatchEvent(new CustomEvent("tessaro:config", { detail: { changed } }));
       },
+      // What happened on the HDMI-CEC bus (screen.cec.page).
+      cec(detail) {
+        window.dispatchEvent(new CustomEvent("tessaro:cec", { detail: Object.freeze(detail) }));
+      },
       // A new DevTools session to the same page: its binding replaces the
       // one that went with the old session.
       rebind() {
@@ -104,6 +108,7 @@
     },
     scripts: { list: () => call("scripts.list") },
     playlist: { status: () => call("playlist.status") },
+    screen: { show: () => call("screen.show") },
   };
 
   // A document for printer.print: text as UTF-8, or bytes, as base64.
@@ -146,10 +151,10 @@
       show: (selector) => call("keyboard.show", selector),
       hide: () => call("keyboard.hide"),
     };
-    api.screen = {
+    Object.assign(api.screen, {
       on: () => call("screen.on"),
       off: () => call("screen.off"),
-    };
+    });
     api.files = { list: (path) => call("files.list", path) };
     Object.assign(api.printer, {
       print: async (job) => {

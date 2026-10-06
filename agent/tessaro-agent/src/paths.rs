@@ -82,6 +82,10 @@ pub struct Paths {
     pub by_label: PathBuf,
     pub mountinfo: PathBuf,
     pub dev: PathBuf,
+    /// The CEC adapters to use, colon separated; empty for every one that
+    /// belongs to a DRM connector. Set for the e2e suite's emulated bus,
+    /// whose adapters belong to none.
+    pub cec_devices: Vec<PathBuf>,
     /// `/proc/meminfo`: whether a disk update's upload fits in RAM, and
     /// `status`'s memory.
     pub meminfo: PathBuf,
@@ -223,6 +227,11 @@ impl Paths {
             by_label: path("KIOSK_BY_LABEL", "/dev/disk/by-label"),
             mountinfo: path("KIOSK_MOUNTINFO", "/proc/self/mountinfo"),
             dev: path("KIOSK_DEV", "/dev"),
+            cec_devices: text("KIOSK_CEC_DEVICES", "")
+                .split(':')
+                .filter(|device| !device.is_empty())
+                .map(PathBuf::from)
+                .collect(),
             meminfo: path("KIOSK_MEMINFO", "/proc/meminfo"),
             dmi: path("KIOSK_DMI", "/sys/class/dmi/id"),
             device_tree: path("KIOSK_DEVICE_TREE", "/proc/device-tree"),
@@ -310,6 +319,12 @@ impl Paths {
     /// restarts. Runtime only: a reboot turns the screen on.
     pub fn screen_power_file(&self) -> PathBuf {
         self.run_dir.join("screen-off")
+    }
+
+    /// That the TV was woken over HDMI-CEC once this boot: an agent that
+    /// restarts must not wake a TV someone has put in standby since.
+    pub fn cec_woke_file(&self) -> PathBuf {
+        self.run_dir.join("cec-woke")
     }
 
     /// psplash's arguments, read by `psplash-start.service` at sysinit

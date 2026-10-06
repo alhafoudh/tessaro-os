@@ -66,9 +66,10 @@ key, which the agent renders into `/run/tessaro-camera/camera.env` for them
   effective value, set or image default - `{screen.osk}`,
   `{browser.fps_counter}` - and `{device.name}` is the name the device actually
   answers to even when none was set. Only `{browser.url}`,
-  `{browser.maintenance.url}` and `{browser.debug.template}` are refused, as no template may
+  `{browser.maintenance.url}`, `{browser.debug.template}` and `{screen.cec.name}` are refused, as no template may
   contain a template (the debug template alone takes `{browser.url}`).
-  `browser.maintenance.url` and `browser.debug.template` are templates by the same rules, and
+  `browser.maintenance.url`, `browser.debug.template` and `screen.cec.name` (the name the TV
+  shows, raw like the debug template's, cut to 14 characters, see [cec.md](cec.md)) are templates by the same rules, and
   `config set` checks every template whichever one is on screen. Because any setting can move the URL, whether
   the page moves is decided by comparing the expanded URL with the one the
   running agent drives, not by which key changed. `config set` refuses a

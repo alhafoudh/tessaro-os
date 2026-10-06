@@ -1,0 +1,107 @@
+{
+  "function": "cec::triggers",
+  "input": [
+    "",
+    "tv-on",
+    " TV-Standby, key:Red ,tv-standby,",
+    "key, source-gained, source-lost",
+    "key:0, key:channel-up",
+    "tv-off",
+    "key:nope"
+  ],
+  "output": {
+    "events": [
+      "tv-on",
+      "tv-standby",
+      "source-gained",
+      "source-lost",
+      "key"
+    ],
+    "keys": [
+      "select",
+      "up",
+      "down",
+      "left",
+      "right",
+      "root-menu",
+      "setup-menu",
+      "contents-menu",
+      "favorite-menu",
+      "exit",
+      "0",
+      "1",
+      "2",
+      "3",
+      "4",
+      "5",
+      "6",
+      "7",
+      "8",
+      "9",
+      "dot",
+      "enter",
+      "clear",
+      "channel-up",
+      "channel-down",
+      "previous-channel",
+      "info",
+      "help",
+      "page-up",
+      "page-down",
+      "power",
+      "volume-up",
+      "volume-down",
+      "mute",
+      "play",
+      "stop",
+      "pause",
+      "record",
+      "rewind",
+      "fast-forward",
+      "eject",
+      "forward",
+      "backward",
+      "guide",
+      "blue",
+      "red",
+      "green",
+      "yellow",
+      "data"
+    ],
+    "typed": [
+      {
+        "ok": []
+      },
+      {
+        "ok": [
+          "tv-on"
+        ]
+      },
+      {
+        "ok": [
+          "tv-standby",
+          "key:red"
+        ]
+      },
+      {
+        "ok": [
+          "key",
+          "source-gained",
+          "source-lost"
+        ]
+      },
+      {
+        "ok": [
+          "key:0",
+          "key:channel-up"
+        ]
+      },
+      {
+        "err": "\"tv-off\" is not a CEC event; one of tv-on, tv-standby, source-gained, source-lost, key, or key:<name>"
+      },
+      {
+        "err": "\"nope\" is not a remote key; one of select, up, down, left, right, root-menu, setup-menu, contents-menu, favorite-menu, exit, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, dot, enter, clear, channel-up, channel-down, previous-channel, info, help, page-up, page-down, power, volume-up, volume-down, mute, play, stop, pause, record, rewind, fast-forward, eject, forward, backward, guide, blue, red, green, yellow, data"
+      }
+    ]
+  }
+}

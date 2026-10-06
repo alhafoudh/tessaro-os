@@ -10,7 +10,9 @@
 use std::path::Path;
 
 use serde_json::{json, Value};
-use tessaro_client::describe::{audio, browser, camera, device, net, playlist, printer, time};
+use tessaro_client::describe::{
+    audio, browser, camera, device, net, playlist, printer, screen, time,
+};
 use tessaro_client::ping;
 use tessaro_client::text::{Fact, Line};
 
@@ -114,7 +116,32 @@ fn render(function: &str, input: &Value) -> Value {
                     .collect(),
             )
         }
+        // The CEC events and remote keys a script runs on, and what
+        // `--cec` and the script dialogs make of what was typed.
+        "cec::triggers" => {
+            let typed: Vec<String> = from(input);
+            json!({
+                "events": protocol::cec::EVENTS,
+                "keys": protocol::cec::KEYS.iter().map(|key| key.name).collect::<Vec<_>>(),
+                "typed": typed
+                    .iter()
+                    .map(|typed| match protocol::cec::triggers(typed) {
+                        Ok(triggers) => json!({ "ok": triggers }),
+                        Err(err) => json!({ "err": err }),
+                    })
+                    .collect::<Vec<_>>(),
+            })
+        }
         // --- screen and browser ---
+        "screen::show" => match input.as_array() {
+            Some(cases) => Value::Array(
+                cases
+                    .iter()
+                    .map(|case| lines(&screen::show(&from(case))))
+                    .collect(),
+            ),
+            None => lines(&screen::show(&from(input))),
+        },
         "browser::policies" => {
             let policies: Vec<protocol::policy::PolicyInfo> = from(input);
             lines(&browser::policies(&policies))

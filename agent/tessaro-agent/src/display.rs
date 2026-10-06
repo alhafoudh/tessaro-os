@@ -7,6 +7,8 @@
 //! display actually listed, so a typo cannot drive a panel out of range.
 //! `tessaro-weston-config` checks the same list again before it writes a
 //! `mode=` line, and the change still reverts unless confirmed.
+//!
+//! The `edid` file next to `modes` says what the display is (`crate::edid`).
 
 use std::fs;
 use std::path::Path;
@@ -46,15 +48,35 @@ pub fn connectors(drm: &Path) -> Vec<Connector> {
                 }
             }
 
+            let display = fs::read(entry.path().join("edid"))
+                .ok()
+                .and_then(|edid| crate::edid::identity(&edid));
+
             Some(Connector {
                 name: name.to_string(),
                 modes,
+                display,
             })
         })
         .collect();
 
     found.sort_by(|a, b| a.name.cmp(&b.name));
     found
+}
+
+/// The connector, `HDMI-A-1`, that has DRM id `id` on card `card`: what a
+/// CEC adapter says it belongs to.
+pub fn connector_name(drm: &Path, card: u32, id: u32) -> Option<String> {
+    let prefix = format!("card{card}-");
+    fs::read_dir(drm)
+        .ok()?
+        .filter_map(Result::ok)
+        .find_map(|entry| {
+            let file_name = entry.file_name();
+            let name = file_name.to_str()?.strip_prefix(&prefix)?.to_string();
+            let found = fs::read_to_string(entry.path().join("connector_id")).ok()?;
+            (found.trim().parse::<u32>().ok()? == id).then_some(name)
+        })
 }
 
 /// Is `mode` something a connected display offers? `preferred` always is.
@@ -94,11 +116,50 @@ mod tests {
             vec![Connector {
                 name: "HDMI-A-1".to_string(),
                 modes: vec!["1920x1080".to_string(), "1280x720".to_string()],
+                display: None,
             }]
         );
         assert!(offered(&found, "1280x720"));
         assert!(offered(&found, "preferred"));
         assert!(!offered(&found, "3840x2160"));
+    }
+
+    #[test]
+    fn a_connector_with_an_edid_says_what_is_plugged_in() {
+        let dir = tempfile::tempdir().unwrap();
+        connector(dir.path(), "card1-HDMI-A-2", "connected", "1920x1080\n");
+        fs::write(
+            dir.path().join("card1-HDMI-A-2/edid"),
+            crate::edid::tests::edid("GSM", 1, 0, &[(0xfc, "LG TV SSCR2")]),
+        )
+        .unwrap();
+
+        let found = connectors(dir.path());
+
+        let display = found[0].display.as_ref().unwrap();
+        assert_eq!(display.vendor.as_deref(), Some("LG"));
+        assert_eq!(display.model.as_deref(), Some("LG TV SSCR2"));
+    }
+
+    #[test]
+    fn a_connector_is_found_by_its_card_and_id() {
+        let dir = tempfile::tempdir().unwrap();
+        connector(dir.path(), "card0-HDMI-A-1", "connected", "");
+        connector(dir.path(), "card1-HDMI-A-1", "connected", "");
+        connector(dir.path(), "card1-HDMI-A-2", "disconnected", "");
+        fs::write(dir.path().join("card0-HDMI-A-1/connector_id"), "33\n").unwrap();
+        fs::write(dir.path().join("card1-HDMI-A-1/connector_id"), "40\n").unwrap();
+        fs::write(dir.path().join("card1-HDMI-A-2/connector_id"), "41\n").unwrap();
+
+        assert_eq!(
+            connector_name(dir.path(), 1, 41).as_deref(),
+            Some("HDMI-A-2")
+        );
+        assert_eq!(
+            connector_name(dir.path(), 0, 33).as_deref(),
+            Some("HDMI-A-1")
+        );
+        assert_eq!(connector_name(dir.path(), 0, 41), None);
     }
 
     #[test]

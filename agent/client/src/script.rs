@@ -24,6 +24,9 @@ pub struct Typed {
     /// `overlap` or `skip`.
     pub concurrency: String,
     pub bridge: bool,
+    /// The CEC events it runs on, comma separated, as `protocol::cec`
+    /// reads them; empty for none.
+    pub cec: String,
 }
 
 impl Typed {
@@ -37,6 +40,7 @@ impl Typed {
             timeout: crate::schedule::format_timeout(spec.timeout_s.unwrap_or(0)),
             concurrency: spec.concurrency.name().to_string(),
             bridge: spec.bridge,
+            cec: spec.cec.join(", "),
         }
     }
 
@@ -51,6 +55,7 @@ impl Typed {
             timeout_s: (timeout > 0).then_some(timeout),
             concurrency: self.concurrency()?,
             bridge: self.bridge,
+            cec: protocol::cec::triggers(&self.cec)?,
         })
     }
 
@@ -64,6 +69,7 @@ impl Typed {
             timeout_s: Some(self.timeout_s()?),
             concurrency: Some(self.concurrency()?),
             bridge: Some(self.bridge),
+            cec: Some(protocol::cec::triggers(&self.cec)?),
         })
     }
 
@@ -123,14 +129,35 @@ pub fn last_run(info: &ScriptInfo, now: i64) -> Line {
     runs(info.runs.first(), info.running, now)
 }
 
-/// Who started a run: `by hand`, `from the page`, `by schedule night`.
+/// Who started a run: `by hand`, `from the page`, `by schedule night`,
+/// `by the TV going to standby`, `by the remote's red key`.
 pub fn started_by(run: &ScriptRun) -> String {
     match (run.trigger.as_str(), &run.schedule) {
         ("manual", _) => "by hand".to_string(),
         ("bridge", _) => "from the page".to_string(),
         ("schedule", Some(name)) => format!("by schedule {name}"),
         ("schedule", None) => "by a removed schedule".to_string(),
+        ("cec", _) => match run.event.as_deref() {
+            Some(event) => format!("by {}", cec_event(event)),
+            None => "by HDMI-CEC".to_string(),
+        },
         (other, _) => format!("by {other}"),
+    }
+}
+
+/// A CEC event a script runs on, in words: `the TV switching on`, `the
+/// remote's red key`, `any remote key`.
+pub fn cec_event(event: &str) -> String {
+    match event {
+        "tv-on" => "the TV switching on".to_string(),
+        "tv-standby" => "the TV going to standby".to_string(),
+        "source-gained" => "the TV switching to this device".to_string(),
+        "source-lost" => "the TV switching away".to_string(),
+        "key" => "any remote key".to_string(),
+        other => match other.strip_prefix("key:") {
+            Some(key) => format!("the remote's {key} key"),
+            None => other.to_string(),
+        },
     }
 }
 
@@ -204,6 +231,9 @@ pub fn behaviour(spec: &ScriptSpec) -> String {
     if spec.bridge {
         words.push("page may run it".to_string());
     }
+    if !spec.cec.is_empty() {
+        words.push(format!("runs on {}", spec.cec.join(" ")));
+    }
     words.join(", ")
 }
 
@@ -221,9 +251,11 @@ mod tests {
             timeout: "10m".into(),
             concurrency: "skip".into(),
             bridge: true,
+            cec: "tv-standby, Key:Red".into(),
         };
         let spec = typed.spec().unwrap();
         assert_eq!(spec.name, "dim");
+        assert_eq!(spec.cec, vec!["tv-standby", "key:red"]);
         assert_eq!(spec.timeout_s, Some(600));
         assert_eq!(spec.concurrency, Concurrency::Skip);
         assert_eq!(Typed::of(&spec).spec().unwrap(), spec);

@@ -421,6 +421,10 @@ struct ChangeArgs {
 
 #[derive(Subcommand)]
 enum ScreenCmd {
+    /// What is plugged in: each display's maker, model, serial and size
+    /// from its EDID, and over HDMI-CEC (screen.cec.enable) the TV's power,
+    /// whether it shows the device, and everything else on its bus.
+    Show,
     /// Save what the browser is rendering as a JPEG.
     Screenshot {
         #[arg(long, short)]
@@ -433,7 +437,8 @@ enum ScreenCmd {
     Confirm,
     /// Switch the display off or on, or with neither say which it is. Off
     /// stays off through touches and a restart of the compositor, until
-    /// `on` or a reboot.
+    /// `on` or a reboot. With screen.cec.enable the TV goes to standby and
+    /// wakes with it.
     ///
     ///   tessaro-ctl screen power off
     Power { state: Option<Toggle> },
@@ -969,6 +974,14 @@ fn run_on(cli: Cli, target: Target, mut nodes: Nodes) -> Result<(), String> {
         Cmd::Storage(what) => storage::run(&mut session, what, json),
         Cmd::Device(DeviceCmd::Ping { count, interval }) => {
             net::ping(&mut session, json, count, interval)
+        }
+        Cmd::Screen(ScreenCmd::Show) => {
+            let shown = session.fetch::<api::screen::Show>()?;
+            print(json, &shown, || {
+                for line in tessaro_client::describe::screen::show(&shown) {
+                    println!("{}", style::line(&line));
+                }
+            })
         }
         Cmd::Screen(ScreenCmd::Modes) => {
             let connectors = session.fetch::<api::screen::Modes>()?;

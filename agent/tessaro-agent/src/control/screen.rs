@@ -1,6 +1,8 @@
 //! The screen's power: `tessaro-ctl screen power`, through Weston's
 //! `tessaro-power.so` (`crate::power`), and the watcher that puts a screen
-//! that was switched off back off after Weston restarts.
+//! that was switched off back off after Weston restarts. Switching it also
+//! puts the TV in standby or wakes it over HDMI-CEC (`control/cec.rs`); the
+//! watcher's switching back does not.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -8,6 +10,7 @@ use std::time::Duration;
 use protocol::ScreenPower;
 
 use super::{Caller, Control};
+use crate::cec::Request;
 use crate::deadline::blocking;
 use crate::power;
 
@@ -48,6 +51,8 @@ impl Control {
             if now { "on" } else { "off" },
             caller.describe()
         ));
+        // The TV follows over HDMI-CEC, when screen.cec.enable is on.
+        self.cec_request(if on { Request::Wake } else { Request::Standby });
         Ok(ScreenPower { on: now })
     }
 
