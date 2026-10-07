@@ -1,0 +1,390 @@
+/* The demo's look is the welcome page's (tessaro-selftest/files/index.html):
+   the same palette, the same drifting glows over the desktop wallpaper's dot
+   grid, the same gradient title. Sized for a screen read from a few steps
+   away and driven with a finger or a TV remote: big text, big targets, and a
+   focus ring that is always visible when the keys move it. */
+
+@import "tailwindcss";
+
+@theme {
+  --font-sans: system-ui, "DejaVu Sans", "Liberation Sans", sans-serif;
+  --font-mono: "DejaVu Sans Mono", "Liberation Mono", ui-monospace, monospace;
+
+  --color-bg: #0a0d14;
+  --color-fg: #eaf0f8;
+  --color-dim: #8e9bb0;
+  --color-line: rgba(255, 255, 255, 0.08);
+  --color-card: rgba(255, 255, 255, 0.035);
+  --color-raised: rgba(255, 255, 255, 0.06);
+  --color-accent: #5cc8ff;
+  --color-accent-2: #9d8cff;
+  --color-ok: #5fe0a6;
+  --color-warn: #ffc66b;
+  --color-bad: #ff7a7a;
+  --color-ink: #071019;
+
+  --radius-card: clamp(14px, 2vmin, 24px);
+}
+
+@layer base {
+  /* Every size below is in rem, so this one line scales the whole demo with
+     the screen: about 23px at 1080p, 31px at 4K, never under 15px. */
+  html {
+    font-size: clamp(15px, 2.15vmin, 31px);
+    color-scheme: dark;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    overflow: hidden;
+    background: var(--color-bg);
+    color: var(--color-fg);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  input,
+  textarea,
+  select {
+    user-select: text;
+  }
+
+  :focus {
+    outline: none;
+  }
+
+  /* The ring the arrow keys and the remote move. Touch never shows it. */
+  :focus-visible {
+    outline: 0.18rem solid var(--color-accent);
+    outline-offset: 0.22rem;
+    box-shadow: 0 0 1.6rem rgba(92, 200, 255, 0.45);
+  }
+
+  code,
+  .mono {
+    font-family: var(--font-mono);
+  }
+}
+
+@layer components {
+  /* The desktop wallpaper, redrawn as the welcome page does it: the demo
+     appears over the desktop without a change, then the glows drift. */
+  .backdrop {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    overflow: hidden;
+  }
+  .backdrop .glow {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 1800px;
+    height: 1800px;
+    margin: -900px 0 0 -900px;
+  }
+  .backdrop .glow.a {
+    background: radial-gradient(closest-side, rgba(18, 48, 77, 0.95), rgba(16, 36, 58, 0.35) 60%, rgba(16, 36, 58, 0));
+    translate: -400px -340px;
+    animation: drift-a 38s ease-in-out infinite alternate;
+  }
+  .backdrop .glow.b {
+    background: radial-gradient(closest-side, rgba(36, 27, 68, 0.95), rgba(29, 23, 51, 0.35) 60%, rgba(29, 23, 51, 0));
+    translate: 440px 380px;
+    animation: drift-b 46s ease-in-out infinite alternate;
+  }
+  .backdrop::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image: radial-gradient(rgba(184, 200, 230, 0.09) 1.2px, transparent 1.6px);
+    background-size: 40px 40px;
+    mask-image: radial-gradient(circle at center, #000 0, transparent 960px);
+  }
+
+  .title-gradient {
+    background: linear-gradient(100deg, var(--color-fg) 30%, var(--color-accent) 70%, var(--color-accent-2));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  .panel {
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-card);
+    background: var(--color-card);
+    backdrop-filter: blur(6px);
+    padding: 1.1rem 1.3rem;
+  }
+
+  .eyebrow {
+    color: var(--color-dim);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+
+  /* A button a finger cannot miss. */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.55rem;
+    min-height: 3.1rem;
+    padding: 0 1.3rem;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    background: var(--color-raised);
+    color: var(--color-fg);
+    font: inherit;
+    font-size: 1rem;
+    font-weight: 650;
+    letter-spacing: 0.01em;
+    white-space: nowrap;
+    cursor: pointer;
+    transition:
+      transform 120ms ease,
+      background-color 160ms ease,
+      border-color 160ms ease,
+      opacity 160ms ease;
+  }
+  .btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+  }
+  .btn:active {
+    transform: scale(0.97);
+  }
+  .btn:disabled {
+    opacity: 0.4;
+    cursor: default;
+    transform: none;
+  }
+  .btn-primary {
+    border-color: transparent;
+    background: linear-gradient(110deg, var(--color-accent), var(--color-accent-2));
+    color: var(--color-ink);
+  }
+  .btn-primary:hover {
+    background: linear-gradient(110deg, #80d4ff, #b1a3ff);
+  }
+  /* The chosen one of a list: marked without hiding what the row says. */
+  .btn-selected {
+    border-color: var(--color-accent);
+    background: rgba(92, 200, 255, 0.14);
+    box-shadow: inset 0 0 0 1px var(--color-accent);
+  }
+  .btn-danger {
+    border-color: rgba(255, 122, 122, 0.45);
+    background: rgba(255, 122, 122, 0.12);
+    color: var(--color-bad);
+  }
+  .btn-danger:hover {
+    background: rgba(255, 122, 122, 0.2);
+  }
+  .btn-sm {
+    min-height: 2.4rem;
+    padding: 0 1rem;
+    font-size: 0.85rem;
+  }
+
+  .field {
+    min-height: 2.8rem;
+    padding: 0 0.9rem;
+    border-radius: 0.7rem;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    background: rgba(0, 0, 0, 0.28);
+    color: var(--color-fg);
+    font: inherit;
+    font-size: 1rem;
+  }
+  .field:focus-visible,
+  .field:focus {
+    border-color: var(--color-accent);
+    outline: none;
+    box-shadow: 0 0 0 0.15rem rgba(92, 200, 255, 0.35);
+  }
+
+  input[type="range"] {
+    accent-color: var(--color-accent);
+    height: 2.4rem;
+  }
+  input[type="checkbox"],
+  input[type="radio"] {
+    accent-color: var(--color-accent);
+    width: 1.5rem;
+    height: 1.5rem;
+  }
+
+  /* A status pill: what a feature is ready for, at a glance. */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45em;
+    padding: 0.28em 0.75em;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    border: 1px solid currentColor;
+  }
+  .badge::before {
+    content: "";
+    width: 0.55em;
+    height: 0.55em;
+    border-radius: 50%;
+    background: currentColor;
+    box-shadow: 0 0 0.7em currentColor;
+  }
+  .badge-ok {
+    color: var(--color-ok);
+    background: rgba(95, 224, 166, 0.08);
+  }
+  .badge-warn {
+    color: var(--color-warn);
+    background: rgba(255, 198, 107, 0.08);
+  }
+  .badge-bad {
+    color: var(--color-bad);
+    background: rgba(255, 122, 122, 0.08);
+  }
+  .badge-dim {
+    color: var(--color-dim);
+    background: rgba(142, 155, 176, 0.08);
+  }
+  .badge-info {
+    color: var(--color-accent);
+    background: rgba(92, 200, 255, 0.08);
+  }
+
+  /* The feature tiles of the home page. */
+  .tile {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.8rem;
+    min-height: 7.8rem;
+    padding: 1.05rem 1.15rem;
+    border-radius: var(--radius-card);
+    border: 1px solid var(--color-line);
+    background: linear-gradient(160deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.02));
+    color: var(--color-fg);
+    text-align: left;
+    font: inherit;
+    cursor: pointer;
+    overflow: hidden;
+    transition:
+      transform 140ms ease,
+      border-color 160ms ease,
+      background 160ms ease;
+  }
+  .tile::after {
+    content: "";
+    position: absolute;
+    inset: auto -30% -60% auto;
+    width: 70%;
+    aspect-ratio: 1;
+    border-radius: 50%;
+    background: radial-gradient(closest-side, rgba(92, 200, 255, 0.16), transparent);
+    pointer-events: none;
+  }
+  .tile:hover {
+    border-color: rgba(92, 200, 255, 0.35);
+  }
+  .tile:active {
+    transform: scale(0.98);
+  }
+
+  .kv {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    column-gap: 1.4rem;
+    row-gap: 0.5rem;
+    align-items: baseline;
+    margin: 0;
+  }
+  .kv dt {
+    color: var(--color-dim);
+    font-size: 0.78rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  .kv dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .log {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid var(--color-line);
+    border-radius: 0.8rem;
+    padding: 0.8rem 1rem;
+    overflow-y: auto;
+    user-select: text;
+  }
+
+  .scroll-area {
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+  }
+}
+
+@keyframes drift-a {
+  to {
+    transform: translate(10vmin, 8vmin);
+  }
+}
+@keyframes drift-b {
+  to {
+    transform: translate(-9vmin, -7vmin);
+  }
+}
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(0.8rem);
+  }
+}
+@keyframes pulse-ring {
+  0% {
+    transform: scale(0.9);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(1.6);
+    opacity: 0;
+  }
+}
+
+.rise {
+  animation: rise 360ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .backdrop .glow,
+  .rise {
+    animation: none;
+  }
+}

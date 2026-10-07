@@ -257,6 +257,32 @@ mise run webconfig:lock      # after changing a dependency
 points the dev server at a real device. How it works is in
 [docs/webconfig.md](docs/webconfig.md).
 
+## The demo
+
+The demo shows every feature of the device on its own screen, a React app
+in `demo/` that reaches the device only through the page bridge.
+
+```sh
+mise run demo:setup     # npm ci
+mise run demo:run       # dev server on http://localhost:5174, with a pretend device
+mise run demo:test      # unit tests, bitbake-lock.json current
+mise run demo:lint      # tsc, ESLint, Prettier
+mise run demo:build     # into build/demo
+mise run demo:lock      # after changing a dependency
+```
+
+To work on it against a real device, build it into the device's file store
+and put it on the screen:
+
+```sh
+mise run ctl:run -- -n ADDRESS config set agent.refresh_interval=0 browser.bridge.mode=actions
+TESSARO_NODE=ADDRESS mise run demo:sync
+```
+
+`demo:sync` opens `http://127.0.0.1/files/demo/`. Put
+`agent.refresh_interval` back with `config unset` when done. How it works
+is in [docs/demo.md](docs/demo.md).
+
 ## The player page
 
 The player page plays playlists on the device: static files in

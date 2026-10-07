@@ -32,6 +32,10 @@
 /webconfig/src/api/schema.d.ts
 /webconfig/dist/
 
+# The demo's dependencies, remade by `mise run demo:setup`; its build goes
+# to build/demo.
+/demo/node_modules/
+
 # The README screenshot tool's Playwright, installed by
 # `mise run docs:screenshots`.
 /docs/screenshots/node_modules/

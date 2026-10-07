@@ -386,6 +386,57 @@ description = "Type check, ESLint and Prettier on Webconfig"
 dir = "{{config_root}}/webconfig"
 run = "npm run lint"
 
+# The demo (docs/demo.md): Webconfig's tools and the same lock rules, but no
+# API types - it reaches the device only through window.tessaro.
+[tasks."demo:setup"]
+description = "Install the demo's dependencies from package-lock.json"
+dir = "{{config_root}}/demo"
+run = "npm ci --no-audit --no-fund"
+
+[tasks."demo:lock"]
+description = "Write bitbake-lock.json, what the tessaro-demo recipe fetches, from package-lock.json"
+dir = "{{config_root}}/demo"
+run = "npm run lock"
+
+[tasks."demo:run"]
+description = "The demo's dev server on http://localhost:5174, with a pretend device on window.tessaro"
+dir = "{{config_root}}/demo"
+run = "npm run dev"
+
+[tasks."demo:build"]
+description = "Build the demo into build/demo"
+dir = "{{config_root}}/demo"
+run = "npm run build"
+
+[tasks."demo:test"]
+description = "The demo's unit tests, and bitbake-lock.json being current"
+dir = "{{config_root}}/demo"
+run = '''
+set -e
+npm test
+npm run lock:check
+'''
+
+[tasks."demo:lint"]
+description = "Type check, ESLint and Prettier on the demo"
+dir = "{{config_root}}/demo"
+run = "npm run lint"
+
+# Into the device's file store and onto its screen, for working on the demo
+# against real hardware. The page is then the file store's
+# http://127.0.0.1/files/demo/, on the origin the bridge answers while
+# browser.url is the welcome page.
+[tasks."demo:sync"]
+description = "Build the demo, sync it into TESSARO_NODE's /data/files/demo and open it there"
+dir = "{{config_root}}"
+run = '''
+set -e
+: "${TESSARO_NODE:?name the device, like TESSARO_NODE=192.168.1.42 mise run demo:sync}"
+(cd demo && npm run build)
+mise run ctl:run -- files sync build/demo demo --yes
+mise run ctl:run -- browser navigate http://127.0.0.1/files/demo/
+'''
+
 [tasks."player:test"]
 description = "The player page's unit tests (player-core.js), with node --test"
 dir = "{{config_root}}/meta-tessaro-distro/recipes-browser/tessaro-selftest/files/player"

@@ -24,6 +24,7 @@ are not in the image at all. So each part is read from its own lock file.
 | `try-tessaro` | `cargo` | `cargo metadata` on `gui/`, from the `try-tessaro` member only, every platform |
 | `try-tessaro` | `runtime` | the bundled QEMU's `runtime.json`, `brew info --json=v2` of every Homebrew formula it ships plus what `build-qemu-gpu.sh` built or fetched, in the same shape (`runtime.rb`), with `check --runtime` only |
 | `tessaro-webconfig` | `npm` | `npm sbom --omit dev --package-lock-only` in `webconfig/` (`npm.rb`) |
+| `tessaro-demo` | `npm` | the same in `demo/` |
 | any | `vendored` | `sbom/vendored.yml`, files kept in the repo (the Manrope fonts, presence detection's models, test pictures) |
 
 * **The image's rows are the recipes of what it installs.** Bitbake's
@@ -61,7 +62,7 @@ the per-library list from the recipe's source tree; that is not wired in.
 
 * `<image>.sbom.tar.zst`: a `<image>.sbom/` directory with `yocto/` (the
   image's SPDX 2.2 documents, untouched), `cargo-<component>.spdx.json` and
-  `npm-tessaro-webconfig.spdx.json` (SPDX 2.3), and `licenses.csv` and
+  `npm-<component>.spdx.json` (SPDX 2.3), and `licenses.csv` and
   `licenses.json`.
 * `<image>.licenses.csv`: the same list on its own, the file to read. One
   row per component and package: `component, ecosystem, name, version,

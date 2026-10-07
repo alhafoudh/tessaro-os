@@ -102,6 +102,24 @@ jobs:
       # The player page's tests need the same Node and nothing installed.
       - run: mise run player:test
 
+  # The demo (docs/demo.md), checked like Webconfig.
+  demo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: jdx/mise-action@v5
+        with:
+          install_args: node
+      - uses: actions/cache@v6
+        with:
+          path: ~/.npm
+          key: npm-demo-${{ hashFiles('demo/package-lock.json') }}
+      - run: mise run demo:setup
+      - run: mise run demo:lint
+      # Includes bitbake-lock.json being current.
+      - run: mise run demo:test
+      - run: mise run demo:build
+
   # The license policy over every crate, npm package and vendored file
   # (docs/sbom.md). cargo metadata and npm sbom read the lock files, so
   # nothing is built; the runner's own ruby runs the tool.

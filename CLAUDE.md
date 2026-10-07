@@ -58,6 +58,7 @@ same change as the behaviour it describes.
 | [docs/printing.md](docs/printing.md) | the device's CUPS and why it is set up that way, the `printers` table and the reconcile, driverless and raw printers, `printer.enable` and `window.print()`, the default printer, discovery, supplies, sizes, which printers work |
 | [docs/playlists.md](docs/playlists.md) | playlists and the player page: when the player is on screen instead of browser.url, the timetable and what plays, preloading and transitions, interactive items and input from frames, the frame-unlock extension, first-party frames and their grants, the media cache |
 | [docs/quick-setup.md](docs/quick-setup.md) | the welcome page's QR code, captive portal detection, nginx's redirect to Quick Setup on the API's port, what the page uses, the online indicator |
+| [docs/demo.md](docs/demo.md) | the demo: where it runs and why that origin, what each section detects and the statuses, what it changes on the device, maintenance for a few seconds, navigation by touch, keys and remote, the hash routes and the mock bridge, its media, adding a section |
 
 **Writing docs** (in `docs/` and in this file):
 
@@ -127,6 +128,11 @@ details for each surface; this is the checklist.
 * **Docs**: the subsystem's `docs/` file (a new file and a row in the table
   above for a new subsystem), README for what users see, and
   `docs:screenshots` when a page it shows changes.
+* **The demo**: offer the user a demo section for the feature - its page in
+  `demo/src/sections/` and its `detect()`, which says when the feature is
+  off and how to switch it on (**Adding a section** in
+  [docs/demo.md](docs/demo.md)) - or say why the feature has nothing to
+  show on the screen.
 
 ## Commands
 
@@ -177,6 +183,10 @@ Use the mise tasks rather than calling `kas-container` directly:
 | `mise run player:test` | The player page's unit tests (`player-core.js`), with `node --test` |
 | `mise run player:run` | The player page with a sample playlist on http://127.0.0.1:8090, for desktop development |
 | `mise run webconfig:lock` | `bitbake-lock.json` from `package-lock.json`, after any change to the dependencies |
+| `mise run demo:setup` | `npm ci` for the demo |
+| `mise run demo:run` | The demo's dev server on http://localhost:5174, with a pretend device on `window.tessaro` |
+| `mise run demo:build` / `demo:test` / `demo:lint` / `demo:lock` | The demo into `build/demo`; its unit tests and `bitbake-lock.json`; tsc, ESLint and Prettier; its lock after a dependency change |
+| `mise run demo:sync` | Build the demo into `TESSARO_NODE`'s file store and open it on that device's screen |
 | `mise run sbom:build` | The `$TESSARO_MACHINE` image's SBOM bundle and license list into `build/sbom/`, from its built image |
 | `mise run sbom:check` | Every crate, npm package and vendored file against the license policy in `sbom/licenses.yml` |
 | `mise run sbom:test` | The SBOM tool's unit tests |
@@ -391,7 +401,7 @@ recipe.
   `webconfig/bitbake-lock.json` in the same change** (`mise run
   webconfig:lock`): the recipe fetches only what that file lists. Keep
   Webconfig's tools on Node 22.11 (Vite 6, not 7): that is bitbake's
-  `nodejs-native`.
+  `nodejs-native`. The same goes for `demo/` (`mise run demo:lock`).
 * **A new dependency whose license `sbom/licenses.yml` does not allow gets
   an `exceptions` entry with its reason in the same change**, never a wider
   allowlist; a third-party file copied into the repo gets its

@@ -44,7 +44,8 @@ module Sbom
         Cargo.collect(File.join(root, "agent"), component: "tessaro-ctl", roots: ["tessaro-ctl"]),
       "cargo-tessaro-gui.spdx.json" => Cargo.collect(gui, component: "tessaro-gui", roots: ["tessaro-gui"]),
       "cargo-try-tessaro.spdx.json" => Cargo.collect(gui, component: "try-tessaro", roots: ["try-tessaro"]),
-      "npm-tessaro-webconfig.spdx.json" => Npm.collect(File.join(root, "webconfig"), component: "tessaro-webconfig")
+      "npm-tessaro-webconfig.spdx.json" => Npm.collect(File.join(root, "webconfig"), component: "tessaro-webconfig"),
+      "npm-tessaro-demo.spdx.json" => Npm.collect(File.join(root, "demo"), component: "tessaro-demo")
     }
     rows = parts.values.flat_map(&:rows) + Vendored.rows(File.join(root, "sbom", "vendored.yml"), root: root)
     rows += Runtime.rows(runtime) if runtime

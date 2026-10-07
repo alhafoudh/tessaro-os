@@ -1,0 +1,40 @@
+{
+  "name": "tessaro-demo",
+  "private": true,
+  "version": "1.0.0",
+  "description": "The Tessaro demo: every feature of the kiosk shown on its own screen, through the page bridge (docs/demo.md).",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22.11.0"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "test": "vitest run",
+    "lint": "tsc --noEmit && eslint . && prettier --check .",
+    "lock": "node scripts/bitbake-lock.mjs",
+    "lock:check": "node scripts/bitbake-lock.mjs --check"
+  },
+  "dependencies": {
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "react-router": "^7.9.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.30.0",
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^22.20.4",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^4.7.0",
+    "eslint": "^9.30.0",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "prettier": "^3.6.0",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^5.9.0",
+    "typescript-eslint": "^8.40.0",
+    "vite": "^6.4.3",
+    "vitest": "^3.2.7"
+  }
+}
