@@ -201,13 +201,21 @@ from AVFoundation.
   in `kas/machine/qemux86-64.yml`; on genericarm64 the modules come from
   `tessaro-genericarm64.cfg` and `usbip-tools` from
   `kas/machine/genericarm64.yml`.
-* **genericarm64 reaches the camera only on slirp**, `qemu:run:arm64
-  --no-vmnet`: the guest finds the host at `10.0.2.2` and `--attach` goes
-  over the `127.0.0.1:2222` forward. On vmnet neither exists, and the server
-  listens on `127.0.0.1` alone.
+* **`--attach` finds the VM on slirp or on a Mac's vmnet.** On slirp the
+  guest reaches the host at `10.0.2.2` and is reached on the
+  `127.0.0.1:2222` forward, and the server listens on `127.0.0.1`. On vmnet
+  (`qemu:run:arm64`, which keeps mDNS) the VM is found at the Mac's DHCP
+  lease for its MAC, or `--vm ADDRESS`, and the server listens only on the
+  guest's default gateway, the Mac's bridge address, so the camera is not
+  offered to the rest of the LAN.
 * **`--live` lets AVFoundation drop frames** rather than pacing the stream
   like a clip: it keeps only the newest frame, so a slow reader skips frames
   instead of falling behind. The terminal needs macOS's camera permission.
+* **`--live` asks the Mac's camera for 1280x720.** Without a size
+  AVFoundation takes the last format that matches, which on a Center Stage
+  camera is portrait 1080x1920. Every picture, a clip's too, is fitted into
+  the committed mode with its aspect kept and black bars, never stretched
+  (`Feed.fit`).
 
 ## What does not work
 

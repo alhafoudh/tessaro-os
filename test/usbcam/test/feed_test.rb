@@ -74,16 +74,22 @@ class FeedCommandTest < Minitest::Test
 
   def test_clip_yuyv
     cmd = Usbcam::Feed.command(Mode.new(:yuyv, 320, 240, 30), clip: "/c.mp4")
-    assert_includes cmd.join(" "), "-stream_loop -1 -i /c.mp4 -vf scale=320:240,fps=30"
+    assert_includes cmd.join(" "), "-stream_loop -1 -i /c.mp4 -vf #{Usbcam::Feed.fit(Mode.new(:yuyv, 320, 240, 30))}"
     refute_includes cmd, "-re" # the stream is paced by its reader
     assert_equal %w[-pix_fmt yuyv422 -f rawvideo pipe:1], cmd.last(5)
   end
 
   def test_live_camera
     cmd = Usbcam::Feed.command(Mode.new(:mjpeg, 640, 480, 15), live: "0")
-    assert_includes cmd.join(" "), "-f avfoundation -framerate 30 -pixel_format uyvy422 -i 0:none"
-    assert_includes cmd.join(" "), "-vf scale=640:480,fps=15"
+    assert_includes cmd.join(" "), "-f avfoundation -framerate 30 -video_size 1280x720 -pixel_format uyvy422 -i 0:none"
+    assert_includes cmd.join(" "), "-vf #{Usbcam::Feed.fit(Mode.new(:mjpeg, 640, 480, 15))}"
     refute_includes cmd, "-stream_loop"
+  end
+
+  def test_fit_keeps_the_aspect
+    assert_equal "scale=1280:720:force_original_aspect_ratio=decrease:force_divisible_by=2," \
+                 "pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30",
+                 Usbcam::Feed.fit(Mode.new(:mjpeg, 1280, 720, 30))
   end
 
   def test_mode_to_s

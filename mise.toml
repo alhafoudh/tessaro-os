@@ -896,10 +896,12 @@ TESSARO_MACHINE=genericarm64 exec mise run qemu:vnc --count {{ usage.count | def
 
 # A fake USB webcam for the qemu VM: test/usbcam/usbcam.rb serves a UVC camera
 # over USB/IP on this host, playing a clip (looped), a Mac's camera (--live)
-# or ffmpeg's test pattern, and the guest attaches it through vhci-hcd,
-# reaching this host as 10.0.2.2. On genericarm64 that is the slirp network
-# of qemu:run:arm64 --no-vmnet. QEMU emulates no camera; see docs/camera.md,
-# Testing in qemu.
+# or ffmpeg's test pattern, and the guest attaches it through vhci-hcd. On
+# slirp the guest reaches this host as 10.0.2.2 and is reached on the
+# 127.0.0.1:2222 forward; on a Mac's vmnet (qemu:run:arm64) it is reached at
+# its DHCP lease or --vm, and reaches this host at its default gateway, the
+# Mac's bridge address the server then listens on. QEMU emulates no camera;
+# see docs/camera.md, Testing in qemu.
 [tasks."usbcam:run"]
 description = "Serve a fake USB webcam playing a clip or this Mac's camera over USB/IP, and attach it to the qemu:run/qemu:vnc VM with --attach"
 dir = "{{config_root}}"
@@ -907,8 +909,9 @@ raw = true
 usage = '''
 arg "[clip]" help="A video file to loop; without one, a moving test pattern"
 flag "--live" help="macOS: stream this Mac's built-in camera instead of a clip"
-flag "--port <port>" default="3240" help="The USB/IP port on 127.0.0.1"
-flag "--attach" help="Also attach it in the VM on 127.0.0.1:2222 (genericarm64: qemu:run:arm64 --no-vmnet), and detach it on exit"
+flag "--port <port>" default="3240" help="The USB/IP port"
+flag "--attach" help="Also attach it in the VM, and detach it on exit"
+flag "--vm <address>" help="With --attach: the VM's address on vmnet; by default the 127.0.0.1:2222 forward, else the Mac's DHCP lease for its MAC"
 '''
 run = '''
 set -eu
@@ -931,28 +934,55 @@ if [ "{{ usage.attach | default(value='false') }}" != "true" ]; then
     exec ruby test/usbcam/usbcam.rb "$@"
 fi
 
-# The VM of qemu:run and qemu:vnc, over its SSH forward. The unclaimed image
-# has an empty root password.
+# The VM of qemu:run and qemu:vnc over SSH, at ssh_host:ssh_port. The
+# unclaimed image has an empty root password.
 guest() {
-    ssh -p 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-        -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=5 root@127.0.0.1 "$@"
+    ssh -p "$ssh_port" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+        -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=5 "root@$ssh_host" "$@"
 }
-case "$TESSARO_MACHINE" in
-    genericarm64) vm="mise run qemu:run:arm64 -- --no-vmnet" ;;
-    *) vm="mise run qemu:run" ;;
-esac
+# The address the Mac's DHCP gave MAC on vmnet, written there without
+# leading zeros (52:54:0:12:34:56), as in scripts/qemu-devices.sh.
+lease() {
+    short=$(echo "$1" | awk -F: '{ for (i = 1; i <= NF; i++) { sub(/^0/, "", $i); printf "%s%s", $i, (i < NF ? ":" : "") } }')
+    awk -v mac="1,$short" '
+        /ip_address=/ { ip = substr($0, index($0, "=") + 1) }
+        /hw_address=/ { if (substr($0, index($0, "=") + 1) == mac) found = ip }
+        END { print found }' /var/db/dhcpd_leases 2>/dev/null || true
+}
+vm_address={{ usage.vm | default(value="") | quote }}
+ssh_host=127.0.0.1 ssh_port=2222
+if [ -n "$vm_address" ]; then
+    ssh_host=$vm_address ssh_port=22
+elif ! guest true 2>/dev/null && [ "$(uname -s)" = Darwin ]; then
+    # QEMU's own MAC, unless qemu-arm64.sh was given one.
+    vm_address=$(lease "${TESSARO_QEMU_MAC:-52:54:00:12:34:56}")
+    [ -n "$vm_address" ] && ssh_host=$vm_address ssh_port=22
+fi
 guest true 2>/dev/null || {
-    echo "no VM answers SSH on 127.0.0.1:2222; start one with: $vm" >&2
+    case "$TESSARO_MACHINE" in
+        genericarm64) vm="mise run qemu:run:arm64" ;;
+        *) vm="mise run qemu:run" ;;
+    esac
+    echo "no VM answers SSH on $ssh_host:$ssh_port; start one with: $vm, or name it with --vm" >&2
     exit 1
 }
 guest 'command -v usbip' >/dev/null || {
     echo "the VM's image has no usbip; rebuild it with usbip-tools (docs/camera.md, Testing in qemu)" >&2
     exit 1
 }
+# Where the guest finds this host: slirp's alias, or on vmnet its gateway,
+# the Mac's address on the bridge, which the server listens on alone.
+if [ "$ssh_port" = 2222 ]; then
+    listen=127.0.0.1 remote=10.0.2.2
+else
+    remote=$(guest "ip route show default | awk '{ print \$3; exit }'")
+    [ -n "$remote" ] || { echo "the VM at $ssh_host has no default route" >&2; exit 1; }
+    listen=$remote
+fi
 # Its log is a file, which the attach waits on and tail shows: mise runs this
 # with sh, which has no process substitution to tee it.
 log=$(mktemp)
-ruby test/usbcam/usbcam.rb "$@" 2>"$log" &
+ruby test/usbcam/usbcam.rb --host "$listen" "$@" 2>"$log" &
 server=$!
 tail -n +1 -f "$log" >&2 &
 shown=$!
@@ -968,7 +998,7 @@ until grep -q '^usbcam: listening on' "$log"; do
     kill -0 "$server" 2>/dev/null || exit 1
     sleep 0.2
 done
-guest "modprobe vhci-hcd && usbip --tcp-port $port attach -r 10.0.2.2 -b 1-1"
+guest "modprobe vhci-hcd && usbip --tcp-port $port attach -r $remote -b 1-1"
 echo "attached; the VM's tessaro-ctl camera list shows it. Ctrl-C detaches." >&2
 wait "$server"
 '''

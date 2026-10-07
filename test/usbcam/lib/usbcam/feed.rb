@@ -137,14 +137,17 @@ module Usbcam
     # live is a macOS camera, an AVFoundation index or name. It captures at
     # 30 fps, a rate every Mac camera offers, and AVFoundation keeps only the
     # newest frame, so a slow reader drops frames rather than adding lag.
+    # The size is asked for: without it avfoundation takes the last format
+    # that matches, which on a Center Stage camera is portrait 1080x1920.
+    # 1280x720 is the largest mode the emulator offers and every Mac camera
+    # has it.
     def self.command(mode, clip: nil, live: nil, ffmpeg: "ffmpeg")
       input =
         if live
-          ["-f", "avfoundation", "-framerate", "30", "-pixel_format", "uyvy422", "-i", "#{live}:none",
-           "-vf", "scale=#{mode.width}:#{mode.height},fps=#{mode.fps}"]
+          ["-f", "avfoundation", "-framerate", "30", "-video_size", "1280x720", "-pixel_format", "uyvy422",
+           "-i", "#{live}:none", "-vf", fit(mode)]
         elsif clip
-          ["-stream_loop", "-1", "-i", clip,
-           "-vf", "scale=#{mode.width}:#{mode.height},fps=#{mode.fps}"]
+          ["-stream_loop", "-1", "-i", clip, "-vf", fit(mode)]
         else
           ["-f", "lavfi", "-i", "testsrc2=size=#{mode.width}x#{mode.height}:rate=#{mode.fps}"]
         end
@@ -154,6 +157,17 @@ module Usbcam
         when :yuyv then ["-pix_fmt", "yuyv422", "-f", "rawvideo"]
         end
       [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", *input, "-an", *output, "pipe:1"]
+    end
+
+    # The picture fitted into the mode with its aspect kept and black bars
+    # around it: a portrait clip, or 720p into the 640x480 mode, is never
+    # stretched, and cropping it to fill would cut faces off. Even sizes, because 4:2:2 chroma halves the width
+    # (1080x1920 fitted into 720 lines is 405 wide); setsar=1 keeps the
+    # pixels square for the encoder.
+    def self.fit(mode)
+      w, h = mode.width, mode.height
+      "scale=#{w}:#{h}:force_original_aspect_ratio=decrease:force_divisible_by=2," \
+        "pad=#{w}:#{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=#{mode.fps}"
     end
 
     def running? = @lock.synchronize { !@io.nil? }
