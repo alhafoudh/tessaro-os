@@ -937,6 +937,18 @@ guest() {
     ssh -p 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
         -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=5 root@127.0.0.1 "$@"
 }
+case "$TESSARO_MACHINE" in
+    genericarm64) vm="mise run qemu:run:arm64 -- --no-vmnet" ;;
+    *) vm="mise run qemu:run" ;;
+esac
+guest true 2>/dev/null || {
+    echo "no VM answers SSH on 127.0.0.1:2222; start one with: $vm" >&2
+    exit 1
+}
+guest 'command -v usbip' >/dev/null || {
+    echo "the VM's image has no usbip; rebuild it with usbip-tools (docs/camera.md, Testing in qemu)" >&2
+    exit 1
+}
 # Its log is a file, which the attach waits on and tail shows: mise runs this
 # with sh, which has no process substitution to tee it.
 log=$(mktemp)
