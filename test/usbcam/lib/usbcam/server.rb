@@ -14,11 +14,12 @@ module Usbcam
 
     attr_reader :descriptors
 
-    def initialize(host: "127.0.0.1", port: 3240, fps: 30, clip: nil, ffmpeg: "ffmpeg",
+    def initialize(host: "127.0.0.1", port: 3240, fps: 30, clip: nil, live: nil, ffmpeg: "ffmpeg",
                    log: ->(line) { warn "usbcam: #{line}" }, stats_interval: 5)
       @host = host
       @port = port
       @clip = clip
+      @live = live
       @ffmpeg = ffmpeg
       @log = log
       @stats_interval = stats_interval
@@ -86,7 +87,7 @@ module Usbcam
       session = nil
       @lock.synchronize do
         if busid == BUSID && @session.nil?
-          session = Session.new(client, Device.new(descriptors), clip: @clip, ffmpeg: @ffmpeg,
+          session = Session.new(client, Device.new(descriptors), clip: @clip, live: @live, ffmpeg: @ffmpeg,
                                                                   log: @log, stats_interval: @stats_interval)
           @session = session
         end
@@ -128,7 +129,7 @@ module Usbcam
     Urb = Struct.new(:seqnum, :length, :number_of_packets)
     QUEUED_FRAMES = 2
 
-    def initialize(socket, device, clip:, ffmpeg:, log:, stats_interval:)
+    def initialize(socket, device, clip:, ffmpeg:, log:, stats_interval:, live: nil)
       @socket = socket
       @device = device
       @log = log
@@ -144,7 +145,7 @@ module Usbcam
       @interval = 0
       @next_frame_at = 0
       @sent = 0
-      @feed = Feed.new(clip:, ffmpeg:, log:) { offer(_1) }
+      @feed = Feed.new(clip:, live:, ffmpeg:, log:) { offer(_1) }
       device.on_commit = ->(ctrl) { commit(ctrl) }
       device.on_stop = -> { stop_streaming }
     end

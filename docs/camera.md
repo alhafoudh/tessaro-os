@@ -179,6 +179,9 @@ and has a USB camera like any other: uvcvideo binds it, the udev rule hides
 it and starts its mirror, and the page reads the virtual camera.
 `mise run usbcam:run -- [CLIP] --attach` does it for the `qemu:run` or
 `qemu:vnc` VM; the e2e camera lane does it for its own ([e2e.md](e2e.md)).
+On a Mac, `--live` streams the Mac's built-in camera instead of a clip,
+which is how Parallels gives a VM a camera too: an emulated USB camera fed
+from AVFoundation.
 
 * **QEMU emulates no camera.** A UVC device for it has been proposed more
   than once and never merged.
@@ -192,9 +195,19 @@ it and starts its mirror, and the page reads the virtual camera.
   through the host. ffmpeg starts for the mode the guest commits to, and
   the newest frame is what is sent, so a slow reader drops frames rather
   than falling behind.
-* **The guest side is qemux86-64 only**: `tessaro-qemu-usbip.cfg` for
-  `usbip-core` and `vhci-hcd`, and `usbip-tools` and uvcvideo installed
-  through `MACHINE_EXTRA_RRECOMMENDS` in `kas/machine/qemux86-64.yml`.
+* **The guest side is in qemux86-64 and genericarm64**: on qemux86-64
+  `tessaro-qemu-usbip.cfg` for `usbip-core` and `vhci-hcd`, and
+  `usbip-tools` and uvcvideo installed through `MACHINE_EXTRA_RRECOMMENDS`
+  in `kas/machine/qemux86-64.yml`; on genericarm64 the modules come from
+  `tessaro-genericarm64.cfg` and `usbip-tools` from
+  `kas/machine/genericarm64.yml`.
+* **genericarm64 reaches the camera only on slirp**, `qemu:run:arm64
+  --no-vmnet`: the guest finds the host at `10.0.2.2` and `--attach` goes
+  over the `127.0.0.1:2222` forward. On vmnet neither exists, and the server
+  listens on `127.0.0.1` alone.
+* **`--live` lets AVFoundation drop frames** rather than pacing the stream
+  like a clip: it keeps only the newest frame, so a slow reader skips frames
+  instead of falling behind. The terminal needs macOS's camera permission.
 
 ## What does not work
 

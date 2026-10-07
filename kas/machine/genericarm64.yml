@@ -40,6 +40,11 @@ local_conf_header:
     # library QEMU is built without by default; as in qemux86-64.yml, only
     # the host's QEMU changes (scripts/qemu-arm64.sh).
     PACKAGECONFIG:append:pn-qemu-system-native = " nettle"
+    # usbip to attach the test camera the host serves over USB/IP
+    # (test/usbcam/usbcam.rb, mise run usbcam:run); its kernel modules and
+    # uvcvideo come with every module (tessaro-genericarm64.cfg). See
+    # docs/camera.md, Testing in qemu.
+    MACHINE_EXTRA_RRECOMMENDS:append = " usbip-tools"
 
 # Both keys belong in the entry point of the config chain: an include cannot
 # set them, because meta-moonforge-distro.yml sets distro too and wins by

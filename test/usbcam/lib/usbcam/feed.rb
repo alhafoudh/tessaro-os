@@ -125,17 +125,24 @@ module Usbcam
 
     attr_reader :mode
 
-    def initialize(clip: nil, ffmpeg: "ffmpeg", log: ->(_) {}, &on_frame)
+    def initialize(clip: nil, live: nil, ffmpeg: "ffmpeg", log: ->(_) {}, &on_frame)
       @clip = clip
+      @live = live
       @ffmpeg = ffmpeg
       @log = log
       @on_frame = on_frame
       @lock = Mutex.new
     end
 
-    def self.command(mode, clip: nil, ffmpeg: "ffmpeg")
+    # live is a macOS camera, an AVFoundation index or name. It captures at
+    # 30 fps, a rate every Mac camera offers, and AVFoundation keeps only the
+    # newest frame, so a slow reader drops frames rather than adding lag.
+    def self.command(mode, clip: nil, live: nil, ffmpeg: "ffmpeg")
       input =
-        if clip
+        if live
+          ["-f", "avfoundation", "-framerate", "30", "-pixel_format", "uyvy422", "-i", "#{live}:none",
+           "-vf", "scale=#{mode.width}:#{mode.height},fps=#{mode.fps}"]
+        elsif clip
           ["-stream_loop", "-1", "-i", clip,
            "-vf", "scale=#{mode.width}:#{mode.height},fps=#{mode.fps}"]
         else
@@ -159,7 +166,7 @@ module Usbcam
         stop_locked
         @mode = mode
         splitter = mode.kind == :mjpeg ? MjpegSplitter.new : FixedSplitter.new(mode.width * mode.height * 2)
-        io = IO.popen(Feed.command(mode, clip: @clip, ffmpeg: @ffmpeg), "rb")
+        io = IO.popen(Feed.command(mode, clip: @clip, live: @live, ffmpeg: @ffmpeg), "rb")
         @io = io
         @reader = Thread.new { read(io, splitter) }
       end

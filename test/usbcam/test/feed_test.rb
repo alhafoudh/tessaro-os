@@ -79,6 +79,13 @@ class FeedCommandTest < Minitest::Test
     assert_equal %w[-pix_fmt yuyv422 -f rawvideo pipe:1], cmd.last(5)
   end
 
+  def test_live_camera
+    cmd = Usbcam::Feed.command(Mode.new(:mjpeg, 640, 480, 15), live: "0")
+    assert_includes cmd.join(" "), "-f avfoundation -framerate 30 -pixel_format uyvy422 -i 0:none"
+    assert_includes cmd.join(" "), "-vf scale=640:480,fps=15"
+    refute_includes cmd, "-stream_loop"
+  end
+
   def test_mode_to_s
     assert_equal "mjpeg 1280x720 @ 30 fps", Mode.new(:mjpeg, 1280, 720, 30).to_s
   end

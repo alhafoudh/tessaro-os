@@ -3,11 +3,11 @@
 
 # A fake USB webcam served over USB/IP, for a qemu guest to attach:
 #
-#   ruby test/usbcam/usbcam.rb [--host 127.0.0.1] [--port 3240] [--fps 30] [CLIP]
+#   ruby test/usbcam/usbcam.rb [--host 127.0.0.1] [--port 3240] [--fps 30] [--live [CAMERA] | CLIP]
 #   usbip --tcp-port 3240 attach -r 10.0.2.2 -b 1-1      # in the guest
 #
-# It streams CLIP looped, or ffmpeg's testsrc2 pattern without one, in the
-# format and size the host commits. Status lines go to stderr, each starting
+# It streams CLIP looped, a Mac's camera with --live, or ffmpeg's testsrc2
+# pattern without either, in the format and size the host commits. Status lines go to stderr, each starting
 # with "usbcam: ".
 
 require "optparse"
@@ -27,6 +27,10 @@ parser = OptionParser.new do |o|
   o.on("--fps FPS", Integer, "Frame rate every mode offers (default #{options[:fps]})") do
     options[:fps] = _1
   end
+  o.on("--live [CAMERA]", "macOS: stream this Mac's camera instead, an AVFoundation index or name",
+       "(default 0, the built-in one; ffmpeg -f avfoundation -list_devices true -i '' lists them)") do
+    options[:live] = _1 || "0"
+  end
   o.on("-h", "--help", "Show this help") do
     puts o
     exit
@@ -43,6 +47,8 @@ end
 abort parser.to_s if args.size > 1
 clip = args.first
 abort "usbcam: #{clip}: no such file" if clip && !File.file?(clip)
+abort "usbcam: --live takes no CLIP" if clip && options[:live]
+abort "usbcam: --live needs macOS" if options[:live] && RUBY_PLATFORM !~ /darwin/
 abort "usbcam: --fps must be positive" unless options[:fps].positive?
 
 $stderr.sync = true

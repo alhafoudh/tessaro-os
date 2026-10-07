@@ -895,29 +895,36 @@ TESSARO_MACHINE=genericarm64 exec mise run qemu:vnc --count {{ usage.count | def
 '''
 
 # A fake USB webcam for the qemu VM: test/usbcam/usbcam.rb serves a UVC camera
-# over USB/IP on this host, playing a clip (looped) or ffmpeg's test pattern,
-# and the guest attaches it through vhci-hcd, reaching this host as 10.0.2.2.
-# QEMU emulates no camera; see docs/camera.md, Testing in qemu.
+# over USB/IP on this host, playing a clip (looped), a Mac's camera (--live)
+# or ffmpeg's test pattern, and the guest attaches it through vhci-hcd,
+# reaching this host as 10.0.2.2. On genericarm64 that is the slirp network
+# of qemu:run:arm64 --no-vmnet. QEMU emulates no camera; see docs/camera.md,
+# Testing in qemu.
 [tasks."usbcam:run"]
-description = "Serve a fake USB webcam playing a clip over USB/IP, and attach it to the qemu:run/qemu:vnc VM with --attach"
+description = "Serve a fake USB webcam playing a clip or this Mac's camera over USB/IP, and attach it to the qemu:run/qemu:vnc VM with --attach"
 dir = "{{config_root}}"
 raw = true
 usage = '''
 arg "[clip]" help="A video file to loop; without one, a moving test pattern"
+flag "--live" help="macOS: stream this Mac's built-in camera instead of a clip"
 flag "--port <port>" default="3240" help="The USB/IP port on 127.0.0.1"
-flag "--attach" help="Also attach it in the VM on 127.0.0.1:2222, and detach it on exit"
+flag "--attach" help="Also attach it in the VM on 127.0.0.1:2222 (genericarm64: qemu:run:arm64 --no-vmnet), and detach it on exit"
 '''
 run = '''
 set -eu
-[ "$TESSARO_MACHINE" = "qemux86-64" ] || {
-    echo "usbcam:run only works for qemux86-64, not $TESSARO_MACHINE" >&2
-    exit 1
-}
+case "$TESSARO_MACHINE" in
+    qemux86-64|genericarm64) ;;
+    *)
+        echo "usbcam:run only works for qemux86-64 and genericarm64, not $TESSARO_MACHINE" >&2
+        exit 1
+        ;;
+esac
 command -v ffmpeg >/dev/null || { echo "usbcam:run needs ffmpeg on this host" >&2; exit 1; }
 
 clip={{ usage.clip | default(value="") | quote }}
 port={{ usage.port | default(value="3240") | quote }}
 set -- --port "$port"
+[ "{{ usage.live | default(value='false') }}" = "true" ] && set -- "$@" --live=0
 [ -n "$clip" ] && set -- "$@" "$(realpath "$clip")"
 
 if [ "{{ usage.attach | default(value='false') }}" != "true" ]; then
