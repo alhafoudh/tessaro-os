@@ -85,6 +85,11 @@ reads for `camera list`.
   part of uvcvideo's `Product: Product` card before the colon, cut short so
   the whole fits V4L2's 31 characters. Every mirror is in `video`, so the
   page sees them all; a page that wants one camera picks by label.
+* **With camera.presence.enable on, one more: `<camera> Vision`**, root
+  0600, which presence detection reads and the page never sees. It is
+  reported apart (`CameraInfo.vision`), so `camera.mirrors` and `camera
+  list`'s mirrors are still the page's; see **The hidden mirror** in
+  [presence.md](presence.md).
 
 * **Exclusive caps, per device.** A loopback device announces capture only
   while something writes to it. Chromium lists only devices that capture, so

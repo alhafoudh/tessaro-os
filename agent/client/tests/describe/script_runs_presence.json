@@ -1,0 +1,135 @@
+{
+  "function": "script::runs",
+  "input": {
+    "now": 1790000000,
+    "runs": [
+      {
+        "event": "arrived",
+        "finished": {
+          "local": "",
+          "unix": 1789999990
+        },
+        "result": "success",
+        "run": "presence-arrived-1789999988-4f2a",
+        "started": {
+          "local": "",
+          "unix": 1789999988
+        },
+        "status": "0",
+        "trigger": "presence"
+      },
+      {
+        "event": "far",
+        "finished": {
+          "local": "",
+          "unix": 1789999000
+        },
+        "result": "exit-code",
+        "run": "presence-far-1789998999-0b1c",
+        "started": {
+          "local": "",
+          "unix": 1789998999
+        },
+        "status": "1",
+        "trigger": "presence"
+      },
+      {
+        "finished": {
+          "local": "",
+          "unix": 1789990000
+        },
+        "result": "success",
+        "run": "presence-1789989999-0b1d",
+        "started": {
+          "local": "",
+          "unix": 1789989999
+        },
+        "status": "0",
+        "trigger": "presence"
+      }
+    ]
+  },
+  "output": {
+    "ended": [
+      [
+        [
+          "ok",
+          "run presence-arrived-1789999988-4f2a succeeded after 2s",
+          0
+        ]
+      ],
+      [
+        [
+          "bad",
+          "run presence-far-1789998999-0b1c failed: exit-code 1, after 1s",
+          0
+        ]
+      ],
+      [
+        [
+          "ok",
+          "run presence-1789989999-0b1d succeeded after 1s",
+          0
+        ]
+      ]
+    ],
+    "run_line": [
+      [
+        [
+          "ok",
+          "success",
+          0
+        ],
+        [
+          "plain",
+          ", 10s ago, by someone arriving",
+          0
+        ],
+        [
+          "muted",
+          " (2s)",
+          0
+        ]
+      ],
+      [
+        [
+          "bad",
+          "exit-code 1",
+          0
+        ],
+        [
+          "plain",
+          ", 16min 40s ago, by everyone near stepping back",
+          0
+        ],
+        [
+          "muted",
+          " (1s)",
+          0
+        ]
+      ],
+      [
+        [
+          "ok",
+          "success",
+          0
+        ],
+        [
+          "plain",
+          ", 2h 46min ago, by presence detection",
+          0
+        ],
+        [
+          "muted",
+          " (1s)",
+          0
+        ]
+      ]
+    ],
+    "started_by": [
+      "by someone arriving",
+      "by everyone near stepping back",
+      "by presence detection"
+    ]
+  }
+}

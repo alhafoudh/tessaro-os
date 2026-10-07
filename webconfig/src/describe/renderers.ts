@@ -9,6 +9,7 @@ import * as audio from "./audio";
 import * as browser from "./browser";
 import * as camera from "./camera";
 import * as cec from "./cec";
+import * as presence from "./presence";
 import * as clock from "./clock";
 import * as schedule from "./schedule";
 import * as script from "./script";
@@ -73,6 +74,17 @@ export const renderers: Record<string, (input: any) => unknown> = {
       }
     }),
   }),
+  "presence::triggers": (input) => ({
+    events: presence.EVENTS,
+    words: presence.EVENTS.map(script.presenceEvent),
+    typed: input.map((typed: string) => {
+      try {
+        return { ok: presence.triggers(typed) };
+      } catch (error) {
+        return { err: (error as Error).message };
+      }
+    }),
+  }),
   // --- screen and browser ---
   "screen::show": (input) =>
     Array.isArray(input) ? input.map((one) => lines(screen.show(one))) : lines(screen.show(input)),
@@ -111,6 +123,8 @@ export const renderers: Record<string, (input: any) => unknown> = {
     };
   },
   "camera::list": (input) => lines(camera.list(input)),
+  "camera::presence": (input) => input.map((one: any) => lines(camera.presence(one))),
+  "camera::calibrated": (input) => spans(camera.calibrated(input)),
   "printer::list": (input) => lines(printer.list(input)),
   "printer::show": (input) => facts(printer.show(input)),
   "printer::jobs": (input) => lines(printer.jobs(input)),

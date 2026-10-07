@@ -30,6 +30,15 @@
 SUBSYSTEM=="video4linux", SUBSYSTEMS=="usb", OWNER="root", GROUP="root", MODE="0600", \
     TAG-="uaccess"
 
+# The hidden mirror presence detection reads: root's alone, like the camera,
+# so the page neither lists it nor takes it before tessaro-vision does.
+# tessaro-camera names it `<camera> Vision` (mirrors.rs); v4l2loopback copies
+# the label into the node's name before it registers it
+# (`v4l2_loopback_add`), so this sees it on the add event. devtmpfs makes
+# the node root 0600 before udev runs, so it is never open to weston.
+SUBSYSTEM=="video4linux", ATTR{name}=="*Vision", OWNER="root", GROUP="root", MODE="0600", \
+    TAG-="uaccess"
+
 # One mirror per node that captures video. v4l_id writes the capabilities as
 # ":capture:" for a camera; a UVC metadata node has none of the ones it
 # lists and gets ":", so it starts nothing. BindsTo= in the unit stops the

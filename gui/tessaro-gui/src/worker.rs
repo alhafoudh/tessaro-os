@@ -122,6 +122,9 @@ pub struct Frame {
     pub jpeg: Vec<u8>,
     /// How old the frame was when the device answered.
     pub age: Option<Duration>,
+    /// Presence detection as the device saw it just after, for the faces
+    /// drawn over the frame; `None` from a device without it.
+    pub presence: Option<protocol::presence::PresenceStatus>,
 }
 
 #[derive(Debug, Clone)]
@@ -392,6 +395,9 @@ impl Worker {
                 device,
                 jpeg: shot.jpeg,
                 age: shot.age,
+                presence: tessaro_client::camera::presence(session)
+                    .ok()
+                    .filter(|status| status.enabled),
             }),
             Answer::Refused(error) => Err(error),
             Answer::Lost(why) => {

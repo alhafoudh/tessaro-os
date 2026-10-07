@@ -451,6 +451,7 @@ struct Frame {
     device: String,
     shot: Shot,
     age: Option<std::time::Duration>,
+    presence: Option<protocol::presence::PresenceStatus>,
 }
 
 /// The device actions on the toolbar, confirmed in a dialog first.
@@ -1159,6 +1160,7 @@ impl Device {
                         at: Instant::now(),
                     },
                     age: frame.age,
+                    presence: frame.presence,
                 });
                 self.frame_error = None;
             }
@@ -1795,11 +1797,23 @@ impl Device {
             toolbar = toolbar.push(text(said).size(theme::SMALL).style(theme::muted));
         }
         let picture: Element<'_, Message> = match frame {
-            Some(frame) => iced::widget::image(frame.shot.image.clone())
-                .content_fit(iced::ContentFit::Contain)
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .into(),
+            Some(frame) => {
+                let shown = iced::widget::image(frame.shot.image.clone())
+                    .content_fit(iced::ContentFit::Contain)
+                    .width(Length::Fill)
+                    .height(Length::Fill);
+                // The faces presence detection saw, when it watches this
+                // camera: its status names the camera, the panel the node.
+                let faces = frame.presence.as_ref().and_then(|status| {
+                    let watched =
+                        status.running && status.camera.as_deref() == self.camera_name(device);
+                    status.frame.clone().filter(|_| watched)
+                });
+                match faces {
+                    Some(faces) => iced::widget::stack![shown, crate::faces::view(faces)].into(),
+                    None => shown.into(),
+                }
+            }
             None => text(format!("no snapshot of {device} yet"))
                 .size(theme::SMALL)
                 .style(theme::muted)

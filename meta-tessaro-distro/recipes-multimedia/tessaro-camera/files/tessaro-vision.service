@@ -1,0 +1,65 @@
+[Unit]
+Description=Presence detection on a camera's hidden mirror
+
+# Started and stopped by tessaro-agent with camera.presence.enable, never
+# enabled: no boot target wants it, and the agent starts it at boot when the
+# setting is on. It reads the hidden mirror `<camera> Vision` the camera
+# mirrors add while the setting is on, finds the faces in each frame it looks
+# at and sends them to the agent, which decides what they mean
+# (docs/presence.md). No frame is written anywhere.
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/tessaro-vision
+
+# camera.presence.camera, .model and .fps, as KIOSK_PRESENCE_CAMERA,
+# KIOSK_PRESENCE_MODEL and KIOSK_PRESENCE_FPS. tessaro-agent renders the
+# file and restarts the service when it changes. Missing is the defaults.
+EnvironmentFile=-/run/tessaro-camera/vision.env
+
+# A mirror that stalls makes it look for the camera again by itself; a
+# failure it cannot get past exits non-zero and is started afresh.
+Restart=on-failure
+RestartSec=5
+
+# Where it says how it is doing, status.json: gone with the service, so a
+# stopped one is never mistaken for a running one.
+RuntimeDirectory=tessaro-vision
+RuntimeDirectoryMode=0755
+
+# Inference is the heavy part; the page, the agent and the mirrors come
+# first. One core at most, at a lower priority.
+CPUQuota=100%
+Nice=10
+
+# Root, with no capabilities at all: the hidden mirror is root's alone
+# (0600, 71-tessaro-camera.rules), which is what keeps the page from it.
+# It reads the mirrors' reports in /run/tessaro-camera and sends datagrams to
+# the agent's socket in /run/tessaro-kiosk, which a read-only /run allows.
+User=root
+CapabilityBoundingSet=
+AmbientCapabilities=
+NoNewPrivileges=yes
+
+# Only video4linux nodes: the hidden mirror's number is only known once the
+# camera mirror makes it.
+DevicePolicy=closed
+DeviceAllow=char-video4linux rw
+
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateNetwork=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service

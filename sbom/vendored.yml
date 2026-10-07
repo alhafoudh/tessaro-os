@@ -22,3 +22,28 @@
   license: OFL-1.1
   source: https://github.com/googlefonts/manrope
   path: gui/tessaro-style/fonts/OFL.txt
+
+# MediaPipe's face detectors, converted to ONNX by `mise run vision:models`
+# (agent/vision/models/convert.py, which pins the tag and the sha256).
+- component: tessaro-kiosk
+  name: MediaPipe face_detection_full_range
+  version: "0.8.9"
+  license: Apache-2.0
+  source: https://github.com/google/mediapipe/blob/v0.8.9/mediapipe/modules/face_detection/face_detection_full_range.tflite
+  path: agent/vision/models/face-full.onnx
+
+- component: tessaro-kiosk
+  name: MediaPipe face_detection_short_range
+  version: "0.8.9"
+  license: Apache-2.0
+  source: https://github.com/google/mediapipe/blob/v0.8.9/mediapipe/modules/face_detection/face_detection_short_range.tflite
+  path: agent/vision/models/face-short.onnx
+
+# Two portrait photographs, scaled down: the faces the vision tests and the
+# e2e presence lane's clip are made of. Not shipped.
+- component: tests
+  name: Opdracht Bonera 2 pasfoto's (Nationaal Archief 902-7906)
+  version: "1"
+  license: CC0-1.0
+  source: https://commons.wikimedia.org/wiki/File:Opdracht_Bonera_2_pasfoto%27s,_Bestanddeelnr_902-7906.jpg
+  path: agent/vision/tests/two-faces.jpg

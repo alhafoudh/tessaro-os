@@ -76,6 +76,12 @@ start.
   10.0.2.2`: no forward is needed, the guest connects out through slirp.
   The emulator's log is `build/e2e/camera.usbcam.log`. How it works is
   **Testing in qemu** in [camera.md](camera.md).
+* **The presence lane loops a clip of faces through the same fake camera.**
+  `presence_spec.rb` makes `build/e2e/presence-clip.mp4` with the host's
+  ffmpeg from `agent/vision/tests/two-faces.jpg` (grey, then the faces,
+  then grey again) and hands it to `usbcam.rb` (`Usbcam.new(lane, clip:)`),
+  so arriving and leaving come round every 20s without anyone in front of
+  a camera ([presence.md](presence.md), Testing).
 * **The CEC lane talks over vivid's emulated HDMI-CEC bus.** qemu emulates
   no CEC, so `cec_spec.rb` loads `vivid` (built for qemux86-64 only,
   `tessaro-qemu-cec.cfg`), points the agent at the adapter of vivid's HDMI

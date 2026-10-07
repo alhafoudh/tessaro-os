@@ -708,6 +708,180 @@
     }
   },
   {
+    "name": "camera.presence.enable",
+    "env": "KIOSK_PRESENCE",
+    "applies": [
+      "camera",
+      "vision"
+    ],
+    "guarded": false,
+    "doc": "Presence detection: find the faces in front of the screen on camera.presence.camera and tell the journal, the page and scripts when someone arrives, leaves or comes near. Each camera gets a hidden mirror for it, which restarts the mirrors once. No picture is kept. `tessaro-ctl camera presence on|off`.",
+    "values": "1 or 0 (on/off, true/false, yes/no)",
+    "default": null,
+    "value": null,
+    "input": {
+      "kind": "flag"
+    }
+  },
+  {
+    "name": "camera.presence.camera",
+    "env": "KIOSK_PRESENCE_CAMERA",
+    "applies": [
+      "vision"
+    ],
+    "guarded": false,
+    "doc": "The camera presence detection watches: auto for the first one plugged in, or a camera's name from `tessaro-ctl camera list`.",
+    "values": "auto, or a camera's name from `tessaro-ctl camera list`",
+    "default": null,
+    "value": null,
+    "input": {
+      "kind": "text"
+    }
+  },
+  {
+    "name": "camera.presence.model",
+    "env": "KIOSK_PRESENCE_MODEL",
+    "applies": [
+      "vision"
+    ],
+    "guarded": false,
+    "doc": "The face detector: face-full sees faces up to about 5 m, face-short up to about 2 m for a fraction of the CPU.",
+    "values": "one of: face-full, face-short",
+    "default": null,
+    "value": null,
+    "input": {
+      "kind": "choice",
+      "choices": [
+        "face-full",
+        "face-short"
+      ]
+    }
+  },
+  {
+    "name": "camera.presence.fps",
+    "env": "KIOSK_PRESENCE_FPS",
+    "applies": [
+      "vision"
+    ],
+    "guarded": false,
+    "doc": "Frames a second presence detection looks at, at most. More notices people sooner and costs CPU; `tessaro-ctl camera presence` shows what the device keeps up with.",
+    "values": "a whole number, 1 to 15",
+    "default": null,
+    "value": null,
+    "input": {
+      "kind": "int",
+      "min": 1,
+      "max": 15
+    }
+  },
+  {
+    "name": "camera.presence.confidence",
+    "env": "KIOSK_PRESENCE_CONFIDENCE",
+    "applies": [
+      "agent"
+    ],
+    "guarded": false,
+    "doc": "How sure the detector has to be that it sees a face, 0.3 to 0.95. Lower finds faces further away and side-on, and mistakes a poster for one more often.",
+    "values": "a number, 0.3 to 0.95",
+    "default": null,
+    "value": null,
+    "input": {
+      "kind": "text"
+    }
+  },
+  {
+    "name": "camera.presence.near",
+    "env": "KIOSK_PRESENCE_NEAR",
+    "applies": [
+      "agent"
+    ],
+    "guarded": false,
+    "doc": "Meters within which someone counts as near: the near and far events, and near in every face. off for no near events. Distances come from the face's size and camera.presence.fov.",
+    "values": "a number, 0.3 to 10, or off",
+    "default": null,
+    "value": null,
+    "input": {
+      "kind": "text"
+    }
+  },
+  {
+    "name": "camera.presence.fov",
+    "env": "KIOSK_PRESENCE_FOV",
+    "applies": [
+      "agent"
+    ],
+    "guarded": false,
+    "doc": "The camera's horizontal field of view in degrees, which turns a face's width into its distance. `tessaro-ctl camera calibrate --distance 1` measures it with someone standing 1 m away.",
+    "values": "a whole number, 20 to 170",
+    "default": null,
+    "value": null,
+    "input": {
+      "kind": "int",
+      "min": 20,
+      "max": 170
+    }
+  },
+  {
+    "name": "camera.presence.arrive",
+    "env": "KIOSK_PRESENCE_ARRIVE",
+    "applies": [
+      "agent"
+    ],
+    "guarded": false,
+    "doc": "Seconds a face has to stay in view before someone has arrived, so a passer-by glancing over does not count.",
+    "values": "a number, 0 to 10",
+    "default": null,
+    "value": null,
+    "input": {
+      "kind": "text"
+    }
+  },
+  {
+    "name": "camera.presence.linger",
+    "env": "KIOSK_PRESENCE_LINGER",
+    "applies": [
+      "agent"
+    ],
+    "guarded": false,
+    "doc": "Seconds without a face before someone has left, so looking away for a moment does not count.",
+    "values": "a number, 0.5 to 60",
+    "default": null,
+    "value": null,
+    "input": {
+      "kind": "text"
+    }
+  },
+  {
+    "name": "camera.presence.page",
+    "env": "KIOSK_PRESENCE_PAGE",
+    "applies": [
+      "agent"
+    ],
+    "guarded": false,
+    "doc": "Tell the page about presence: a tessaro:presence event on window when someone arrives, leaves or comes near, and the faces with tessaro.presence.watch(). Needs browser.bridge.mode config or actions.",
+    "values": "1 or 0 (on/off, true/false, yes/no)",
+    "default": null,
+    "value": null,
+    "input": {
+      "kind": "flag"
+    }
+  },
+  {
+    "name": "camera.presence.scripts",
+    "env": "KIOSK_PRESENCE_SCRIPTS",
+    "applies": [
+      "agent"
+    ],
+    "guarded": false,
+    "doc": "Run the scripts that run on presence events (`tessaro-ctl script set --presence`). 0 runs none of them.",
+    "values": "1 or 0 (on/off, true/false, yes/no)",
+    "default": null,
+    "value": null,
+    "input": {
+      "kind": "flag"
+    }
+  },
+  {
     "name": "printer.enable",
     "env": "KIOSK_PRINTING",
     "applies": [

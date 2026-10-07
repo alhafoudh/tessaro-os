@@ -78,6 +78,9 @@ pub struct State {
     volume: Option<u8>,
     input_volume: Option<u8>,
     cameras: Option<CameraList>,
+    /// Presence detection, for the Camera page; `None` from a device
+    /// without it.
+    presence: Option<protocol::presence::PresenceStatus>,
     time: Option<TimeStatus>,
     scripts: Vec<ScriptInfo>,
     schedules: Vec<ScheduleInfo>,
@@ -228,6 +231,8 @@ enum Action {
     CameraFormat,
     CameraSize,
     CameraMirrors,
+    CameraPresence,
+    CameraCalibrate,
 }
 
 #[derive(Debug, Clone)]
@@ -293,6 +298,8 @@ pub enum Msg {
     CameraFormat,
     CameraSize,
     CameraMirrors,
+    CameraPresence,
+    CameraCalibrate,
     // time
     Timezone,
     Ntp,
@@ -568,6 +575,8 @@ const CONCURRENCY: &[&str] = Concurrency::NAMES;
 const PAGE_MAY_RUN: &str = "Page may run it";
 /// The script dialog's CEC events: comma separated, as `--cec` takes them.
 const CEC_EVENTS: &str = "Run on CEC events";
+/// Its presence events, the same way as `--presence` takes them.
+const PRESENCE_EVENTS: &str = "Run on presence events";
 
 /// The script dialog: new, or `existing` to change.
 fn script_form(existing: Option<&ScriptInfo>) -> Form {
@@ -631,6 +640,11 @@ fn script_form(existing: Option<&ScriptInfo>) -> Form {
         CEC_EVENTS,
         typed.cec,
         "tv-on, tv-standby, source-gained, source-lost, key, key:NAME",
+    ))
+    .field(Field::text(
+        PRESENCE_EVENTS,
+        typed.presence,
+        "arrived, left, near, far",
     ))
     .field(Field::check(PAGE_MAY_RUN, typed.bridge))
 }
@@ -1260,7 +1274,10 @@ impl Device {
             }
             Page::Storage => self.call("storage", fetch::<api::storage::Show>()),
             Page::Audio => self.call("audio", fetch::<api::audio::Show>()),
-            Page::Camera => self.call("camera", fetch::<api::camera::List>()),
+            Page::Camera => {
+                self.call("camera", fetch::<api::camera::List>());
+                self.call("camera.presence", fetch::<api::camera::Presence>());
+            }
             Page::Time => self.call("time", fetch::<api::time::Show>()),
             Page::Scripts => self.call("scripts", fetch::<api::script::List>()),
             Page::Schedules => {
@@ -1313,6 +1330,12 @@ impl Device {
                 Some(result) => result,
                 None => return,
             },
+            // A device from before presence detection has no such endpoint:
+            // the page goes without it rather than show an error.
+            "camera.presence" if result.is_err() => {
+                self.pages.presence = None;
+                return;
+            }
             _ => result,
         };
         let value = match result {
@@ -1614,6 +1637,12 @@ impl Device {
                 }
             }
             "camera" => self.pages.cameras = Some(parse(value)?),
+            "camera.presence" => self.pages.presence = Some(parse(value)?),
+            "camera.calibrated" => {
+                let calibrated: protocol::presence::Calibrated = parse(value)?;
+                self.log_line(describe::camera::calibrated(&calibrated));
+                self.call("camera.presence", fetch::<api::camera::Presence>());
+            }
             "time" => self.pages.time = Some(parse(value)?),
             "time.zones" => {
                 let zones = zones(parse(value)?);
@@ -2505,6 +2534,28 @@ impl Device {
                         .field(Field::choice("Mirrors", current, MIRROR_COUNTS)),
                 );
             }
+            Msg::CameraPresence => {
+                let status = self.pages.presence.as_ref();
+                let on = status.is_some_and(|status| status.enabled);
+                let camera = status
+                    .and_then(|status| status.camera.clone())
+                    .unwrap_or_default();
+                let near = status
+                    .and_then(|status| status.near_m)
+                    .map_or_else(|| "off".to_string(), |meters| format!("{meters}"));
+                self.form(
+                    Form::new("Presence detection", "Apply", Action::CameraPresence)
+                        .intro("Find the faces in front of the screen and tell the journal, the page and scripts when someone arrives, leaves or comes near. Each camera gets a hidden mirror for it, so the camera mirrors restart once. No picture is kept.")
+                        .field(Field::check("Detect presence", on))
+                        .field(Field::text("Camera", camera, "the first one"))
+                        .field(Field::text("Near (meters)", near, "1.5, or off")),
+                );
+            }
+            Msg::CameraCalibrate => self.form(
+                Form::new("Calibrate distances", "Measure", Action::CameraCalibrate)
+                    .intro("One person stands this far from the camera, facing it, with nobody else in view. The device measures their face and saves the camera's field of view, so every distance is right from then on.")
+                    .field(Field::text("Distance (meters)", "1", "1")),
+            ),
             Msg::Timezone => match ZONES.get() {
                 Some(zones) => self.timezone_form(zones),
                 None => self.call("time.zones", fetch::<api::time::Zones>()),
@@ -3218,6 +3269,35 @@ impl Device {
                 self.set(&[(keys::CAMERA_MIRRORS, form.value("Mirrors"))]);
                 self.call("camera", fetch::<api::camera::List>());
             }
+            Action::CameraPresence => {
+                // As `tessaro-ctl camera presence on|off --camera --near`.
+                let on = form.checked("Detect presence");
+                let values = tessaro_client::camera::presence_change(
+                    on,
+                    on.then(|| form.value("Camera")),
+                    on.then(|| form.value("Near (meters)")),
+                )?;
+                let values: Vec<(&str, &str)> = values
+                    .iter()
+                    .map(|(key, value)| (key.as_str(), value.as_str()))
+                    .collect();
+                self.set(&values);
+                self.call("camera.presence", fetch::<api::camera::Presence>());
+            }
+            Action::CameraCalibrate => {
+                let distance: f64 = form
+                    .value("Distance (meters)")
+                    .trim()
+                    .parse()
+                    .map_err(|_| "the distance is a number of meters, e.g. 1.5".to_string())?;
+                if !(0.3..=10.0).contains(&distance) {
+                    return Err("stand 0.3 to 10 m from the camera to calibrate".to_string());
+                }
+                self.call(
+                    "camera.calibrated",
+                    send::<api::camera::Calibrate>(api::CalibrateBody { distance }),
+                );
+            }
             Action::Timezone => {
                 let zone = form.value("Timezone").trim();
                 super::check(keys::TIMEZONE, zone)?;
@@ -3402,6 +3482,7 @@ impl Device {
                     concurrency: form.value("Concurrency").to_string(),
                     bridge: form.checked(PAGE_MAY_RUN),
                     cec: form.value(CEC_EVENTS).to_string(),
+                    presence: form.value(PRESENCE_EVENTS).to_string(),
                 };
                 let save = match id {
                     None => send::<api::script::Create>(typed.spec()?),
@@ -5345,6 +5426,8 @@ impl Device {
             action("Format ...", self.when(Msg::CameraFormat)),
             action("Size ...", self.when(Msg::CameraSize)),
             action("Mirrors ...", self.when(Msg::CameraMirrors)),
+            action("Presence ...", self.when(Msg::CameraPresence)),
+            action("Calibrate ...", self.when(Msg::CameraCalibrate)),
         ];
         let Some(list) = &self.pages.cameras else {
             return self.page("camera", actions, Vec::new(), Vec::new());
@@ -5439,6 +5522,13 @@ impl Device {
         }
         body.push(self.table("cameras", CAMERAS, cameras, Length::Fixed(TABLE_HEIGHT)));
         body.push(self.table("camera.modes", MODES, modes, Length::Fill));
+        // Presence detection, as `tessaro-ctl camera presence` says it; the
+        // camera panel draws the faces over the picture.
+        if let Some(status) = &self.pages.presence {
+            for line in describe::camera::presence(status) {
+                body.push(theme::text_line(&line, theme::FONT));
+            }
+        }
         self.page("camera", actions, Vec::new(), body)
     }
 

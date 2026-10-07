@@ -2,12 +2,15 @@
 // camera_panel_view): the snapshot of one camera, as `tessaro-ctl camera
 // snapshot` saves it, on Take or every second while Live. Double-clicking a
 // camera on the Camera page opens it on that camera, Close closes it; live
-// snapshots are taken only while it is open.
+// snapshots are taken only while it is open. While presence detection
+// watches the camera, the faces it sees are boxed over the picture, green
+// while near.
 
 import { useQuery } from "@tanstack/react-query";
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
 
 import { answer, client } from "../api/client";
+import { fixed } from "../describe/common";
 import { useDevice } from "../device/DeviceContext";
 import { Button } from "../ui/controls";
 import { LIVE_FRAME_MS, saveShot, takeCameraSnapshot, useAge, useShots } from "./useScreenshot";
@@ -38,6 +41,16 @@ export function CameraPanel({ device, onClose }: { device: string; onClose: () =
   });
   const title = shown.data?.cameras.find((one) => one.device === device)?.name ?? "Camera";
   const name = status?.node.name ?? "camera";
+  // The faces presence detection sees, drawn over the picture when it
+  // watches this camera: its status names the camera, the panel the node.
+  const presence = useQuery({
+    queryKey: ["camera.presence"],
+    queryFn: () => answer(client.GET("/api/v1/camera/presence")),
+    retry: false,
+    refetchInterval: live && online ? LIVE_FRAME_MS : false,
+  });
+  const watched = presence.data?.enabled && presence.data.running && presence.data.camera === title;
+  const faces = watched ? (presence.data?.frame?.faces ?? []) : [];
 
   return (
     <aside aria-label="Camera" className="flex min-h-0 flex-1 flex-col gap-1 p-1.5">
@@ -70,7 +83,33 @@ export function CameraPanel({ device, onClose }: { device: string; onClose: () =
       </div>
       <div className="flex min-h-40 flex-1 items-start justify-center overflow-auto border border-border bg-background p-1">
         {shot ? (
-          <img src={shot.url} alt={`What ${device} sees`} className="max-h-full max-w-full object-contain" />
+          <div className="relative inline-block max-h-full max-w-full">
+            <img src={shot.url} alt={`What ${device} sees`} className="block max-h-full max-w-full object-contain" />
+            {faces.length > 0 && (
+              <svg
+                viewBox="0 0 1 1"
+                preserveAspectRatio="none"
+                className="pointer-events-none absolute inset-0 h-full w-full"
+                aria-label="Faces presence detection sees"
+              >
+                {faces.map((face) => (
+                  <rect
+                    key={face.id}
+                    x={face.box.x}
+                    y={face.box.y}
+                    width={face.box.w}
+                    height={face.box.h}
+                    fill="none"
+                    strokeWidth={2}
+                    vectorEffect="non-scaling-stroke"
+                    className={face.near ? "stroke-success" : "stroke-primary"}
+                  >
+                    <title>{`#${face.id} ${fixed(face.distance, 1)} m${face.facing ? ", facing" : ""}`}</title>
+                  </rect>
+                ))}
+              </svg>
+            )}
+          </div>
         ) : (
           <span className="self-center text-sm text-muted">no snapshot of {device} yet</span>
         )}

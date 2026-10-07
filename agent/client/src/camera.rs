@@ -1,10 +1,14 @@
-//! Camera snapshots, for `tessaro-ctl camera snapshot` and the GUI's Camera
-//! page: which camera a snapshot is of, one snapshot, and a new one every
-//! so often until the caller stops.
+//! Camera snapshots and presence detection, for `tessaro-ctl camera` and
+//! the GUI's Camera page: which camera a snapshot is of, one snapshot, and a
+//! new one every so often until the caller stops; who is in front of the
+//! screen, the same way; calibrating the distances.
 
+use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
-use protocol::api::{self, CameraRef, HEADER_FRAME_AGE};
+use protocol::api::{self, CalibrateBody, CameraRef, HEADER_FRAME_AGE};
+use protocol::keys;
+use protocol::presence::{Calibrated, PresenceStatus};
 use protocol::CameraList;
 
 use crate::connect::{Answer, Session};
@@ -79,6 +83,72 @@ pub fn age_text(age: Duration) -> String {
     format!("frame {} ms old", age.as_millis())
 }
 
+/// Whether anyone is in front of the screen, and how presence detection
+/// runs: `tessaro-ctl camera presence` and the Camera page.
+pub fn presence(session: &mut Session) -> Result<PresenceStatus, String> {
+    session.fetch::<api::camera::Presence>()
+}
+
+/// The presence status every `interval`, each handed to `each`, until the
+/// report says stop. A failed read is reported and the watching goes on.
+pub fn watch_presence(
+    session: &mut Session,
+    interval: Duration,
+    report: &mut dyn Report,
+    mut each: impl FnMut(PresenceStatus) -> Result<(), String>,
+) -> Result<(), String> {
+    let interval = interval.max(Duration::from_millis(100));
+    loop {
+        if report.stopped() {
+            return Ok(());
+        }
+        let started = Instant::now();
+        match presence(session) {
+            Ok(status) => each(status)?,
+            Err(error) => report.line(Line::of(Tone::Bad, error)),
+        }
+        let until = started + interval;
+        while Instant::now() < until && !report.stopped() {
+            std::thread::sleep(Duration::from_millis(50).min(until - Instant::now()));
+        }
+    }
+}
+
+/// The settings `camera presence on|off` saves: camera.presence.enable, and
+/// with `on` the camera and the near distance where given (empty is not
+/// given). Off with either is refused, as the command line refuses it.
+pub fn presence_change(
+    on: bool,
+    camera: Option<&str>,
+    near: Option<&str>,
+) -> Result<BTreeMap<String, String>, String> {
+    let camera = camera.map(str::trim).filter(|value| !value.is_empty());
+    let near = near.map(str::trim).filter(|value| !value.is_empty());
+    if !on && (camera.is_some() || near.is_some()) {
+        return Err("--camera and --near go with `tessaro-ctl camera presence on`".to_string());
+    }
+    let mut values = BTreeMap::from([(
+        keys::PRESENCE_ENABLE.to_string(),
+        if on { "1" } else { "0" }.to_string(),
+    )]);
+    for (key, value) in [(keys::PRESENCE_CAMERA, camera), (keys::PRESENCE_NEAR, near)] {
+        if let Some(value) = value {
+            let key_info = keys::find(key).ok_or_else(|| format!("no key {key}"))?;
+            values.insert(key.to_string(), keys::validate(key_info, value)?);
+        }
+    }
+    Ok(values)
+}
+
+/// Measure camera.presence.fov from the one face in view, of someone
+/// standing `distance` meters away, and save it.
+pub fn calibrate(session: &mut Session, distance: f64) -> Result<Calibrated, String> {
+    if !(0.3..=10.0).contains(&distance) {
+        return Err("stand 0.3 to 10 m from the camera to calibrate".to_string());
+    }
+    session.send::<api::camera::Calibrate>(CalibrateBody { distance })
+}
+
 /// A snapshot of `device` every `interval`, each handed to `each`, until
 /// the report says stop. A failed one is reported and the watching goes
 /// on, as `ping::device` does with a lost round trip.
@@ -113,6 +183,19 @@ mod tests {
     use super::*;
     use protocol::CameraInfo;
 
+    #[test]
+    fn presence_on_takes_a_camera_and_a_near_distance_and_off_takes_neither() {
+        let on = presence_change(true, Some("HD Webcam"), Some("1.50")).unwrap();
+        assert_eq!(on[keys::PRESENCE_ENABLE], "1");
+        assert_eq!(on[keys::PRESENCE_CAMERA], "HD Webcam");
+        assert_eq!(on[keys::PRESENCE_NEAR], "1.5");
+        let off = presence_change(false, None, Some(" ")).unwrap();
+        assert_eq!(off.len(), 1);
+        assert_eq!(off[keys::PRESENCE_ENABLE], "0");
+        assert!(presence_change(false, None, Some("2")).is_err());
+        assert!(presence_change(true, None, Some("far")).is_err());
+    }
+
     fn list(devices: &[&str]) -> CameraList {
         CameraList {
             format: "auto".to_string(),
@@ -125,6 +208,7 @@ mod tests {
                     device: device.to_string(),
                     bus: "usb-1".to_string(),
                     mirrors: Vec::new(),
+                    vision: None,
                     mode: None,
                     fallback: None,
                     error: None,

@@ -371,6 +371,7 @@ pub fn restarts(consumer: Consumer) -> &'static str {
         Consumer::Camera => {
             "the camera mirrors (tessaro-camera@*.service); a page showing a camera asks for it again"
         }
+        Consumer::Vision => "presence detection (tessaro-vision.service)",
     }
 }
 
@@ -387,6 +388,7 @@ pub fn restarts_short(consumer: Consumer) -> &'static str {
         Consumer::Time => "clock",
         Consumer::Proxy => "local proxy (browser, agent on switching)",
         Consumer::Camera => "camera mirrors",
+        Consumer::Vision => "presence detection",
     }
 }
 

@@ -211,6 +211,7 @@ function ScriptDialog({
           concurrency: "overlap",
           bridge: false,
           cec: "",
+          presence: "",
         },
   );
   const [error, setError] = useState<string | null>(null);
@@ -255,7 +256,8 @@ function ScriptDialog({
     >
       <Intro>
         The body runs with /bin/sh as root, from /; write tessaro-ctl commands out in full. Run it now from this page,
-        on calendar times from Schedules, from the kiosk page when it may, or on the TV's HDMI-CEC events.
+        on calendar times from Schedules, from the kiosk page when it may, on the TV's HDMI-CEC events, or when someone
+        arrives in front of the screen or leaves.
       </Intro>
       <Field label="Name">
         <input
@@ -326,6 +328,17 @@ function ScriptDialog({
           value={typed.cec}
           onChange={(event) => edit({ cec: event.target.value })}
           placeholder="none, or tv-standby, key:red"
+          spellCheck={false}
+        />
+      </Field>
+      <Field
+        label="Run on presence events"
+        hint="comma separated: arrived, left, near, far; empty for none. Needs camera.presence.enable."
+      >
+        <input
+          value={typed.presence}
+          onChange={(event) => edit({ presence: event.target.value })}
+          placeholder="none, or arrived, left"
           spellCheck={false}
         />
       </Field>

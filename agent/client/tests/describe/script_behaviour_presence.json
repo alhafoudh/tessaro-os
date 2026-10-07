@@ -1,0 +1,27 @@
+{
+  "function": "script::behaviour",
+  "input": [
+    {
+      "body": "true\n",
+      "name": "greet",
+      "presence": [
+        "arrived",
+        "near"
+      ]
+    },
+    {
+      "body": "true\n",
+      "cec": [
+        "tv-on"
+      ],
+      "name": "both",
+      "presence": [
+        "left"
+      ]
+    }
+  ],
+  "output": [
+    "stop on error, overlap, runs on presence arrived near",
+    "stop on error, overlap, runs on tv-on, runs on presence left"
+  ]
+}

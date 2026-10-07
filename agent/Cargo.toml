@@ -13,6 +13,8 @@
 #                   by tessaro-flash from the initramfs.
 #   camera/         tessaro-camera, which mirrors a USB camera into a
 #                   v4l2loopback device, one process per camera.
+#   vision/         tessaro-vision, which finds faces on a camera's hidden
+#                   mirror for presence detection.
 #
 # The recipe builds the whole workspace from this directory (S is agent/), and
 # cargo.bbclass installs every binary it finds, so all of them land in /usr/bin.
@@ -20,7 +22,7 @@
 # own, and reaches protocol/ and client/ by path.
 [workspace]
 resolver = "2"
-members = ["protocol", "client", "db", "tessaro-agent", "tessaro-ctl", "update", "camera"]
+members = ["protocol", "client", "db", "tessaro-agent", "tessaro-ctl", "update", "camera", "vision"]
 
 [workspace.package]
 version = "1.0.0"

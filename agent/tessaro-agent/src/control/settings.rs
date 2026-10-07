@@ -351,6 +351,7 @@ impl Control {
         // off, which its clients are built for.
         let config = self.config_from(&state.settings).await;
         let agent = restarts_agent(changed, &config, self.proxy);
+        let presence = config.presence.enable;
         if apply {
             // Before any browser restart below, so the browser comes back to
             // the new page with the new scripts.
@@ -438,6 +439,29 @@ impl Control {
                 if let Err(err) = outcome {
                     return Reply::err(format!(
                         "saved as revision {}, but a camera did not follow: {err}",
+                        state.revision
+                    ));
+                }
+            }
+            // Presence detection after the mirrors, which add or drop the
+            // hidden one it reads: running while camera.presence.enable is on,
+            // restarted when what it watches with changed.
+            if reads(Consumer::Vision) {
+                let unit = &self.paths.vision_unit;
+                let switched = changed
+                    .iter()
+                    .any(|(_, key)| key.name == keys::PRESENCE_ENABLE);
+                let outcome = if !presence {
+                    self.bus.stop(unit).await
+                } else if switched || rendered.vision_changed {
+                    let outcome = self.bus.restart(unit).await;
+                    outcome.map(|()| restarted.push(unit.clone()))
+                } else {
+                    Ok(())
+                };
+                if let Err(err) = outcome {
+                    return Reply::err(format!(
+                        "saved as revision {}, but presence detection did not follow: {err}",
                         state.revision
                     ));
                 }

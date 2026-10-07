@@ -132,6 +132,25 @@ fn render(function: &str, input: &Value) -> Value {
                     .collect::<Vec<_>>(),
             })
         }
+        // The presence events a script runs on, what `--presence` and the
+        // script dialogs make of what was typed, and the events in words.
+        "presence::triggers" => {
+            let typed: Vec<String> = from(input);
+            json!({
+                "events": protocol::presence::EVENTS,
+                "words": protocol::presence::EVENTS
+                    .iter()
+                    .map(|event| tessaro_client::script::presence_event(event))
+                    .collect::<Vec<_>>(),
+                "typed": typed
+                    .iter()
+                    .map(|typed| match protocol::presence::triggers(typed) {
+                        Ok(triggers) => json!({ "ok": triggers }),
+                        Err(err) => json!({ "err": err }),
+                    })
+                    .collect::<Vec<_>>(),
+            })
+        }
         // --- screen and browser ---
         "screen::show" => match input.as_array() {
             Some(cases) => Value::Array(
@@ -231,6 +250,16 @@ fn render(function: &str, input: &Value) -> Value {
             json!({ "facts": facts(&shown), "nothing": nothing.as_ref().map(line), "grows": plan.grows() })
         }
         "camera::list" => lines(&camera::list(&from(input))),
+        "camera::presence" => {
+            let cases: Vec<protocol::presence::PresenceStatus> = from(input);
+            Value::Array(
+                cases
+                    .iter()
+                    .map(|one| lines(&camera::presence(one)))
+                    .collect(),
+            )
+        }
+        "camera::calibrated" => line(&camera::calibrated(&from(input))),
         "printer::list" => lines(&printer::list(&from(input))),
         "printer::show" => facts(&printer::show(&from(input))),
         "printer::jobs" => {

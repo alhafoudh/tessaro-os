@@ -237,7 +237,7 @@ fn zeroed<T>() -> T {
 }
 
 /// `ioctl(fd, request, arg)`, retried on EINTR.
-pub fn ioctl<T>(fd: RawFd, request: u64, arg: *mut T) -> io::Result<i32> {
+pub(crate) fn ioctl<T>(fd: RawFd, request: u64, arg: *mut T) -> io::Result<i32> {
     loop {
         // SAFETY: every request constant is paired with the struct its size
         // is encoded from, and `arg` points at one.

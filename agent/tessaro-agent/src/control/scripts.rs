@@ -34,9 +34,10 @@ const FOLLOW_MAX: Duration = Duration::from_secs(24 * 3600);
 /// Polls in a row with the run gone from systemd and no record before the
 /// run is taken as ended without one.
 const GONE_POLLS: u32 = 3;
-/// The most runs one script starts on CEC events in `CEC_WINDOW`.
-const CEC_BURST: usize = 10;
-const CEC_WINDOW: Duration = Duration::from_secs(60);
+/// The most runs one script starts on one kind of event, CEC or presence,
+/// in `EVENT_WINDOW`.
+const EVENT_BURST: usize = 10;
+const EVENT_WINDOW: Duration = Duration::from_secs(60);
 
 /// What `script-set` changes; `None` keeps what is there.
 pub(super) struct Change {
@@ -48,6 +49,7 @@ pub(super) struct Change {
     pub concurrency: Option<Concurrency>,
     pub bridge: Option<bool>,
     pub cec: Option<Vec<String>>,
+    pub presence: Option<Vec<String>>,
 }
 
 /// Who asked for a run, the first word of its instance.
@@ -164,6 +166,9 @@ impl Control {
                 }
                 if let Some(cec) = change.cec {
                     spec.cec = cec;
+                }
+                if let Some(presence) = change.presence {
+                    spec.presence = presence;
                 }
                 let id = all.scripts[at].id.clone();
                 let others: Vec<&Script> =
@@ -295,27 +300,45 @@ impl Control {
 
     /// Start a run of every script that runs on this CEC event, `key` for a
     /// remote key, and leave it: how it ended is in its record, as for a
-    /// schedule's run. Each script starts at most `CEC_BURST` runs in
-    /// `CEC_WINDOW`, so a remote key held down cannot pile up root shells.
+    /// schedule's run. Each script starts at most `EVENT_BURST` runs in
+    /// `EVENT_WINDOW`, so a remote key held down cannot pile up root shells.
     pub(super) async fn cec_scripts(&self, event: &str, key: Option<&str>) {
+        let word = match key {
+            Some(key) => format!("key:{key}"),
+            None => event.to_string(),
+        };
+        let wanted = |script: &Script| protocol::cec::runs_on(&script.spec.cec, event, key);
+        self.event_scripts("cec", "CEC", &word, wanted).await;
+    }
+
+    /// The same for a presence event (`arrived`, `left`, `near`, `far`).
+    pub(super) async fn presence_scripts(&self, event: &str) {
+        let wanted = |script: &Script| protocol::presence::runs_on(&script.spec.presence, event);
+        self.event_scripts("presence", "presence", event, wanted)
+            .await;
+    }
+
+    /// Start a run of every script `wanted` picks, as `<trigger>-<word>-...`,
+    /// with each script's runs on `trigger` events held to `EVENT_BURST` in
+    /// `EVENT_WINDOW`. `what` names the events in the journal.
+    async fn event_scripts(
+        &self,
+        trigger: &str,
+        what: &str,
+        word: &str,
+        wanted: impl Fn(&Script) -> bool,
+    ) {
         if !self.paths.manage_schedules {
             return;
         }
         let all = match self.read_scripts().await {
             Ok(all) => all,
             Err(err) => {
-                self.log.info(format!("cec: the scripts: {err}"));
+                self.log.info(format!("{trigger}: the scripts: {err}"));
                 return;
             }
         };
-        let word = match key {
-            Some(key) => format!("key:{key}"),
-            None => event.to_string(),
-        };
-        let wanted: Vec<&Script> = all
-            .iter()
-            .filter(|script| protocol::cec::runs_on(&script.spec.cec, event, key))
-            .collect();
+        let wanted: Vec<&Script> = all.iter().filter(|script| wanted(script)).collect();
         if wanted.is_empty() {
             return;
         }
@@ -323,10 +346,10 @@ impl Control {
 
         for script in wanted {
             let name = &script.spec.name;
-            if !self.cec_run_allowed(&script.id) {
+            if !self.event_run_allowed(trigger, &script.id) {
                 self.log.info(format!(
-                    "script {name}: more than {CEC_BURST} runs on CEC events in {}s; {word} skipped",
-                    CEC_WINDOW.as_secs()
+                    "script {name}: more than {EVENT_BURST} runs on {what} events in {}s; {word} skipped",
+                    EVENT_WINDOW.as_secs()
                 ));
                 continue;
             }
@@ -344,10 +367,10 @@ impl Control {
             let Ok(random) = crate::auth::random(2) else {
                 continue;
             };
-            let instance = format!("cec-{word}-{started}-{}", protocol::hex(&random));
+            let instance = format!("{trigger}-{word}-{started}-{}", protocol::hex(&random));
             match self.bus.start(&scripts::run_unit(script, &instance)).await {
                 Ok(_) => self.log.info(format!(
-                    "script {name} ({}) run {instance} started by the CEC event {word}",
+                    "script {name} ({}) run {instance} started by the {what} event {word}",
                     script.id
                 )),
                 Err(err) => self
@@ -357,13 +380,14 @@ impl Control {
         }
     }
 
-    /// Room for one more CEC run of script `id` in `CEC_WINDOW`, taken.
-    fn cec_run_allowed(&self, id: &str) -> bool {
+    /// Room for one more run of script `id` on `trigger` events in
+    /// `EVENT_WINDOW`, taken. Each kind of event has its own window.
+    fn event_run_allowed(&self, trigger: &str, id: &str) -> bool {
         let now = std::time::Instant::now();
-        let mut runs = crate::sync::lock(&self.cec_runs);
-        let recent = runs.entry(id.to_string()).or_default();
-        recent.retain(|at| now.duration_since(*at) < CEC_WINDOW);
-        if recent.len() >= CEC_BURST {
+        let mut runs = crate::sync::lock(&self.event_runs);
+        let recent = runs.entry(format!("{trigger}:{id}")).or_default();
+        recent.retain(|at| now.duration_since(*at) < EVENT_WINDOW);
+        if recent.len() >= EVENT_BURST {
             return false;
         }
         recent.push(now);

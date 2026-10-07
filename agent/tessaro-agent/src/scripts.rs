@@ -62,16 +62,20 @@ impl Stored for Scripts {
 
     fn load(db: &Connection) -> rusqlite::Result<Self> {
         let mut rows = db.prepare(
-            "SELECT id, name, description, body, on_error, timeout_s, concurrency, bridge, cec \
-             FROM scripts ORDER BY position",
+            "SELECT id, name, description, body, on_error, timeout_s, concurrency, bridge, cec, \
+             presence FROM scripts ORDER BY position",
         )?;
         let scripts = rows
             .query_map([], |row| {
                 let timeout_s: Option<i64> = row.get(5)?;
-                let cec: String = row.get(8)?;
-                let cec: Vec<String> = serde_json::from_str(&cec).map_err(|err| {
-                    rusqlite::Error::FromSqlConversionFailure(8, Type::Text, err.into())
-                })?;
+                let list = |at: usize| -> rusqlite::Result<Vec<String>> {
+                    let text: String = row.get(at)?;
+                    serde_json::from_str(&text).map_err(|err| {
+                        rusqlite::Error::FromSqlConversionFailure(at, Type::Text, err.into())
+                    })
+                };
+                let cec = list(8)?;
+                let presence = list(9)?;
                 Ok(Script {
                     id: row.get(0)?,
                     spec: ScriptSpec {
@@ -83,6 +87,7 @@ impl Stored for Scripts {
                         concurrency: parsed(6, row.get(6)?)?,
                         bridge: row.get(7)?,
                         cec,
+                        presence,
                     },
                 })
             })?
@@ -95,8 +100,8 @@ impl Stored for Scripts {
         let mut insert = db.prepare(
             "INSERT INTO scripts \
              (id, position, name, description, body, on_error, timeout_s, concurrency, bridge, \
-              cec) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+              cec, presence) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         )?;
         for (position, script) in self.scripts.iter().enumerate() {
             let spec = &script.spec;
@@ -111,6 +116,7 @@ impl Stored for Scripts {
                 spec.concurrency.name(),
                 spec.bridge,
                 serde_json::to_string(&spec.cec).unwrap_or_else(|_| "[]".to_string()),
+                serde_json::to_string(&spec.presence).unwrap_or_else(|_| "[]".to_string()),
             ])?;
         }
         Ok(())
@@ -163,6 +169,7 @@ pub fn validate(mut spec: ScriptSpec, others: &[&Script]) -> Result<ScriptSpec, 
         spec.timeout_s = None;
     }
     spec.cec = protocol::cec::triggers(&spec.cec.join(","))?;
+    spec.presence = protocol::presence::triggers(&spec.presence.join(","))?;
     Ok(spec)
 }
 
@@ -345,8 +352,9 @@ pub fn render(
 
 /// What a run's `/bin/sh -c` runs before the body, which is its `$0`. The
 /// trigger is the instance's first word, which systemd has no specifier
-/// for. A CEC run's event is what lies between it and the start time:
-/// `cec-tv-on-<unix>-<hex>`, `cec-key:red-<unix>-<hex>`.
+/// for. A CEC or presence run's event is what lies between it and the start
+/// time: `cec-tv-on-<unix>-<hex>`, `cec-key:red-<unix>-<hex>`,
+/// `presence-arrived-<unix>-<hex>`.
 fn run_shell(strict: &str) -> String {
     format!(
         "export TESSARO_TRIGGER=\"${{TESSARO_RUN%%-*}}\"; \
@@ -354,6 +362,8 @@ fn run_shell(strict: &str) -> String {
          e=\"${{TESSARO_RUN#cec-}}\"; e=\"${{e%-*}}\"; export TESSARO_CEC_EVENT=\"${{e%-*}}\"; \
          case \"$TESSARO_CEC_EVENT\" in key:*) \
          export TESSARO_CEC_KEY=\"${{TESSARO_CEC_EVENT#key:}}\" TESSARO_CEC_EVENT=key;; esac; fi; \
+         if [ \"$TESSARO_TRIGGER\" = presence ]; then \
+         e=\"${{TESSARO_RUN#presence-}}\"; e=\"${{e%-*}}\"; export TESSARO_PRESENCE_EVENT=\"${{e%-*}}\"; fi; \
          exec /bin/sh{strict} \"$0\""
     )
 }
@@ -394,7 +404,8 @@ pub struct Ended {
     pub trigger: String,
     /// The schedule that started it, by id.
     pub schedule: Option<String>,
-    /// The CEC event that started it: `tv-on`, `key:red`.
+    /// The CEC or presence event that started it: `tv-on`, `key:red`,
+    /// `arrived`.
     pub event: Option<String>,
     pub started: i64,
     pub finished: i64,
@@ -414,7 +425,8 @@ pub fn parse_ended(run: &str, text: &str) -> Option<Ended> {
     let schedule = (trigger == "schedule")
         .then(|| words.get(1).map(|id| id.to_string()))
         .flatten();
-    let event = (trigger == "cec" && words.len() > 3).then(|| words[1..words.len() - 2].join("-"));
+    let event = (matches!(trigger.as_str(), "cec" | "presence") && words.len() > 3)
+        .then(|| words[1..words.len() - 2].join("-"));
     Some(Ended {
         run: run.to_string(),
         trigger,
@@ -512,6 +524,7 @@ mod tests {
             concurrency: Concurrency::Overlap,
             bridge: false,
             cec: Vec::new(),
+            presence: Vec::new(),
         }
     }
 
@@ -700,6 +713,36 @@ mod tests {
         assert_eq!(run("manual-1700000000-4f2a"), "manual||");
         assert_eq!(run("cec-tv-standby-1700000000-4f2a"), "cec|tv-standby|");
         assert_eq!(run("cec-key:red-1700000000-4f2a"), "cec|key|red");
+    }
+
+    #[test]
+    fn a_run_learns_its_presence_event_from_its_instance() {
+        let dir = tempfile::tempdir().unwrap();
+        let body = dir.path().join("body");
+        fs::write(
+            &body,
+            "echo \"$TESSARO_TRIGGER|${TESSARO_PRESENCE_EVENT-}|${TESSARO_CEC_EVENT-}\"\n",
+        )
+        .unwrap();
+        let run = |instance: &str| {
+            let out = std::process::Command::new("/bin/sh")
+                .arg("-c")
+                .arg(run_shell(""))
+                .arg(&body)
+                .env("TESSARO_RUN", instance)
+                .env_remove("TESSARO_PRESENCE_EVENT")
+                .env_remove("TESSARO_CEC_EVENT")
+                .output()
+                .unwrap();
+            String::from_utf8(out.stdout).unwrap().trim().to_string()
+        };
+        assert_eq!(run("presence-arrived-1700000000-4f2a"), "presence|arrived|");
+        assert_eq!(run("manual-1700000000-4f2a"), "manual||");
+        let ended = parse_ended("presence-left-1700000000-4f2a", "1700000001 success 0").unwrap();
+        assert_eq!(
+            (ended.trigger.as_str(), ended.event.as_deref()),
+            ("presence", Some("left"))
+        );
     }
 
     #[test]

@@ -14,6 +14,7 @@ pub mod keys;
 pub mod openapi;
 pub mod playlist;
 pub mod policy;
+pub mod presence;
 pub mod sshkey;
 
 use std::collections::BTreeMap;
@@ -496,6 +497,14 @@ pub enum Command {
     CameraSnapshot {
         device: String,
     },
+    /// Whether anyone is in front of the screen, the faces presence
+    /// detection sees and how it runs. Read-only.
+    CameraPresence,
+    /// Measure camera.presence.fov from the one face in view, of someone
+    /// standing `distance_cm` away, and save it.
+    CameraCalibrate {
+        distance_cm: u32,
+    },
     /// The disk the device runs from: its partitions and how full each
     /// filesystem is. Read-only.
     Storage,
@@ -566,6 +575,9 @@ pub enum Command {
         /// The CEC events it runs on; empty for none.
         #[serde(default)]
         cec: Option<Vec<String>>,
+        /// The presence events it runs on; empty for none.
+        #[serde(default)]
+        presence: Option<Vec<String>>,
     },
     /// Refused while a schedule runs it.
     ScriptRemove {
@@ -920,6 +932,10 @@ pub struct Status {
     /// before the TV answered.
     #[serde(default)]
     pub tv: Option<TvStatus>,
+    /// Whether anyone is in front of the screen; `None` with
+    /// camera.presence.enable off. Defaulted the same way.
+    #[serde(default)]
+    pub presence: Option<presence::PresenceSummary>,
     /// The page bridge: `browser.bridge.mode`, and the injected script with
     /// its state. Defaulted the same way.
     #[serde(default)]
@@ -1718,6 +1734,11 @@ pub struct CameraInfo {
     /// when the mirror could not start.
     #[serde(default)]
     pub mirrors: Vec<CameraMirror>,
+    /// The hidden virtual camera presence detection reads, `<camera>
+    /// Vision`: root's alone, so the page never sees it. Only while
+    /// camera.presence.enable is on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vision: Option<CameraMirror>,
     /// What the mirror captures. None when it could not start.
     #[serde(default)]
     pub mode: Option<CameraMode>,
@@ -2185,6 +2206,10 @@ pub struct ScriptSpec {
     /// `key:<name>` for one (`protocol::cec`).
     #[serde(default)]
     pub cec: Vec<String>,
+    /// The presence events it runs on: `arrived`, `left`, `near`, `far`
+    /// (`protocol::presence`).
+    #[serde(default)]
+    pub presence: Vec<String>,
 }
 
 /// What a schedule is: when it fires and which script it runs.
@@ -2217,13 +2242,14 @@ pub struct ScriptRun {
     /// The run's systemd instance, `manual-1700000000-4f2a`: what
     /// `logs --unit` takes after the script's template.
     pub run: String,
-    /// What started it: `manual`, `bridge` (the kiosk page), `schedule` or
-    /// `cec`, the first word of `run`.
+    /// What started it: `manual`, `bridge` (the kiosk page), `schedule`,
+    /// `cec` or `presence`, the first word of `run`.
     pub trigger: String,
     /// The schedule that started it, by name, while that schedule exists.
     #[serde(default)]
     pub schedule: Option<String>,
-    /// The CEC event that started it: `tv-standby`, `key:red`.
+    /// The CEC or presence event that started it: `tv-standby`, `key:red`,
+    /// `arrived`.
     #[serde(default)]
     pub event: Option<String>,
     pub started: Moment,

@@ -72,6 +72,7 @@
   },
   "screen_on": true,
   "tv": null,
+  "presence": null,
   "bridge": null,
   "time": {
     "timezone": "Europe/Bratislava",

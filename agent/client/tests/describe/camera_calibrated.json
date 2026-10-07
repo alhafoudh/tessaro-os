@@ -1,0 +1,20 @@
+{
+  "function": "camera::calibrated",
+  "input": {
+    "distance": 1.0,
+    "fov": 71.0,
+    "width": 0.1172
+  },
+  "output": [
+    [
+      "ok",
+      "camera.presence.fov is 71°",
+      0
+    ],
+    [
+      "muted",
+      " (a face 0.117 of the frame wide at 1.0 m)",
+      0
+    ]
+  ]
+}

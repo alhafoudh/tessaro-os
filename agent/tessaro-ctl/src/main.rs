@@ -120,6 +120,8 @@ const HELP_STYLES: Styles = Styles::styled()
         \x20 tessaro-ctl camera format mjpeg && tessaro-ctl camera size 1280x720   every mirror restarts\n\
         \x20 tessaro-ctl camera mirrors 2                   two readers may watch each camera at once\n\
         \x20 tessaro-ctl camera snapshot -o door.jpg --watch 5   what the camera sees, rewritten every 5 s\n\
+        \x20 tessaro-ctl camera presence on && tessaro-ctl camera presence --watch 1   who is in front of the screen\n\
+        \x20 tessaro-ctl script create greet --body 'tessaro-ctl screen power on' --presence arrived\n\
         \x20 tessaro-ctl time show                          timezone, NTP sync, offset and drift\n\
         \x20 tessaro-ctl time timezone Europe/Bratislava && tessaro-ctl time ntp on --server ntp.corp.test\n\
         \x20 tessaro-ctl script create dim --body 'tessaro-ctl screen power off'\n\
@@ -774,6 +776,7 @@ fn bulk_refused(path: &str, leaf: &ArgMatches) -> Option<&'static str> {
         "browser policies edit" => Some("opens an editor for one device"),
         "device logs" if flag("follow") => Some("follows one device's journal"),
         "camera snapshot" if given("watch") => Some("watches one camera until Ctrl-C"),
+        "camera presence" if given("watch") => Some("watches one device until Ctrl-C"),
         "access webconfig" if !flag("print") => Some("opens a browser for one device"),
         "files download" => Some("writes one local file or directory"),
         "screen screenshot" | "camera snapshot" if given("output") => {

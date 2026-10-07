@@ -1,14 +1,16 @@
 SUMMARY = "Tessaro cameras: a mirror per USB camera, shared through v4l2loopback"
 DESCRIPTION = "The udev rule that hides every USB camera node from everyone \
 but its mirror and starts one, the tessaro-camera@.service unit that runs it, \
-and the v4l2loopback module configuration. The mirror itself, \
-/usr/bin/tessaro-camera, is built with the rest of the agent workspace by \
-tessaro-kiosk."
+tessaro-vision.service for presence detection on a camera's hidden mirror, \
+and the v4l2loopback module configuration. The mirror and the vision \
+service themselves, /usr/bin/tessaro-camera and /usr/bin/tessaro-vision, \
+are built with the rest of the agent workspace by tessaro-kiosk."
 LICENSE = "Apache-2.0"
 LIC_FILES_CHKSUM = "file://${COMMON_LICENSE_DIR}/Apache-2.0;md5=89aea4e17d99a7cacdbeed46a0096b10"
 
 SRC_URI = " \
     file://tessaro-camera@.service \
+    file://tessaro-vision.service \
     file://71-tessaro-camera.rules \
     file://tmpfiles-tessaro-camera.conf \
     file://modules-load-v4l2loopback.conf \
@@ -20,11 +22,14 @@ S = "${WORKDIR}"
 do_configure[noexec] = "1"
 do_compile[noexec] = "1"
 
-# No systemd.bbclass: the unit is a template that udev starts per camera
-# (SYSTEMD_WANTS in the rule), so there is nothing to enable.
+# No systemd.bbclass: the mirror's unit is a template that udev starts per
+# camera (SYSTEMD_WANTS in the rule), and presence detection's is started by
+# tessaro-agent with camera.presence.enable, so there is nothing to enable.
 do_install() {
     install -Dm0644 ${WORKDIR}/tessaro-camera@.service \
         ${D}${systemd_system_unitdir}/tessaro-camera@.service
+    install -Dm0644 ${WORKDIR}/tessaro-vision.service \
+        ${D}${systemd_system_unitdir}/tessaro-vision.service
 
     install -Dm0644 ${WORKDIR}/71-tessaro-camera.rules \
         ${D}${nonarch_libdir}/udev/rules.d/71-tessaro-camera.rules
@@ -43,6 +48,7 @@ do_install() {
 
 FILES:${PN} += " \
     ${systemd_system_unitdir}/tessaro-camera@.service \
+    ${systemd_system_unitdir}/tessaro-vision.service \
     ${nonarch_libdir}/udev/rules.d/71-tessaro-camera.rules \
     ${nonarch_libdir}/tmpfiles.d/tessaro-camera.conf \
     ${nonarch_libdir}/modules-load.d/v4l2loopback.conf \

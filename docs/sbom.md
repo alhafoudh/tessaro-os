@@ -24,7 +24,7 @@ are not in the image at all. So each part is read from its own lock file.
 | `try-tessaro` | `cargo` | `cargo metadata` on `gui/`, from the `try-tessaro` member only, every platform |
 | `try-tessaro` | `runtime` | the bundled QEMU's `runtime.json`, `brew info --json=v2` of every Homebrew formula it ships plus what `build-qemu-gpu.sh` built or fetched, in the same shape (`runtime.rb`), with `check --runtime` only |
 | `tessaro-webconfig` | `npm` | `npm sbom --omit dev --package-lock-only` in `webconfig/` (`npm.rb`) |
-| any | `vendored` | `sbom/vendored.yml`, files kept in the repo (the Manrope fonts) |
+| any | `vendored` | `sbom/vendored.yml`, files kept in the repo (the Manrope fonts, presence detection's models, test pictures) |
 
 * **The image's rows are the recipes of what it installs.** Bitbake's
   `create-spdx` is on by default (`INHERIT_DISTRO` in openembedded-core's

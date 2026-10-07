@@ -2,6 +2,7 @@
 
 import type { Schemas } from "../api/client";
 import { Line } from "../text/line";
+import { fixed } from "./common";
 
 /** protocol::keys::CAMERA_MIRRORS_MAX: the most virtual cameras one camera gets. */
 export const CAMERA_MIRRORS_MAX = 8;
@@ -95,4 +96,94 @@ function one(camera: Schemas["CameraInfo"]): Line[] {
     lines.push(indent().pad("label", format, 9).text(" ").add("muted", sizes.join(" ")));
   }
   return lines;
+}
+
+/**
+ * `camera presence`: whether anyone is there and who, how the detection runs, the last event, then
+ * the saved distances and how to change them.
+ */
+export function presence(status: Schemas["PresenceStatus"]): Line[] {
+  if (!status.enabled) {
+    return [
+      Line.of("muted", "presence detection is off;")
+        .text(" ")
+        .add("muted", "switch it on with")
+        .text(" ")
+        .add("cmd", "tessaro-ctl camera presence on"),
+    ];
+  }
+  let state = new Line().pad("label", "presence", 9).text(" ");
+  if (!status.running) {
+    state = state.add("warn", "not running");
+  } else if (status.present && status.near) {
+    state = state.add("ok", "someone is there, near");
+  } else if (status.present) {
+    state = state.add("ok", "someone is there");
+  } else {
+    state = state.add("muted", "nobody is there");
+  }
+  const lines = [state];
+  for (const face of status.frame?.faces ?? []) {
+    lines.push(faceLine(face));
+  }
+  let camera = new Line()
+    .pad("label", "camera", 9)
+    .text(` ${status.camera ?? "(none)"}  `)
+    .add("label", "model")
+    .text(` ${status.model}`);
+  if (status.fps != null) {
+    camera = camera.add("muted", `  ${fixed(status.fps, 1)} fps`);
+  }
+  if (status.inference_ms != null) {
+    camera = camera.add("muted", `  ${fixed(status.inference_ms, 0)} ms a frame`);
+  }
+  lines.push(camera);
+  if (status.error) {
+    lines.push(Line.plain("          ").add("bad", status.error));
+  }
+  if (status.last) {
+    lines.push(new Line().pad("label", "last", 9).text(` ${status.last.event} at ${status.last.at.local}`));
+  }
+  const near = status.near_m != null ? ` ${fixed(status.near_m, 1)} m  ` : " off  ";
+  lines.push(new Line());
+  lines.push(
+    new Line()
+      .pad("label", "saved", 9)
+      .text(" ")
+      .add("label", "near")
+      .text(near)
+      .add("label", "fov")
+      .text(` ${fixed(status.fov, 0)}°`),
+  );
+  lines.push(
+    Line.of("muted", "change them with")
+      .text(" ")
+      .add("cmd", "tessaro-ctl config set camera.presence.near=METERS")
+      .add("muted", ",")
+      .text(" ")
+      .add("cmd", "tessaro-ctl camera calibrate --distance 1"),
+  );
+  return lines;
+}
+
+/** One face: `face     #3 1.2 m near facing (0.93)`. */
+function faceLine(face: Schemas["Face"]): Line {
+  let line = Line.plain("    ")
+    .pad("label", "face", 5)
+    .text(` #${face.id} ${fixed(face.distance, 1)} m`);
+  if (face.near) {
+    line = line.text(" ").add("ok", "near");
+  }
+  return line
+    .text(" ")
+    .add("plain", face.facing ? "facing" : "turned away")
+    .add("muted", ` (${fixed(face.score, 2)})`);
+}
+
+/** What `camera calibrate` saved. */
+export function calibrated(calibrated: Schemas["Calibrated"]): Line {
+  return Line.of("ok", `camera.presence.fov is ${fixed(calibrated.fov, 0)}°`).add(
+    "muted",
+    ` (a face ${fixed(calibrated.width, 3)} of the frame wide at ${fixed(calibrated.distance, 1)} m)`,
+  );
 }

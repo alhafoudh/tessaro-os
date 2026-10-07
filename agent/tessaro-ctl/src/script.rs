@@ -1,6 +1,7 @@
 //! `tessaro-ctl script ...`: shell scripts the device keeps and runs as
 //! root, now (`run`), for a schedule (`tessaro-ctl schedule`), for the
-//! kiosk page (`--bridge`) or on the TV's HDMI-CEC events (`--cec`).
+//! kiosk page (`--bridge`), on the TV's HDMI-CEC events (`--cec`) or on
+//! presence events (`--presence`).
 //!
 //! A body runs with `/bin/sh` from `/`, so a `tessaro-ctl` command in it is
 //! written out in full. `run` follows the run to its end and prints what it
@@ -35,6 +36,7 @@ pub enum ScriptCmd {
     ///   tessaro-ctl script create cleanup --file cleanup.sh --on-error continue --timeout 10m
     ///   tessaro-ctl script create restock --file restock.sh --bridge --concurrency skip
     ///   tessaro-ctl script create back-off --body 'tessaro-ctl screen power off' --cec key:red
+    ///   tessaro-ctl script create greet --body 'tessaro-ctl screen power on' --presence arrived
     Create {
         /// Lower-case letters, digits and -.
         name: String,
@@ -120,6 +122,10 @@ pub struct Fields {
     /// e.g. key:red); empty for none. Needs screen.cec.enable.
     #[arg(long, value_name = "EVENTS", value_parser = cec_events)]
     cec: Option<String>,
+    /// Run it on presence events, comma separated: arrived, left, near,
+    /// far; empty for none. Needs camera.presence.enable.
+    #[arg(long, value_name = "EVENTS", value_parser = presence_events)]
+    presence: Option<String>,
 }
 
 /// `--cec` checked, as the comma-separated list it is stored as.
@@ -127,7 +133,12 @@ fn cec_events(typed: &str) -> Result<String, String> {
     protocol::cec::triggers(typed).map(|events| events.join(","))
 }
 
-/// The events `--cec` gave, one by one.
+/// `--presence` checked, the same way.
+fn presence_events(typed: &str) -> Result<String, String> {
+    protocol::presence::triggers(typed).map(|events| events.join(","))
+}
+
+/// The events `--cec` or `--presence` gave, one by one.
 fn cec_list(checked: String) -> Vec<String> {
     checked
         .split(',')
@@ -179,6 +190,7 @@ pub fn run(session: &mut Session, command: ScriptCmd, json: bool) -> Result<(), 
                 concurrency: fields.concurrency.unwrap_or_default(),
                 bridge: fields.bridge,
                 cec: fields.cec.map(cec_list).unwrap_or_default(),
+                presence: fields.presence.map(cec_list).unwrap_or_default(),
             };
             let info = session.send::<api::script::Create>(spec)?;
             print(json, &info, || {
@@ -211,6 +223,7 @@ pub fn run(session: &mut Session, command: ScriptCmd, json: bool) -> Result<(), 
                 concurrency: fields.concurrency,
                 bridge,
                 cec: fields.cec.map(cec_list),
+                presence: fields.presence.map(cec_list),
             };
             let info = session.call::<api::script::Change>(ScriptRef { script }, change)?;
             print(json, &info, || {

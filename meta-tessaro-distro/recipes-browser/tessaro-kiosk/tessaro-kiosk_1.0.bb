@@ -181,6 +181,13 @@ do_install:append() {
     install -Dm0644 ${WORKDIR}/offline.html \
         ${D}${datadir}/tessaro-kiosk/offline.html
 
+    # The face detectors tessaro-vision runs (KIOSK_VISION_MODELS), from the
+    # workspace this recipe builds anyway: agent/vision/models, converted from
+    # MediaPipe's with `mise run vision:models`. The unit that runs it is
+    # tessaro-camera's, beside the mirrors whose hidden mirror it reads.
+    install -d ${D}${datadir}/tessaro-vision
+    install -m0644 ${S}/vision/models/*.onnx ${D}${datadir}/tessaro-vision/
+
     # The frame unlock extension, loaded by tessaro-kiosk.service through
     # KIOSK_EXTENSION_ARGS. Rules only, no code: frames the player page at
     # http://127.0.0.1 opens get their X-Frame-Options and CSP headers
@@ -216,6 +223,7 @@ FILES:${PN} += " \
     ${nonarch_libdir}/tmpfiles.d/tessaro-kiosk.conf \
     ${nonarch_libdir}/udev/rules.d/70-tessaro-devices.rules \
     ${datadir}/tessaro-kiosk \
+    ${datadir}/tessaro-vision \
 "
 
 # Ours and in /etc, so marked as configuration. It is only in /etc because

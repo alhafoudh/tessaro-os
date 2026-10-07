@@ -311,6 +311,7 @@ mod tests {
                 concurrency: Concurrency::Overlap,
                 bridge: false,
                 cec: Vec::new(),
+                presence: Vec::new(),
             },
         }]
     }

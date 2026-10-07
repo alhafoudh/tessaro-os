@@ -53,6 +53,7 @@ mod playlists;
 mod policies;
 mod ports;
 mod power;
+mod presence;
 mod printer;
 mod probe;
 mod proc;
@@ -358,6 +359,7 @@ async fn start_control(
     control.watch_welcome();
     control.watch_screen_power();
     control.watch_cec();
+    control.watch_presence();
     control.watch_playlist();
     control.watch_media();
     // Before the agent's first navigation, so the page it opens already

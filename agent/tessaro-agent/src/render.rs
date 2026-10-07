@@ -96,9 +96,15 @@ pub fn env_file(
             // way. The browser follows /etc/localtime, not TZ.
             continue;
         }
-        if key.consumers == [protocol::keys::Consumer::Camera] {
-            // camera.env, for the camera mirrors; the browser reads the
-            // cameras, not their settings.
+        if key.consumers.iter().all(|consumer| {
+            matches!(
+                consumer,
+                protocol::keys::Consumer::Camera | protocol::keys::Consumer::Vision
+            )
+        }) && !key.consumers.is_empty()
+        {
+            // camera.env and vision.env, for the camera mirrors and presence
+            // detection; the browser reads the cameras, not their settings.
             continue;
         }
         if key.consumers.contains(&protocol::keys::Consumer::Proxy) {
@@ -406,6 +412,8 @@ pub struct Rendered {
     pub proxy_changed: bool,
     /// What the camera mirrors capture changed.
     pub camera_changed: bool,
+    /// What presence detection watches with changed.
+    pub vision_changed: bool,
     /// The input devices Weston ignores changed.
     pub input_changed: bool,
     /// The splash's angle changed, for the next boot.
@@ -452,6 +460,7 @@ pub fn all(
     };
     let proxy_changed = render_proxy(paths, &effective, log)?;
     let camera_changed = render_camera(paths, &effective)?;
+    let vision_changed = render_vision(paths, &effective)?;
     let input_changed = render_input(paths, &effective, log)?;
 
     Ok(Rendered {
@@ -460,6 +469,7 @@ pub fn all(
         firmware_changed,
         proxy_changed,
         camera_changed,
+        vision_changed,
         input_changed,
         splash_changed: false,
     })
@@ -502,23 +512,45 @@ pub fn splash_angle(rotation: &str) -> u16 {
 /// camera.mirrors on a device whose env file predates it.
 pub const DEFAULT_CAMERA_MIRRORS: &str = "2";
 
-/// camera.env, for `tessaro-camera@.service`: always both keys, `auto` for
+/// camera.env, for `tessaro-camera@.service`: always every key, `auto` for
 /// one never set, and the image's number of mirrors, so a mirror reads the
-/// same whether or not a key was ever touched.
+/// same whether or not a key was ever touched. `KIOSK_CAMERA_VISION` is
+/// camera.presence.enable: the mirrors add the hidden one presence
+/// detection reads.
 fn render_camera(paths: &Paths, effective: &state::Effective) -> Result<bool, String> {
-    let value = |env, default: &str| {
-        effective
-            .get(env)
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| default.to_string())
-    };
+    let value = |env, default: &str| setting(effective, env, default);
     let body = format!(
-        "KIOSK_CAMERA_FORMAT={}\nKIOSK_CAMERA_SIZE={}\nKIOSK_CAMERA_MIRRORS={}\n",
+        "KIOSK_CAMERA_FORMAT={}\nKIOSK_CAMERA_SIZE={}\nKIOSK_CAMERA_MIRRORS={}\nKIOSK_CAMERA_VISION={}\n",
         value("KIOSK_CAMERA_FORMAT", "auto"),
         value("KIOSK_CAMERA_SIZE", "auto"),
         value("KIOSK_CAMERA_MIRRORS", DEFAULT_CAMERA_MIRRORS),
+        value("KIOSK_PRESENCE", "0"),
     );
     let path = &paths.camera_env;
+    store::replace_if_changed(path, body.as_bytes(), 0o644)
+        .map_err(|err| format!("{}: {err}", path.display()))
+}
+
+fn setting(effective: &state::Effective, env: &str, default: &str) -> String {
+    effective
+        .get(env)
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| default.to_string())
+}
+
+/// vision.env, for `tessaro-vision.service`: the camera it watches, the
+/// model and how many frames a second, every key always there. What the
+/// agent decides with (confidence, distances, timing) stays out, so changing
+/// it restarts nothing.
+fn render_vision(paths: &Paths, effective: &state::Effective) -> Result<bool, String> {
+    let value = |env, default: &str| setting(effective, env, default);
+    let body = format!(
+        "KIOSK_PRESENCE_CAMERA={}\nKIOSK_PRESENCE_MODEL={}\nKIOSK_PRESENCE_FPS={}\n",
+        value("KIOSK_PRESENCE_CAMERA", "auto"),
+        value("KIOSK_PRESENCE_MODEL", "face-full"),
+        value("KIOSK_PRESENCE_FPS", "5"),
+    );
+    let path = &paths.vision_env;
     store::replace_if_changed(path, body.as_bytes(), 0o644)
         .map_err(|err| format!("{}: {err}", path.display()))
 }
@@ -1540,6 +1572,7 @@ mod tests {
                 firmware_changed: false,
                 proxy_changed: false,
                 camera_changed: true,
+                vision_changed: true,
                 input_changed: false,
                 splash_changed: false,
             }
@@ -1558,6 +1591,7 @@ mod tests {
                 firmware_changed: false,
                 proxy_changed: false,
                 camera_changed: false,
+                vision_changed: false,
                 input_changed: false,
                 splash_changed: false,
             }
@@ -1579,6 +1613,7 @@ mod tests {
                 firmware_changed: false,
                 proxy_changed: false,
                 camera_changed: false,
+                vision_changed: false,
                 input_changed: false,
                 splash_changed: false,
             }
@@ -1610,7 +1645,7 @@ mod tests {
         all(&paths, &defaults, &settings(&[]), &log).unwrap();
         assert_eq!(
             std::fs::read_to_string(&paths.camera_env).unwrap(),
-            "KIOSK_CAMERA_FORMAT=auto\nKIOSK_CAMERA_SIZE=auto\nKIOSK_CAMERA_MIRRORS=2\n"
+            "KIOSK_CAMERA_FORMAT=auto\nKIOSK_CAMERA_SIZE=auto\nKIOSK_CAMERA_MIRRORS=2\nKIOSK_CAMERA_VISION=0\n"
         );
 
         let set = settings(&[
@@ -1627,11 +1662,59 @@ mod tests {
         );
         assert_eq!(
             std::fs::read_to_string(&paths.camera_env).unwrap(),
-            "KIOSK_CAMERA_FORMAT=yuyv\nKIOSK_CAMERA_SIZE=640x480\nKIOSK_CAMERA_MIRRORS=3\n"
+            "KIOSK_CAMERA_FORMAT=yuyv\nKIOSK_CAMERA_SIZE=640x480\nKIOSK_CAMERA_MIRRORS=3\nKIOSK_CAMERA_VISION=0\n"
         );
         let generated = std::fs::read_to_string(paths.generated_env()).unwrap();
         assert!(!generated.contains("KIOSK_CAMERA"), "{generated}");
         assert!(!all(&paths, &defaults, &set, &log).unwrap().camera_changed);
+    }
+
+    #[test]
+    fn presence_adds_the_vision_mirror_and_renders_vision_env() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = Log::buffered(true);
+        let env: HashMap<String, String> = [
+            ("KIOSK_RUN_DIR", dir.path().join("run")),
+            ("KIOSK_POLICY", dir.path().join("policy.json")),
+            ("KIOSK_POLICY_BASE", dir.path().join("missing-base.json")),
+            ("KIOSK_PROXY_CONFIG", dir.path().join("tinyproxy.conf")),
+            ("KIOSK_CAMERA_ENV", dir.path().join("camera/camera.env")),
+        ]
+        .into_iter()
+        .map(|(name, path)| (name.to_string(), path.display().to_string()))
+        .collect();
+        let paths = Paths::load(&env);
+        assert_eq!(paths.vision_env, dir.path().join("camera/vision.env"));
+        let defaults: HashMap<String, String> = HashMap::new();
+
+        all(&paths, &defaults, &settings(&[]), &log).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&paths.vision_env).unwrap(),
+            "KIOSK_PRESENCE_CAMERA=auto\nKIOSK_PRESENCE_MODEL=face-full\nKIOSK_PRESENCE_FPS=5\n"
+        );
+
+        let set = settings(&[
+            ("camera.presence.enable", "1"),
+            ("camera.presence.camera", "HD Webcam"),
+            ("camera.presence.near", "2"),
+        ]);
+        let rendered = all(&paths, &defaults, &set, &log).unwrap();
+        assert!(rendered.camera_changed && rendered.vision_changed);
+        assert!(std::fs::read_to_string(&paths.camera_env)
+            .unwrap()
+            .ends_with("KIOSK_CAMERA_VISION=1\n"));
+        assert!(std::fs::read_to_string(&paths.vision_env)
+            .unwrap()
+            .starts_with("KIOSK_PRESENCE_CAMERA=HD Webcam\n"));
+        let generated = std::fs::read_to_string(paths.generated_env()).unwrap();
+        assert!(!generated.contains("KIOSK_PRESENCE="), "{generated}");
+        assert!(!generated.contains("KIOSK_PRESENCE_CAMERA"), "{generated}");
+
+        // What the agent decides with renders nothing new.
+        let mut nearer = set.clone();
+        nearer.insert("camera.presence.near".into(), "1".into());
+        let rendered = all(&paths, &defaults, &nearer, &log).unwrap();
+        assert!(!rendered.camera_changed && !rendered.vision_changed);
     }
 
     #[test]

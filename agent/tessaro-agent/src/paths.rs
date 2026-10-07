@@ -140,6 +140,14 @@ pub struct Paths {
     pub camera_env: PathBuf,
     /// The mirrors, one per camera, as a unit pattern.
     pub camera_units: String,
+    /// Presence detection's settings, rendered from camera.presence.camera,
+    /// .model and .fps, next to camera.env.
+    pub vision_env: PathBuf,
+    /// Where tessaro-vision says how it is doing, `status.json`.
+    pub vision_dir: PathBuf,
+    /// The datagram socket the agent listens on for tessaro-vision's frames.
+    pub vision_socket: PathBuf,
+    pub vision_unit: String,
     /// The udev rule that hides the ignored input devices from libinput,
     /// rendered from screen.input.*; absent while every kind is used. In
     /// `/run`, so it is rendered from the settings at every boot.
@@ -186,11 +194,13 @@ impl Paths {
             PathBuf::from(env.get(name).unwrap_or_else(|| default.to_string()))
         };
         let text = |name: &str, default: &str| env.get(name).unwrap_or_else(|| default.to_string());
+        let run_dir = path("KIOSK_RUN_DIR", "/run/tessaro-kiosk");
+        let camera_env = path("KIOSK_CAMERA_ENV", "/run/tessaro-camera/camera.env");
 
         Self {
             state_dir: path("KIOSK_STATE_DIR", "/data/tessaro"),
             files_dir: path("KIOSK_FILES_DIR", "/data/files"),
-            run_dir: path("KIOSK_RUN_DIR", "/run/tessaro-kiosk"),
+            run_dir: run_dir.clone(),
             policy: path(
                 "KIOSK_POLICY",
                 "/etc/chromium/policies/managed/10-tessaro.json",
@@ -259,8 +269,16 @@ impl Paths {
             proxy_config: path("KIOSK_PROXY_CONFIG", "/run/tessaro-proxy/tinyproxy.conf"),
             proxy_unit: text("KIOSK_PROXY_UNIT", "tessaro-proxy.service"),
             camera_dir: path("KIOSK_CAMERA_DIR", "/run/tessaro-camera"),
-            camera_env: path("KIOSK_CAMERA_ENV", "/run/tessaro-camera/camera.env"),
+            camera_env: camera_env.clone(),
             camera_units: text("KIOSK_CAMERA_UNITS", "tessaro-camera@*.service"),
+            vision_env: env
+                .get("KIOSK_VISION_ENV")
+                .map_or_else(|| camera_env.with_file_name("vision.env"), PathBuf::from),
+            vision_dir: path("KIOSK_VISION_DIR", "/run/tessaro-vision"),
+            vision_socket: env
+                .get("KIOSK_VISION_SOCKET")
+                .map_or_else(|| run_dir.join("vision.sock"), PathBuf::from),
+            vision_unit: text("KIOSK_VISION_UNIT", "tessaro-vision.service"),
             input_rules: path(
                 "KIOSK_INPUT_RULES",
                 "/run/udev/rules.d/69-tessaro-input.rules",

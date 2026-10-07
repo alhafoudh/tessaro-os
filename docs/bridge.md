@@ -82,6 +82,20 @@ await tessaro.device.status();
   `pressed` and `repeat` ([cec.md](cec.md)). The agent fires it the way it
   fires `tessaro:config`, through the same hidden object; a page that is
   loading misses it.
+* **Someone arriving, leaving, coming near or stepping back is a
+  `tessaro:presence` event**, with `camera.presence.page` on: `detail.event`
+  (`arrived`, `left`, `near`, `far`), `present`, `near`, `count` and the
+  `faces` ([presence.md](presence.md)). Fired the same way.
+* **The faces of every frame are `tessaro:faces` events, only while the page
+  watches them**: `tessaro.presence.watch()` takes a lease the agent keeps
+  for 10s (`WATCH_LEASE`), which the preamble renews every few seconds until
+  `tessaro.presence.unwatch()`; a page that navigates away stops renewing
+  it, so nothing needs to notice the navigation. `detail` is `t` (capture
+  time, ms), the frame's `width` and `height`, and `faces`, each `id` (a
+  track, never an identity), `box` `{x, y, w, h}` and `keypoints`
+  (`leftEye`, `rightEye`, `nose`, `mouth`, `leftEar`, `rightEar`) as shares
+  of the frame in the camera's own view, `score`, `distance` in meters,
+  `near` and `facing`.
 
 **Calls return Promises.** A refusal rejects with an `Error` whose message is
 the control plane's own. `config` mode answers the reads; `actions` mode
@@ -98,6 +112,8 @@ answers everything:
 | `printer.jobs(printer)` | config | `printer jobs`: every printer's, or the one named |
 | `scripts.list()` | config | `script list`, only the scripts with `--bridge`, without their bodies: name, description, concurrency, runs going, the last run |
 | `playlist.status()` | config | `playlist status`: whether the player is on screen, what plays and why, the item on screen, what was gone past, the media cache; also `device.status().playlist` |
+| `presence.status()` | config | `camera presence`, without the camera's name, the model and how fast it runs: `enabled`, `running`, `present`, `near`, `nearMeters`, `count`, the `last` event and the newest frame's `faces`; also `device.status().presence` (`present`, `near`, `count`) |
+| `presence.watch()`, `presence.unwatch()` | config | nothing the ctl has: start and stop `tessaro:faces` |
 | `network.publicIp()` | actions | `config get network.public_ip`: asked now |
 | `network.online()` | actions | the same lookup, resolved as `true` or `false` |
 | `browser.reload()` | actions | `browser reload` |
@@ -132,7 +148,10 @@ with the names `camera list` shows, and `camera.*` is the operator's, like
 any setting outside `data.*`. Nor is `camera snapshot`: a page that wants a
 camera's picture opens a mirror with `getUserMedia` and draws a frame
 itself, and a snapshot is how the operator sees a camera without taking a
-mirror from the page. Nor is `screen.input.*`, which the page reads in
+mirror from the page. Nor are `camera presence on|off` and `camera
+calibrate`: whether the device watches the people in front of it is the
+operator's decision, and a page that could switch it on could watch them.
+Nor is `screen.input.*`, which the page reads in
 `tessaro.config` but cannot set: ignoring the touchscreen or the keyboard
 is the operator's lockout of the people in front of the screen, which the
 page must not lift, and each change restarts Weston and the browser

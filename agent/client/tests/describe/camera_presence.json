@@ -1,0 +1,611 @@
+{
+  "function": "camera::presence",
+  "input": [
+    {
+      "enabled": false,
+      "fov": 65.0,
+      "model": "face-full",
+      "near": false,
+      "near_m": 1.5,
+      "present": false,
+      "running": false
+    },
+    {
+      "enabled": true,
+      "error": "no camera is plugged in",
+      "fov": 65.0,
+      "model": "face-short",
+      "near": false,
+      "present": false,
+      "running": false
+    },
+    {
+      "camera": "HD Webcam",
+      "enabled": true,
+      "fov": 70.0,
+      "fps": 4.86,
+      "frame": {
+        "faces": [
+          {
+            "box": {
+              "h": 0.16,
+              "w": 0.12,
+              "x": 0.41,
+              "y": 0.22
+            },
+            "distance": 0.94,
+            "facing": true,
+            "id": 3,
+            "keypoints": {
+              "left_ear": [
+                0.52,
+                0.28
+              ],
+              "left_eye": [
+                0.49,
+                0.27
+              ],
+              "mouth": [
+                0.465,
+                0.34
+              ],
+              "nose": [
+                0.465,
+                0.31
+              ],
+              "right_ear": [
+                0.42,
+                0.28
+              ],
+              "right_eye": [
+                0.44,
+                0.27
+              ]
+            },
+            "near": true,
+            "score": 0.931
+          },
+          {
+            "box": {
+              "h": 0.06,
+              "w": 0.04,
+              "x": 0.8,
+              "y": 0.3
+            },
+            "distance": 2.83,
+            "facing": false,
+            "id": 4,
+            "keypoints": {
+              "left_ear": [
+                0.83,
+                0.32
+              ],
+              "left_eye": [
+                0.82,
+                0.32
+              ],
+              "mouth": [
+                0.82,
+                0.34
+              ],
+              "nose": [
+                0.825,
+                0.33
+              ],
+              "right_ear": [
+                0.8,
+                0.32
+              ],
+              "right_eye": [
+                0.81,
+                0.32
+              ]
+            },
+            "near": false,
+            "score": 0.712
+          }
+        ],
+        "height": 720,
+        "t": 1791367923512,
+        "width": 1280
+      },
+      "inference_ms": 112.4,
+      "last": {
+        "at": {
+          "local": "2026-10-07 10:12:03 CEST",
+          "unix": 1791367923
+        },
+        "event": "near"
+      },
+      "model": "face-full",
+      "near": true,
+      "near_m": 1.5,
+      "present": true,
+      "running": true
+    },
+    {
+      "camera": "HD Webcam",
+      "enabled": true,
+      "fov": 65.0,
+      "fps": 5.0,
+      "frame": {
+        "faces": [],
+        "height": 480,
+        "t": 1791367923512,
+        "width": 640
+      },
+      "inference_ms": 98.0,
+      "model": "face-full",
+      "near": false,
+      "present": false,
+      "running": true
+    }
+  ],
+  "output": [
+    [
+      [
+        [
+          "muted",
+          "presence detection is off;",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "switch it on with",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "cmd",
+          "tessaro-ctl camera presence on",
+          0
+        ]
+      ]
+    ],
+    [
+      [
+        [
+          "label",
+          "presence",
+          9
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "warn",
+          "not running",
+          0
+        ]
+      ],
+      [
+        [
+          "label",
+          "camera",
+          9
+        ],
+        [
+          "plain",
+          " (none)  ",
+          0
+        ],
+        [
+          "label",
+          "model",
+          0
+        ],
+        [
+          "plain",
+          " face-short",
+          0
+        ]
+      ],
+      [
+        [
+          "plain",
+          "          ",
+          0
+        ],
+        [
+          "bad",
+          "no camera is plugged in",
+          0
+        ]
+      ],
+      [],
+      [
+        [
+          "label",
+          "saved",
+          9
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "label",
+          "near",
+          0
+        ],
+        [
+          "plain",
+          " off  ",
+          0
+        ],
+        [
+          "label",
+          "fov",
+          0
+        ],
+        [
+          "plain",
+          " 65°",
+          0
+        ]
+      ],
+      [
+        [
+          "muted",
+          "change them with",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "cmd",
+          "tessaro-ctl config set camera.presence.near=METERS",
+          0
+        ],
+        [
+          "muted",
+          ",",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "cmd",
+          "tessaro-ctl camera calibrate --distance 1",
+          0
+        ]
+      ]
+    ],
+    [
+      [
+        [
+          "label",
+          "presence",
+          9
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "ok",
+          "someone is there, near",
+          0
+        ]
+      ],
+      [
+        [
+          "plain",
+          "    ",
+          0
+        ],
+        [
+          "label",
+          "face",
+          5
+        ],
+        [
+          "plain",
+          " #3 0.9 m",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "ok",
+          "near",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "plain",
+          "facing",
+          0
+        ],
+        [
+          "muted",
+          " (0.93)",
+          0
+        ]
+      ],
+      [
+        [
+          "plain",
+          "    ",
+          0
+        ],
+        [
+          "label",
+          "face",
+          5
+        ],
+        [
+          "plain",
+          " #4 2.8 m",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "plain",
+          "turned away",
+          0
+        ],
+        [
+          "muted",
+          " (0.71)",
+          0
+        ]
+      ],
+      [
+        [
+          "label",
+          "camera",
+          9
+        ],
+        [
+          "plain",
+          " HD Webcam  ",
+          0
+        ],
+        [
+          "label",
+          "model",
+          0
+        ],
+        [
+          "plain",
+          " face-full",
+          0
+        ],
+        [
+          "muted",
+          "  4.9 fps",
+          0
+        ],
+        [
+          "muted",
+          "  112 ms a frame",
+          0
+        ]
+      ],
+      [
+        [
+          "label",
+          "last",
+          9
+        ],
+        [
+          "plain",
+          " near at 2026-10-07 10:12:03 CEST",
+          0
+        ]
+      ],
+      [],
+      [
+        [
+          "label",
+          "saved",
+          9
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "label",
+          "near",
+          0
+        ],
+        [
+          "plain",
+          " 1.5 m  ",
+          0
+        ],
+        [
+          "label",
+          "fov",
+          0
+        ],
+        [
+          "plain",
+          " 70°",
+          0
+        ]
+      ],
+      [
+        [
+          "muted",
+          "change them with",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "cmd",
+          "tessaro-ctl config set camera.presence.near=METERS",
+          0
+        ],
+        [
+          "muted",
+          ",",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "cmd",
+          "tessaro-ctl camera calibrate --distance 1",
+          0
+        ]
+      ]
+    ],
+    [
+      [
+        [
+          "label",
+          "presence",
+          9
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "nobody is there",
+          0
+        ]
+      ],
+      [
+        [
+          "label",
+          "camera",
+          9
+        ],
+        [
+          "plain",
+          " HD Webcam  ",
+          0
+        ],
+        [
+          "label",
+          "model",
+          0
+        ],
+        [
+          "plain",
+          " face-full",
+          0
+        ],
+        [
+          "muted",
+          "  5.0 fps",
+          0
+        ],
+        [
+          "muted",
+          "  98 ms a frame",
+          0
+        ]
+      ],
+      [],
+      [
+        [
+          "label",
+          "saved",
+          9
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "label",
+          "near",
+          0
+        ],
+        [
+          "plain",
+          " off  ",
+          0
+        ],
+        [
+          "label",
+          "fov",
+          0
+        ],
+        [
+          "plain",
+          " 65°",
+          0
+        ]
+      ],
+      [
+        [
+          "muted",
+          "change them with",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "cmd",
+          "tessaro-ctl config set camera.presence.near=METERS",
+          0
+        ],
+        [
+          "muted",
+          ",",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "cmd",
+          "tessaro-ctl camera calibrate --distance 1",
+          0
+        ]
+      ]
+    ]
+  ]
+}

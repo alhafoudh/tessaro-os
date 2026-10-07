@@ -111,6 +111,7 @@ mod tests {
                 name: "HD Webcam Mirror 1".to_string(),
                 device: "/dev/video50".to_string(),
             }],
+            vision: None,
             mode: Some(CameraMode {
                 format: "mjpeg".to_string(),
                 width: 1280,

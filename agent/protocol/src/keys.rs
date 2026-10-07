@@ -72,6 +72,10 @@ pub enum Consumer {
     /// capture in the new format. A page showing a camera loses its picture
     /// for a moment and has to ask for it again; the browser stays.
     Camera,
+    /// Presence detection, `tessaro-vision.service`: its config in `/run`
+    /// is rendered again, and the service restarts, or starts or stops with
+    /// camera.presence.enable. Nothing else restarts.
+    Vision,
 }
 
 /// Hardware a key needs. A key that names one is left out of `config keys`
@@ -113,6 +117,12 @@ pub enum Kind {
     /// A camera frame size: `auto`, or `WIDTHxHEIGHT`. Whether a camera has
     /// it is the camera's: one without it falls back to `auto`.
     CameraSize,
+    /// `auto`, or a camera's name as `tessaro-ctl camera list` shows it.
+    CameraName,
+    /// A number with up to two decimals, `min` to `max` in hundredths (a
+    /// range of 0.3 to 0.95 is 30 to 95), and `off` as well when `off` is
+    /// true.
+    Decimal { min: i64, max: i64, off: bool },
     /// A DNS label, or empty for the name derived from the node id.
     Name,
     /// `off`, or an `address:port` to listen on.
@@ -210,6 +220,15 @@ impl Kind {
             Kind::CameraSize => {
                 "auto, or WIDTHxHEIGHT from `tessaro-ctl camera list`".to_string()
             }
+            Kind::CameraName => {
+                "auto, or a camera's name from `tessaro-ctl camera list`".to_string()
+            }
+            Kind::Decimal { min, max, off } => format!(
+                "a number, {} to {}{}",
+                hundredths(*min),
+                hundredths(*max),
+                if *off { ", or off" } else { "" }
+            ),
             Kind::Name => "letters, digits and dashes, up to 40; empty derives one".to_string(),
             Kind::Listen => "address:port, or off".to_string(),
             Kind::Param => "any text; percent-encoded where browser.url uses it".to_string(),
@@ -283,6 +302,10 @@ const AUDIO: &[Consumer] = &[Consumer::Audio];
 const FIRMWARE: &[Consumer] = &[Consumer::Firmware];
 const TIME: &[Consumer] = &[Consumer::Time];
 const CAMERA: &[Consumer] = &[Consumer::Camera];
+const VISION: &[Consumer] = &[Consumer::Vision];
+/// camera.presence.enable: the mirrors add or drop the hidden one presence
+/// detection reads, and the vision service starts or stops.
+const CAMERA_AND_VISION: &[Consumer] = &[Consumer::Camera, Consumer::Vision];
 /// The proxy keys: the local proxy. The agent, whose probe and public
 /// address lookup go through it, follows only it being switched on or off.
 const PROXY: &[Consumer] = &[Consumer::Proxy];
@@ -442,6 +465,31 @@ pub static KEYS: &[Key] = &[
         "Frame size cameras capture at: auto (the largest up to 1920x1080 that keeps 25 fps), or WIDTHxHEIGHT from `tessaro-ctl camera list`. A camera without the size uses auto. `tessaro-ctl camera size`."),
     key(CAMERA_MIRRORS, "KIOSK_CAMERA_MIRRORS", Kind::Int { min: 1, max: CAMERA_MIRRORS_MAX }, CAMERA,
         "Virtual cameras each camera gets, `<camera> Mirror 1` and up, all with the same picture. Each has one reader at a time - the page, or a service on the device - so this is how many may watch a camera at once. `tessaro-ctl camera mirrors`."),
+    // Presence detection: tessaro-vision finds faces on a hidden mirror of
+    // one camera, and the agent turns them into events; see `tessaro-ctl
+    // camera presence` and docs/presence.md.
+    key(PRESENCE_ENABLE, "KIOSK_PRESENCE", Kind::Flag, CAMERA_AND_VISION,
+        "Presence detection: find the faces in front of the screen on camera.presence.camera and tell the journal, the page and scripts when someone arrives, leaves or comes near. Each camera gets a hidden mirror for it, which restarts the mirrors once. No picture is kept. `tessaro-ctl camera presence on|off`."),
+    key(PRESENCE_CAMERA, "KIOSK_PRESENCE_CAMERA", Kind::CameraName, VISION,
+        "The camera presence detection watches: auto for the first one plugged in, or a camera's name from `tessaro-ctl camera list`."),
+    key(PRESENCE_MODEL, "KIOSK_PRESENCE_MODEL", Kind::Choice(crate::presence::MODELS), VISION,
+        "The face detector: face-full sees faces up to about 5 m, face-short up to about 2 m for a fraction of the CPU."),
+    key(PRESENCE_FPS, "KIOSK_PRESENCE_FPS", Kind::Int { min: 1, max: 15 }, VISION,
+        "Frames a second presence detection looks at, at most. More notices people sooner and costs CPU; `tessaro-ctl camera presence` shows what the device keeps up with."),
+    key(PRESENCE_CONFIDENCE, "KIOSK_PRESENCE_CONFIDENCE", Kind::Decimal { min: 30, max: 95, off: false }, AGENT,
+        "How sure the detector has to be that it sees a face, 0.3 to 0.95. Lower finds faces further away and side-on, and mistakes a poster for one more often."),
+    key(PRESENCE_NEAR, "KIOSK_PRESENCE_NEAR", Kind::Decimal { min: 30, max: 1000, off: true }, AGENT,
+        "Meters within which someone counts as near: the near and far events, and near in every face. off for no near events. Distances come from the face's size and camera.presence.fov."),
+    key(PRESENCE_FOV, "KIOSK_PRESENCE_FOV", Kind::Int { min: 20, max: 170 }, AGENT,
+        "The camera's horizontal field of view in degrees, which turns a face's width into its distance. `tessaro-ctl camera calibrate --distance 1` measures it with someone standing 1 m away."),
+    key(PRESENCE_ARRIVE, "KIOSK_PRESENCE_ARRIVE", Kind::Decimal { min: 0, max: 1000, off: false }, AGENT,
+        "Seconds a face has to stay in view before someone has arrived, so a passer-by glancing over does not count."),
+    key(PRESENCE_LINGER, "KIOSK_PRESENCE_LINGER", Kind::Decimal { min: 50, max: 6000, off: false }, AGENT,
+        "Seconds without a face before someone has left, so looking away for a moment does not count."),
+    key(PRESENCE_PAGE, "KIOSK_PRESENCE_PAGE", Kind::Flag, AGENT,
+        "Tell the page about presence: a tessaro:presence event on window when someone arrives, leaves or comes near, and the faces with tessaro.presence.watch(). Needs browser.bridge.mode config or actions."),
+    key(PRESENCE_SCRIPTS, "KIOSK_PRESENCE_SCRIPTS", Kind::Flag, AGENT,
+        "Run the scripts that run on presence events (`tessaro-ctl script set --presence`). 0 runs none of them."),
     // The printers themselves are in their own table, `tessaro-ctl printer`;
     // this only decides whether the page may use them.
     key(PRINTER_ENABLE, "KIOSK_PRINTING", Kind::Flag, BROWSER_AND_AGENT,
@@ -631,6 +679,17 @@ pub const CAMERA_MIRRORS_MAX: i64 = 8;
 
 /// What camera.format may be.
 pub const CAMERA_FORMATS: &[&str] = &["auto", "mjpeg", "yuyv"];
+pub const PRESENCE_ENABLE: &str = "camera.presence.enable";
+pub const PRESENCE_CAMERA: &str = "camera.presence.camera";
+pub const PRESENCE_MODEL: &str = "camera.presence.model";
+pub const PRESENCE_FPS: &str = "camera.presence.fps";
+pub const PRESENCE_CONFIDENCE: &str = "camera.presence.confidence";
+pub const PRESENCE_NEAR: &str = "camera.presence.near";
+pub const PRESENCE_FOV: &str = "camera.presence.fov";
+pub const PRESENCE_ARRIVE: &str = "camera.presence.arrive";
+pub const PRESENCE_LINGER: &str = "camera.presence.linger";
+pub const PRESENCE_PAGE: &str = "camera.presence.page";
+pub const PRESENCE_SCRIPTS: &str = "camera.presence.scripts";
 /// `screen.rotation`, in degrees clockwise. tessaro-weston-config turns each
 /// into Weston's `transform=` (`90` is `rotate-90`, `flipped-90` is
 /// `flipped-rotate-90`), and the splash into psplash's `--angle`.
@@ -879,6 +938,17 @@ pub fn find_env(env: &str) -> Option<&'static Key> {
         .find(|key| !key.env.is_empty() && key.env == env)
 }
 
+/// A count of hundredths as the shortest decimal: 150 is `1.5`, 300 `3`.
+pub fn hundredths(value: i64) -> String {
+    let text = format!("{}.{:02}", value / 100, (value % 100).abs());
+    let text = text.trim_end_matches('0').trim_end_matches('.');
+    if value < 0 && value > -100 {
+        format!("-{text}")
+    } else {
+        text.to_string()
+    }
+}
+
 /// The value as it will be stored, or why it cannot be.
 pub fn validate(key: &Key, value: &str) -> Result<String, String> {
     // The debug template's `\n` is the one backslash allowed anywhere. It
@@ -960,6 +1030,41 @@ pub fn validate(key: &Key, value: &str) -> Result<String, String> {
             Ok(number) if (min..=max).contains(&number) => Ok(number.to_string()),
             _ => fail(&format!("must be a whole number from {min} to {max}")),
         },
+        Kind::Decimal { min, max, off } => {
+            if off && value.eq_ignore_ascii_case("off") {
+                return Ok("off".to_string());
+            }
+            match value.parse::<f64>() {
+                Ok(number) if number.is_finite() => {
+                    let rounded = (number * 100.0).round() as i64;
+                    if (min..=max).contains(&rounded) {
+                        Ok(hundredths(rounded))
+                    } else {
+                        fail(&format!(
+                            "must be from {} to {}{}",
+                            hundredths(min),
+                            hundredths(max),
+                            if off { ", or off" } else { "" }
+                        ))
+                    }
+                }
+                _ => fail(&format!(
+                    "must be a number{}, e.g. {}",
+                    if off { " or off" } else { "" },
+                    hundredths(max)
+                )),
+            }
+        }
+        Kind::CameraName => {
+            if value.is_empty() || value.eq_ignore_ascii_case("auto") {
+                return Ok("auto".to_string());
+            }
+            // V4L2's card name is 31 bytes, and a camera is named by it.
+            if value.len() > 31 {
+                return fail("a camera's name is at most 31 characters");
+            }
+            Ok(value.to_string())
+        }
         Kind::Args => Ok(value.split_whitespace().collect::<Vec<_>>().join(" ")),
         Kind::Features => {
             if value.chars().any(char::is_whitespace) {
@@ -1816,6 +1921,38 @@ mod tests {
         for name in [CAMERA_FORMAT, CAMERA_SIZE, CAMERA_MIRRORS] {
             assert_eq!(find(name).unwrap().consumers, [Consumer::Camera]);
         }
+    }
+
+    #[test]
+    fn presence_keys_take_decimals_and_a_camera_name() {
+        assert_eq!(check(PRESENCE_CONFIDENCE, "0.6").unwrap(), "0.6");
+        assert_eq!(check(PRESENCE_CONFIDENCE, ".755").unwrap(), "0.76");
+        assert!(check(PRESENCE_CONFIDENCE, "0.2").is_err());
+        assert!(check(PRESENCE_CONFIDENCE, "off").is_err());
+        assert_eq!(check(PRESENCE_NEAR, "1.50").unwrap(), "1.5");
+        assert_eq!(check(PRESENCE_NEAR, "2").unwrap(), "2");
+        assert_eq!(check(PRESENCE_NEAR, "OFF").unwrap(), "off");
+        assert!(check(PRESENCE_NEAR, "far").is_err());
+        assert!(check(PRESENCE_NEAR, "NaN").is_err());
+        assert_eq!(check(PRESENCE_ARRIVE, "0").unwrap(), "0");
+        assert_eq!(check(PRESENCE_CAMERA, "").unwrap(), "auto");
+        assert_eq!(check(PRESENCE_CAMERA, "HD Webcam").unwrap(), "HD Webcam");
+        assert!(check(PRESENCE_CAMERA, &"x".repeat(32)).is_err());
+        assert_eq!(check(PRESENCE_MODEL, "face-short").unwrap(), "face-short");
+        assert!(check(PRESENCE_MODEL, "face-mesh").is_err());
+        assert_eq!(
+            find(PRESENCE_ENABLE).unwrap().consumers,
+            [Consumer::Camera, Consumer::Vision]
+        );
+    }
+
+    #[test]
+    fn hundredths_read_as_the_shortest_decimal() {
+        assert_eq!(hundredths(150), "1.5");
+        assert_eq!(hundredths(300), "3");
+        assert_eq!(hundredths(5), "0.05");
+        assert_eq!(hundredths(0), "0");
+        assert_eq!(hundredths(-50), "-0.5");
     }
 
     #[test]

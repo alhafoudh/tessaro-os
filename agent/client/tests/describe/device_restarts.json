@@ -10,7 +10,8 @@
     "firmware",
     "time",
     "proxy",
-    "camera"
+    "camera",
+    "vision"
   ],
   "output": [
     {
@@ -52,6 +53,10 @@
     {
       "long": "the camera mirrors (tessaro-camera@*.service); a page showing a camera asks for it again",
       "short": "camera mirrors"
+    },
+    {
+      "long": "presence detection (tessaro-vision.service)",
+      "short": "presence detection"
     }
   ]
 }

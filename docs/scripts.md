@@ -2,8 +2,9 @@
 
 **A script is a named shell body the device keeps in the `scripts` table
 of `/data/tessaro/tessaro.db` and runs as root through systemd: now, for a
-schedule ([scheduler.md](scheduler.md)), for the kiosk page, or on an
-HDMI-CEC event ([cec.md](cec.md)).** Every
+schedule ([scheduler.md](scheduler.md)), for the kiosk page, on an
+HDMI-CEC event ([cec.md](cec.md)) or on a presence event
+([presence.md](presence.md)).** Every
 trigger starts the same run unit, so the timeout, the concurrency rule, the
 journal and the run history belong to the script, whoever started it.
 `tessaro-ctl script create|set|remove` change the table, `list` and `show`
@@ -21,8 +22,9 @@ records), `control/scripts.rs` (the commands and following a run) and
   which anyone who may manage the device can already do (`ssh`,
   `browser eval`), so it needs no rule of its own. A run gets
   `TESSARO_SCRIPT` (its name), `TESSARO_RUN` (its instance) and
-  `TESSARO_TRIGGER` (`manual`, `bridge`, `schedule` or `cec`); a CEC run
-  also gets `TESSARO_CEC_EVENT`, and `TESSARO_CEC_KEY` for a remote key.
+  `TESSARO_TRIGGER` (`manual`, `bridge`, `schedule`, `cec` or `presence`);
+  a CEC run also gets `TESSARO_CEC_EVENT`, and `TESSARO_CEC_KEY` for a
+  remote key, a presence run `TESSARO_PRESENCE_EVENT`.
 * **The body is a file, never escaped into a unit.** It is written to
   `/run/tessaro-kiosk/scripts/<id>-<hash>.sh`, `0600`, and the run unit
   execs `/bin/sh` on it. Only the fixed wrapper line goes through `exec_arg`
@@ -42,21 +44,29 @@ records), `control/scripts.rs` (the commands and following a run) and
     so a timer never finds it running.
 * **A run's instance names its trigger first:** `manual-<unix>-<random>`,
   `bridge-...`, `schedule-<schedule id>-<unix>-<pid>`,
-  `cec-<event>-<unix>-<random>` (`cec-tv-standby-...`, `cec-key:red-...`).
-  `TESSARO_TRIGGER` is that first word, and a CEC run's event what lies
-  between it and the time, both cut out by the wrapper line (`run_shell`)
-  because systemd has no specifier for them. `script list` names the
-  schedule behind a `schedule-...` run while that schedule exists, and the
-  event behind a `cec-...` run.
+  `cec-<event>-<unix>-<random>` (`cec-tv-standby-...`, `cec-key:red-...`),
+  `presence-<event>-<unix>-<random>`. `TESSARO_TRIGGER` is that first word,
+  and a CEC or presence run's event what lies between it and the time, both
+  cut out by the wrapper line (`run_shell`) because systemd has no specifier
+  for them. `script list` names the schedule behind a `schedule-...` run
+  while that schedule exists, and the event behind a `cec-...` or
+  `presence-...` run.
 * **A script runs on the HDMI-CEC events in its `cec` list**
   (`script create|set --cec`): `tv-on`, `tv-standby`, `source-gained`,
   `source-lost`, `key` for every remote key, `key:<name>` for one
   (`protocol::cec`). The agent starts the run itself, as for `script run`,
   but does not follow it: how it ended is in its record. A key starts a run
   when it goes down, not again while held, and each script starts at most
-  10 runs on CEC events a minute (`CEC_BURST`), so a remote key held down
+  10 runs on CEC events a minute (`EVENT_BURST`), so a remote key held down
   cannot pile up root shells. `screen.cec.scripts=0` starts none, and the
   rest of the CEC events are [cec.md](cec.md)'s.
+* **A script runs on the presence events in its `presence` list**
+  (`script create|set --presence`): `arrived`, `left`, `near`, `far`
+  (`protocol::presence`). Started the same way, with a burst window of its
+  own (`EVENT_BURST` again, kept apart from the CEC one), so someone
+  stepping in and out of view cannot pile up runs either.
+  `camera.presence.scripts=0` starts none; what the events mean is
+  [presence.md](presence.md)'s.
 * **The content hash is in the run template's and the body's names.** Any
   change to the name, body, `on_error`, timeout or concurrency is a new
   template and body, so an edit never changes a run already going; the old

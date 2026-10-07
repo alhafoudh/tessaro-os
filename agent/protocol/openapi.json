@@ -2461,6 +2461,78 @@
         }
       }
     },
+    "/api/v1/camera/presence": {
+      "get": {
+        "operationId": "camera.Presence",
+        "tags": [
+          "camera"
+        ],
+        "summary": "Whether anyone is in front of the screen: what presence detection decided, the faces of the newest frame it looked at, and how it runs.",
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PresenceStatus"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/camera/presence/calibrate": {
+      "post": {
+        "operationId": "camera.Calibrate",
+        "tags": [
+          "camera"
+        ],
+        "summary": "Measure camera.presence.fov from the one face in view, of someone standing `distance` meters from the camera, and save it.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CalibrateBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Calibrated"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/time": {
       "get": {
         "operationId": "time.Show",
@@ -4979,6 +5051,18 @@
             "description": "The TV as HDMI-CEC reports it; `None` with screen.cec.enable off or\nbefore the TV answered.",
             "default": null
           },
+          "presence": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PresenceSummary"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Whether anyone is in front of the screen; `None` with\ncamera.presence.enable off. Defaulted the same way.",
+            "default": null
+          },
           "bridge": {
             "anyOf": [
               {
@@ -5298,6 +5382,29 @@
           "turning-off"
         ],
         "description": "A device's power as HDMI-CEC reports it."
+      },
+      "PresenceSummary": {
+        "type": "object",
+        "properties": {
+          "present": {
+            "type": "boolean"
+          },
+          "near": {
+            "type": "boolean"
+          },
+          "count": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "Faces in the newest frame."
+          }
+        },
+        "required": [
+          "present",
+          "near",
+          "count"
+        ],
+        "description": "Presence in `device status`, with camera.presence.enable on."
       },
       "BridgeStatus": {
         "type": "object",
@@ -6303,6 +6410,11 @@
             "type": "string",
             "const": "camera",
             "description": "The camera mirrors, `tessaro-camera@<device>.service`: their config\nin `/run` is rendered again, and every running mirror restarts to\ncapture in the new format. A page showing a camera loses its picture\nfor a moment and has to ask for it again; the browser stays."
+          },
+          {
+            "type": "string",
+            "const": "vision",
+            "description": "Presence detection, `tessaro-vision.service`: its config in `/run`\nis rendered again, and the service restarts, or starts or stops with\ncamera.presence.enable. Nothing else restarts."
           }
         ],
         "description": "What has to happen for a changed value to take effect."
@@ -8430,6 +8542,17 @@
             "description": "The virtual cameras the mirror writes every frame into, one reader\neach: v4l2loopback streams a device to one reader at a time. Empty\nwhen the mirror could not start.",
             "default": []
           },
+          "vision": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CameraMirror"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The hidden virtual camera presence detection reads, `<camera>\nVision`: root's alone, so the page never sees it. Only while\ncamera.presence.enable is on."
+          },
           "mode": {
             "anyOf": [
               {
@@ -8535,6 +8658,346 @@
           "device"
         ],
         "description": "A camera by its own node, as `camera list` names it: `video0`."
+      },
+      "PresenceStatus": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "camera.presence.enable."
+          },
+          "running": {
+            "type": "boolean",
+            "description": "The vision service reported in the last few seconds."
+          },
+          "camera": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The camera it reads, by name.",
+            "default": null
+          },
+          "model": {
+            "type": "string",
+            "description": "camera.presence.model."
+          },
+          "fps": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Frames looked at a second, measured.",
+            "default": null
+          },
+          "inference_ms": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Inference of one frame, in milliseconds.",
+            "default": null
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why it is not looking.",
+            "default": null
+          },
+          "present": {
+            "type": "boolean",
+            "description": "Someone has been in view for camera.presence.arrive, and not gone for\ncamera.presence.linger."
+          },
+          "near": {
+            "type": "boolean",
+            "description": "Someone present is closer than camera.presence.near."
+          },
+          "near_m": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "camera.presence.near in meters; `None` when it is off.",
+            "default": null
+          },
+          "fov": {
+            "type": "number",
+            "format": "double",
+            "description": "camera.presence.fov, the horizontal field of view distances use."
+          },
+          "last": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PresenceEvent"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The last event, if there was one since the agent started.",
+            "default": null
+          },
+          "frame": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FacesFrame"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The newest frame's faces.",
+            "default": null
+          }
+        },
+        "required": [
+          "enabled",
+          "running",
+          "model",
+          "present",
+          "near",
+          "fov"
+        ],
+        "description": "`tessaro-ctl camera presence`: whether anyone is in front of the screen,\nand how the detection runs."
+      },
+      "PresenceEvent": {
+        "type": "object",
+        "properties": {
+          "event": {
+            "type": "string",
+            "description": "`arrived`, `left`, `near` or `far`."
+          },
+          "at": {
+            "$ref": "#/components/schemas/Moment"
+          }
+        },
+        "required": [
+          "event",
+          "at"
+        ],
+        "description": "One presence event and when it happened."
+      },
+      "FacesFrame": {
+        "type": "object",
+        "properties": {
+          "t": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "When the frame was captured, milliseconds since the epoch."
+          },
+          "width": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "The frame's size as the camera captures it, for its aspect ratio."
+          },
+          "height": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "faces": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Face"
+            },
+            "description": "The faces at or above camera.presence.confidence."
+          }
+        },
+        "required": [
+          "t",
+          "width",
+          "height",
+          "faces"
+        ],
+        "description": "The faces of one frame."
+      },
+      "Face": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Stable while the face stays in view; never an identity."
+          },
+          "box": {
+            "$ref": "#/components/schemas/FaceBox"
+          },
+          "score": {
+            "type": "number",
+            "format": "double",
+            "description": "How sure the detector is, 0 to 1."
+          },
+          "distance": {
+            "type": "number",
+            "format": "double",
+            "description": "How far away it is, in meters, from its width and camera.presence.fov."
+          },
+          "near": {
+            "type": "boolean",
+            "description": "Closer than camera.presence.near."
+          },
+          "facing": {
+            "type": "boolean",
+            "description": "It looks at the camera, judged from how its eyes and ears sit: a\nguess, not gaze tracking."
+          },
+          "keypoints": {
+            "$ref": "#/components/schemas/Keypoints"
+          }
+        },
+        "required": [
+          "id",
+          "box",
+          "score",
+          "distance",
+          "near",
+          "facing",
+          "keypoints"
+        ],
+        "description": "A face in front of the screen."
+      },
+      "FaceBox": {
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "number",
+            "format": "double"
+          },
+          "y": {
+            "type": "number",
+            "format": "double"
+          },
+          "w": {
+            "type": "number",
+            "format": "double"
+          },
+          "h": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "required": [
+          "x",
+          "y",
+          "w",
+          "h"
+        ],
+        "description": "A rectangle in a camera frame, every value a share of the frame's width\nor height (0 to 1), from its top left corner. It is the camera's own\nview, never mirrored: a page drawing over a selfie-style preview flips\n`x` itself."
+      },
+      "Keypoints": {
+        "type": "object",
+        "properties": {
+          "right_eye": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            },
+            "minItems": 2,
+            "maxItems": 2
+          },
+          "left_eye": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            },
+            "minItems": 2,
+            "maxItems": 2
+          },
+          "nose": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            },
+            "minItems": 2,
+            "maxItems": 2
+          },
+          "mouth": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            },
+            "minItems": 2,
+            "maxItems": 2
+          },
+          "right_ear": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            },
+            "minItems": 2,
+            "maxItems": 2
+          },
+          "left_ear": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            },
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+        "required": [
+          "right_eye",
+          "left_eye",
+          "nose",
+          "mouth",
+          "right_ear",
+          "left_ear"
+        ],
+        "description": "The landmarks of a face, as `Point`s."
+      },
+      "CalibrateBody": {
+        "type": "object",
+        "properties": {
+          "distance": {
+            "type": "number",
+            "format": "double",
+            "description": "Meters, 0.3 to 10."
+          }
+        },
+        "required": [
+          "distance"
+        ],
+        "description": "How far from the camera the person calibrating stands."
+      },
+      "Calibrated": {
+        "type": "object",
+        "properties": {
+          "distance": {
+            "type": "number",
+            "format": "double",
+            "description": "The distance the person stood at, in meters, as given."
+          },
+          "width": {
+            "type": "number",
+            "format": "double",
+            "description": "Their face's width as a share of the frame's."
+          },
+          "fov": {
+            "type": "number",
+            "format": "double",
+            "description": "The field of view that makes the two agree, saved as\ncamera.presence.fov."
+          }
+        },
+        "required": [
+          "distance",
+          "width",
+          "fov"
+        ],
+        "description": "What `tessaro-ctl camera calibrate` measured and saved."
       },
       "TimeStatus": {
         "type": "object",
@@ -8926,6 +9389,14 @@
             "description": "The HDMI-CEC events it runs on: `tv-on`, `tv-standby`,\n`source-gained`, `source-lost`, `key` for every remote key, or\n`key:<name>` for one (`protocol::cec`).",
             "default": []
           },
+          "presence": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The presence events it runs on: `arrived`, `left`, `near`, `far`\n(`protocol::presence`).",
+            "default": []
+          },
           "runs": {
             "type": "array",
             "items": {
@@ -9001,7 +9472,7 @@
           },
           "trigger": {
             "type": "string",
-            "description": "What started it: `manual`, `bridge` (the kiosk page), `schedule` or\n`cec`, the first word of `run`."
+            "description": "What started it: `manual`, `bridge` (the kiosk page), `schedule`,\n`cec` or `presence`, the first word of `run`."
           },
           "schedule": {
             "type": [
@@ -9016,7 +9487,7 @@
               "string",
               "null"
             ],
-            "description": "The CEC event that started it: `tv-standby`, `key:red`.",
+            "description": "The CEC or presence event that started it: `tv-standby`, `key:red`,\n`arrived`.",
             "default": null
           },
           "started": {
@@ -9089,6 +9560,14 @@
               "type": "string"
             },
             "description": "The HDMI-CEC events it runs on: `tv-on`, `tv-standby`,\n`source-gained`, `source-lost`, `key` for every remote key, or\n`key:<name>` for one (`protocol::cec`).",
+            "default": []
+          },
+          "presence": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The presence events it runs on: `arrived`, `left`, `near`, `far`\n(`protocol::presence`).",
             "default": []
           }
         },
@@ -9182,6 +9661,17 @@
               "type": "string"
             },
             "description": "Replaces the CEC events it runs on; empty for none.",
+            "default": null
+          },
+          "presence": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Replaces the presence events it runs on; empty for none.",
             "default": null
           }
         },

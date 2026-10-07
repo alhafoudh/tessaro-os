@@ -72,6 +72,36 @@ pub enum CameraCmd {
         #[arg(long, value_name = "SECONDS")]
         watch: Option<f64>,
     },
+    /// Presence detection: whether anyone is in front of the screen, the
+    /// faces in view and how far away each is, and how it runs. `on` and
+    /// `off` switch it, the same as `tessaro-ctl config set
+    /// camera.presence.enable=1`; each camera's mirrors restart once.
+    ///
+    ///   tessaro-ctl camera presence
+    ///   tessaro-ctl camera presence on --near 1.2
+    ///   tessaro-ctl camera presence --watch 1
+    Presence {
+        state: Option<crate::Toggle>,
+        /// With `on`: the camera to watch, by its name from `tessaro-ctl
+        /// camera list`; the first one unless given.
+        #[arg(long, value_name = "NAME")]
+        camera: Option<String>,
+        /// With `on`: meters within which someone counts as near, or off.
+        #[arg(long, value_name = "METERS")]
+        near: Option<String>,
+        /// Show it again every SECONDS, until Ctrl-C.
+        #[arg(long, value_name = "SECONDS", conflicts_with = "state")]
+        watch: Option<f64>,
+    },
+    /// Measure the camera's field of view with one person standing
+    /// METERS from it, facing it, and nobody else in view, and save it as
+    /// camera.presence.fov: distances are right from then on.
+    ///
+    ///   tessaro-ctl camera calibrate --distance 1
+    Calibrate {
+        #[arg(long, value_name = "METERS")]
+        distance: f64,
+    },
 }
 
 pub fn run(session: &mut Session, command: CameraCmd, json: bool) -> Result<(), String> {
@@ -94,6 +124,63 @@ pub fn run(session: &mut Session, command: CameraCmd, json: bool) -> Result<(), 
             output,
             watch,
         } => snapshot(session, json, device, output, watch),
+        CameraCmd::Presence {
+            state: Some(state),
+            camera,
+            near,
+            ..
+        } => {
+            let values = camera::presence_change(
+                state == crate::Toggle::On,
+                camera.as_deref(),
+                near.as_deref(),
+            )?;
+            let applied = crate::set(session, values)?;
+            print(json, &applied, || show_applied(&applied, false))
+        }
+        CameraCmd::Presence {
+            state: None,
+            watch: None,
+            ..
+        } => {
+            let status = camera::presence(session)?;
+            print(json, &status, || show_presence(&status))
+        }
+        CameraCmd::Presence {
+            state: None,
+            watch: Some(seconds),
+            ..
+        } => {
+            if seconds.is_nan() || seconds <= 0.0 || seconds.is_infinite() {
+                return Err("--watch: the interval must be more than 0 seconds".to_string());
+            }
+            // Watching ends with Ctrl-C, which ends the process.
+            camera::watch_presence(
+                session,
+                Duration::from_secs_f64(seconds),
+                &mut Stderr,
+                |status| {
+                    if json {
+                        return crate::print_json(&status);
+                    }
+                    show_presence(&status);
+                    println!();
+                    Ok(())
+                },
+            )
+        }
+        CameraCmd::Calibrate { distance } => {
+            let calibrated = camera::calibrate(session, distance)?;
+            print(json, &calibrated, || {
+                println!("{}", style::line(&describe::calibrated(&calibrated)))
+            })
+        }
+    }
+}
+
+fn show_presence(status: &protocol::presence::PresenceStatus) {
+    for line in describe::presence(status) {
+        println!("{}", style::line(&line));
     }
 }
 

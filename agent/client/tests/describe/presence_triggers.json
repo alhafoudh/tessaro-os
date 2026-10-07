@@ -1,0 +1,49 @@
+{
+  "function": "presence::triggers",
+  "input": [
+    "",
+    "arrived",
+    " Arrived, left ,arrived,",
+    "near,far",
+    "gone"
+  ],
+  "output": {
+    "events": [
+      "arrived",
+      "left",
+      "near",
+      "far"
+    ],
+    "typed": [
+      {
+        "ok": []
+      },
+      {
+        "ok": [
+          "arrived"
+        ]
+      },
+      {
+        "ok": [
+          "arrived",
+          "left"
+        ]
+      },
+      {
+        "ok": [
+          "near",
+          "far"
+        ]
+      },
+      {
+        "err": "\"gone\" is not a presence event; one of arrived, left, near, far"
+      }
+    ],
+    "words": [
+      "someone arriving",
+      "everyone leaving",
+      "someone coming near",
+      "everyone near stepping back"
+    ]
+  }
+}

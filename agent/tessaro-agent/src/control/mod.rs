@@ -34,6 +34,7 @@ mod network;
 mod page;
 mod playlists;
 mod policies;
+mod presence;
 mod printers;
 mod schedules;
 mod screen;
@@ -268,8 +269,14 @@ pub struct Control {
     /// Every adapter in use and its bus, by device path, as its worker last
     /// saw it.
     cec_adapters: Mutex<BTreeMap<String, protocol::CecAdapter>>,
-    /// When each script last started on CEC events, within `CEC_WINDOW`.
-    cec_runs: Mutex<HashMap<String, Vec<std::time::Instant>>>,
+    /// When each script last started on CEC or presence events, by
+    /// `<trigger>:<id>`, within `EVENT_WINDOW`.
+    event_runs: Mutex<HashMap<String, Vec<std::time::Instant>>>,
+    /// What presence detection last saw and decided (`presence`).
+    presence: Mutex<crate::presence::Presence>,
+    /// When the page last asked for the faces (`presence.watch()`); they
+    /// go to it while that is under `bridge::WATCH_LEASE` old.
+    presence_watch: Mutex<Option<std::time::Instant>>,
 }
 
 impl Control {
@@ -333,7 +340,9 @@ impl Control {
             media_wake: tokio::sync::Notify::new(),
             cec_requests: tokio::sync::broadcast::channel(8).0,
             cec_adapters: Mutex::new(BTreeMap::new()),
-            cec_runs: Mutex::new(HashMap::new()),
+            event_runs: Mutex::new(HashMap::new()),
+            presence: Mutex::new(crate::presence::Presence::default()),
+            presence_watch: Mutex::new(None),
         })
     }
 
@@ -670,6 +679,10 @@ impl Control {
             Command::Storage => self.storage().await.into(),
             Command::CameraList => self.camera_list().await.into(),
             Command::CameraSnapshot { device } => self.camera_snapshot(device).await.into(),
+            Command::CameraPresence => self.camera_presence().await.into(),
+            Command::CameraCalibrate { distance_cm } => {
+                self.camera_calibrate(caller, distance_cm).await
+            }
             Command::NetProfiles => self.network.profiles().await.into(),
             Command::NetShow { profile } => self.network.show(&profile).await.into(),
             Command::NetLast => self.network.last().await.into(),
@@ -757,6 +770,7 @@ impl Control {
                 concurrency,
                 bridge,
                 cec,
+                presence,
             } => {
                 let change = scripts::Change {
                     name,
@@ -767,6 +781,7 @@ impl Control {
                     concurrency,
                     bridge,
                     cec,
+                    presence,
                 };
                 self.script_set(caller, script, change).await.into()
             }
@@ -1146,6 +1161,7 @@ impl Control {
             playlist,
             screen_on,
             tv: self.tv_status(),
+            presence: self.presence_summary(),
             bridge: self.bridge_status(),
             os,
             image_version,
@@ -1760,6 +1776,7 @@ mod tests {
                 name: "HD Webcam Mirror 1".into(),
                 device: "/dev/video50".into(),
             }],
+            vision: None,
             mode: None,
             fallback: None,
             error: None,
@@ -2126,6 +2143,7 @@ mod tests {
             concurrency: protocol::Concurrency::Overlap,
             bridge: false,
             cec: Vec::new(),
+            presence: Vec::new(),
         }
     }
 
@@ -2176,6 +2194,7 @@ mod tests {
                 concurrency: Some(protocol::Concurrency::Skip),
                 bridge: Some(true),
                 cec: Some(vec!["TV-standby".into(), "key:red".into()]),
+                presence: Some(vec!["Arrived".into()]),
             },
         )
         .await;
@@ -2183,6 +2202,7 @@ mod tests {
         assert_eq!(changed.spec.body, "true\nfalse\n");
         assert!(changed.spec.bridge);
         assert_eq!(changed.spec.cec, vec!["tv-standby", "key:red"]);
+        assert_eq!(changed.spec.presence, vec!["arrived"]);
         // A new run template and body replace the old ones; nothing runs to
         // keep them.
         let rendered = units();
@@ -2260,6 +2280,7 @@ mod tests {
                 concurrency: None,
                 bridge: Some(false),
                 cec: None,
+                presence: None,
             },
         )
         .await;

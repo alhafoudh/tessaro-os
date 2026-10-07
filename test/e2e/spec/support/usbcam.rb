@@ -2,14 +2,15 @@
 
 module AgentE2E
   # The fake USB webcam, test/usbcam/usbcam.rb, on this worker's USB/IP port:
-  # ffmpeg's moving test pattern served as a UVC camera, which the guest
-  # attaches through vhci-hcd. QEMU emulates no camera (docs/camera.md,
-  # Testing in qemu).
+  # ffmpeg's moving test pattern, or `clip` looped, served as a UVC camera,
+  # which the guest attaches through vhci-hcd. QEMU emulates no camera
+  # (docs/camera.md, Testing in qemu).
   class Usbcam
     SCRIPT = File.join(ROOT, "test", "usbcam", "usbcam.rb")
 
-    def initialize(lane)
+    def initialize(lane, clip: nil)
       @log = File.join(LOG_DIR, "#{lane}.usbcam.log")
+      @clip = clip
     end
 
     def port = Ports.usbip
@@ -18,7 +19,7 @@ module AgentE2E
     def start
       FileUtils.mkdir_p(LOG_DIR)
       File.write(@log, "")
-      @pid = Process.spawn("ruby", SCRIPT, "--port", port.to_s,
+      @pid = Process.spawn("ruby", SCRIPT, "--port", port.to_s, *@clip,
                            in: File::NULL, out: @log, err: @log, pgroup: true)
       AgentE2E.step("wait up to 10s for the fake webcam on 127.0.0.1:#{port}")
       deadline = Time.now + 10

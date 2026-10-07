@@ -244,6 +244,7 @@ mod tests {
             "src/control/page.rs",
             "src/control/screen.rs",
             "src/control/cec.rs",
+            "src/control/presence.rs",
             "src/cec/io.rs",
             "src/control/schedules.rs",
             "src/control/playlists.rs",

@@ -16,7 +16,10 @@
 //! (camera.format and camera.size, rendered by the agent into
 //! `/run/tessaro-camera/camera.env`); see `choice.rs`. How many mirrors it
 //! makes comes from `KIOSK_CAMERA_MIRRORS` (camera.mirrors) in the same file,
-//! read at start only: the agent restarts the mirror when it changes. What
+//! read at start only: the agent restarts the mirror when it changes. So is
+//! `KIOSK_CAMERA_VISION` (camera.presence.enable), which adds one more,
+//! `<camera> Vision`, that only root may open: tessaro-vision reads it for
+//! presence detection, and the page never sees it. What
 //! it captures goes to `/run/tessaro-camera/videoN.json` as a
 //! `protocol::CameraInfo`, which `tessaro-ctl camera list` reads back, and is
 //! removed on exit along with the virtual cameras. While the agent asks for
@@ -27,12 +30,6 @@
 //! failure, which the unit restarts. A camera it cannot mirror at all (no
 //! MJPEG or YUYV) is reported in the state file and then waited out, so the
 //! unit does not restart for nothing.
-
-mod choice;
-mod loopback;
-mod mirrors;
-mod snapshot;
-mod v4l2;
 
 use std::env;
 use std::fs::{self, File, OpenOptions};
@@ -47,10 +44,13 @@ use std::time::{Duration, Instant};
 
 use protocol::{CameraInfo, CameraMirror, CameraMode};
 
-use choice::Wanted;
-use loopback::{Control, Leftovers, Removed};
-use snapshot::Snapshots;
-use v4l2::{Capture, Interval, BUF_TYPE_VIDEO_CAPTURE, BUF_TYPE_VIDEO_OUTPUT};
+use tessaro_camera::choice::{self, Wanted};
+use tessaro_camera::loopback::{Control, Leftovers, Removed};
+use tessaro_camera::snapshot::Snapshots;
+use tessaro_camera::v4l2::{
+    self, Capture, Interval, BUF_TYPE_VIDEO_CAPTURE, BUF_TYPE_VIDEO_OUTPUT,
+};
+use tessaro_camera::{mirrors, write_whole};
 
 const STATE_DIR: &str = "/run/tessaro-camera";
 
@@ -198,6 +198,7 @@ fn run(
         device: name.to_string(),
         bus: identity.bus.clone(),
         mirrors: Vec::new(),
+        vision: None,
         mode: None,
         fallback: None,
         error: None,
@@ -256,11 +257,29 @@ fn run(
             }
         }
     }
+    // The hidden one presence detection reads, after the page's, so a
+    // reader that counts mirrors from the first still finds its own.
+    let mut vision = None;
+    if result.is_ok() && mirrors::vision(env::var("KIOSK_CAMERA_VISION").ok().as_deref()) {
+        let label = mirrors::vision_label(&camera_name);
+        match control.add(&label) {
+            Ok(nr) => {
+                let hidden = CameraMirror {
+                    name: label,
+                    device: format!("/dev/video{nr}"),
+                };
+                vision = Some(hidden.clone());
+                made.push((nr, hidden));
+            }
+            Err(err) => result = Err(stop(err, "adding the vision device")),
+        }
+    }
     if result.is_ok() {
         let loopbacks: Vec<CameraMirror> = made.iter().map(|(_, m)| m.clone()).collect();
         result = mirror(
             &camera,
             &loopbacks,
+            vision,
             &mode,
             &mut info,
             state,
@@ -365,10 +384,12 @@ fn open_output(device: &str, mode: &CameraMode) -> Result<Output> {
 }
 
 /// Stream the camera into every one of `loopbacks` until asked to stop.
+/// `vision`, one of them, is reported apart from the page's mirrors.
 #[allow(clippy::too_many_arguments)]
 fn mirror(
     camera: &File,
     loopbacks: &[CameraMirror],
+    vision: Option<CameraMirror>,
     mode: &CameraMode,
     info: &mut CameraInfo,
     state: &State,
@@ -382,7 +403,12 @@ fn mirror(
         .collect::<Result<Vec<Output>>>()?;
 
     let capture = check(Capture::start(camera, BUFFERS), "starting the capture")?;
-    info.mirrors = loopbacks.to_vec();
+    info.mirrors = loopbacks
+        .iter()
+        .filter(|loopback| Some(*loopback) != vision.as_ref())
+        .cloned()
+        .collect();
+    info.vision = vision;
     info.mode = Some(mode.clone());
     state.write(info);
     let devices: Vec<&str> = loopbacks.iter().map(|m| m.device.as_str()).collect();
@@ -474,22 +500,6 @@ fn open_virtual(path: &str) -> Result<File> {
             }
             Err(err) => return Err(Stop::Failed(format!("{path}: {err}"))),
         }
-    }
-}
-
-/// Whole or not at all: a temporary file in the same directory, then a
-/// rename over the real one, so a reader never sees half of it. A failure is
-/// logged, not fatal: the mirror is what matters, the files only report on it.
-fn write_whole(path: &Path, body: &[u8]) {
-    let name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("camera");
-    let temporary = path.with_file_name(format!(".{name}.tmp"));
-    let result = fs::write(&temporary, body).and_then(|()| fs::rename(&temporary, path));
-    if let Err(err) = result {
-        eprintln!("{}: {err}", path.display());
-        let _ = fs::remove_file(&temporary);
     }
 }
 

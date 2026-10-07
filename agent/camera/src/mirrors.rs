@@ -52,7 +52,28 @@ pub fn labels(camera: &str, count: u32) -> Vec<String> {
 }
 
 fn label(camera: &str, k: u32) -> String {
-    let suffix = format!("Mirror {k}");
+    labelled(camera, &format!("Mirror {k}"))
+}
+
+/// What a vision label ends in. `71-tessaro-camera.rules` matches video
+/// devices named `*Vision` and makes them root's alone, which is what keeps
+/// the page from seeing or taking this one; a camera's mirrors end in a
+/// number, so they never match.
+pub const VISION: &str = "Vision";
+
+/// `KIOSK_CAMERA_VISION` as the agent renders it (camera.presence.enable):
+/// `1` adds the hidden mirror presence detection reads.
+pub fn vision(value: Option<&str>) -> bool {
+    value.map(str::trim) == Some("1")
+}
+
+/// `<camera> Vision`, the hidden mirror presence detection reads, cut like
+/// the others.
+pub fn vision_label(camera: &str) -> String {
+    labelled(camera, VISION)
+}
+
+fn labelled(camera: &str, suffix: &str) -> String {
     let room = CARD_BYTES.saturating_sub(suffix.len() + 1);
     let mut end = camera.len().min(room);
     while !camera.is_char_boundary(end) {
@@ -60,7 +81,7 @@ fn label(camera: &str, k: u32) -> String {
     }
     let camera = camera[..end].trim_end();
     if camera.is_empty() {
-        suffix
+        suffix.to_string()
     } else {
         format!("{camera} {suffix}")
     }
@@ -158,5 +179,23 @@ mod tests {
     #[test]
     fn an_empty_name_leaves_the_suffix() {
         assert_eq!(label("", 1), "Mirror 1");
+    }
+
+    #[test]
+    fn the_vision_mirror_ends_in_vision_and_fits() {
+        assert_eq!(vision_label("HD Webcam"), "HD Webcam Vision");
+        let label = vision_label("A Really Long Camera Product Name");
+        assert!(label.len() <= CARD_BYTES);
+        assert!(label.ends_with(" Vision"));
+        // A camera called Vision still gets numbered mirrors, which the
+        // udev rule leaves alone.
+        assert!(!labels("Vision", 1)[0].ends_with(" Vision"));
+    }
+
+    #[test]
+    fn the_vision_mirror_is_only_asked_for_with_1() {
+        assert!(vision(Some("1\n")));
+        assert!(!vision(Some("0")));
+        assert!(!vision(None));
     }
 }

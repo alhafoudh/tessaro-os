@@ -65,6 +65,14 @@
       cec(detail) {
         window.dispatchEvent(new CustomEvent("tessaro:cec", { detail: Object.freeze(detail) }));
       },
+      // Someone arrived, left, came near or went far (camera.presence.page).
+      presence(detail) {
+        window.dispatchEvent(new CustomEvent("tessaro:presence", { detail: Object.freeze(detail) }));
+      },
+      // A frame's faces, while the page watches them.
+      faces(detail) {
+        window.dispatchEvent(new CustomEvent("tessaro:faces", { detail: Object.freeze(detail) }));
+      },
       // A new DevTools session to the same page: its binding replaces the
       // one that went with the old session.
       rebind() {
@@ -93,6 +101,8 @@
     return;
   }
 
+  // The renewal timer of presence.watch(), while the page watches.
+  let watching = null;
   const api = {
     mode: MODE,
     get config() {
@@ -109,6 +119,23 @@
     scripts: { list: () => call("scripts.list") },
     playlist: { status: () => call("playlist.status") },
     screen: { show: () => call("screen.show") },
+    presence: {
+      status: () => call("presence.status"),
+      // The faces come as tessaro:faces while the agent's lease is fresh:
+      // renewed here every few seconds, so a page that goes away stops
+      // them by itself (WATCH_LEASE in control/bridge.rs).
+      watch: () => {
+        if (watching === null) {
+          watching = setInterval(() => call("presence.watch").catch(() => {}), 4000);
+        }
+        return call("presence.watch");
+      },
+      unwatch: () => {
+        if (watching !== null) clearInterval(watching);
+        watching = null;
+        return call("presence.unwatch");
+      },
+    },
   };
 
   // A document for printer.print: text as UTF-8, or bytes, as base64.

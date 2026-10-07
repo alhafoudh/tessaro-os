@@ -100,6 +100,7 @@ permission prompt in the way.
 - 📶 **Web Bluetooth**, opt-in: one pairing by a technician and it stays.
 - 🎙️ **Microphone** granted to your site, with the input and level set remotely.
 - 📷 **USB cameras, shared**: your page and other software on the device watch the same camera at once.
+- 🙋 **Presence detection**: the device notices when someone steps up to the screen, comes near or walks away, and tells your page and runs your scripts. Faces are found on the device itself, nothing in the page; no picture is kept and nobody is identified.
 - 🖨️ **Printing**: `window.print()` goes silently to the default printer, and the bridge prints to any printer by name. Office printers need no driver (IPP Everywhere, AirPrint), and receipt and label printers take raw ESC/POS or ZPL. Find printers on USB and the network and set them up from the CLI, the desktop app or Webconfig.
 - 👆 **Touch screens** work out of the box, and turn with the picture on a rotated screen.
 - ⌨️ **On-screen keyboard** that appears only when no keyboard is plugged in.
@@ -107,7 +108,8 @@ permission prompt in the way.
 
 The details, and what your page needs to do, are in
 [docs/kiosk-browser.md](docs/kiosk-browser.md#device-apis-webserial-webhid-webusb-web-bluetooth),
-[docs/printing.md](docs/printing.md) and [docs/camera.md](docs/camera.md).
+[docs/printing.md](docs/printing.md), [docs/camera.md](docs/camera.md) and
+[docs/presence.md](docs/presence.md).
 
 ## Complete Chromium policy management
 

@@ -112,7 +112,15 @@ const READS: &[&str] = &[
     "scripts.list",
     "playlist.status",
     "screen.show",
+    "presence.status",
+    "presence.watch",
+    "presence.unwatch",
 ];
+
+/// How long `presence.watch()` keeps the faces coming without being
+/// renewed. The preamble renews it every few seconds while the page watches,
+/// so a page that navigates away stops them within this.
+pub(super) const WATCH_LEASE: Duration = Duration::from_secs(10);
 
 /// What `main` hands over: the session's end of the page scripts, and the
 /// page's calls.
@@ -252,6 +260,28 @@ impl Control {
     /// page - when the page has the bridge - in the main frame, like
     /// `tessaro:config`.
     pub(super) async fn bridge_cec(&self, detail: Value) {
+        self.bridge_event("cec", detail).await;
+    }
+
+    /// Someone arrived, left, came near or went far, as `tessaro:presence`.
+    pub(super) async fn bridge_presence(&self, detail: Value) {
+        self.bridge_event("presence", detail).await;
+    }
+
+    /// The faces of a frame, as `tessaro:faces`, while the page watches
+    /// them (`presence.watch()`, renewed by the preamble every few seconds,
+    /// so a page that navigates away stops getting them by itself).
+    pub(super) async fn bridge_faces(&self, detail: Value) {
+        let watching =
+            lock(&self.presence_watch).is_some_and(|since| since.elapsed() < WATCH_LEASE);
+        if watching {
+            self.bridge_event("faces", detail).await;
+        }
+    }
+
+    /// `window[settle].<method>(detail)`, which dispatches the event, in the
+    /// main frame while the page has the bridge.
+    async fn bridge_event(&self, method: &str, detail: Value) {
         let Some(bridge) = self.bridge.get() else {
             return;
         };
@@ -259,7 +289,7 @@ impl Control {
             return;
         }
         let expression = format!(
-            "window[{0}] && window[{0}].cec({1})",
+            "window[{0}] && window[{0}].{method}({1})",
             json!(bridge.settle),
             detail
         );
@@ -625,6 +655,19 @@ impl Control {
             }
             "audio.status" => plain(self.audio_status().await.and_then(to_value)),
             "screen.show" => plain(self.screen_show().await.and_then(to_value)),
+            "presence.status" => plain(
+                self.camera_presence()
+                    .await
+                    .map(|status| page_presence_status(&status)),
+            ),
+            "presence.watch" => {
+                *lock(&self.presence_watch) = Some(std::time::Instant::now());
+                plain(Ok(Value::Bool(true)))
+            }
+            "presence.unwatch" => {
+                *lock(&self.presence_watch) = None;
+                plain(Ok(Value::Bool(true)))
+            }
             "network.publicIp" => (self.page_public_ip(bridge).await, None),
             // The same lookup and cache as publicIp, as a plain yes or no: a
             // device that cannot reach the internet resolves `false`, it does
@@ -1205,6 +1248,58 @@ fn page_status(status: &protocol::Status) -> Value {
         "memory": status.memory,
         "cpuPercent": status.cpu_percent,
         "playlist": status.playlist.as_ref().map(page_playlist),
+        "presence": status.presence,
+    })
+}
+
+/// A face as the page gets it, in `tessaro:presence`, `tessaro:faces` and
+/// `presence.status()`.
+pub(super) fn page_face(face: &protocol::presence::Face) -> Value {
+    let keypoints = &face.keypoints;
+    json!({
+        "id": face.id,
+        "box": face.area,
+        "score": face.score,
+        "distance": face.distance,
+        "near": face.near,
+        "facing": face.facing,
+        "keypoints": {
+            "rightEye": keypoints.right_eye,
+            "leftEye": keypoints.left_eye,
+            "nose": keypoints.nose,
+            "mouth": keypoints.mouth,
+            "rightEar": keypoints.right_ear,
+            "leftEar": keypoints.left_ear,
+        },
+    })
+}
+
+/// A frame's faces as the page gets them: `tessaro:faces`.
+pub(super) fn page_faces(frame: &protocol::presence::FacesFrame) -> Value {
+    json!({
+        "t": frame.t,
+        "width": frame.width,
+        "height": frame.height,
+        "faces": frame.faces.iter().map(page_face).collect::<Vec<_>>(),
+    })
+}
+
+/// `camera presence` as the page gets it: `tessaro.presence.status()`. The
+/// camera's name and how the detection runs are left out with the rest of
+/// what describes the device's insides.
+fn page_presence_status(status: &protocol::presence::PresenceStatus) -> Value {
+    json!({
+        "enabled": status.enabled,
+        "running": status.running,
+        "present": status.present,
+        "near": status.near,
+        "nearMeters": status.near_m,
+        "count": status.frame.as_ref().map_or(0, |frame| frame.faces.len()),
+        "last": status.last,
+        "faces": status
+            .frame
+            .as_ref()
+            .map_or_else(Vec::new, |frame| frame.faces.iter().map(page_face).collect()),
     })
 }
 

@@ -72,6 +72,16 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 '''
 
+[tasks."vision:models"]
+description = "Convert MediaPipe's face detectors into the ONNX files tessaro-vision runs (tf2onnx in docker)"
+dir = "{{config_root}}"
+run = '''
+set -e
+docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \
+    -v "$PWD/agent/vision/models:/models" python:3.11-slim \
+    sh -c 'pip install --quiet --user tf2onnx==1.16.1 tensorflow-cpu==2.15.1 "numpy<2" && python /models/convert.py'
+'''
+
 [tasks."agent:integration"]
 description = "Run the agent against a real headless Chromium (Ctrl-C to stop)"
 dir = "{{config_root}}/agent"

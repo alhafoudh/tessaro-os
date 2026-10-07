@@ -1,0 +1,33 @@
+[package]
+name = "tessaro-vision"
+description = "Finds the faces in front of the screen on a camera's hidden mirror and tells the agent"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# One process, started by the agent through tessaro-vision.service while
+# camera.presence.enable is on. A frame loop with inference in it is blocking
+# by nature, so this is a plain blocking program like tessaro-camera, not part
+# of the agent and not under its no-blocking rules.
+[[bin]]
+name = "tessaro-vision"
+path = "src/main.rs"
+
+[dependencies]
+# VisionFrame and VisionStatus, what goes to the agent; CameraInfo, the
+# mirror's report this reads its hidden mirror from.
+protocol = { path = "../protocol" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# The V4L2 capture and the MJPEG fix-up, shared with the mirror.
+tessaro-camera = { path = "../camera" }
+libc = "0.2"
+
+# MediaPipe's face detectors as ONNX (models/), run in pure Rust: no C++
+# runtime to build in bitbake, and the crates vendor like any other.
+tract-onnx = "0.23"
+# MJPEG frames decoded at 1/2, 1/4 or 1/8 of their size straight from the
+# DCT (`Decoder::scale`), so a 1080p frame costs a fraction of a full decode.
+jpeg-decoder = { version = "0.3", default-features = false }

@@ -11,6 +11,7 @@ mod copy_menu;
 mod device;
 mod dialog;
 mod discovery;
+mod faces;
 mod grid;
 mod jobs;
 mod keysym;

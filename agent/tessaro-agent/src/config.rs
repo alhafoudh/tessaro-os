@@ -160,6 +160,42 @@ pub struct Config {
     pub watchdog: bool,
     /// `screen.cec.*`, which the CEC worker follows (`crate::cec`).
     pub cec: Cec,
+    /// `camera.presence.*`, which the presence watcher follows
+    /// (`control/presence.rs`).
+    pub presence: Presence,
+}
+
+/// Presence detection as the settings have it. The decimals are kept in
+/// hundredths, as `keys::Kind::Decimal` checks them, so the config stays
+/// comparable whole.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Presence {
+    /// `camera.presence.enable`.
+    pub enable: bool,
+    /// `camera.presence.model`, for the status; the vision service runs it.
+    pub model: String,
+    /// `camera.presence.confidence`, in hundredths.
+    pub confidence: i64,
+    /// `camera.presence.near` in centimeters; `None` when it is off.
+    pub near: Option<i64>,
+    /// `camera.presence.fov`, degrees.
+    pub fov: i64,
+    /// `camera.presence.arrive` and `.linger`, in hundredths of a second.
+    pub arrive: i64,
+    pub linger: i64,
+    /// `camera.presence.page`: `tessaro:presence` events and the faces.
+    pub page: bool,
+    /// `camera.presence.scripts`: the scripts that run on presence events.
+    pub scripts: bool,
+}
+
+/// A `keys::Kind::Decimal` value in hundredths, or `default` when it is
+/// missing or not a number.
+fn hundredths(env: &dyn Env, name: &str, default: i64) -> i64 {
+    env.get(name)
+        .and_then(|value| value.trim().parse::<f64>().ok())
+        .filter(|value| value.is_finite())
+        .map_or(default, |value| (value * 100.0).round() as i64)
 }
 
 /// HDMI-CEC as the settings have it.
@@ -260,6 +296,20 @@ impl Config {
                 keys: flag(env, "KIOSK_CEC_KEYS", false),
                 page: flag(env, "KIOSK_CEC_PAGE", true),
                 scripts: flag(env, "KIOSK_CEC_SCRIPTS", true),
+            },
+            presence: Presence {
+                enable: flag(env, "KIOSK_PRESENCE", false),
+                model: string(env, "KIOSK_PRESENCE_MODEL", "face-full"),
+                confidence: hundredths(env, "KIOSK_PRESENCE_CONFIDENCE", 60),
+                near: match string(env, "KIOSK_PRESENCE_NEAR", "1.5").trim() {
+                    "off" => None,
+                    _ => Some(hundredths(env, "KIOSK_PRESENCE_NEAR", 150)),
+                },
+                fov: int(env, "KIOSK_PRESENCE_FOV", 65).clamp(20, 170),
+                arrive: hundredths(env, "KIOSK_PRESENCE_ARRIVE", 50).max(0),
+                linger: hundredths(env, "KIOSK_PRESENCE_LINGER", 300).max(50),
+                page: flag(env, "KIOSK_PRESENCE_PAGE", true),
+                scripts: flag(env, "KIOSK_PRESENCE_SCRIPTS", true),
             },
         }
     }

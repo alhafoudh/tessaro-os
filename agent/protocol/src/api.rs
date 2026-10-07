@@ -686,6 +686,9 @@ pub struct ScriptChange {
     /// Replaces the CEC events it runs on; empty for none.
     #[serde(default)]
     pub cec: Option<Vec<String>>,
+    /// Replaces the presence events it runs on; empty for none.
+    #[serde(default)]
+    pub presence: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -718,6 +721,13 @@ pub struct PrinterRef {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct CameraRef {
     pub device: String,
+}
+
+/// How far from the camera the person calibrating stands.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct CalibrateBody {
+    /// Meters, 0.3 to 10.
+    pub distance: f64,
 }
 
 /// Where a document goes and how. Without a body, `path` names a file in
@@ -1345,6 +1355,19 @@ pub mod camera {
                 }
             }
             = |camera, _| Action::Run(Command::CameraSnapshot { device: camera.device });
+
+        /// Whether anyone is in front of the screen: what presence
+        /// detection decided, the faces of the newest frame it looked at,
+        /// and how it runs.
+        Presence: Get "/api/v1/camera/presence" (Empty, ()) -> crate::presence::PresenceStatus
+            = |_, _| Action::Run(Command::CameraPresence);
+
+        /// Measure camera.presence.fov from the one face in view, of someone
+        /// standing `distance` meters from the camera, and save it.
+        Calibrate: Post "/api/v1/camera/presence/calibrate" (Empty, CalibrateBody) -> crate::presence::Calibrated
+            = |_, body| Action::Run(Command::CameraCalibrate {
+                distance_cm: (body.distance * 100.0).round().clamp(0.0, 100_000.0) as u32,
+            });
     }
 }
 
@@ -1414,6 +1437,7 @@ pub mod script {
                 concurrency: change.concurrency,
                 bridge: change.bridge,
                 cec: change.cec,
+                presence: change.presence,
             });
 
         /// Remove a script no schedule runs, and its units.

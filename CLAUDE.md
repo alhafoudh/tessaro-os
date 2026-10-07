@@ -40,6 +40,7 @@ same change as the behaviour it describes.
 | [docs/remote-access.md](docs/remote-access.md) | VNC mirror and its PAM auth, SSH and `ssh connect` keys |
 | [docs/audio.md](docs/audio.md) | PipeWire units, how `audio.*` is applied, `auto` |
 | [docs/camera.md](docs/camera.md) | the camera mirrors and v4l2loopback, one reader per `Mirror N`, why not PipeWire, hiding the real cameras, how a format is picked, `camera.*`, snapshots and previews, the USB/IP test camera in qemu, what does not work |
+| [docs/presence.md](docs/presence.md) | presence detection: the hidden Vision mirror, `tessaro-vision` and its sandbox, the BlazeFace models and `vision:models`, what the agent decides (confidence, distance and calibration, arrive, linger, near), the events for scripts and the page, privacy, what does not work |
 | [docs/time.md](docs/time.md) | timedated and timesyncd, how `time.*` is applied, DHCP's NTP servers, the persistent clock, where `time show`'s numbers come from |
 | [docs/scripts.md](docs/scripts.md) | scripts: the body file and the fire and run units, triggers and `TESSARO_TRIGGER`, concurrency, how each run is recorded, `script run` as a job, the page's scripts |
 | [docs/scheduler.md](docs/scheduler.md) | schedules: the systemd timer each is rendered into and the script it starts, the reconcile of every script and schedule unit, checking `OnCalendar` expressions |
@@ -154,6 +155,7 @@ Use the mise tasks rather than calling `kas-container` directly:
 | `mise run qemu:run:arm64` / `qemu:vnc:arm64` | Same, forced to `genericarm64`; on a Mac on vmnet for mDNS, `--no-vmnet` for the 127.0.0.1 forwards, `[IMAGE]` for a release image |
 | `mise run usbcam:run -- [CLIP] --attach` | A fake USB webcam looping CLIP (or a test pattern) over USB/IP, attached to that VM |
 | `mise run usbcam:test` | The fake webcam's unit tests |
+| `mise run vision:models` | Presence detection's ONNX face detectors from MediaPipe's `.tflite` (tf2onnx in docker), into `agent/vision/models/` |
 | `mise run agent:test` | `cargo test` for the whole agent workspace |
 | `mise run agent:lint` | `cargo fmt --check` plus clippy for the workspace |
 | `mise run agent:integration` | The agent against a real headless Chromium (`agent/compose.yaml`, needs docker compose), control plane in a sandbox |
@@ -320,7 +322,9 @@ the chunked transfers, shared by both clients), `db/` (opening a SQLite
 store, shared by the agent and `client/`), `tessaro-agent/` (device side),
 `tessaro-ctl/` (client), `update/`
 (the staging library and `tessaro-flash`, packaged separately for the
-initramfs).
+initramfs), `camera/` (`tessaro-camera`, the camera mirrors) and `vision/`
+(`tessaro-vision`, presence detection; plain blocking programs like
+`tessaro-flash`, outside the agent's no-blocking rule).
 The host toolchain is pinned to **rust 1.95.0** because the Chromium pin
 (`meta-lts-mixins-rust`) dictates bitbake's; do not bump it on its own.
 `CARGO_TARGET_DIR` is `build/cargo-target` so no `target/` is hashed into the
@@ -451,7 +455,8 @@ same thing. Keep to these rules when adding a command or a setting:
   * `audio`: sound. Which output plays and which input records, volume,
     mute, a test tone and a recording level.
   * `camera`: the USB cameras. Which there are and what each captures, the
-    format and size they capture in, how many mirrors each has, a snapshot.
+    format and size they capture in, how many mirrors each has, a snapshot,
+    presence detection and calibrating its distances.
   * `time`: the clock. Timezone, NTP servers and sync, its status, setting
     it by hand.
   * `script`: shell scripts the device keeps and runs as root. The scripts,

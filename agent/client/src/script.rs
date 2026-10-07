@@ -27,6 +27,9 @@ pub struct Typed {
     /// The CEC events it runs on, comma separated, as `protocol::cec`
     /// reads them; empty for none.
     pub cec: String,
+    /// The presence events it runs on, comma separated, as
+    /// `protocol::presence` reads them; empty for none.
+    pub presence: String,
 }
 
 impl Typed {
@@ -41,6 +44,7 @@ impl Typed {
             concurrency: spec.concurrency.name().to_string(),
             bridge: spec.bridge,
             cec: spec.cec.join(", "),
+            presence: spec.presence.join(", "),
         }
     }
 
@@ -56,6 +60,7 @@ impl Typed {
             concurrency: self.concurrency()?,
             bridge: self.bridge,
             cec: protocol::cec::triggers(&self.cec)?,
+            presence: protocol::presence::triggers(&self.presence)?,
         })
     }
 
@@ -70,6 +75,7 @@ impl Typed {
             concurrency: Some(self.concurrency()?),
             bridge: Some(self.bridge),
             cec: Some(protocol::cec::triggers(&self.cec)?),
+            presence: Some(protocol::presence::triggers(&self.presence)?),
         })
     }
 
@@ -130,7 +136,8 @@ pub fn last_run(info: &ScriptInfo, now: i64) -> Line {
 }
 
 /// Who started a run: `by hand`, `from the page`, `by schedule night`,
-/// `by the TV going to standby`, `by the remote's red key`.
+/// `by the TV going to standby`, `by the remote's red key`, `by someone
+/// arriving`.
 pub fn started_by(run: &ScriptRun) -> String {
     match (run.trigger.as_str(), &run.schedule) {
         ("manual", _) => "by hand".to_string(),
@@ -141,7 +148,22 @@ pub fn started_by(run: &ScriptRun) -> String {
             Some(event) => format!("by {}", cec_event(event)),
             None => "by HDMI-CEC".to_string(),
         },
+        ("presence", _) => match run.event.as_deref() {
+            Some(event) => format!("by {}", presence_event(event)),
+            None => "by presence detection".to_string(),
+        },
         (other, _) => format!("by {other}"),
+    }
+}
+
+/// A presence event a script runs on, in words: `someone arriving`.
+pub fn presence_event(event: &str) -> String {
+    match event {
+        "arrived" => "someone arriving".to_string(),
+        "left" => "everyone leaving".to_string(),
+        "near" => "someone coming near".to_string(),
+        "far" => "everyone near stepping back".to_string(),
+        other => other.to_string(),
     }
 }
 
@@ -234,6 +256,9 @@ pub fn behaviour(spec: &ScriptSpec) -> String {
     if !spec.cec.is_empty() {
         words.push(format!("runs on {}", spec.cec.join(" ")));
     }
+    if !spec.presence.is_empty() {
+        words.push(format!("runs on presence {}", spec.presence.join(" ")));
+    }
     words.join(", ")
 }
 
@@ -252,10 +277,13 @@ mod tests {
             concurrency: "skip".into(),
             bridge: true,
             cec: "tv-standby, Key:Red".into(),
+            presence: "Arrived".into(),
         };
         let spec = typed.spec().unwrap();
         assert_eq!(spec.name, "dim");
         assert_eq!(spec.cec, vec!["tv-standby", "key:red"]);
+        assert_eq!(spec.presence, vec!["arrived"]);
+        assert!(behaviour(&spec).ends_with("runs on presence arrived"));
         assert_eq!(spec.timeout_s, Some(600));
         assert_eq!(spec.concurrency, Concurrency::Skip);
         assert_eq!(Typed::of(&spec).spec().unwrap(), spec);

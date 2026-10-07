@@ -1,6 +1,8 @@
-//! Cameras: `tessaro-ctl camera` and the Camera page.
+//! Cameras: `tessaro-ctl camera` and the Camera page, presence detection
+//! included.
 
 use protocol::keys;
+use protocol::presence::{Calibrated, Face, PresenceStatus};
 use protocol::{CameraInfo, CameraList, CameraMode};
 
 use crate::text::{Line, Tone};
@@ -130,6 +132,118 @@ fn one(camera: &CameraInfo) -> Vec<Line> {
     lines
 }
 
+/// `camera presence`: whether anyone is there and who, how the detection
+/// runs, the last event, then the saved distances and how to change them.
+pub fn presence(status: &PresenceStatus) -> Vec<Line> {
+    if !status.enabled {
+        return vec![Line::of(Tone::Muted, "presence detection is off;")
+            .text(" ")
+            .add(Tone::Muted, "switch it on with")
+            .text(" ")
+            .add(Tone::Cmd, "tessaro-ctl camera presence on")];
+    }
+    let mut state = Line::new().pad(Tone::Label, "presence", 9).text(" ");
+    state = if !status.running {
+        state.add(Tone::Warn, "not running")
+    } else if status.present && status.near {
+        state.add(Tone::Ok, "someone is there, near")
+    } else if status.present {
+        state.add(Tone::Ok, "someone is there")
+    } else {
+        state.add(Tone::Muted, "nobody is there")
+    };
+    let mut lines = vec![state];
+    let faces = status
+        .frame
+        .as_ref()
+        .map_or(&[][..], |frame| &frame.faces[..]);
+    for face in faces {
+        lines.push(face_line(face));
+    }
+    let mut camera = Line::new()
+        .pad(Tone::Label, "camera", 9)
+        .text(format!(
+            " {}  ",
+            status.camera.as_deref().unwrap_or("(none)")
+        ))
+        .add(Tone::Label, "model")
+        .text(format!(" {}", status.model));
+    if let Some(fps) = status.fps {
+        camera = camera.add(Tone::Muted, format!("  {fps:.1} fps"));
+    }
+    if let Some(ms) = status.inference_ms {
+        camera = camera.add(Tone::Muted, format!("  {ms:.0} ms a frame"));
+    }
+    lines.push(camera);
+    if let Some(err) = &status.error {
+        lines.push(Line::plain("          ").add(Tone::Bad, err));
+    }
+    if let Some(last) = &status.last {
+        lines.push(
+            Line::new()
+                .pad(Tone::Label, "last", 9)
+                .text(format!(" {} at {}", last.event, last.at.local)),
+        );
+    }
+    let near = match status.near_m {
+        Some(meters) => format!(" {meters:.1} m  "),
+        None => " off  ".to_string(),
+    };
+    lines.push(Line::new());
+    lines.push(
+        Line::new()
+            .pad(Tone::Label, "saved", 9)
+            .text(" ")
+            .add(Tone::Label, "near")
+            .text(near)
+            .add(Tone::Label, "fov")
+            .text(format!(" {:.0}°", status.fov)),
+    );
+    lines.push(
+        Line::of(Tone::Muted, "change them with")
+            .text(" ")
+            .add(
+                Tone::Cmd,
+                "tessaro-ctl config set camera.presence.near=METERS",
+            )
+            .add(Tone::Muted, ",")
+            .text(" ")
+            .add(Tone::Cmd, "tessaro-ctl camera calibrate --distance 1"),
+    );
+    lines
+}
+
+/// One face: `face     #3 1.2 m near facing (0.93)`.
+fn face_line(face: &Face) -> Line {
+    let mut line = Line::plain("    ")
+        .pad(Tone::Label, "face", 5)
+        .text(format!(" #{} {:.1} m", face.id, face.distance));
+    if face.near {
+        line = line.text(" ").add(Tone::Ok, "near");
+    }
+    line.text(" ")
+        .add(
+            Tone::Plain,
+            if face.facing { "facing" } else { "turned away" },
+        )
+        .add(Tone::Muted, format!(" ({:.2})", face.score))
+}
+
+/// What `camera calibrate` saved.
+pub fn calibrated(calibrated: &Calibrated) -> Line {
+    Line::of(
+        Tone::Ok,
+        format!("camera.presence.fov is {:.0}°", calibrated.fov),
+    )
+    .add(
+        Tone::Muted,
+        format!(
+            " (a face {:.3} of the frame wide at {:.1} m)",
+            calibrated.width, calibrated.distance
+        ),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -156,6 +270,7 @@ mod tests {
             device: "video0".into(),
             bus: "usb-1".into(),
             mirrors: Vec::new(),
+            vision: None,
             mode: Some(at("mjpeg", 1280, 720, 30)),
             fallback: None,
             error: None,
@@ -181,6 +296,7 @@ mod tests {
             device: "video0".into(),
             bus: "usb-1".into(),
             mirrors: vec![mirror("/dev/video9", 1), mirror("/dev/video10", 2)],
+            vision: None,
             mode: None,
             fallback: None,
             error: None,
@@ -198,6 +314,7 @@ mod tests {
             device: "video0".into(),
             bus: "usb-1".into(),
             mirrors: Vec::new(),
+            vision: None,
             mode: None,
             fallback: None,
             error: Some("broken".into()),
