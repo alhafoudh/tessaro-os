@@ -121,7 +121,13 @@ const READS: &[&str] = &[
     "presence.status",
     "presence.watch",
     "presence.unwatch",
+    "scanner.list",
+    "scanner.listen",
 ];
+
+/// The most frames `tessaro:scanner` goes to at once. The player shows one
+/// item at a time; its next is preloaded beside it.
+const SCANNER_FRAMES: usize = 16;
 
 /// How long `presence.watch()` keeps the faces coming without being
 /// renewed. The preamble renews it every few seconds while the page watches,
@@ -308,6 +314,45 @@ impl Control {
             lock(&self.presence_watch).is_some_and(|since| since.elapsed() < WATCH_LEASE);
         if watching {
             self.bridge_event("faces", detail, BridgeMode::Config).await;
+        }
+    }
+
+    /// A scan began or ended, a scanner came or went, as `tessaro:scanner`:
+    /// in the main frame, and in every frame of the player that asked
+    /// (`scanner.listen`). A frame whose context is gone - it navigated, or
+    /// its item ended - is forgotten.
+    pub(super) async fn bridge_scanner(&self, detail: Value) {
+        let Some(bridge) = self.bridge.get() else {
+            return;
+        };
+        if lock(&bridge.offer).mode < BridgeMode::Config {
+            return;
+        }
+        self.bridge_event("scanner", detail.clone(), BridgeMode::Config)
+            .await;
+        let frames = lock(&self.scanner_frames).clone();
+        if frames.is_empty() {
+            return;
+        }
+        let expression = format!(
+            "window[{0}] && window[{0}].scanner({1})",
+            json!(bridge.settle),
+            detail
+        );
+        for (session, context) in frames {
+            let reached = self
+                .session
+                .call_on(
+                    &Heartbeat::detached(),
+                    session.as_deref(),
+                    "Runtime.evaluate",
+                    json!({ "expression": expression, "contextId": context }),
+                    CDP_LIMIT,
+                )
+                .await; // naked: SessionHandle::call_on bounds itself with within()
+            if reached.is_err() {
+                lock(&self.scanner_frames).retain(|frame| *frame != (session.clone(), context));
+            }
         }
     }
 
@@ -589,6 +634,20 @@ impl Control {
                 Err(fail(format!("{name} needs browser.bridge.mode actions"))),
                 None,
             )
+        } else if name == "scanner.listen" {
+            // A frame of the player asks for tessaro:scanner in its own
+            // context; the page itself gets it either way.
+            if !call.top {
+                let mut frames = lock(&self.scanner_frames);
+                let frame = (call.session.clone(), call.context);
+                if !frames.contains(&frame) {
+                    if frames.len() == SCANNER_FRAMES {
+                        frames.remove(0);
+                    }
+                    frames.push(frame);
+                }
+            }
+            (Ok(Value::Null), None)
         } else {
             // naked: every action is a bounded control-plane call; see page_action
             self.page_action(bridge, name, &args).await
@@ -878,6 +937,11 @@ impl Control {
                 plain(self.files.list(&path, false).await.and_then(to_value))
             }
             "printer.list" => plain(self.printer_list().await.map(|list| page_printers(&list))),
+            "scanner.list" => plain(
+                self.scanner_list()
+                    .await
+                    .and_then(|list| serde_json::to_value(list).map_err(|err| err.to_string())),
+            ),
             "printer.jobs" => {
                 let printer = arg(0).as_str().map(str::to_string);
                 plain(self.printer_jobs(printer).await.and_then(to_value))

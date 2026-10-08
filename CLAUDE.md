@@ -55,6 +55,7 @@ same change as the behaviour it describes.
 | [docs/gui.md](docs/gui.md) | `tessaro-gui`: inner windows, keyboard, the node list and marking rows, device pages per command group, workers and jobs, the bulk window, the VNC viewer |
 | [docs/try-tessaro.md](docs/try-tessaro.md) | Try Tessaro, the Mac app with a device in a VM: what the bundle carries, the relinked QEMU runtime and its licenses, the command line, the disk overlay and reset, ports, the client store entry, the activities |
 | [docs/webconfig.md](docs/webconfig.md) | Webconfig: browser sessions, tickets and the activity rule, the handover across restarts, opening it from ctl and the GUI, the pages, the describe port and its golden fixtures, serving and caching, the frontend and its codegen, the dev proxy, the bitbake build and `bitbake-lock.json` |
+| [docs/scanners.md](docs/scanners.md) | barcode scanners: the transports (keyboard, serial, HID POS), which USB device is a scanner and `identify`, taking it from Weston and the browser (the grab, the udev rule, the on-screen keyboard), the supervisor and workers, keyboard layouts and GS1, HID POS reports, where a scan ends, the events for the page and frames, scripts, privacy, the fake scanner in qemu, what does not work |
 | [docs/printing.md](docs/printing.md) | the device's CUPS and why it is set up that way, the `printers` table and the reconcile, driverless and raw printers, `printer.enable` and `window.print()`, the default printer, discovery, supplies, sizes, which printers work |
 | [docs/playlists.md](docs/playlists.md) | playlists and the player page: when the player is on screen instead of browser.url, the timetable and what plays, preloading and transitions, interactive items and input from frames, the frame-unlock extension, first-party frames and their grants, the media cache |
 | [docs/quick-setup.md](docs/quick-setup.md) | the welcome page's QR code, captive portal detection, nginx's redirect to Quick Setup on the API's port, what the page uses, the online indicator |
@@ -161,6 +162,8 @@ Use the mise tasks rather than calling `kas-container` directly:
 | `mise run qemu:run:arm64` / `qemu:vnc:arm64` | Same, forced to `genericarm64`; on a Mac on vmnet for mDNS, `--no-vmnet` for the 127.0.0.1 forwards, `[IMAGE]` for a release image |
 | `mise run usbcam:run -- [CLIP] --attach` | A fake USB webcam looping CLIP (or a test pattern) over USB/IP, attached to that VM |
 | `mise run usbcam:test` | The fake webcam's unit tests |
+| `mise run usbscanner:run -- --mode M --attach` | A fake USB barcode scanner (keyboard, hidpos or serial) over USB/IP, attached to that VM; a line on its control port is a scan |
+| `mise run usbscanner:test` | The fake scanner's unit tests |
 | `mise run vision:models` | Presence detection's ONNX face detectors from MediaPipe's `.tflite` (tf2onnx in docker), into `agent/vision/models/` |
 | `mise run agent:test` | `cargo test` for the whole agent workspace |
 | `mise run agent:lint` | `cargo fmt --check` plus clippy for the workspace |
@@ -476,6 +479,8 @@ same thing. Keep to these rules when adding a command or a setting:
     switching them on and off, their output, checking a calendar.
   * `printer`: the printers the device prints on. Discover, create, remove,
     the default, a test page, print, jobs.
+  * `scanner`: the barcode scanners the device reads. Discover, identify,
+    create, set, enable and disable, remove, a test, the log.
   * `playlist`: the screens the player shows instead of browser.url. The
     playlists, their items, the timetable that picks one, what plays now.
   * `update`: putting an image on the device.
@@ -506,7 +511,7 @@ same thing. Keep to these rules when adding a command or a setting:
   belongs to (`device factory-reset` wipes the device, `access unclaim` only
   removes its owners).
 * **Setting keys are prefixed by the command group that acts on the same
-  thing**: `browser.*`, `screen.*`, `audio.*`, `time.*`, `network.*`, `device.*`, `access.*`, `printer.*`, `camera.*`, `playlist.*`. A key
+  thing**: `browser.*`, `screen.*`, `audio.*`, `time.*`, `network.*`, `device.*`, `access.*`, `printer.*`, `scanner.*`, `camera.*`, `playlist.*`. A key
   that no command group matches is named after the component it tunes
   (`agent.*`), and `data.*` is the user's namespace. A sub-feature with its own
   on/off gets a third level that mirrors its command (`browser maintenance on

@@ -1,0 +1,71 @@
+{
+  "function": "scanner::scan",
+  "input": [
+    {
+      "at_ms": 1790000000123,
+      "bytes": "aHR0cHM6Ly90ZXNzYXJvLmV4YW1wbGUvdGlja2V0LzQy",
+      "length": 33,
+      "ms": 412,
+      "scanner": "front",
+      "text": "https://tessaro.example/ticket/42",
+      "time": "21:04:05.123",
+      "transport": "keyboard"
+    },
+    {
+      "at_ms": 1790000000123,
+      "bytes": "/w==",
+      "length": 1,
+      "ms": 0,
+      "scanner": "back",
+      "symbology": "]E0",
+      "time": "21:04:06.000",
+      "transport": "hidpos"
+    }
+  ],
+  "output": [
+    [
+      [
+        "muted",
+        "21:04:05.123",
+        13
+      ],
+      [
+        "heading",
+        "https://tessaro.example/ticket/42",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "(33 bytes in 412 ms)",
+        0
+      ]
+    ],
+    [
+      [
+        "muted",
+        "21:04:06.000",
+        13
+      ],
+      [
+        "warn",
+        "not text",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "(1 byte in 0 ms, ]E0)",
+        0
+      ]
+    ]
+  ]
+}

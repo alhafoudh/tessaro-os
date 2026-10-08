@@ -376,6 +376,9 @@ impl Control {
         if let Err(err) = self.clear_printers().await {
             return Reply::err(err);
         }
+        if let Err(err) = self.clear_scanners().await {
+            return Reply::err(err);
+        }
 
         if let Err(err) = self.render(&crate::state::State::default()).await {
             return Reply::err(format!("reset, but rendering failed: {err}"));

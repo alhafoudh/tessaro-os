@@ -10,7 +10,7 @@ touch one row instead of rewriting a whole document.
 
 | Store | Opened by | Tables | Why there |
 | --- | --- | --- | --- |
-| `/data/tessaro/tessaro.db` | `tessaro-agent` and `tessaro-agent boot` (`db.rs`) | `settings`, `state`, `pending`, `tokens`, `secrets`, `scripts`, `schedules`, `browser_policies`, `printers`, `playlists`, `timetable`, `media_cache`, `net_txn`, `net_last` | on `/data`, so it survives reboots and updates |
+| `/data/tessaro/tessaro.db` | `tessaro-agent` and `tessaro-agent boot` (`db.rs`) | `settings`, `state`, `pending`, `tokens`, `secrets`, `scripts`, `schedules`, `browser_policies`, `printers`, `scanners`, `playlists`, `timetable`, `media_cache`, `net_txn`, `net_last` | on `/data`, so it survives reboots and updates |
 | `/run/tessaro-kiosk/sessions.db` | `tessaro-agent` (`api/sessions.rs`) | `sessions` | on tmpfs, so a reboot ends every browser session |
 | `<config dir>/tessaro.db` | `tessaro-ctl`, `tessaro-gui` (`agent/client/src/store.rs`) | `nodes`, `gui_prefs` | the config dir is `TESSARO_CONFIG_DIR`, else `$XDG_CONFIG_HOME/tessaro`, else `~/.config/tessaro` |
 
@@ -74,11 +74,16 @@ whole, inside the transaction it is given (`State` in `state.rs`, `Auth` in
   (see **Display scaling** in [display.md](display.md)).
 * **A factory reset clears rows, not the file**: `tokens`, `settings`,
   `state`, `pending`, `secrets`, `scripts`, `schedules`, `browser_policies`, `printers`,
-  `playlists`, `timetable`, `media_cache`. The store
+  `scanners`, `playlists`, `timetable`, `media_cache`. The store
   and its migration history stay.
 * **`printers` is what CUPS is reconciled with**, one row per queue by name,
   and the row with `is_default` is the printer `window.print()` uses; a
   unique index keeps it to one (see [printing.md](printing.md)).
+* **`scanners` is what the scanners' supervisor reads**, one row per scanner
+  by name: its transport, the USB device it is (vendor, product, and serial
+  number or port) and how its scans end. A NULL is the transport's default,
+  so a default that changes reaches every scanner that never set it (see
+  [scanners.md](scanners.md)).
 * **`browser_policies` holds each document's text as typed**, comments
   included, and its `position` in the priority order, 1 the highest; the
   check runs on save and again at every render, which leaves out one edited

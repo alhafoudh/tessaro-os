@@ -101,6 +101,7 @@ permission prompt in the way.
 - 🎙️ **Microphone** granted to your site, with the input and level set remotely.
 - 📷 **USB cameras, shared**: your page and other software on the device watch the same camera at once.
 - 🙋 **Presence detection**: the device notices when someone steps up to the screen, comes near or walks away, and tells your page and runs your scripts. Faces are found on the device itself, nothing in the page; no picture is kept and nobody is identified.
+- 🏷️ **Barcode scanners**: point at any USB scanner, as a keyboard, a serial port or HID POS, and it stops typing into the page. Your page gets a `tessaro:scanner` event when a scan begins and when it ends, with the whole code, GS1 separators and all, in playlist frames too, and your scripts can run on every scan. `tessaro-ctl scanner identify` finds the scanner you just scanned with.
 - 🖨️ **Printing**: `window.print()` goes silently to the default printer, and the bridge prints to any printer by name. Office printers need no driver (IPP Everywhere, AirPrint), and receipt and label printers take raw ESC/POS or ZPL. Find printers on USB and the network and set them up from the CLI, the desktop app or Webconfig.
 - 👆 **Touch screens** work out of the box, and turn with the picture on a rotated screen.
 - ⌨️ **On-screen keyboard** that appears only when no keyboard is plugged in.
@@ -108,8 +109,8 @@ permission prompt in the way.
 
 The details, and what your page needs to do, are in
 [docs/kiosk-browser.md](docs/kiosk-browser.md#device-apis-webserial-webhid-webusb-web-bluetooth),
-[docs/printing.md](docs/printing.md), [docs/camera.md](docs/camera.md) and
-[docs/presence.md](docs/presence.md).
+[docs/printing.md](docs/printing.md), [docs/scanners.md](docs/scanners.md),
+[docs/camera.md](docs/camera.md) and [docs/presence.md](docs/presence.md).
 
 ## Complete Chromium policy management
 

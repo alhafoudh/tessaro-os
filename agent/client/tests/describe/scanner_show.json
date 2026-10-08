@@ -1,0 +1,152 @@
+{
+  "function": "scanner::show",
+  "input": {
+    "baud": 115200,
+    "enabled": true,
+    "gap_ms": 250,
+    "last_scan": "21:04:05.123",
+    "name": "till",
+    "node": "/dev/ttyUSB0",
+    "product": "7523",
+    "scans": 3,
+    "serial": "S1234",
+    "state": "reading",
+    "strip_prefix": "]C1",
+    "strip_suffix": "\r",
+    "terminator": "0x03",
+    "transport": "serial",
+    "vendor": "1a86"
+  },
+  "output": [
+    {
+      "label": "name",
+      "value": [
+        [
+          "heading",
+          "till",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "state",
+      "value": [
+        [
+          "ok",
+          "reading",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "read as",
+      "value": [
+        [
+          "plain",
+          "serial port",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "device",
+      "value": [
+        [
+          "plain",
+          "serial:1a86:7523:S1234",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "node",
+      "value": [
+        [
+          "plain",
+          "/dev/ttyUSB0",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "ends on",
+      "value": [
+        [
+          "plain",
+          "0x03",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "gap",
+      "value": [
+        [
+          "plain",
+          "250 ms of quiet ends a scan",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "baud",
+      "value": [
+        [
+          "plain",
+          "115200",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "strips",
+      "value": [
+        [
+          "plain",
+          "]C1 first",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "strips",
+      "value": [
+        [
+          "plain",
+          "<CR> last",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "enabled",
+      "value": [
+        [
+          "ok",
+          "yes",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "scans",
+      "value": [
+        [
+          "plain",
+          "3",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "last scan",
+      "value": [
+        [
+          "plain",
+          "21:04:05.123",
+          0
+        ]
+      ]
+    }
+  ]
+}

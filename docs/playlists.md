@@ -166,6 +166,10 @@ browser.
 * **A URL item with `bridge` gets `window.tessaro`** in its frame, answered
   only from a frame directly in the player, on the origin of such an item or
   browser.url's (see [bridge.md](bridge.md)).
+* **Such a frame gets `tessaro:scanner` too**, the barcode scans, as the
+  player page does: its preamble asks for them when it loads
+  ([scanners.md](scanners.md), **The events**). An interactive item that
+  takes a scan needs no focus and no keyboard scanner typing into it.
 
 ## The media cache
 

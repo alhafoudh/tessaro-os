@@ -20,6 +20,7 @@ import { Playlists } from "./Playlists";
 import { Policies } from "./Policies";
 import { Printer } from "./Printer";
 import { QuickSetup } from "./QuickSetup";
+import { Scanner } from "./Scanner";
 import { Schedules } from "./Schedules";
 import { Screen } from "./Screen";
 import { Scripts } from "./Scripts";
@@ -61,6 +62,7 @@ export const PAGES: PageInfo[] = [
   { path: "audio", title: "Audio", section: PERIPHERALS, scope: { prefix: "audio" }, component: Audio },
   { path: "camera", title: "Camera", section: PERIPHERALS, scope: { prefix: "camera" }, component: Camera },
   { path: "printer", title: "Printer", section: PERIPHERALS, scope: { prefix: "printer" }, component: Printer },
+  { path: "scanner", title: "Scanner", section: PERIPHERALS, scope: { prefix: "scanner" }, component: Scanner },
   {
     path: "network",
     title: "Network",

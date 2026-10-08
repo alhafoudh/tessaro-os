@@ -15,6 +15,7 @@ pub mod openapi;
 pub mod playlist;
 pub mod policy;
 pub mod presence;
+pub mod scanner;
 pub mod sshkey;
 
 use std::collections::BTreeMap;
@@ -594,6 +595,9 @@ pub enum Command {
         /// The presence events it runs on; empty for none.
         #[serde(default)]
         presence: Option<Vec<String>>,
+        /// The scanners whose scans it runs on; empty for none.
+        #[serde(default)]
+        scanner: Option<Vec<String>>,
     },
     /// Refused while a schedule runs it.
     ScriptRemove {
@@ -760,6 +764,40 @@ pub enum Command {
     PrinterCancel {
         job: String,
     },
+    /// Every scanner and how it is doing, and whether any is read.
+    ScannerList,
+    ScannerShow {
+        scanner: String,
+    },
+    /// The USB devices that may be scanners. A stream of
+    /// `ScannerCandidate`s.
+    ScannerDiscover,
+    /// Listen to every device that may be a scanner, leaving it to whoever
+    /// reads it, and name the first one a scan comes from. A stream of one
+    /// `ScannerCandidate`, its scan with it.
+    ScannerIdentify,
+    /// Add a scanner. Its device is read from then on, plugged in or not.
+    ScannerCreate {
+        spec: scanner::ScannerSpec,
+    },
+    /// Change what is given of one scanner.
+    ScannerSet {
+        scanner: String,
+        change: scanner::ScannerChange,
+    },
+    ScannerRemove {
+        scanner: String,
+    },
+    /// The scans of one scanner, with what they say, for a while. A
+    /// stream of `Scan`s.
+    ScannerTest {
+        scanner: String,
+    },
+    /// What happened to the scanners after `after`, never what they
+    /// scanned.
+    ScannerLogs {
+        after: u64,
+    },
 }
 
 /// The image `update-begin` describes. Its fields sit in the command itself
@@ -797,6 +835,9 @@ impl Command {
                 | Command::StorageGrow { .. }
                 | Command::PrinterDiscover
                 | Command::ScriptRun { .. }
+                | Command::ScannerDiscover
+                | Command::ScannerIdentify
+                | Command::ScannerTest { .. }
         )
     }
 }
@@ -853,6 +894,8 @@ pub enum JobEvent {
     StorageGrow(StorageGrowEvent),
     PrinterFound(PrinterFound),
     Script(ScriptEvent),
+    ScannerCandidate(scanner::ScannerCandidate),
+    Scan(scanner::Scan),
 }
 
 /// A job the device started: poll it at `/api/v1/jobs/{job}`.
@@ -865,8 +908,8 @@ pub struct JobStarted {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct JobPage {
     /// Its steps from number `after` on, in order: `PingEvent`s,
-    /// `SpeedtestEvent`s, `StorageGrowEvent`s, `PrinterFound`s or
-    /// `ScriptEvent`s, by the job.
+    /// `SpeedtestEvent`s, `StorageGrowEvent`s, `PrinterFound`s,
+    /// `ScriptEvent`s, `ScannerCandidate`s or `Scan`s, by the job.
     #[schemars(with = "Vec<JobEvent>")]
     pub events: Vec<Value>,
     /// What to send as `after` next.
@@ -2356,6 +2399,10 @@ pub struct ScriptSpec {
     /// (`protocol::presence`).
     #[serde(default)]
     pub presence: Vec<String>,
+    /// The scanners whose scans it runs on, by name, or `*` for every
+    /// scanner (`protocol::scanner`).
+    #[serde(default)]
+    pub scanner: Vec<String>,
 }
 
 /// What a schedule is: when it fires and which script it runs.
@@ -2389,13 +2436,13 @@ pub struct ScriptRun {
     /// `logs --unit` takes after the script's template.
     pub run: String,
     /// What started it: `manual`, `bridge` (the kiosk page), `schedule`,
-    /// `cec` or `presence`, the first word of `run`.
+    /// `cec`, `presence` or `scanner`, the first word of `run`.
     pub trigger: String,
     /// The schedule that started it, by name, while that schedule exists.
     #[serde(default)]
     pub schedule: Option<String>,
-    /// The CEC or presence event that started it: `tv-standby`, `key:red`,
-    /// `arrived`.
+    /// The CEC or presence event that started it, or the scanner that
+    /// did: `tv-standby`, `key:red`, `arrived`, `front`.
     #[serde(default)]
     pub event: Option<String>,
     pub started: Moment,

@@ -364,6 +364,7 @@ pub enum Page {
     Scripts,
     Schedules,
     Printer,
+    Scanner,
     Access,
     Ssh,
     Files,
@@ -384,6 +385,7 @@ impl Page {
         (Page::Audio, "Audio", sections::PERIPHERALS),
         (Page::Camera, "Camera", sections::PERIPHERALS),
         (Page::Printer, "Printer", sections::PERIPHERALS),
+        (Page::Scanner, "Scanner", sections::PERIPHERALS),
         (Page::Network, "Network", sections::NETWORK),
         (Page::Wifi, "WiFi", sections::NETWORK),
         (Page::Certs, "Certificates", sections::NETWORK),
@@ -411,6 +413,7 @@ impl Page {
             Page::Camera => ("camera", None),
             Page::Time => ("time", None),
             Page::Printer => ("printer", None),
+            Page::Scanner => ("scanner", None),
             Page::Playlists => ("playlist", None),
             Page::Access => ("access", None),
             Page::Policies

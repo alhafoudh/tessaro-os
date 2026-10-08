@@ -52,6 +52,9 @@
       "name": "printers"
     },
     {
+      "name": "scanners"
+    },
+    {
       "name": "update"
     },
     {
@@ -4503,6 +4506,353 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Done"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/scanners": {
+      "get": {
+        "operationId": "scanners.List",
+        "tags": [
+          "scanners"
+        ],
+        "summary": "Every scanner and how it is doing, and whether any is read (scanner.enable).",
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScannerList"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "scanners.Create",
+        "tags": [
+          "scanners"
+        ],
+        "summary": "Add a scanner.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScannerSpec"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScannerInfo"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/scanners/discover": {
+      "post": {
+        "operationId": "scanners.Discover",
+        "tags": [
+          "scanners"
+        ],
+        "summary": "The USB keyboards, serial ports and HID POS devices plugged in, as a job of `ScannerCandidate`s.",
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobStarted"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/scanners/identify": {
+      "post": {
+        "operationId": "scanners.Identify",
+        "tags": [
+          "scanners"
+        ],
+        "summary": "Wait for a scan on any of them, as a job of the one `ScannerCandidate` it came from.",
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobStarted"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/scanners/logs": {
+      "get": {
+        "operationId": "scanners.Logs",
+        "tags": [
+          "scanners"
+        ],
+        "summary": "What happened to the scanners after `after`: connected, disconnected, failed, and each scan's length, never its content.",
+        "parameters": [
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0,
+              "default": 0
+            },
+            "description": "The last page's `next`; 0 for everything kept."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanLog"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/scanners/{scanner}": {
+      "get": {
+        "operationId": "scanners.Show",
+        "tags": [
+          "scanners"
+        ],
+        "summary": "One scanner and how it is doing.",
+        "parameters": [
+          {
+            "name": "scanner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScannerInfo"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "operationId": "scanners.Change",
+        "tags": [
+          "scanners"
+        ],
+        "summary": "Change what is given of one scanner.",
+        "parameters": [
+          {
+            "name": "scanner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScannerChange"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScannerInfo"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "scanners.Remove",
+        "tags": [
+          "scanners"
+        ],
+        "summary": "Remove a scanner: its device goes back to whoever else reads it.",
+        "parameters": [
+          {
+            "name": "scanner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Done"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/scanners/{scanner}/test": {
+      "post": {
+        "operationId": "scanners.Test",
+        "tags": [
+          "scanners"
+        ],
+        "summary": "Its scans, with what they say, for a minute, as a job of `Scan`s. They reach the page and the scripts as well.",
+        "parameters": [
+          {
+            "name": "scanner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobStarted"
                 }
               }
             }
@@ -10146,6 +10496,14 @@
             "description": "The presence events it runs on: `arrived`, `left`, `near`, `far`\n(`protocol::presence`).",
             "default": []
           },
+          "scanner": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The scanners whose scans it runs on, by name, or `*` for every\nscanner (`protocol::scanner`).",
+            "default": []
+          },
           "runs": {
             "type": "array",
             "items": {
@@ -10221,7 +10579,7 @@
           },
           "trigger": {
             "type": "string",
-            "description": "What started it: `manual`, `bridge` (the kiosk page), `schedule`,\n`cec` or `presence`, the first word of `run`."
+            "description": "What started it: `manual`, `bridge` (the kiosk page), `schedule`,\n`cec`, `presence` or `scanner`, the first word of `run`."
           },
           "schedule": {
             "type": [
@@ -10236,7 +10594,7 @@
               "string",
               "null"
             ],
-            "description": "The CEC or presence event that started it: `tv-standby`, `key:red`,\n`arrived`.",
+            "description": "The CEC or presence event that started it, or the scanner that\ndid: `tv-standby`, `key:red`, `arrived`, `front`.",
             "default": null
           },
           "started": {
@@ -10317,6 +10675,14 @@
               "type": "string"
             },
             "description": "The presence events it runs on: `arrived`, `left`, `near`, `far`\n(`protocol::presence`).",
+            "default": []
+          },
+          "scanner": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The scanners whose scans it runs on, by name, or `*` for every\nscanner (`protocol::scanner`).",
             "default": []
           }
         },
@@ -10421,6 +10787,17 @@
               "type": "string"
             },
             "description": "Replaces the presence events it runs on; empty for none.",
+            "default": null
+          },
+          "scanner": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Replaces the scanners whose scans it runs on; empty for none.",
             "default": null
           }
         },
@@ -11461,6 +11838,455 @@
           "job"
         ]
       },
+      "ScannerList": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "scanners": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScannerInfo"
+            }
+          }
+        },
+        "required": [
+          "enabled",
+          "scanners"
+        ],
+        "description": "Every scanner, and whether any is read (scanner.enable)."
+      },
+      "ScannerInfo": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "`[a-z0-9][a-z0-9_-]*`, unique on the device: what events, scripts\nand the page name it by."
+          },
+          "transport": {
+            "$ref": "#/components/schemas/Transport"
+          },
+          "vendor": {
+            "type": "string",
+            "description": "The USB vendor id, four hex digits: `0c2e`."
+          },
+          "product": {
+            "type": "string",
+            "description": "The USB product id, four hex digits. Many scanners have one per\nmode, so a scanner switched to another mode is another scanner."
+          },
+          "serial": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The USB serial number, when the scanner has one: then it is found on\nany port.",
+            "default": null
+          },
+          "port": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The USB port it is plugged into, `1-1.2`: how a scanner without a\nserial number is told from another of the same model.",
+            "default": null
+          },
+          "layout": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Keyboard only: the keyboard layout the scanner is set to type in, as\nxkb names it: `us`, `de`, `sk(qwerty)`. `us` by default.",
+            "default": null
+          },
+          "terminator": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What ends a scan besides the quiet: `auto`, `enter`, `tab`, `cr`,\n`lf`, `crlf`, `none` or a byte as `0x03`, by the transport.",
+            "default": null
+          },
+          "gap_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "description": "Milliseconds of quiet that end a scan.",
+            "default": null
+          },
+          "baud": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "description": "Serial only: the baud rate, 9600 by default.",
+            "default": null
+          },
+          "strip_prefix": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Taken off the start of a scan when it is there: a prefix the scanner\nis set to send.",
+            "default": null
+          },
+          "strip_suffix": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Taken off the end of a scan, after the terminator.",
+            "default": null
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Read it. A disabled scanner is left to whoever else reads it: a\nkeyboard one types into the page again.",
+            "default": true
+          },
+          "state": {
+            "type": "string",
+            "description": "`reading`, `missing` (not plugged in), `disabled` (the scanner or\nscanner.enable is off) or `failed` (plugged in, and could not be\nread: `message` says why)."
+          },
+          "node": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The device node it is read from while it is plugged in:\n`/dev/input/event3`, `/dev/ttyACM0`, `/dev/hidraw1`.",
+            "default": null
+          },
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "scans": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Scans since the agent started.",
+            "default": 0
+          },
+          "last_scan": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "When the last of them ended, the device's wall clock.",
+            "default": null
+          }
+        },
+        "required": [
+          "name",
+          "transport",
+          "vendor",
+          "product",
+          "state"
+        ],
+        "description": "One scanner and how it is doing."
+      },
+      "Transport": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "keyboard",
+            "description": "A USB keyboard: the agent takes its keys from everyone else and\nreads them in the scanner's layout."
+          },
+          {
+            "type": "string",
+            "const": "serial",
+            "description": "A USB serial port (CDC ACM, or an FTDI, CP210x or CH341 bridge)."
+          },
+          {
+            "type": "string",
+            "const": "hidpos",
+            "description": "A HID POS barcode scanner (USB HID usage page 0x8C)."
+          }
+        ],
+        "description": "How the device reads a scanner."
+      },
+      "ScanLogQuery": {
+        "type": "object",
+        "properties": {
+          "after": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "The last page's `next`; 0 for everything kept.",
+            "default": 0
+          }
+        }
+      },
+      "ScanLog": {
+        "type": "object",
+        "properties": {
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScanLogEntry"
+            }
+          },
+          "next": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "entries",
+          "next"
+        ],
+        "description": "A page of the scanners' log: every entry after a `seq`, and where to\nask from next."
+      },
+      "ScanLogEntry": {
+        "type": "object",
+        "properties": {
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Grows by one per entry."
+          },
+          "at_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Milliseconds since the epoch."
+          },
+          "time": {
+            "type": "string",
+            "description": "The device's wall clock: `21:04:05.123`."
+          },
+          "scanner": {
+            "type": "string"
+          },
+          "event": {
+            "type": "string",
+            "description": "`scan`, `connected`, `disconnected` or `failed`."
+          },
+          "length": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "description": "A scan's length in bytes.",
+            "default": null
+          },
+          "ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0,
+            "description": "How long a scan took.",
+            "default": null
+          },
+          "symbology": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why it failed; the device node it connected on.",
+            "default": null
+          }
+        },
+        "required": [
+          "seq",
+          "at_ms",
+          "time",
+          "scanner",
+          "event"
+        ],
+        "description": "What happened to the scanners, never what was scanned."
+      },
+      "ScannerSpec": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "`[a-z0-9][a-z0-9_-]*`, unique on the device: what events, scripts\nand the page name it by."
+          },
+          "transport": {
+            "$ref": "#/components/schemas/Transport"
+          },
+          "vendor": {
+            "type": "string",
+            "description": "The USB vendor id, four hex digits: `0c2e`."
+          },
+          "product": {
+            "type": "string",
+            "description": "The USB product id, four hex digits. Many scanners have one per\nmode, so a scanner switched to another mode is another scanner."
+          },
+          "serial": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The USB serial number, when the scanner has one: then it is found on\nany port.",
+            "default": null
+          },
+          "port": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The USB port it is plugged into, `1-1.2`: how a scanner without a\nserial number is told from another of the same model.",
+            "default": null
+          },
+          "layout": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Keyboard only: the keyboard layout the scanner is set to type in, as\nxkb names it: `us`, `de`, `sk(qwerty)`. `us` by default.",
+            "default": null
+          },
+          "terminator": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What ends a scan besides the quiet: `auto`, `enter`, `tab`, `cr`,\n`lf`, `crlf`, `none` or a byte as `0x03`, by the transport.",
+            "default": null
+          },
+          "gap_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "description": "Milliseconds of quiet that end a scan.",
+            "default": null
+          },
+          "baud": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "description": "Serial only: the baud rate, 9600 by default.",
+            "default": null
+          },
+          "strip_prefix": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Taken off the start of a scan when it is there: a prefix the scanner\nis set to send.",
+            "default": null
+          },
+          "strip_suffix": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Taken off the end of a scan, after the terminator.",
+            "default": null
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Read it. A disabled scanner is left to whoever else reads it: a\nkeyboard one types into the page again.",
+            "default": true
+          }
+        },
+        "required": [
+          "name",
+          "transport",
+          "vendor",
+          "product"
+        ],
+        "description": "What a scanner is: which USB device, read how, its scans ended how."
+      },
+      "ScannerRef": {
+        "type": "object",
+        "properties": {
+          "scanner": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "scanner"
+        ]
+      },
+      "ScannerChange": {
+        "type": "object",
+        "properties": {
+          "layout": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "terminator": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "gap_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "description": "`0` goes back to the default.",
+            "default": null
+          },
+          "baud": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "description": "`0` goes back to the default.",
+            "default": null
+          },
+          "strip_prefix": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "strip_suffix": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "default": null
+          }
+        },
+        "description": "What is given replaces what the scanner has. An empty string unsets a\ntext field, back to its default."
+      },
       "UpdateStatus": {
         "type": "object",
         "properties": {
@@ -11929,7 +12755,7 @@
             "items": {
               "$ref": "#/components/schemas/JobEvent"
             },
-            "description": "Its steps from number `after` on, in order: `PingEvent`s,\n`SpeedtestEvent`s, `StorageGrowEvent`s, `PrinterFound`s or\n`ScriptEvent`s, by the job."
+            "description": "Its steps from number `after` on, in order: `PingEvent`s,\n`SpeedtestEvent`s, `StorageGrowEvent`s, `PrinterFound`s,\n`ScriptEvent`s, `ScannerCandidate`s or `Scan`s, by the job."
           },
           "next": {
             "type": "integer",
@@ -11972,6 +12798,12 @@
           },
           {
             "$ref": "#/components/schemas/ScriptEvent"
+          },
+          {
+            "$ref": "#/components/schemas/ScannerCandidate"
+          },
+          {
+            "$ref": "#/components/schemas/Scan"
           }
         ],
         "description": "One step of a job, of the kind the job is. Only described, for the\nAPI's document."
@@ -12461,6 +13293,134 @@
           }
         ],
         "description": "One step of `script-run`, in the order they arrive."
+      },
+      "ScannerCandidate": {
+        "type": "object",
+        "properties": {
+          "device": {
+            "type": "string",
+            "description": "What `scanner-create` takes as `--device`."
+          },
+          "transport": {
+            "$ref": "#/components/schemas/Transport"
+          },
+          "vendor": {
+            "type": "string"
+          },
+          "product": {
+            "type": "string"
+          },
+          "serial": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "port": {
+            "type": "string"
+          },
+          "node": {
+            "type": "string",
+            "description": "`/dev/input/event3`, `/dev/ttyACM0`, `/dev/hidraw1`."
+          },
+          "description": {
+            "type": "string",
+            "description": "What the device calls itself: its maker and product."
+          },
+          "known": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The scanner this device is already, by name.",
+            "default": null
+          },
+          "scan": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Scan"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "From `scanner-identify`: the scan that came from it.",
+            "default": null
+          }
+        },
+        "required": [
+          "device",
+          "transport",
+          "vendor",
+          "product",
+          "port",
+          "node",
+          "description"
+        ],
+        "description": "A USB device that may be a scanner: a keyboard, a serial port or a HID\nPOS device. One step of `scanner-discover`, and what `scanner-identify`\nanswers with the scan it heard."
+      },
+      "Scan": {
+        "type": "object",
+        "properties": {
+          "scanner": {
+            "type": "string",
+            "description": "The scanner's name; empty from a device that is no scanner yet."
+          },
+          "transport": {
+            "$ref": "#/components/schemas/Transport"
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The scan as text, when it is UTF-8.",
+            "default": null
+          },
+          "bytes": {
+            "type": "string",
+            "description": "The scan's bytes, base64, always."
+          },
+          "length": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "ms": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "From its first byte to its last."
+          },
+          "symbology": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The AIM symbology identifier a HID POS scanner reports: `]Q1` for a\nQR code, `]E0` for an EAN-13.",
+            "default": null
+          },
+          "at_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Milliseconds since the epoch."
+          },
+          "time": {
+            "type": "string",
+            "description": "The device's wall clock: `21:04:05.123`."
+          }
+        },
+        "required": [
+          "scanner",
+          "transport",
+          "bytes",
+          "length",
+          "ms",
+          "at_ms",
+          "time"
+        ],
+        "description": "One scan."
       },
       "JobRef": {
         "type": "object",

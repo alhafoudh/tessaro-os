@@ -376,6 +376,58 @@ export interface CecActions {
   messages(after?: number): Promise<CecMessages>;
 }
 
+export type ScannerTransport = "keyboard" | "serial" | "hidpos";
+
+/** One barcode scanner and how it is doing (scanner.list()). */
+export interface ScannerInfo {
+  name: string;
+  transport: ScannerTransport;
+  vendor: string;
+  product: string;
+  serial?: string | null;
+  port?: string | null;
+  layout?: string | null;
+  terminator?: string | null;
+  gap_ms?: number | null;
+  baud?: number | null;
+  strip_prefix?: string | null;
+  strip_suffix?: string | null;
+  enabled: boolean;
+  state: "reading" | "missing" | "disabled" | "failed";
+  node?: string | null;
+  message?: string | null;
+  scans: number;
+  last_scan?: string | null;
+}
+
+export interface ScannerList {
+  /** scanner.enable */
+  enabled: boolean;
+  scanners: ScannerInfo[];
+}
+
+interface ScannerEventBase {
+  scanner: string;
+  transport: ScannerTransport;
+  at_ms: number;
+}
+
+/** A scan beginning or ending, a scanner plugged in or out (tessaro:scanner). */
+export type ScannerDetail =
+  | (ScannerEventBase & { event: "begin" })
+  | (ScannerEventBase & {
+      event: "end";
+      /** The scan as text, when it is UTF-8. */
+      text?: string | null;
+      /** The scan's bytes, base64, always. */
+      bytes: string;
+      length: number;
+      ms: number;
+      symbology?: string | null;
+    })
+  | (ScannerEventBase & { event: "connected"; node?: string | null })
+  | (ScannerEventBase & { event: "disconnected" });
+
 export interface PrintRequest {
   data?: string | Blob | ArrayBuffer | Uint8Array;
   path?: string;
@@ -411,6 +463,7 @@ export interface TessaroReads {
     cancel?(job: string): Promise<unknown>;
   };
   scripts: { list(): Promise<BridgeScript[]>; run?(name: string): Promise<ScriptResult> };
+  scanner: { list(): Promise<ScannerList> };
   playlist: { status(): Promise<PlaylistStatus> };
   screen: {
     show(): Promise<ScreenShow>;
@@ -442,6 +495,7 @@ export interface TessaroEvents {
   "tessaro:cec": CustomEvent<CecDetail>;
   "tessaro:presence": CustomEvent<PresenceDetail>;
   "tessaro:faces": CustomEvent<FacesDetail>;
+  "tessaro:scanner": CustomEvent<ScannerDetail>;
 }
 
 declare global {

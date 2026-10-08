@@ -416,7 +416,7 @@ impl Control {
         });
     }
 
-    async fn reconcile_display(&self, snapshot: &str) {
+    pub(super) async fn reconcile_display(&self, snapshot: &str) {
         let paths = self.paths.clone();
         let compared = blocking("regenerating the Weston config", move || {
             // A device whose Weston is not started through the drop-in, or a

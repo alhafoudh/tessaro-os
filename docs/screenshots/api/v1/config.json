@@ -338,6 +338,24 @@
       "source": "default"
     },
     {
+      "key": "scanner.enable",
+      "env": "KIOSK_SCANNER",
+      "value": "0",
+      "source": "default"
+    },
+    {
+      "key": "scanner.page",
+      "env": "KIOSK_SCANNER_PAGE",
+      "value": "1",
+      "source": "default"
+    },
+    {
+      "key": "scanner.scripts",
+      "env": "KIOSK_SCANNER_SCRIPTS",
+      "value": "1",
+      "source": "default"
+    },
+    {
       "key": "playlist.default",
       "env": "KIOSK_PLAYLIST",
       "value": "",

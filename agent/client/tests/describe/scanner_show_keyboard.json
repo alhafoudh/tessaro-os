@@ -1,0 +1,136 @@
+{
+  "function": "scanner::show",
+  "input": {
+    "enabled": false,
+    "message": "not plugged in",
+    "name": "front",
+    "port": "1-1.2",
+    "product": "0b61",
+    "scans": 0,
+    "state": "missing",
+    "transport": "keyboard",
+    "vendor": "0c2e"
+  },
+  "output": [
+    {
+      "label": "name",
+      "value": [
+        [
+          "heading",
+          "front",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "state",
+      "value": [
+        [
+          "warn",
+          "missing",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "says",
+      "value": [
+        [
+          "warn",
+          "not plugged in",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "read as",
+      "value": [
+        [
+          "plain",
+          "keyboard (its keys never reach the page)",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "device",
+      "value": [
+        [
+          "plain",
+          "keyboard:0c2e:0b61:@1-1.2",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "node",
+      "value": [
+        [
+          "muted",
+          "not plugged in",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "layout",
+      "value": [
+        [
+          "plain",
+          "us",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "ends on",
+      "value": [
+        [
+          "plain",
+          "auto",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "gap",
+      "value": [
+        [
+          "plain",
+          "100 ms of quiet ends a scan",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "enabled",
+      "value": [
+        [
+          "muted",
+          "no",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "scans",
+      "value": [
+        [
+          "plain",
+          "0",
+          0
+        ]
+      ]
+    },
+    {
+      "label": "last scan",
+      "value": [
+        [
+          "muted",
+          "none yet",
+          0
+        ]
+      ]
+    }
+  ]
+}

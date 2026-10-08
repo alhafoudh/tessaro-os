@@ -55,9 +55,9 @@ section is one of:
 | --- | --- | --- |
 | `ready` | Ready | the feature works here |
 | `limited` | Partly | some of it works: the browser's part without the bridge's, software WebGL, no touchscreen |
-| `off` | Off | the operator has it switched off (`camera.presence.enable`, `screen.cec.enable`, `printer.enable`, no script marked `--bridge`) |
+| `off` | Off | the operator has it switched off (`camera.presence.enable`, `screen.cec.enable`, `printer.enable`, `scanner.enable`, no script marked `--bridge`) |
 | `needs-bridge` | Bridge off / Read-only | the bridge mode is below what the section needs |
-| `no-hardware` | Nothing plugged in | no camera, no printer set up, no HDMI-CEC adapter |
+| `no-hardware` | Nothing plugged in | no camera, no printer or scanner set up, no HDMI-CEC adapter, no scanner plugged in |
 | `offline` | Offline | the section streams from the internet and the device cannot reach it |
 
 **Detection only reads.** A section that is off shows the operator's
@@ -120,6 +120,25 @@ buttons that would only be refused.
   (`screen.cec.messages()`), and the two are merged by `seq`, so nothing
   shows twice.
 
+## The barcode scanner
+
+**The barcode scanner section shows every scan as the page hears it, in
+either bridge mode**: it only reads `scanner.list()` and listens to
+`tessaro:scanner` ([scanners.md](scanners.md)). Setting a scanner up is
+the operator's (`tessaro-ctl scanner identify` and `create`), never the
+page's, so the section says how instead of offering it.
+
+* **`begin` shows that a scan is coming in**, with a running timer, and
+  `end` replaces it with the code, its length, how long it took and the
+  symbology a HID POS scanner reports. A keyboard scanner types a long QR
+  code for a second or more, which is what the timer makes visible.
+* **Control characters are drawn as names** (`⟨GS⟩`, `⟨CR⟩`, `visible()` in
+  `src/sections/Scanner.tsx`), so a GS1 code's group separators show; a
+  scan that is not UTF-8 shows as its length in bytes.
+* **The scanners panel is `scanner.list()`**, asked again whenever a
+  `connected` or `disconnected` event comes, with each scanner's state,
+  device node and scan count.
+
 ## Maintenance for a few seconds
 
 **Maintenance puts another page on screen, so the demo makes that page its
@@ -171,6 +190,10 @@ a route in the path would be a 404.
   (`src/bridge/mock-cec.ts`) has a TV and a sound bar that answer the
   common questions, keeps a message log, fires every message as a
   `message` event and refuses the way the agent does, burst limit included.
+  Its barcode scanner (`src/bridge/mock-scanner.ts`) is a keyboard scanner
+  that scans an EAN-13, a GS1 DataMatrix and a long QR code in turn, on the
+  section's "Pretend scan" button (shown only with the mock) and now and
+  then on its own, firing `begin` and `end` as the agent does.
 * **`bitbake-lock.json` follows `package-lock.json`**, made by
   `scripts/bitbake-lock.mjs`, Webconfig's script under the demo's name, and
   checked by `demo:test`.

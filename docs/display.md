@@ -219,9 +219,14 @@ keyboard attached", and how that is decided matters:
   panel. Exercising the keyboard under `mise run qemu:vnc` therefore needs
   `tessaro-ctl config set screen.osk=always`; note `qemu:run`/`qemu:vnc` pass
   `-snapshot`, so that does not survive a reboot of the VM.
-* **Keyboard-shaped peripherals will fool it.** A barcode scanner, an RFID
-  reader or a KVM dongle enumerates as a USB HID keyboard. `screen.osk=always`
-  is the answer, which is why that value exists.
+* **A barcode scanner the agent reads is no keyboard.** Its udev rule gives
+  it `TESSARO_SCANNER`, which the generator skips, and the agent checks
+  Weston's config again whenever that rule changes ([scanners.md](scanners.md),
+  **Taking it from everyone else**).
+* **Other keyboard-shaped peripherals will fool it.** A scanner nobody set
+  up, an RFID reader or a KVM dongle enumerates as a USB HID keyboard.
+  `tessaro-ctl scanner create` for a scanner, else `screen.osk=always`, is the
+  answer, which is why that value exists.
 * **It fails towards showing the keyboard.** No `udevadm`, an unpopulated udev
   database, anything unexpected: the verdict is "no keyboard" and the panel is
   offered. A superfluous keyboard on screen is a nuisance; a touch-only device
@@ -229,8 +234,9 @@ keyboard attached", and how that is decided matters:
 * **It follows hotplug, at the cost of a Weston restart.** The agent re-runs
   the decision when an input device comes or goes, and restarts Weston, taking
   the browser with it, if the verdict changed - see **Display hotplug**. So on
-  a device with `auto`, plugging in a keyboard, or a scanner that looks like
-  one, costs a page reload. `screen.osk=always`/`never` never restart for it.
+  a device with `auto`, plugging in a keyboard, or a scanner nobody set up,
+  costs a page reload; so does setting up or removing a keyboard scanner
+  that was the only keyboard. `screen.osk=always`/`never` never restart for it.
 * An `[input-method]` section written by hand in `/etc/xdg/weston/weston.ini`
   wins over all of it, the same courtesy `[output]` sections get.
 
@@ -323,7 +329,9 @@ with that property (`evdev_device_create`, `src/evdev.c`).
 * **The kinds**: mouse is `ID_INPUT_MOUSE`, `_TOUCHPAD`, `_POINTINGSTICK`,
   `_TRACKBALL` and `_TABLET` (pens; qemu's usb-tablet has no pen and is
   `ID_INPUT_MOUSE`); keyboard is
-  `ID_INPUT_KEYBOARD`, which barcode scanners and RFID readers have too;
+  `ID_INPUT_KEYBOARD`, which barcode scanners and RFID readers have too (a
+  scanner the agent reads is ignored by its own rule either way,
+  [scanners.md](scanners.md));
   touch is `ID_INPUT_TOUCHSCREEN`. A power button or a lid switch has only
   `ID_INPUT_KEY` and stays.
 * **A touch panel that reports itself as a mouse or a tablet goes with

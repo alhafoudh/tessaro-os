@@ -106,6 +106,15 @@ await tessaro.device.status();
   (`leftEye`, `rightEye`, `nose`, `mouth`, `leftEar`, `rightEar`) as shares
   of the frame in the camera's own view, `score`, `distance` in meters,
   `near` and `facing`.
+* **A barcode scan is a `tessaro:scanner` event**, with `scanner.page` on:
+  `detail.event` `begin` when its first byte comes and `end` with the scan
+  (`text` when it is UTF-8, always `bytes` in base64, `length`, `ms`,
+  `symbology`), and `connected` (with its `node`) and `disconnected`; each
+  with `scanner`, `transport` and `at_ms` ([scanners.md](scanners.md)).
+  Fired the same way, and also in every frame of the player that has the
+  bridge: the preamble in a frame calls `scanner.listen` when it loads, and
+  the agent fires the event in that frame's context until the context is
+  gone (**The events** in [scanners.md](scanners.md)).
 
 **Calls return Promises.** A refusal rejects with an `Error` whose message is
 the control plane's own. `config` mode answers the reads; `actions` mode
@@ -124,6 +133,7 @@ answers everything:
 | `playlist.status()` | config | `playlist status`: whether the player is on screen, what plays and why, the item on screen, what was gone past, the media cache; also `device.status().playlist` |
 | `presence.status()` | config | `camera presence`, without the camera's name, the model and how fast it runs: `enabled`, `running`, `present`, `near`, `nearMeters`, `count`, the `last` event and the newest frame's `faces`; also `device.status().presence` (`present`, `near`, `count`) |
 | `presence.watch()`, `presence.unwatch()` | config | nothing the ctl has: start and stop `tessaro:faces` |
+| `scanner.list()` | config | `scanner list`: whether scanner.enable is on, and each scanner, its device, how it is read, its `state`, `node`, `scans` and `last_scan` |
 | `network.publicIp()` | actions | `config get network.public_ip`: asked now |
 | `network.online()` | actions | the same lookup, resolved as `true` or `false` |
 | `browser.reload()` | actions | `browser reload` |
@@ -200,6 +210,12 @@ The other commands no call mirrors are the operator's too:
   the store over `/files/` and does not change the operator's files.
 * **`audio output`, `input` and `test`**: which device plays and records is
   the operator's; the page sets the volume it plays and records at.
+* **`scanner create`, `set`, `enable`, `disable`, `remove`, `discover`,
+  `identify`, `test` and `logs`**: which USB device is a scanner is the
+  operator's, and a page that could designate one could take a keyboard
+  from the people in front of the screen; `identify` and `test` hear scans
+  the page has no business with. The page gets every scan as
+  `tessaro:scanner`.
 * **`device logs`, `ping` and `restart`** of anything but the browser: the
   journal carries every caller's actions, and the agent's restart is the
   operator's.

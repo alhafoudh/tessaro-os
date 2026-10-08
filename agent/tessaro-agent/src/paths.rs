@@ -159,6 +159,19 @@ pub struct Paths {
     /// Run to apply a changed rule to the devices already present; empty
     /// leaves them alone (tests).
     pub udevadm: PathBuf,
+    /// The udev rule that keeps the barcode scanners from libinput, the
+    /// on-screen keyboard's `auto` and the browser, rendered from the
+    /// `scanners` table while scanner.enable is on. In `/run`, next to
+    /// `input_rules`, and numbered before the image's device rules so its
+    /// final owner and mode win.
+    pub scanner_rules: PathBuf,
+    /// `/sys/class/tty` and `/sys/class/hidraw`: the serial ports and the HID
+    /// devices a scanner may be.
+    pub sys_tty: PathBuf,
+    pub sys_hidraw: PathBuf,
+    /// The keyboard layouts, `symbols/<layout>`, that a scanner in keyboard
+    /// mode types in: xkeyboard-config's, which Weston reads too.
+    pub xkb: PathBuf,
     /// Where the scripts' and schedules' systemd units are rendered. In
     /// `/run`, so they are rendered from the store at every start and never
     /// land on the `/etc` overlay.
@@ -289,6 +302,13 @@ impl Paths {
                 "/run/udev/rules.d/69-tessaro-input.rules",
             ),
             udevadm: path("KIOSK_UDEVADM", "udevadm"),
+            scanner_rules: path(
+                "KIOSK_SCANNER_RULES",
+                "/run/udev/rules.d/68-tessaro-scanners.rules",
+            ),
+            sys_tty: path("KIOSK_SYS_TTY", "/sys/class/tty"),
+            sys_hidraw: path("KIOSK_SYS_HIDRAW", "/sys/class/hidraw"),
+            xkb: path("KIOSK_XKB", "/usr/share/X11/xkb"),
             systemd_unit_dir: path("KIOSK_SYSTEMD_UNIT_DIR", "/run/systemd/system"),
             manage_schedules: text("KIOSK_MANAGE_SCHEDULES", "1") != "0",
             systemd_analyze: path("KIOSK_SYSTEMD_ANALYZE", "systemd-analyze"),
@@ -390,6 +410,13 @@ impl Paths {
     /// table at every start like their units.
     pub fn script_body_dir(&self) -> PathBuf {
         self.run_dir.join("scripts")
+    }
+
+    /// What a scan said, `<run>`, for the script run it started: a unit's
+    /// instance name cannot carry it. The run reads it into
+    /// `TESSARO_SCAN_TEXT` and removes it (`scripts.rs`).
+    pub fn scans_dir(&self) -> PathBuf {
+        self.run_dir.join("scans")
     }
 
     pub fn factory_reset_marker(&self) -> PathBuf {

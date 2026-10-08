@@ -45,6 +45,7 @@ require_relative "support/progress"
 require_relative "support/network"
 require_relative "support/update"
 require_relative "support/usbcam"
+require_relative "support/usbscanner"
 require_relative "support/vnc"
 require_relative "support/host_web"
 

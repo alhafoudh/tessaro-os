@@ -37,6 +37,7 @@ mod playlists;
 mod policies;
 mod presence;
 mod printers;
+mod scanners;
 mod schedules;
 mod screen;
 mod scripts;
@@ -287,6 +288,22 @@ pub struct Control {
     /// When a client last started the VNC mirror or kept it going; it stops
     /// `vnc::LEASE` after that with no viewer connected.
     vnc_started: Mutex<Option<std::time::Instant>>,
+    /// How each scanner is doing, by name, as its supervisor and workers
+    /// last saw it (`scanners`).
+    scanner_states: Mutex<BTreeMap<String, scanners::State>>,
+    /// What happened to the scanners, never what they scanned.
+    scan_log: Mutex<crate::scanner::log::Log>,
+    /// Who else wants each scan as it ends: `scanner test`'s jobs, by
+    /// scanner name.
+    scan_taps: Mutex<Vec<(String, tokio::sync::mpsc::Sender<protocol::scanner::Scan>)>>,
+    /// Wakes the scanners' supervisor: the table changed.
+    scanner_wake: tokio::sync::Notify,
+    /// Where the scans wait for the page and the scripts, set once by
+    /// `watch_scanners`, so a worker never waits for either.
+    scanner_queue: std::sync::OnceLock<tokio::sync::mpsc::Sender<scanners::Dispatch>>,
+    /// The player's frames that asked for `tessaro:scanner`: their session
+    /// and context (`bridge_scanner`).
+    scanner_frames: Mutex<Vec<(Option<String>, i64)>>,
 }
 
 impl Control {
@@ -356,6 +373,12 @@ impl Control {
             presence: Mutex::new(crate::presence::Presence::default()),
             presence_watch: Mutex::new(None),
             vnc_started: Mutex::new(None),
+            scanner_states: Mutex::new(BTreeMap::new()),
+            scan_log: Mutex::new(crate::scanner::log::Log::default()),
+            scan_taps: Mutex::new(Vec::new()),
+            scanner_wake: tokio::sync::Notify::new(),
+            scanner_queue: std::sync::OnceLock::new(),
+            scanner_frames: Mutex::new(Vec::new()),
         })
     }
 
@@ -398,6 +421,9 @@ impl Control {
                 })
             }
             Command::PrinterDiscover => self.printer_discover(caller).map(Stream::Printers),
+            Command::ScannerDiscover => Ok(self.scanner_discover()),
+            Command::ScannerIdentify => self.scanner_identify(caller),
+            Command::ScannerTest { scanner } => self.scanner_test(caller, scanner).await,
             _ => Err("that command is not a stream".to_string()),
         }
     }
@@ -662,7 +688,10 @@ impl Control {
             | Command::NetPing { .. }
             | Command::StorageGrow { .. }
             | Command::PrinterDiscover
-            | Command::ScriptRun { .. } => Reply::err("that command runs as a job"),
+            | Command::ScriptRun { .. }
+            | Command::ScannerDiscover
+            | Command::ScannerIdentify
+            | Command::ScannerTest { .. } => Reply::err("that command runs as a job"),
             // The hotspot's security follows the claim, re-applied once the
             // answer is out: whoever claims through the hotspot gets its new
             // password before the hotspot drops them.
@@ -795,6 +824,7 @@ impl Control {
                 bridge,
                 cec,
                 presence,
+                scanner,
             } => {
                 let change = scripts::Change {
                     name,
@@ -806,6 +836,7 @@ impl Control {
                     bridge,
                     cec,
                     presence,
+                    scanner,
                 };
                 self.script_set(caller, script, change).await.into()
             }
@@ -922,6 +953,14 @@ impl Control {
                 .into(),
             Command::PrinterJobs { printer } => self.printer_jobs(printer).await.into(),
             Command::PrinterCancel { job } => self.printer_cancel(caller, job).await.into(),
+            Command::ScannerList => self.scanner_list().await.into(),
+            Command::ScannerShow { scanner } => self.scanner_show(&scanner).await.into(),
+            Command::ScannerCreate { spec } => self.scanner_create(caller, spec).await.into(),
+            Command::ScannerSet { scanner, change } => {
+                self.scanner_set(caller, scanner, change).await.into()
+            }
+            Command::ScannerRemove { scanner } => self.scanner_remove(caller, scanner).await.into(),
+            Command::ScannerLogs { after } => self.scanner_logs(after).await.into(),
         }
     }
 
@@ -1487,6 +1526,12 @@ pub enum Stream {
         steps: tokio::sync::mpsc::Receiver<Result<protocol::ScriptEvent, String>>,
         /// The longest following the run can take: its timeout and a
         /// margin.
+        total: Duration,
+    },
+    /// The scanners' jobs: `ScannerCandidate`s or `Scan`s, as JSON.
+    Scanner {
+        steps: tokio::sync::mpsc::Receiver<Result<Value, String>>,
+        what: &'static str,
         total: Duration,
     },
 }
@@ -2171,6 +2216,7 @@ mod tests {
             bridge: false,
             cec: Vec::new(),
             presence: Vec::new(),
+            scanner: Vec::new(),
         }
     }
 
@@ -2222,6 +2268,7 @@ mod tests {
                 bridge: Some(true),
                 cec: Some(vec!["TV-standby".into(), "key:red".into()]),
                 presence: Some(vec!["Arrived".into()]),
+                scanner: Some(vec!["Front".into(), "*".into()]),
             },
         )
         .await;
@@ -2308,6 +2355,7 @@ mod tests {
                 bridge: Some(false),
                 cec: None,
                 presence: None,
+                scanner: None,
             },
         )
         .await;

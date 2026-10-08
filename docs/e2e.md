@@ -94,6 +94,15 @@ start.
   `cups` package) in the guest on a loopback port, keeping every job as a
   file: a job reached the printer when a file appears. A printer that does
   not answer is a URI with nothing listening, where a job waits.
+* **The scanner lane attaches a fake USB scanner over USB/IP**, as the
+  camera lanes attach the fake camera: `scanner_spec.rb` starts
+  `test/usbscanner/usbscanner.rb` on the worker's `usbscanner` port (3241
+  plus the offset) in each mode in turn, keyboard, HID POS and serial, and
+  sends scans to its control port (`usbscanner_control`). It checks
+  `discover` and `identify`, the page's `tessaro:scanner` events, a script's
+  `TESSARO_SCAN_TEXT`, that a designated keyboard types nothing, the udev
+  rule and the on-screen keyboard's verdict, and that `remove` gives the
+  device back. See **Testing in qemu** in [scanners.md](scanners.md).
 * **The playlist lane serves a site from the host.** A page that forbids
   framing and an image for the media cache have to come from somewhere that
   is not the device, so `playlist_spec.rb` runs a small server

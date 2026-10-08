@@ -1,0 +1,95 @@
+{
+  "function": "script::runs",
+  "input": {
+    "now": 1790000000,
+    "runs": [
+      {
+        "event": "front",
+        "finished": {
+          "local": "",
+          "unix": 1789999990
+        },
+        "result": "success",
+        "run": "scanner-front-1789999988-4f2a",
+        "started": {
+          "local": "",
+          "unix": 1789999988
+        },
+        "status": "0",
+        "trigger": "scanner"
+      },
+      {
+        "finished": {
+          "local": "",
+          "unix": 1789990000
+        },
+        "result": "exit-code",
+        "run": "scanner-1789989999-0b1d",
+        "started": {
+          "local": "",
+          "unix": 1789989999
+        },
+        "status": "2",
+        "trigger": "scanner"
+      }
+    ]
+  },
+  "output": {
+    "ended": [
+      [
+        [
+          "ok",
+          "run scanner-front-1789999988-4f2a succeeded after 2s",
+          0
+        ]
+      ],
+      [
+        [
+          "bad",
+          "run scanner-1789989999-0b1d failed: exit-code 2, after 1s",
+          0
+        ]
+      ]
+    ],
+    "run_line": [
+      [
+        [
+          "ok",
+          "success",
+          0
+        ],
+        [
+          "plain",
+          ", 10s ago, by a scan on front",
+          0
+        ],
+        [
+          "muted",
+          " (2s)",
+          0
+        ]
+      ],
+      [
+        [
+          "bad",
+          "exit-code 2",
+          0
+        ],
+        [
+          "plain",
+          ", 2h 46min ago, by a barcode scan",
+          0
+        ],
+        [
+          "muted",
+          " (1s)",
+          0
+        ]
+      ]
+    ],
+    "started_by": [
+      "by a scan on front",
+      "by a barcode scan"
+    ]
+  }
+}

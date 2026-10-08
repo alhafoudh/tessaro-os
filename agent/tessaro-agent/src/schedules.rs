@@ -312,6 +312,7 @@ mod tests {
                 bridge: false,
                 cec: Vec::new(),
                 presence: Vec::new(),
+                scanner: Vec::new(),
             },
         }]
     }

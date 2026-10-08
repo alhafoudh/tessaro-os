@@ -1,0 +1,13 @@
+{
+  "function": "scanner::visible",
+  "input": [
+    "4006381333931",
+    "01\u001d10ab\r\n",
+    "\t\u001e\u0004\u0007é"
+  ],
+  "output": [
+    "4006381333931",
+    "01<GS>10ab<CR><LF>",
+    "<TAB><RS><EOT><0x07><0x7f>é"
+  ]
+}

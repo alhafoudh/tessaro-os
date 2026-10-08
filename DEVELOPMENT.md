@@ -93,6 +93,16 @@ It needs ffmpeg on this host, and runs until Ctrl-C, which unplugs the
 camera again. How it works is in [docs/camera.md](docs/camera.md), "Testing
 in qemu".
 
+A barcode scanner the same way, in the mode to try:
+
+```sh
+mise run usbscanner:run -- --mode keyboard --attach          # hidpos, serial
+echo 'HELLO-123' | nc 127.0.0.1 3242                         # a scan
+mise run usbscanner:run -- --mode serial --scan 5901234123457 --every 5 --attach
+```
+
+How it works is in [docs/scanners.md](docs/scanners.md), "Testing in qemu".
+
 ### genericarm64, on the build host or a Mac
 
 ```sh

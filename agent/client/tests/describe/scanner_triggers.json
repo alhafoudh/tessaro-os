@@ -1,0 +1,50 @@
+{
+  "function": "scanner::triggers",
+  "input": [
+    "",
+    "front",
+    " Front, back ,front,",
+    "*",
+    "front,*",
+    "no way",
+    "logs"
+  ],
+  "output": [
+    {
+      "ok": [],
+      "words": "scanner "
+    },
+    {
+      "ok": [
+        "front"
+      ],
+      "words": "scanner front"
+    },
+    {
+      "ok": [
+        "front",
+        "back"
+      ],
+      "words": "scanner front back"
+    },
+    {
+      "ok": [
+        "*"
+      ],
+      "words": "every scanner"
+    },
+    {
+      "ok": [
+        "front",
+        "*"
+      ],
+      "words": "every scanner"
+    },
+    {
+      "err": "\"no way\" is not a scanner name: lower-case letters, digits, - and _, starting with a letter or digit, at most 40"
+    },
+    {
+      "err": "\"logs\" cannot name a scanner"
+    }
+  ]
+}

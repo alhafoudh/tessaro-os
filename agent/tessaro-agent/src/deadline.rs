@@ -252,6 +252,8 @@ mod tests {
             "src/media.rs",
             "src/control/scripts.rs",
             "src/control/printers.rs",
+            "src/control/scanners.rs",
+            "src/scanner/io.rs",
             "src/control/certs.rs",
             "src/power.rs",
             "src/api/mod.rs",

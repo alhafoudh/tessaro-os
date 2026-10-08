@@ -1,0 +1,226 @@
+{
+  "function": "scanner::identified",
+  "input": [
+    null,
+    {
+      "description": "Zebra DS2208",
+      "device": "hidpos:05e0:1300:@1-1.4",
+      "node": "/dev/hidraw1",
+      "port": "1-1.4",
+      "product": "1300",
+      "scan": {
+        "at_ms": 1790000000123,
+        "bytes": "MDEwNDAxMjM0NTY3ODkwMR0xMEFCQw==",
+        "length": 21,
+        "ms": 4,
+        "scanner": "",
+        "symbology": "]d2",
+        "text": "0104012345678901\u001d10ABC",
+        "time": "21:04:05.123",
+        "transport": "hidpos"
+      },
+      "transport": "hidpos",
+      "vendor": "05e0"
+    },
+    {
+      "description": "Honeywell Imaging & Mobility 1900",
+      "device": "keyboard:0c2e:0b61:@1-1.2",
+      "known": "front",
+      "node": "/dev/input/event3",
+      "port": "1-1.2",
+      "product": "0b61",
+      "scan": {
+        "at_ms": 1790000000123,
+        "bytes": "/w==",
+        "length": 1,
+        "ms": 0,
+        "scanner": "",
+        "time": "21:04:05.123",
+        "transport": "keyboard"
+      },
+      "transport": "keyboard",
+      "vendor": "0c2e"
+    }
+  ],
+  "output": [
+    [
+      [
+        [
+          "warn",
+          "nothing was scanned while the device listened; scan a code while it does",
+          0
+        ]
+      ]
+    ],
+    [
+      [
+        [
+          "label",
+          "hidpos",
+          8
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "heading",
+          "Zebra DS2208",
+          0
+        ]
+      ],
+      [
+        [
+          "plain",
+          "         ",
+          0
+        ],
+        [
+          "plain",
+          "hidpos:05e0:1300:@1-1.4",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "on /dev/hidraw1",
+          0
+        ]
+      ],
+      [
+        [
+          "plain",
+          "         ",
+          0
+        ],
+        [
+          "heading",
+          "0104012345678901<GS>10ABC",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "(21 bytes in 4 ms, ]d2)",
+          0
+        ]
+      ],
+      [
+        [
+          "muted",
+          "add it with",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "cmd",
+          "tessaro-ctl scanner create NAME --device hidpos:05e0:1300:@1-1.4",
+          0
+        ]
+      ]
+    ],
+    [
+      [
+        [
+          "label",
+          "keyboard",
+          8
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "heading",
+          "Honeywell Imaging & Mobility 1900",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "(scanner front)",
+          0
+        ]
+      ],
+      [
+        [
+          "plain",
+          "         ",
+          0
+        ],
+        [
+          "plain",
+          "keyboard:0c2e:0b61:@1-1.2",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "on /dev/input/event3",
+          0
+        ]
+      ],
+      [
+        [
+          "plain",
+          "         ",
+          0
+        ],
+        [
+          "warn",
+          "not text",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "(1 byte in 0 ms)",
+          0
+        ]
+      ],
+      [
+        [
+          "muted",
+          "it is scanner front already; see",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "cmd",
+          "tessaro-ctl scanner show front",
+          0
+        ]
+      ]
+    ]
+  ]
+}

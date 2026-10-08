@@ -393,7 +393,7 @@
       "weston"
     ],
     "guarded": false,
-    "doc": "Use keyboards, barcode scanners included; 0 ignores them, and screen.osk=auto shows the on-screen keyboard as if none were plugged in.",
+    "doc": "Use keyboards, a barcode scanner that types included; 0 ignores them, and screen.osk=auto shows the on-screen keyboard as if none were plugged in. A scanner of `tessaro-ctl scanner list` is never one of them while scanner.enable is on.",
     "values": "1 or 0 (on/off, true/false, yes/no)",
     "default": "1",
     "value": null,
@@ -892,6 +892,51 @@
     "doc": "Let the page print: window.print() goes to the default printer without a dialog, and the page bridge's printer.print() to any printer. `tessaro-ctl printer` sets the printers up; it prints either way.",
     "values": "1 or 0 (on/off, true/false, yes/no)",
     "default": "0",
+    "value": null,
+    "input": {
+      "kind": "flag"
+    }
+  },
+  {
+    "name": "scanner.enable",
+    "env": "KIOSK_SCANNER",
+    "applies": [
+      "agent"
+    ],
+    "guarded": false,
+    "doc": "Read the barcode scanners of `tessaro-ctl scanner list`: each is taken from the browser and the screen, so a keyboard scanner types nothing into the page, and its scans become events. 0 leaves every scanner a plain keyboard or serial port.",
+    "values": "1 or 0 (on/off, true/false, yes/no)",
+    "default": "0",
+    "value": null,
+    "input": {
+      "kind": "flag"
+    }
+  },
+  {
+    "name": "scanner.page",
+    "env": "KIOSK_SCANNER_PAGE",
+    "applies": [
+      "agent"
+    ],
+    "guarded": false,
+    "doc": "Tell the page about scans: a tessaro:scanner event on window, and in playlist frames with the bridge, when a scan begins and ends and when a scanner is plugged in or out. Needs browser.bridge.mode config or actions.",
+    "values": "1 or 0 (on/off, true/false, yes/no)",
+    "default": "1",
+    "value": null,
+    "input": {
+      "kind": "flag"
+    }
+  },
+  {
+    "name": "scanner.scripts",
+    "env": "KIOSK_SCANNER_SCRIPTS",
+    "applies": [
+      "agent"
+    ],
+    "guarded": false,
+    "doc": "Run the scripts that run on scans (`tessaro-ctl script set --scanner`). 0 runs none of them.",
+    "values": "1 or 0 (on/off, true/false, yes/no)",
+    "default": "1",
     "value": null,
     "input": {
       "kind": "flag"

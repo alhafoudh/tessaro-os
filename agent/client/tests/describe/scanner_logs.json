@@ -1,0 +1,147 @@
+{
+  "function": "scanner::logs",
+  "input": {
+    "entries": [
+      {
+        "at_ms": 1790000000000,
+        "event": "connected",
+        "message": "/dev/input/event3",
+        "scanner": "front",
+        "seq": 1,
+        "time": "21:04:00.000"
+      },
+      {
+        "at_ms": 1790000005123,
+        "event": "scan",
+        "length": 33,
+        "ms": 412,
+        "scanner": "front",
+        "seq": 2,
+        "time": "21:04:05.123"
+      },
+      {
+        "at_ms": 1790000006000,
+        "event": "scan",
+        "length": 13,
+        "ms": 2,
+        "scanner": "back",
+        "seq": 3,
+        "symbology": "]E0",
+        "time": "21:04:06.000"
+      },
+      {
+        "at_ms": 1790000007000,
+        "event": "failed",
+        "message": "/dev/ttyUSB0: Device or resource busy",
+        "scanner": "till",
+        "seq": 4,
+        "time": "21:04:07.000"
+      },
+      {
+        "at_ms": 1790000008000,
+        "event": "disconnected",
+        "scanner": "front",
+        "seq": 5,
+        "time": "21:04:08.000"
+      }
+    ],
+    "next": 5
+  },
+  "output": [
+    [
+      [
+        "muted",
+        "21:04:00.000",
+        13
+      ],
+      [
+        "heading",
+        "front",
+        17
+      ],
+      [
+        "ok",
+        "connected",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "on /dev/input/event3",
+        0
+      ]
+    ],
+    [
+      [
+        "muted",
+        "21:04:05.123",
+        13
+      ],
+      [
+        "heading",
+        "front",
+        17
+      ],
+      [
+        "plain",
+        "scan, 33 bytes in 412 ms",
+        0
+      ]
+    ],
+    [
+      [
+        "muted",
+        "21:04:06.000",
+        13
+      ],
+      [
+        "heading",
+        "back",
+        17
+      ],
+      [
+        "plain",
+        "scan, 13 bytes in 2 ms, ]E0",
+        0
+      ]
+    ],
+    [
+      [
+        "muted",
+        "21:04:07.000",
+        13
+      ],
+      [
+        "heading",
+        "till",
+        17
+      ],
+      [
+        "bad",
+        "failed: /dev/ttyUSB0: Device or resource busy",
+        0
+      ]
+    ],
+    [
+      [
+        "muted",
+        "21:04:08.000",
+        13
+      ],
+      [
+        "heading",
+        "front",
+        17
+      ],
+      [
+        "warn",
+        "disconnected",
+        0
+      ]
+    ]
+  ]
+}

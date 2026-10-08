@@ -3,8 +3,9 @@
 **A script is a named shell body the device keeps in the `scripts` table
 of `/data/tessaro/tessaro.db` and runs as root through systemd: now, for a
 schedule ([scheduler.md](scheduler.md)), for the kiosk page, on an
-HDMI-CEC event ([cec.md](cec.md)) or on a presence event
-([presence.md](presence.md)).** Every
+HDMI-CEC event ([cec.md](cec.md)), on a presence event
+([presence.md](presence.md)) or on a barcode scan
+([scanners.md](scanners.md)).** Every
 trigger starts the same run unit, so the timeout, the concurrency rule, the
 journal and the run history belong to the script, whoever started it.
 `tessaro-ctl script create|set|remove` change the table, `list` and `show`
@@ -22,9 +23,10 @@ records), `control/scripts.rs` (the commands and following a run) and
   which anyone who may manage the device can already do (`ssh`,
   `browser eval`), so it needs no rule of its own. A run gets
   `TESSARO_SCRIPT` (its name), `TESSARO_RUN` (its instance) and
-  `TESSARO_TRIGGER` (`manual`, `bridge`, `schedule`, `cec` or `presence`);
-  a CEC run also gets `TESSARO_CEC_EVENT`, and `TESSARO_CEC_KEY` for a
-  remote key, a presence run `TESSARO_PRESENCE_EVENT`.
+  `TESSARO_TRIGGER` (`manual`, `bridge`, `schedule`, `cec`, `presence` or
+  `scanner`); a CEC run also gets `TESSARO_CEC_EVENT`, and `TESSARO_CEC_KEY`
+  for a remote key, a presence run `TESSARO_PRESENCE_EVENT`, a scan's run
+  `TESSARO_SCANNER` and `TESSARO_SCAN_TEXT`.
 * **The body is a file, never escaped into a unit.** It is written to
   `/run/tessaro-kiosk/scripts/<id>-<hash>.sh`, `0600`, and the run unit
   execs `/bin/sh` on it. Only the fixed wrapper line goes through `exec_arg`
@@ -45,12 +47,13 @@ records), `control/scripts.rs` (the commands and following a run) and
 * **A run's instance names its trigger first:** `manual-<unix>-<random>`,
   `bridge-...`, `schedule-<schedule id>-<unix>-<pid>`,
   `cec-<event>-<unix>-<random>` (`cec-tv-standby-...`, `cec-key:red-...`),
-  `presence-<event>-<unix>-<random>`. `TESSARO_TRIGGER` is that first word,
-  and a CEC or presence run's event what lies between it and the time, both
-  cut out by the wrapper line (`run_shell`) because systemd has no specifier
-  for them. `script list` names the schedule behind a `schedule-...` run
-  while that schedule exists, and the event behind a `cec-...` or
-  `presence-...` run.
+  `presence-<event>-<unix>-<random>`, `scanner-<scanner>-<unix>-<random>`.
+  `TESSARO_TRIGGER` is that first word, and a CEC or presence run's event or
+  a scan's scanner what lies between it and the time, both cut out by the
+  wrapper line (`run_shell`) because systemd has no specifier for them.
+  `script list` names the schedule behind a `schedule-...` run while that
+  schedule exists, and the event or scanner behind a `cec-...`,
+  `presence-...` or `scanner-...` run.
 * **A script runs on the HDMI-CEC events in its `cec` list**
   (`script create|set --cec`): `tv-on`, `tv-standby`, `source-gained`,
   `source-lost`, `key` for every remote key, `key:<name>` for one
@@ -67,6 +70,15 @@ records), `control/scripts.rs` (the commands and following a run) and
   stepping in and out of view cannot pile up runs either.
   `camera.presence.scripts=0` starts none; what the events mean is
   [presence.md](presence.md)'s.
+* **A script runs on the scans of the scanners in its `scanner` list**
+  (`script create|set --scanner`): scanner names, or `*` for every scanner
+  (`protocol::scanner`). Started the same way, with a burst window of its
+  own. What was scanned cannot go into a unit's name: the agent writes it to
+  `/run/tessaro-kiosk/scans/<run>` (root's, `0600`) before it starts the
+  run, and the wrapper line reads it into `TESSARO_SCAN_TEXT`, trailing
+  newlines kept, and removes it; a file no run took is gone after 10
+  minutes. `scanner.scripts=0` starts none; the scans are
+  [scanners.md](scanners.md)'s.
 * **The content hash is in the run template's and the body's names.** Any
   change to the name, body, `on_error`, timeout or concurrency is a new
   template and body, so an edit never changes a run already going; the old

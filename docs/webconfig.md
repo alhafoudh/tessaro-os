@@ -161,6 +161,16 @@ are on WiFi, not Network), and only where the scope has settings.
 * **The script dialog checks "Run on CEC events" before it sends**, with
   `describe/cec.ts`, a port of `protocol::cec::triggers` that the
   `cec_triggers` fixture keeps equal, its event and key names included.
+  "Run on scans of" is checked the same way, with `describe/scanner.ts`'s
+  port of `protocol::scanner::triggers` (the `scanner_triggers` fixture).
+* **The Scanner page is `tessaro-ctl scanner`**: Discover and Identify are
+  jobs whose finds fill a table of their own, Identify picking the device a
+  scan came from, each added with its device id (`parseDevice`, a port of
+  `protocol::scanner::parse_device`). Test is a job that shows a scanner's
+  scans for a minute. The scanners' log is followed on `after` every 2 s
+  while the page is open and the tab visible, the newest 500 kept, in the
+  words of the `scanner_logs` fixtures. It never shows what was scanned:
+  the device's log has no content to show ([scanners.md](scanners.md)).
 
 **The words are the Rust's.** A result the clients describe in words - a
 status, what a change did, a job's steps - is a port of `agent/client`'s

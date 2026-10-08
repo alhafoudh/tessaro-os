@@ -11,5 +11,6 @@ pub mod device;
 pub mod net;
 pub mod playlist;
 pub mod printer;
+pub mod scanner;
 pub mod screen;
 pub mod time;

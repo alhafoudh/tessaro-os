@@ -20,6 +20,7 @@ import * as net from "./net";
 import * as ping from "./ping";
 import * as playlist from "./playlist";
 import * as printer from "./printer";
+import * as scanner from "./scanner";
 import * as screen from "./screen";
 import * as tags from "./tags";
 import * as transfer from "./transfer";
@@ -137,6 +138,26 @@ export const renderers: Record<string, (input: any) => unknown> = {
     none: spans(printer.foundHint([])),
   }),
   "printer::queued": (input) => spans(printer.queued(input)),
+  "scanner::list": (input) => lines(scanner.list(input)),
+  "scanner::show": (input) => facts(scanner.show(input)),
+  "scanner::candidates": (input) => ({
+    found: input.map((one: any) => lines(scanner.candidate(one))),
+    hint: spans(scanner.candidatesHint(input)),
+    none: spans(scanner.candidatesHint([])),
+  }),
+  "scanner::identified": (input) => input.map((one: any) => lines(scanner.identified(one))),
+  "scanner::scan": (input) => input.map((one: any) => spans(scanner.scan(one))),
+  "scanner::logs": (input) => lines(scanner.logs(input)),
+  "scanner::visible": (input) => input.map(scanner.visible),
+  "scanner::triggers": (input) =>
+    input.map((typed: string) => {
+      try {
+        const ok = scanner.triggers(typed);
+        return { ok, words: script.scannerTriggers(ok) };
+      } catch (error) {
+        return { err: (error as Error).message };
+      }
+    }),
   // --- playlists and the timetable ---
   "playlist::list": (input) => lines(playlist.list(input)),
   "playlist::show": (input) => ({ facts: facts(playlist.show(input)), items: lines(playlist.items(input)) }),

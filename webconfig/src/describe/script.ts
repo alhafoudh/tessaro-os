@@ -6,6 +6,7 @@ import type { Schemas } from "../api/client";
 import { Line } from "../text/line";
 import { triggers } from "./cec";
 import { triggers as presenceTriggers } from "./presence";
+import { ANY as ANY_SCANNER, triggers as scannerTriggersOf } from "./scanner";
 import { duration, formatTimeout, outcome, parseTimeout, relative, runs, succeeded } from "./schedule";
 
 /** The most output lines a run answers with (`SCRIPT_OUTPUT_MAX`). */
@@ -27,6 +28,8 @@ export interface Typed {
   cec: string;
   /** The presence events it runs on, comma separated, as `presence.ts` reads them; empty for none. */
   presence: string;
+  /** The scanners whose scans it runs on, comma separated, `*` for every one, as `scanner.ts` reads them; empty for none. */
+  scanner: string;
 }
 
 /** What a form shows for `spec`: saving it unchanged changes nothing. */
@@ -41,6 +44,7 @@ export function typedOf(spec: Schemas["ScriptSpec"]): Typed {
     bridge: spec.bridge ?? false,
     cec: (spec.cec ?? []).join(", "),
     presence: (spec.presence ?? []).join(", "),
+    scanner: (spec.scanner ?? []).join(", "),
   };
 }
 
@@ -76,6 +80,7 @@ export function specOf(typed: Typed): Schemas["ScriptSpec"] {
     bridge: typed.bridge,
     cec: triggers(typed.cec),
     presence: presenceTriggers(typed.presence),
+    scanner: scannerTriggersOf(typed.scanner),
   };
 }
 
@@ -91,6 +96,7 @@ export function changeOf(typed: Typed): Schemas["ScriptChange"] {
     bridge: typed.bridge,
     cec: triggers(typed.cec),
     presence: presenceTriggers(typed.presence),
+    scanner: scannerTriggersOf(typed.scanner),
   };
 }
 
@@ -110,7 +116,13 @@ export function startedBy(run: Schemas["ScriptRun"]): string {
   if (run.trigger === "schedule") return schedule !== null ? `by schedule ${schedule}` : "by a removed schedule";
   if (run.trigger === "cec") return run.event != null ? `by ${cecEvent(run.event)}` : "by HDMI-CEC";
   if (run.trigger === "presence") return run.event != null ? `by ${presenceEvent(run.event)}` : "by presence detection";
+  if (run.trigger === "scanner") return run.event != null ? `by a scan on ${run.event}` : "by a barcode scan";
   return `by ${run.trigger}`;
+}
+
+/** The scanners a script runs on, in words: `every scanner`, `scanner front back`. */
+export function scannerTriggers(triggers: string[]): string {
+  return triggers.includes(ANY_SCANNER) ? "every scanner" : `scanner ${triggers.join(" ")}`;
 }
 
 /** A presence event a script runs on, in words: `someone arriving`. */
@@ -197,5 +209,6 @@ export function behaviour(spec: Schemas["ScriptSpec"]): string {
   if (spec.bridge) words.push("page may run it");
   if (spec.cec && spec.cec.length > 0) words.push(`runs on ${spec.cec.join(" ")}`);
   if (spec.presence && spec.presence.length > 0) words.push(`runs on presence ${spec.presence.join(" ")}`);
+  if (spec.scanner && spec.scanner.length > 0) words.push(`runs on ${scannerTriggers(spec.scanner)}`);
   return words.join(", ");
 }

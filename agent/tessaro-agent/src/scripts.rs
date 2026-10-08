@@ -63,7 +63,7 @@ impl Stored for Scripts {
     fn load(db: &Connection) -> rusqlite::Result<Self> {
         let mut rows = db.prepare(
             "SELECT id, name, description, body, on_error, timeout_s, concurrency, bridge, cec, \
-             presence FROM scripts ORDER BY position",
+             presence, scanner FROM scripts ORDER BY position",
         )?;
         let scripts = rows
             .query_map([], |row| {
@@ -76,6 +76,7 @@ impl Stored for Scripts {
                 };
                 let cec = list(8)?;
                 let presence = list(9)?;
+                let scanner = list(10)?;
                 Ok(Script {
                     id: row.get(0)?,
                     spec: ScriptSpec {
@@ -88,6 +89,7 @@ impl Stored for Scripts {
                         bridge: row.get(7)?,
                         cec,
                         presence,
+                        scanner,
                     },
                 })
             })?
@@ -100,8 +102,8 @@ impl Stored for Scripts {
         let mut insert = db.prepare(
             "INSERT INTO scripts \
              (id, position, name, description, body, on_error, timeout_s, concurrency, bridge, \
-              cec, presence) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+              cec, presence, scanner) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
         )?;
         for (position, script) in self.scripts.iter().enumerate() {
             let spec = &script.spec;
@@ -117,6 +119,7 @@ impl Stored for Scripts {
                 spec.bridge,
                 serde_json::to_string(&spec.cec).unwrap_or_else(|_| "[]".to_string()),
                 serde_json::to_string(&spec.presence).unwrap_or_else(|_| "[]".to_string()),
+                serde_json::to_string(&spec.scanner).unwrap_or_else(|_| "[]".to_string()),
             ])?;
         }
         Ok(())
@@ -170,6 +173,7 @@ pub fn validate(mut spec: ScriptSpec, others: &[&Script]) -> Result<ScriptSpec, 
     }
     spec.cec = protocol::cec::triggers(&spec.cec.join(","))?;
     spec.presence = protocol::presence::triggers(&spec.presence.join(","))?;
+    spec.scanner = protocol::scanner::triggers(&spec.scanner.join(","))?;
     Ok(spec)
 }
 
@@ -329,7 +333,7 @@ pub fn render(
         OnError::Stop => " -e",
         OnError::Continue => "",
     };
-    let exec = run_shell(strict);
+    let exec = run_shell(strict, &scans_dir(body_dir));
     let run = format!(
         "{HEADER}[Unit]\nDescription=tessaro script {name} (run)\n\
          CollectMode=inactive-or-failed\n\n\
@@ -352,10 +356,13 @@ pub fn render(
 
 /// What a run's `/bin/sh -c` runs before the body, which is its `$0`. The
 /// trigger is the instance's first word, which systemd has no specifier
-/// for. A CEC or presence run's event is what lies between it and the start
-/// time: `cec-tv-on-<unix>-<hex>`, `cec-key:red-<unix>-<hex>`,
-/// `presence-arrived-<unix>-<hex>`.
-fn run_shell(strict: &str) -> String {
+/// for. A CEC or presence run's event, or a scan's scanner, is what lies
+/// between it and the start time: `cec-tv-on-<unix>-<hex>`,
+/// `cec-key:red-<unix>-<hex>`, `presence-arrived-<unix>-<hex>`,
+/// `scanner-front-<unix>-<hex>`. What a scan said cannot be in a unit's
+/// name: the agent leaves it in `scans/<run>` (`Paths::scans_dir`), and the
+/// run takes it from there, its trailing newlines kept, and removes it.
+fn run_shell(strict: &str, scans: &Path) -> String {
     format!(
         "export TESSARO_TRIGGER=\"${{TESSARO_RUN%%-*}}\"; \
          if [ \"$TESSARO_TRIGGER\" = cec ]; then \
@@ -364,8 +371,20 @@ fn run_shell(strict: &str) -> String {
          export TESSARO_CEC_KEY=\"${{TESSARO_CEC_EVENT#key:}}\" TESSARO_CEC_EVENT=key;; esac; fi; \
          if [ \"$TESSARO_TRIGGER\" = presence ]; then \
          e=\"${{TESSARO_RUN#presence-}}\"; e=\"${{e%-*}}\"; export TESSARO_PRESENCE_EVENT=\"${{e%-*}}\"; fi; \
-         exec /bin/sh{strict} \"$0\""
+         if [ \"$TESSARO_TRIGGER\" = scanner ]; then \
+         e=\"${{TESSARO_RUN#scanner-}}\"; e=\"${{e%-*}}\"; export TESSARO_SCANNER=\"${{e%-*}}\"; \
+         f=\"{scans}/$TESSARO_RUN\"; if [ -f \"$f\" ]; then \
+         TESSARO_SCAN_TEXT=\"$(cat \"$f\"; printf x)\"; export TESSARO_SCAN_TEXT=\"${{TESSARO_SCAN_TEXT%x}}\"; \
+         rm -f \"$f\"; fi; fi; \
+         exec /bin/sh{strict} \"$0\"",
+        scans = scans.display()
     )
+}
+
+/// Where a scan waits for the run it started: `Paths::scans_dir`, next to
+/// the bodies' directory.
+pub fn scans_dir(body_dir: &Path) -> std::path::PathBuf {
+    body_dir.with_file_name("scans")
 }
 
 /// What `ExecStopPost=` runs: `<finished> <result> <status>` into
@@ -404,8 +423,8 @@ pub struct Ended {
     pub trigger: String,
     /// The schedule that started it, by id.
     pub schedule: Option<String>,
-    /// The CEC or presence event that started it: `tv-on`, `key:red`,
-    /// `arrived`.
+    /// The CEC or presence event that started it, or the scanner that did:
+    /// `tv-on`, `key:red`, `arrived`, `front`.
     pub event: Option<String>,
     pub started: i64,
     pub finished: i64,
@@ -425,7 +444,7 @@ pub fn parse_ended(run: &str, text: &str) -> Option<Ended> {
     let schedule = (trigger == "schedule")
         .then(|| words.get(1).map(|id| id.to_string()))
         .flatten();
-    let event = (matches!(trigger.as_str(), "cec" | "presence") && words.len() > 3)
+    let event = (matches!(trigger.as_str(), "cec" | "presence" | "scanner") && words.len() > 3)
         .then(|| words[1..words.len() - 2].join("-"));
     Some(Ended {
         run: run.to_string(),
@@ -525,6 +544,7 @@ mod tests {
             bridge: false,
             cec: Vec::new(),
             presence: Vec::new(),
+            scanner: Vec::new(),
         }
     }
 
@@ -701,7 +721,7 @@ mod tests {
         let run = |instance: &str| {
             let out = std::process::Command::new("/bin/sh")
                 .arg("-c")
-                .arg(run_shell(""))
+                .arg(run_shell("", dir.path()))
                 .arg(&body)
                 .env("TESSARO_RUN", instance)
                 .env_remove("TESSARO_CEC_EVENT")
@@ -727,7 +747,7 @@ mod tests {
         let run = |instance: &str| {
             let out = std::process::Command::new("/bin/sh")
                 .arg("-c")
-                .arg(run_shell(""))
+                .arg(run_shell("", dir.path()))
                 .arg(&body)
                 .env("TESSARO_RUN", instance)
                 .env_remove("TESSARO_PRESENCE_EVENT")
@@ -743,6 +763,36 @@ mod tests {
             (ended.trigger.as_str(), ended.event.as_deref()),
             ("presence", Some("left"))
         );
+    }
+
+    #[test]
+    fn a_scan_run_gets_its_scanner_and_what_was_scanned() {
+        let dir = tempfile::tempdir().unwrap();
+        let body = dir.path().join("body");
+        fs::write(
+            &body,
+            "printf '%s|%s|' \"$TESSARO_TRIGGER\" \"$TESSARO_SCANNER\"; \
+             printf '%s' \"$TESSARO_SCAN_TEXT\" | od -An -c | tr -s ' '\n",
+        )
+        .unwrap();
+        let instance = "scanner-back_door-1700000000-4f2a";
+        fs::write(dir.path().join(instance), "(01)0950\x1d10AB\n\n").unwrap();
+        let out = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg(run_shell("", dir.path()))
+            .arg(&body)
+            .env("TESSARO_RUN", instance)
+            .env_remove("TESSARO_SCAN_TEXT")
+            .output()
+            .unwrap();
+        let out = String::from_utf8(out.stdout).unwrap();
+        assert!(
+            out.starts_with("scanner|back_door| ( 0 1 ) 0 9 5 0 035 1 0 A B \\n \\n"),
+            "{out}"
+        );
+        assert!(!dir.path().join(instance).exists(), "the scan is removed");
+        let ended = parse_ended(instance, "1700000001 success 0").unwrap();
+        assert_eq!(ended.event.as_deref(), Some("back_door"));
     }
 
     #[test]

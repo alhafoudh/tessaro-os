@@ -24,9 +24,9 @@ use protocol::api::{
     self, AudioTestBody, CalendarBody, CertBody, CertQuery, DeleteBody, EvalBody, FilesQuery,
     GrowBody, KeyboardBody, MoveBody, NameBody, NavigateBody, PasswordBody, PathBody, PingBody,
     PlaylistItemMoveBody, PlaylistItemRef, PlaylistRef, PolicyBody, PolicyPositionBody, PolicyRef,
-    PrintJobRef, PrintJobsQuery, PrinterRef, ProfileQuery, ScheduleChange, ScheduleRef,
-    ScreenPowerBody, ScriptRef, SpeedtestBody, SshKeyQuery, TimetableEntryChange, TimetableRef,
-    TokenRef, WifiJoinBody, WifiScanQuery,
+    PrintJobRef, PrintJobsQuery, PrinterRef, ProfileQuery, ScanLogQuery, ScannerRef,
+    ScheduleChange, ScheduleRef, ScreenPowerBody, ScriptRef, SpeedtestBody, SshKeyQuery,
+    TimetableEntryChange, TimetableRef, TokenRef, WifiJoinBody, WifiScanQuery,
 };
 use protocol::files::{self as store, FileEntry, FileKind, FilesListing};
 use protocol::keys;
@@ -35,6 +35,9 @@ use protocol::playlist::{
 };
 use protocol::policy::{
     self, EffectiveEntry, PolicyDoc, PolicyInfo, PolicyMoved, PolicyRemoved, PolicySaved,
+};
+use protocol::scanner::{
+    ScanLog, ScanLogEntry, ScannerCandidate, ScannerChange, ScannerInfo, ScannerList, ScannerSpec,
 };
 use protocol::{
     size_label, Applied, AudioDevice, AudioStatus, AudioTested, CalendarCheck, CameraList,
@@ -49,6 +52,7 @@ use serde_json::Value;
 use tessaro_client::connect::Answer;
 use tessaro_client::describe;
 use tessaro_client::playlist::{EntryFields, ItemFields};
+use tessaro_client::scanner::Typed as ScannerTyped;
 use tessaro_client::script::Typed;
 use tessaro_client::text::{Fact, Line};
 use tessaro_client::transfer::date;
@@ -92,6 +96,11 @@ pub struct State {
     print_jobs: Vec<PrintJob>,
     /// What the last discovery found, for Add.
     found: Vec<PrinterFound>,
+    scanners: Option<ScannerList>,
+    /// The scanners' log, as the last refresh got it.
+    scan_log: Vec<ScanLogEntry>,
+    /// The devices the last scanner discovery or identify found, for Add.
+    scanner_found: Vec<ScannerCandidate>,
     playlists: Vec<PlaylistInfo>,
     timetable: Vec<TimetableInfo>,
     tokens: Vec<TokenInfo>,
@@ -194,6 +203,10 @@ enum Action {
     PrinterRemove(String),
     /// A local file to print on the printer named.
     PrinterPrint(String, PathBuf),
+    ScannerCreate,
+    /// A change to how the scanner named is read.
+    ScannerSave(String),
+    ScannerRemove(String),
     /// A new playlist, or a change to this one.
     PlaylistSave(Option<Box<PlaylistInfo>>),
     /// The playlist with this id.
@@ -340,6 +353,17 @@ pub enum Msg {
     PrinterPicked(Option<PathBuf>),
     PrinterRemove,
     PrintCancel,
+    // scanner
+    ScannerNew,
+    ScannerDiscover,
+    ScannerIdentify,
+    ScannerAdd,
+    ScannerShow,
+    ScannerEdit,
+    ScannerToggle,
+    ScannerTest,
+    ScannerRemove,
+    ScannerLogs,
     // playlists
     PlaylistNew,
     PlaylistEdit,
@@ -587,6 +611,8 @@ const PAGE_MAY_RUN: &str = "Page may run it";
 const CEC_EVENTS: &str = "Run on CEC events";
 /// Its presence events, the same way as `--presence` takes them.
 const PRESENCE_EVENTS: &str = "Run on presence events";
+/// Its scanners, the same way as `--scanner` takes them.
+const SCANNER_TRIGGERS: &str = "Run on scans of";
 
 /// The script dialog: new, or `existing` to change.
 fn script_form(existing: Option<&ScriptInfo>) -> Form {
@@ -655,6 +681,11 @@ fn script_form(existing: Option<&ScriptInfo>) -> Form {
         PRESENCE_EVENTS,
         typed.presence,
         "arrived, left, near, far",
+    ))
+    .field(Field::text(
+        SCANNER_TRIGGERS,
+        typed.scanner,
+        "scanner names, or * for every one; the scan is in $TESSARO_SCAN_TEXT",
     ))
     .field(Field::check(PAGE_MAY_RUN, typed.bridge))
 }
@@ -735,6 +766,82 @@ fn printer_form(found: Option<&PrinterFound>) -> Form {
         .field(Field::text("URI", uri, "ipp://10.0.0.5/ipp/print, socket://10.0.0.9:9100").mono())
         .field(Field::check("Raw", raw))
         .field(Field::text("Paper", "", "the printer's own; or iso_a4_210x297mm"))
+}
+
+/// The scanner dialog's fields for how it is read.
+const LAYOUT: &str = "Layout";
+const TERMINATOR: &str = "Ends on";
+const GAP: &str = "Gap ms";
+const BAUD: &str = "Baud";
+const STRIP_PREFIX: &str = "Strip prefix";
+const STRIP_SUFFIX: &str = "Strip suffix";
+
+/// The scanner dialog: a new scanner on the device `found` names when there
+/// is one, or `existing` to change how it is read.
+fn scanner_form(found: Option<&ScannerCandidate>, existing: Option<&ScannerSpec>) -> Form {
+    let typed = existing.map_or_else(ScannerTyped::default, ScannerTyped::of);
+    let mut form = match existing {
+        Some(spec) => Form::new(
+            format!("Scanner {}", spec.name),
+            "Save",
+            Action::ScannerSave(spec.name.clone()),
+        )
+        .intro(format!(
+            "{}, read as {}. An empty field goes back to its default.",
+            spec.device(),
+            spec.transport.name()
+        )),
+        None => Form::new("Add a scanner", "Add", Action::ScannerCreate)
+            .intro(
+                "Discover lists the devices that may be scanners; Identify names the one a scan \
+                 comes from. A keyboard scanner's keys stop reaching the page once it is added \
+                 and scanner.enable is on.",
+            )
+            .field(Field::text(
+                "Name",
+                "",
+                "lower-case letters, digits, - and _",
+            ))
+            .field(
+                Field::text(
+                    "Device",
+                    found.map(|found| found.device.clone()).unwrap_or_default(),
+                    "keyboard:0c2e:0b61:@1-1.2, from Discover or Identify",
+                )
+                .mono(),
+            ),
+    };
+    form = form
+        .field(Field::text(
+            LAYOUT,
+            typed.layout,
+            "keyboard: us, de, sk(qwerty)",
+        ))
+        .field(Field::text(
+            TERMINATOR,
+            typed.terminator,
+            "auto; keyboard: enter, tab, none; serial: cr, lf, crlf, none, 0x03",
+        ))
+        .field(Field::text(GAP, typed.gap_ms, "quiet that ends a scan"))
+        .field(Field::text(BAUD, typed.baud, "serial: 9600"))
+        .field(Field::text(STRIP_PREFIX, typed.strip_prefix, "none"))
+        .field(Field::text(STRIP_SUFFIX, typed.strip_suffix, "none"));
+    if existing.is_none() {
+        form = form.field(Field::check("Enabled", true));
+    }
+    form
+}
+
+/// What the scanner dialog has for how it is read.
+fn scanner_typed(form: &Form) -> ScannerTyped {
+    ScannerTyped {
+        layout: form.value(LAYOUT).to_string(),
+        terminator: form.value(TERMINATOR).to_string(),
+        gap_ms: form.value(GAP).to_string(),
+        baud: form.value(BAUD).to_string(),
+        strip_prefix: form.value(STRIP_PREFIX).to_string(),
+        strip_suffix: form.value(STRIP_SUFFIX).to_string(),
+    }
 }
 
 /// An item form's transition choice that leaves it to the playlist's, as an
@@ -1057,6 +1164,7 @@ fn page_of(tag: &str) -> &'static str {
         "scripts" | "script" => "scripts",
         "schedules" | "schedule" => "schedules",
         "printers" | "printer" => "printer",
+        "scanners" | "scanner" => "scanner",
         "playlists" | "playlist" => "playlists",
         "timetable" => "timetables",
         "tokens" | "token" | "password" | "claim" | "unclaim" => "access",
@@ -1302,6 +1410,13 @@ impl Device {
                     call::<api::printer::Jobs>(PrintJobsQuery { printer: None }, ()),
                 );
             }
+            Page::Scanner => {
+                self.call("scanners", fetch::<api::scanner::List>());
+                self.call(
+                    "scanner.logs",
+                    call::<api::scanner::Logs>(ScanLogQuery { after: 0 }, ()),
+                );
+            }
             Page::Playlists => self.call("playlists", fetch::<api::playlist::List>()),
             Page::Timetables => {
                 self.call("timetable", fetch::<api::playlist::TimetableList>());
@@ -1335,8 +1450,9 @@ impl Device {
         }
         let result = match tag {
             "script.save" | "schedule.save" | "schedule.check" | "policy.save"
-            | "printer.create" | "playlist.create" | "playlist.change" | "playlist.item.save"
-            | "timetable.create" | "timetable.change" => match self.form_answer(tag, result) {
+            | "printer.create" | "scanner.create" | "scanner.save" | "playlist.create"
+            | "playlist.change" | "playlist.item.save" | "timetable.create"
+            | "timetable.change" => match self.form_answer(tag, result) {
                 Some(result) => result,
                 None => return,
             },
@@ -1387,6 +1503,8 @@ impl Device {
                     Action::ScheduleSave(_) => tag.starts_with("schedule."),
                     Action::PolicySave { .. } => tag == "policy.save",
                     Action::PrinterCreate => tag == "printer.create",
+                    Action::ScannerCreate => tag == "scanner.create",
+                    Action::ScannerSave(_) => tag == "scanner.save",
                     Action::PlaylistSave(_) => tag == "playlist.create" || tag == "playlist.change",
                     Action::ItemSave { .. } => tag == "playlist.item.save",
                     Action::EntrySave(_) => tag == "timetable.create" || tag == "timetable.change",
@@ -1480,6 +1598,36 @@ impl Device {
                 self.log(Tone::Ok, done.message);
                 self.pages.selected.remove("printers");
                 self.refresh_page(Page::Printer);
+            }
+            "scanners" => self.pages.scanners = Some(parse(value)?),
+            "scanner.logs" => {
+                let log: ScanLog = parse(value)?;
+                self.pages.scan_log = log.entries;
+            }
+            "scanner.create" | "scanner.save" | "scanner.toggle" => {
+                let info: ScannerInfo = parse(value)?;
+                let verb = match tag {
+                    "scanner.create" => "added",
+                    _ => "changed",
+                };
+                let state = if info.spec.enabled { "on" } else { "off" };
+                self.log(
+                    Tone::Ok,
+                    format!("{verb} scanner {}, {state}", info.spec.name),
+                );
+                self.pages.selected.insert("scanners", info.spec.name);
+                self.refresh_page(Page::Scanner);
+            }
+            "scanner.show" => {
+                let info: ScannerInfo = parse(value)?;
+                let title = format!("Scanner {}", info.spec.name);
+                self.show_text(title, fact_text(&describe::scanner::show(&info)));
+            }
+            "scanner.remove" => {
+                let done: Done = parse(value)?;
+                self.log(Tone::Ok, done.message);
+                self.pages.selected.remove("scanners");
+                self.refresh_page(Page::Scanner);
             }
             "playlists" => {
                 self.pages.playlists = parse(value)?;
@@ -1758,6 +1906,7 @@ impl Device {
                     "time" => Page::Time,
                     "browser" => Page::Browser,
                     "printer" => Page::Printer,
+                    "scanner" => Page::Scanner,
                     _ => self.page,
                 };
                 self.refresh_page(page);
@@ -1806,6 +1955,30 @@ impl Device {
                     Err(_) => self.log_line(Line::plain(value.to_string())),
                 }
             }
+            jobs::Event::Value(value) if owner == "scanner" => {
+                match serde_json::from_value::<ScannerCandidate>(value.clone()) {
+                    Ok(found) => {
+                        let lines = if found.scan.is_some() {
+                            describe::scanner::identified(Some(&found))
+                        } else {
+                            describe::scanner::candidate(&found)
+                        };
+                        for line in lines {
+                            self.log_line(line);
+                        }
+                        self.pages
+                            .scanner_found
+                            .retain(|known| known.device != found.device);
+                        if found.scan.is_some() {
+                            self.pages
+                                .selected
+                                .insert("scanner.found", found.device.clone());
+                        }
+                        self.pages.scanner_found.push(found);
+                    }
+                    Err(_) => self.log_line(Line::plain(value.to_string())),
+                }
+            }
             jobs::Event::Value(value) => {
                 if let Some(line) = stream_line(owner, &value) {
                     self.log_line(line);
@@ -1830,6 +2003,7 @@ impl Device {
                     "update" => Some(Page::Update),
                     "storage" => Some(Page::Storage),
                     "scripts" => Some(Page::Scripts),
+                    "scanner" => Some(Page::Scanner),
                     _ => None,
                 };
                 if let Some(page) = page {
@@ -2340,6 +2514,94 @@ impl Device {
                     );
                 }
             }
+            Msg::ScannerNew => self.form(scanner_form(None, None)),
+            Msg::ScannerDiscover => {
+                self.pages.scanner_found.clear();
+                self.pages.selected.remove("scanner.found");
+                self.start_job(
+                    "scanner",
+                    "discover scanners",
+                    jobs::Kind::ScannerDiscover,
+                );
+            }
+            Msg::ScannerIdentify => {
+                self.open_log();
+                self.log(
+                    Tone::Muted,
+                    "scan a code with the scanner; the device listens for 30 seconds",
+                );
+                self.start_job(
+                    "scanner",
+                    "identify a scanner",
+                    jobs::Kind::ScannerIdentify,
+                );
+            }
+            Msg::ScannerAdd => {
+                let found = self.selected("scanner.found").and_then(|device| {
+                    self.pages
+                        .scanner_found
+                        .iter()
+                        .find(|found| &found.device == device)
+                });
+                let form = scanner_form(found, None);
+                self.form(form);
+            }
+            Msg::ScannerShow => {
+                if let Some(scanner) = self.selected("scanners").cloned() {
+                    self.call(
+                        "scanner.show",
+                        call::<api::scanner::Show>(ScannerRef { scanner }, ()),
+                    );
+                }
+            }
+            Msg::ScannerEdit => {
+                if let Some(info) = self.selected_scanner() {
+                    self.form(scanner_form(None, Some(&info.spec)));
+                }
+            }
+            Msg::ScannerToggle => {
+                if let Some(info) = self.selected_scanner() {
+                    self.call(
+                        "scanner.toggle",
+                        call::<api::scanner::Change>(
+                            ScannerRef {
+                                scanner: info.spec.name.clone(),
+                            },
+                            ScannerChange {
+                                enabled: Some(!info.spec.enabled),
+                                ..ScannerChange::default()
+                            },
+                        ),
+                    );
+                }
+            }
+            Msg::ScannerTest => {
+                if let Some(scanner) = self.selected("scanners").cloned() {
+                    self.open_log();
+                    self.log(
+                        Tone::Muted,
+                        format!("scan with {scanner}; its scans show here for a minute"),
+                    );
+                    let label = format!("test {scanner}");
+                    self.start_job("scanner", label, jobs::Kind::ScannerTest(scanner));
+                }
+            }
+            Msg::ScannerRemove => {
+                if let Some(scanner) = self.selected("scanners").cloned() {
+                    self.form(
+                        Form::new(
+                            format!("Remove scanner {scanner}"),
+                            "Remove",
+                            Action::ScannerRemove(scanner),
+                        )
+                        .intro("Its device goes back to whoever else reads it: a keyboard scanner types into the page again."),
+                    );
+                }
+            }
+            Msg::ScannerLogs => self.call(
+                "scanner.logs",
+                call::<api::scanner::Logs>(ScanLogQuery { after: 0 }, ()),
+            ),
             Msg::PlaylistNew => self.form(playlist_form(None)),
             Msg::PlaylistEdit => {
                 if let Some(info) = self.selected_playlist() {
@@ -2880,6 +3142,8 @@ impl Device {
             "policies" => self.page_update(Msg::PolicyEdit),
             "printers" => self.page_update(Msg::PrinterShow),
             "found" => self.page_update(Msg::PrinterAdd),
+            "scanners" => self.page_update(Msg::ScannerEdit),
+            "scanner.found" => self.page_update(Msg::ScannerAdd),
             "playlists" => self.page_update(Msg::PlaylistEdit),
             "playlist.items" => self.page_update(Msg::ItemEdit),
             "timetable" => self.page_update(Msg::EntryEdit),
@@ -2977,6 +3241,14 @@ impl Device {
                     .printers
                     .iter()
                     .flat_map(|list| list.printers.iter().map(|info| info.spec.name.clone()))
+                    .collect(),
+            ),
+            Page::Scanner => (
+                "scanners",
+                self.pages
+                    .scanners
+                    .iter()
+                    .flat_map(|list| list.scanners.iter().map(|info| info.spec.name.clone()))
                     .collect(),
             ),
             Page::Access => (
@@ -3083,6 +3355,16 @@ impl Device {
             .schedules
             .iter()
             .find(|info| &info.id == id)
+            .cloned()
+    }
+
+    fn selected_scanner(&self) -> Option<ScannerInfo> {
+        let name = self.selected("scanners")?;
+        self.pages
+            .scanners
+            .iter()
+            .flat_map(|list| list.scanners.iter())
+            .find(|info| &info.spec.name == name)
             .cloned()
     }
 
@@ -3214,6 +3496,8 @@ impl Device {
                         | Action::ScheduleSave(_)
                         | Action::PolicySave { .. }
                         | Action::PrinterCreate
+                        | Action::ScannerCreate
+                        | Action::ScannerSave(_)
                         | Action::PlaylistSave(_)
                         | Action::ItemSave { .. }
                         | Action::EntrySave(_)
@@ -3531,6 +3815,7 @@ impl Device {
                     bridge: form.checked(PAGE_MAY_RUN),
                     cec: form.value(CEC_EVENTS).to_string(),
                     presence: form.value(PRESENCE_EVENTS).to_string(),
+                    scanner: form.value(SCANNER_TRIGGERS).to_string(),
                 };
                 let save = match id {
                     None => send::<api::script::Create>(typed.spec()?),
@@ -3629,6 +3914,36 @@ impl Device {
                     }),
                 );
             }
+            Action::ScannerCreate => {
+                let name = form.value("Name").trim().to_string();
+                let device = form.value("Device").trim().to_string();
+                if name.is_empty() || device.is_empty() {
+                    return Err("a name and a device, please".to_string());
+                }
+                let spec = scanner_typed(form).spec(&name, &device, form.checked("Enabled"))?;
+                self.call("scanner.create", send::<api::scanner::Create>(spec));
+            }
+            Action::ScannerSave(scanner) => {
+                let change = scanner_typed(form).change()?;
+                self.call(
+                    "scanner.save",
+                    call::<api::scanner::Change>(
+                        ScannerRef {
+                            scanner: scanner.clone(),
+                        },
+                        change,
+                    ),
+                );
+            }
+            Action::ScannerRemove(scanner) => self.call(
+                "scanner.remove",
+                call::<api::scanner::Remove>(
+                    ScannerRef {
+                        scanner: scanner.clone(),
+                    },
+                    (),
+                ),
+            ),
             Action::PrinterRemove(printer) => self.call(
                 "printer.remove",
                 call::<api::printer::Remove>(
@@ -3979,6 +4294,7 @@ impl Device {
             Page::Scripts => self.scripts_view(),
             Page::Schedules => self.schedules_view(),
             Page::Printer => self.printer_view(),
+            Page::Scanner => self.scanner_view(),
             Page::Playlists => self.playlists_view(),
             Page::Timetables => self.timetables_view(),
             Page::Access => self.access_view(),
@@ -5132,6 +5448,148 @@ impl Device {
         )
     }
 
+    fn scanner_view(&self) -> Element<'_, Message> {
+        const SCANNERS: &[Col] = &[
+            col("Scanner", Length::Fixed(140.0)),
+            col("Read as", Length::Fixed(80.0)),
+            col("State", Length::Fixed(160.0)),
+            col("Last scan", Length::Fixed(100.0)),
+            col("Device", Length::Fill),
+        ];
+        const FOUND: &[Col] = &[
+            col("Found", Length::Fixed(220.0)),
+            col("Read as", Length::Fixed(80.0)),
+            col("Device", Length::Fill),
+            col("Added as", Length::Fixed(120.0)),
+        ];
+        const LOG: &[Col] = &[
+            col("Time", Length::Fixed(100.0)),
+            col("Scanner", Length::Fixed(140.0)),
+            col("What", Length::Fill),
+        ];
+        let list = self.pages.scanners.as_ref();
+        let scanners = list
+            .iter()
+            .flat_map(|list| list.scanners.iter())
+            .map(|info| {
+                let tone = describe::scanner::state_tone(&info.state);
+                let state = match &info.message {
+                    Some(message) => format!("{}: {message}", info.state),
+                    None => info.state.clone(),
+                };
+                (
+                    info.spec.name.clone(),
+                    vec![
+                        cell(info.spec.name.clone()).into(),
+                        cell(info.spec.transport.name()).into(),
+                        cell(state).style(theme::toned(tone)).into(),
+                        cell(info.last_scan.clone().unwrap_or_default()).into(),
+                        cell(info.spec.device()).style(theme::muted).into(),
+                    ],
+                )
+            })
+            .collect();
+        let found = self
+            .pages
+            .scanner_found
+            .iter()
+            .map(|found| {
+                (
+                    found.device.clone(),
+                    vec![
+                        cell(found.description.clone()).into(),
+                        cell(found.transport.name()).into(),
+                        cell(found.device.clone()).style(theme::muted).into(),
+                        cell(found.known.clone().unwrap_or_default()).into(),
+                    ],
+                )
+            })
+            .collect();
+        let log = self
+            .pages
+            .scan_log
+            .iter()
+            .rev()
+            .map(|entry| {
+                let line = describe::scanner::log_entry(entry);
+                let what = Line(line.0.into_iter().skip(2).collect());
+                (
+                    entry.seq.to_string(),
+                    vec![
+                        cell(entry.time.clone()).style(theme::muted).into(),
+                        cell(entry.scanner.clone()).into(),
+                        cell(what.to_string())
+                            .style(theme::toned(what.tone()))
+                            .into(),
+                    ],
+                )
+            })
+            .collect();
+
+        let chosen = self.selected("scanners").is_some();
+        let with_one = |message: Msg| chosen.then_some(()).and_then(|()| self.when(message));
+        let busy = self
+            .jobs
+            .iter()
+            .any(|job| job.owner == "scanner" && job.running);
+        let idle = |message: Msg| (!busy).then_some(()).and_then(|()| self.when(message));
+        let toggle = match self.selected_scanner() {
+            Some(info) if !info.spec.enabled => "Enable",
+            _ => "Disable",
+        };
+        let mut body: Vec<Element<'_, Message>> = Vec::new();
+        if let Some(list) = list {
+            body.push(theme::text_line(
+                &describe::scanner::enabled(list),
+                theme::FONT,
+            ));
+        }
+        body.push(self.table("scanners", SCANNERS, scanners, Length::Fill));
+        if !self.pages.scanner_found.is_empty() {
+            body.push(
+                row![
+                    self.table("scanner.found", FOUND, found, Length::Fixed(TABLE_HEIGHT)),
+                    theme::tool(
+                        "Add ...",
+                        self.selected("scanner.found")
+                            .and_then(|_| self.when(Msg::ScannerAdd))
+                    ),
+                ]
+                .spacing(6)
+                .into(),
+            );
+        }
+        body.push(
+            row![
+                self.table("scanner.log", LOG, log, Length::Fixed(TABLE_HEIGHT)),
+                theme::tool("Refresh", self.when(Msg::ScannerLogs)),
+            ]
+            .spacing(6)
+            .into(),
+        );
+        self.page(
+            "scanner",
+            vec![
+                action("Add scanner ...", self.when(Msg::ScannerNew)),
+                action("Discover", idle(Msg::ScannerDiscover)),
+                action("Identify", idle(Msg::ScannerIdentify)),
+            ],
+            vec![
+                action("Show", with_one(Msg::ScannerShow)),
+                action("Edit ...", with_one(Msg::ScannerEdit)),
+                action(toggle, with_one(Msg::ScannerToggle)),
+                action(
+                    "Test",
+                    (!busy)
+                        .then_some(())
+                        .and_then(|()| with_one(Msg::ScannerTest)),
+                ),
+                action("Remove ...", with_one(Msg::ScannerRemove)),
+            ],
+            body,
+        )
+    }
+
     fn wifi_view(&self) -> Element<'_, Message> {
         let mut facts = Vec::new();
         if let Some(wifi) = &self.pages.wifi {
@@ -5837,6 +6295,7 @@ pub(super) fn page_key(page: Page) -> &'static str {
         Page::Scripts => "scripts",
         Page::Schedules => "schedules",
         Page::Printer => "printer",
+        Page::Scanner => "scanner",
         Page::Playlists => "playlists",
         Page::Timetables => "timetables",
         Page::Access => "access",

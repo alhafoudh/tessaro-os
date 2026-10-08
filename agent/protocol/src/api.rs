@@ -746,6 +746,9 @@ pub struct ScriptChange {
     /// Replaces the presence events it runs on; empty for none.
     #[serde(default)]
     pub presence: Option<Vec<String>>,
+    /// Replaces the scanners whose scans it runs on; empty for none.
+    #[serde(default)]
+    pub scanner: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -772,6 +775,18 @@ pub struct ScheduleChange {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct PrinterRef {
     pub printer: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ScannerRef {
+    pub scanner: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ScanLogQuery {
+    /// The last page's `next`; 0 for everything kept.
+    #[serde(default)]
+    pub after: u64,
 }
 
 /// A camera by its own node, as `camera list` names it: `video0`.
@@ -1554,6 +1569,7 @@ pub mod script {
                 bridge: change.bridge,
                 cec: change.cec,
                 presence: change.presence,
+                scanner: change.scanner,
             });
 
         /// Remove a script no schedule runs, and its units.
@@ -1758,6 +1774,57 @@ pub mod printer {
     }
 }
 
+pub mod scanner {
+    use super::*;
+    use crate::scanner::{ScanLog, ScannerChange, ScannerInfo, ScannerList, ScannerSpec};
+
+    endpoints! {
+        /// Every scanner and how it is doing, and whether any is read
+        /// (scanner.enable).
+        List: Get "/api/v1/scanners" (Empty, ()) -> ScannerList
+            = |_, _| Action::Run(Command::ScannerList);
+
+        /// The USB keyboards, serial ports and HID POS devices plugged in,
+        /// as a job of `ScannerCandidate`s.
+        Discover: Post "/api/v1/scanners/discover" (Empty, ()) -> JobStarted
+            = |_, _| Action::Start(Command::ScannerDiscover);
+
+        /// Wait for a scan on any of them, as a job of the one
+        /// `ScannerCandidate` it came from.
+        Identify: Post "/api/v1/scanners/identify" (Empty, ()) -> JobStarted
+            = |_, _| Action::Start(Command::ScannerIdentify);
+
+        /// What happened to the scanners after `after`: connected,
+        /// disconnected, failed, and each scan's length, never its content.
+        Logs: Get "/api/v1/scanners/logs" (ScanLogQuery, ()) -> ScanLog
+            = |query, _| Action::Run(Command::ScannerLogs { after: query.after });
+
+        /// Add a scanner.
+        Create: Post "/api/v1/scanners" (Empty, ScannerSpec) -> ScannerInfo
+            = |_, spec| Action::Run(Command::ScannerCreate { spec });
+
+        /// One scanner and how it is doing.
+        Show: Get "/api/v1/scanners/{scanner}" (ScannerRef, ()) -> ScannerInfo
+            = |target, _| Action::Run(Command::ScannerShow { scanner: target.scanner });
+
+        /// Change what is given of one scanner.
+        Change: Patch "/api/v1/scanners/{scanner}" (ScannerRef, ScannerChange) -> ScannerInfo
+            = |target, change| Action::Run(Command::ScannerSet {
+                scanner: target.scanner,
+                change,
+            });
+
+        /// Remove a scanner: its device goes back to whoever else reads it.
+        Remove: Delete "/api/v1/scanners/{scanner}" (ScannerRef, ()) -> Done
+            = |target, _| Action::Run(Command::ScannerRemove { scanner: target.scanner });
+
+        /// Its scans, with what they say, for a minute, as a job of
+        /// `Scan`s. They reach the page and the scripts as well.
+        Test: Post "/api/v1/scanners/{scanner}/test" (ScannerRef, ()) -> JobStarted
+            = |target, _| Action::Start(Command::ScannerTest { scanner: target.scanner });
+    }
+}
+
 pub mod update {
     use super::*;
 
@@ -1908,6 +1975,7 @@ pub fn all() -> Vec<Route> {
         schedule::routes(),
         playlist::routes(),
         printer::routes(),
+        scanner::routes(),
         update::routes(),
         files::routes(),
         jobs::routes(),

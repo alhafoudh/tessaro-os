@@ -5,7 +5,8 @@
 // state of every section can be seen on a desktop.
 
 import { createCecBus } from "./mock-cec";
-import type { DeviceStatus, Face, Mode, PresenceStatus, Tessaro } from "./types";
+import { createScanner } from "./mock-scanner";
+import type { DeviceStatus, Face, Mode, PresenceStatus, ScannerDetail, Tessaro } from "./types";
 
 export interface MockOptions {
   mode?: Mode;
@@ -14,6 +15,8 @@ export interface MockOptions {
   printers?: number;
   scripts?: number;
   presence?: boolean;
+  /** A barcode scanner set up; true by default. */
+  scanner?: boolean;
   /** Fire events (faces, CEC keys) on timers, as a live device would. */
   live?: boolean;
 }
@@ -37,6 +40,8 @@ export const MOCK_CONFIG: Record<string, string> = {
   "camera.presence.enable": "1",
   "camera.presence.page": "1",
   "printer.enable": "1",
+  "scanner.enable": "1",
+  "scanner.page": "1",
   "audio.volume": "70",
   "audio.mute": "0",
   "time.timezone": "Europe/Bratislava",
@@ -73,6 +78,19 @@ function wait(ms: number) {
   return new Promise((done) => setTimeout(done, ms));
 }
 
+let pretendScan: ((text?: string) => Promise<ScannerDetail>) | null = null;
+
+/**
+ * Scan with the mock device's pretend scanner, when the mock is what the
+ * page has: the Scanner section's stand-in for pulling a real trigger.
+ * Null on a real device.
+ */
+export function mockScanner(): ((text?: string) => Promise<ScannerDetail>) | null {
+  return typeof window !== "undefined" && window.tessaro && MOCKS.has(window.tessaro) ? pretendScan : null;
+}
+
+const MOCKS = new WeakSet<object>();
+
 export function createMock(options: MockOptions = {}): Tessaro {
   const mode: Mode = options.mode ?? "actions";
   let config: Record<string, string> = { ...MOCK_CONFIG, "browser.bridge.mode": mode, ...options.config };
@@ -88,6 +106,11 @@ export function createMock(options: MockOptions = {}): Tessaro {
     enabled: () => flagOf(config["screen.cec.enable"]),
     pageEvents: () => flagOf(config["screen.cec.page"]),
     screenOn: () => screenOn,
+  });
+  const scannerOn = options.scanner ?? true;
+  const scanner = createScanner({
+    enabled: () => flagOf(config["scanner.enable"]),
+    pageEvents: () => flagOf(config["scanner.page"]),
   });
 
   const disrupt = () => {
@@ -329,6 +352,9 @@ export function createMock(options: MockOptions = {}): Tessaro {
         };
       }),
     },
+    scanner: {
+      list: async () => (scannerOn ? scanner.list() : { enabled: flagOf(config["scanner.enable"]), scanners: [] }),
+    },
     playlist: {
       status: async () => ({
         player: false,
@@ -486,8 +512,12 @@ export function createMock(options: MockOptions = {}): Tessaro {
       setTimeout(() => bus.receive(0, [0x45]), 120);
     }, 4000);
     setInterval(() => bus.receive(0, [0x8f]), 9000);
+    // Someone at the counter scans now and then.
+    if (scannerOn) setInterval(() => void scanner.scan(), 15000);
   }
 
+  MOCKS.add(api);
+  pretendScan = scannerOn ? scanner.scan : null;
   return api;
 }
 

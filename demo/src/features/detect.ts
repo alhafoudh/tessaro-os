@@ -209,6 +209,48 @@ export const printing: Detect = async (probe) => {
   }
 };
 
+export const scanner: Detect = async (probe) => {
+  const short = lacking(probe, "config");
+  if (short) return short;
+  const bridge = probe.bridge!;
+  try {
+    const list = await bridge.scanner.list();
+    if (!list.enabled) {
+      return {
+        kind: "off",
+        note: "Barcode scanners are off, so a scanner types into the page like a keyboard.",
+        enable: { commands: ["tessaro-ctl config set scanner.enable=1"], webconfig: "Webconfig, Scanner page" },
+      };
+    }
+    if (!flag(bridge.config, "scanner.page", true)) {
+      return {
+        kind: "off",
+        note: "The device reads the scanners, but does not tell the page.",
+        enable: { commands: ["tessaro-ctl config set scanner.page=1"], webconfig: "Webconfig, Scanner page" },
+      };
+    }
+    if (list.scanners.length === 0) {
+      return {
+        kind: "no-hardware",
+        note: "No scanner is set up.",
+        enable: {
+          commands: ["tessaro-ctl scanner identify", "tessaro-ctl scanner create NAME --device ID"],
+          webconfig: "Webconfig, Scanner page",
+        },
+      };
+    }
+    if (!list.scanners.some((one) => one.state === "reading")) {
+      return {
+        kind: "no-hardware",
+        note: `No scanner is plugged in: ${list.scanners.map((one) => `${one.name} is ${one.state}`).join(", ")}.`,
+      };
+    }
+    return { kind: "ready" };
+  } catch (error) {
+    return { kind: "limited", note: message(error) };
+  }
+};
+
 export const scripts: Detect = async (probe) => {
   const short = lacking(probe, "config");
   if (short) return short;

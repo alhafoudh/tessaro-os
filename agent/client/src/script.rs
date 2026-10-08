@@ -30,6 +30,9 @@ pub struct Typed {
     /// The presence events it runs on, comma separated, as
     /// `protocol::presence` reads them; empty for none.
     pub presence: String,
+    /// The scanners whose scans it runs on, comma separated, `*` for every
+    /// one, as `protocol::scanner` reads them; empty for none.
+    pub scanner: String,
 }
 
 impl Typed {
@@ -45,6 +48,7 @@ impl Typed {
             bridge: spec.bridge,
             cec: spec.cec.join(", "),
             presence: spec.presence.join(", "),
+            scanner: spec.scanner.join(", "),
         }
     }
 
@@ -61,6 +65,7 @@ impl Typed {
             bridge: self.bridge,
             cec: protocol::cec::triggers(&self.cec)?,
             presence: protocol::presence::triggers(&self.presence)?,
+            scanner: protocol::scanner::triggers(&self.scanner)?,
         })
     }
 
@@ -76,6 +81,7 @@ impl Typed {
             bridge: Some(self.bridge),
             cec: Some(protocol::cec::triggers(&self.cec)?),
             presence: Some(protocol::presence::triggers(&self.presence)?),
+            scanner: Some(protocol::scanner::triggers(&self.scanner)?),
         })
     }
 
@@ -152,7 +158,24 @@ pub fn started_by(run: &ScriptRun) -> String {
             Some(event) => format!("by {}", presence_event(event)),
             None => "by presence detection".to_string(),
         },
+        ("scanner", _) => match run.event.as_deref() {
+            Some(scanner) => format!("by a scan on {scanner}"),
+            None => "by a barcode scan".to_string(),
+        },
         (other, _) => format!("by {other}"),
+    }
+}
+
+/// The scanners a script runs on, in words: `every scanner`, `scanner
+/// front back`.
+pub fn scanner_triggers(triggers: &[String]) -> String {
+    if triggers
+        .iter()
+        .any(|trigger| trigger == protocol::scanner::ANY)
+    {
+        "every scanner".to_string()
+    } else {
+        format!("scanner {}", triggers.join(" "))
     }
 }
 
@@ -259,6 +282,9 @@ pub fn behaviour(spec: &ScriptSpec) -> String {
     if !spec.presence.is_empty() {
         words.push(format!("runs on presence {}", spec.presence.join(" ")));
     }
+    if !spec.scanner.is_empty() {
+        words.push(format!("runs on {}", scanner_triggers(&spec.scanner)));
+    }
     words.join(", ")
 }
 
@@ -278,6 +304,7 @@ mod tests {
             bridge: true,
             cec: "tv-standby, Key:Red".into(),
             presence: "Arrived".into(),
+            scanner: String::new(),
         };
         let spec = typed.spec().unwrap();
         assert_eq!(spec.name, "dim");

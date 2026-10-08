@@ -163,9 +163,11 @@ o=$(read_key "$OVERRIDE" KIOSK_INPUT_KEYBOARD)
 # -device usb-kbd`, so the guest really does have a USB keyboard - it is the
 # one the VNC window types on. Testing the panel there means KIOSK_OSK=always.
 #
-# Not filtered, and worth knowing: a barcode scanner, an RFID reader or a KVM
-# dongle enumerates as a USB HID keyboard, so on a device with one of those
-# auto will decide there is a keyboard. KIOSK_OSK=always is the answer there.
+# A barcode scanner the agent reads (`tessaro-ctl scanner`) is no keyboard:
+# its udev rule (68-tessaro-scanners.rules) gives it TESSARO_SCANNER, and it
+# types nothing anyone sees. One nobody set up, an RFID reader or a KVM dongle
+# enumerates as a USB HID keyboard, so on a device with one of those auto
+# will decide there is a keyboard. KIOSK_OSK=always is the answer there.
 #
 # Anything that goes wrong here - no udevadm, an unpopulated udev database -
 # ends up reporting no keyboard, which shows the on-screen one. That is the
@@ -185,8 +187,9 @@ hw_keyboard_present() {
             *) continue ;;
         esac
 
-        udevadm info --query=property --path="$dev" 2>/dev/null \
-            | grep -q '^ID_INPUT_KEYBOARD=1$' || continue
+        props=$(udevadm info --query=property --path="$dev" 2>/dev/null)
+        printf '%s\n' "$props" | grep -q '^ID_INPUT_KEYBOARD=1$' || continue
+        printf '%s\n' "$props" | grep -q '^TESSARO_SCANNER=' && continue
 
         echo "tessaro-weston-config: keyboard attached: $(cat "$dev/name" 2>/dev/null || echo "${dev##*/}")"
         return 0

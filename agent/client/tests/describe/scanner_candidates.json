@@ -1,0 +1,165 @@
+{
+  "function": "scanner::candidates",
+  "input": [
+    {
+      "description": "Honeywell Imaging & Mobility 1900",
+      "device": "keyboard:0c2e:0b61:@1-1.2",
+      "node": "/dev/input/event3",
+      "port": "1-1.2",
+      "product": "0b61",
+      "transport": "keyboard",
+      "vendor": "0c2e"
+    },
+    {
+      "description": "QinHeng CH340 serial converter",
+      "device": "serial:1a86:7523:S1234",
+      "known": "till",
+      "node": "/dev/ttyUSB0",
+      "port": "1-1.3",
+      "product": "7523",
+      "serial": "S1234",
+      "transport": "serial",
+      "vendor": "1a86"
+    }
+  ],
+  "output": {
+    "found": [
+      [
+        [
+          [
+            "label",
+            "keyboard",
+            8
+          ],
+          [
+            "plain",
+            " ",
+            0
+          ],
+          [
+            "heading",
+            "Honeywell Imaging & Mobility 1900",
+            0
+          ]
+        ],
+        [
+          [
+            "plain",
+            "         ",
+            0
+          ],
+          [
+            "plain",
+            "keyboard:0c2e:0b61:@1-1.2",
+            0
+          ],
+          [
+            "plain",
+            " ",
+            0
+          ],
+          [
+            "muted",
+            "on /dev/input/event3",
+            0
+          ]
+        ]
+      ],
+      [
+        [
+          [
+            "label",
+            "serial",
+            8
+          ],
+          [
+            "plain",
+            " ",
+            0
+          ],
+          [
+            "heading",
+            "QinHeng CH340 serial converter",
+            0
+          ],
+          [
+            "plain",
+            " ",
+            0
+          ],
+          [
+            "muted",
+            "(scanner till)",
+            0
+          ]
+        ],
+        [
+          [
+            "plain",
+            "         ",
+            0
+          ],
+          [
+            "plain",
+            "serial:1a86:7523:S1234",
+            0
+          ],
+          [
+            "plain",
+            " ",
+            0
+          ],
+          [
+            "muted",
+            "on /dev/ttyUSB0",
+            0
+          ]
+        ]
+      ]
+    ],
+    "hint": [
+      [
+        "muted",
+        "add one with",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "cmd",
+        "tessaro-ctl scanner create NAME --device DEVICE",
+        0
+      ],
+      [
+        "plain",
+        ", ",
+        0
+      ],
+      [
+        "muted",
+        "or let a scan pick it with",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "cmd",
+        "tessaro-ctl scanner identify",
+        0
+      ]
+    ],
+    "none": [
+      [
+        "warn",
+        "nothing that may be a scanner is plugged in: no USB keyboard, serial port or HID POS device",
+        0
+      ]
+    ]
+  }
+}

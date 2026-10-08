@@ -34,10 +34,37 @@ const FOLLOW_MAX: Duration = Duration::from_secs(24 * 3600);
 /// Polls in a row with the run gone from systemd and no record before the
 /// run is taken as ended without one.
 const GONE_POLLS: u32 = 3;
-/// The most runs one script starts on one kind of event, CEC or presence,
-/// in `EVENT_WINDOW`.
+/// The most runs one script starts on one kind of event, CEC, presence or
+/// scans, in `EVENT_WINDOW`.
 const EVENT_BURST: usize = 10;
 const EVENT_WINDOW: Duration = Duration::from_secs(60);
+/// How long a scan waits for the run it started to take it.
+const SCAN_KEEP: Duration = Duration::from_secs(600);
+
+/// A scan for one run, root's alone: `0700` directory, `0600` file, written
+/// whole before the run can start. NUL bytes cannot reach a shell variable
+/// and are left out.
+fn keep_scan(file: &std::path::Path, scanned: &[u8]) -> Result<(), String> {
+    use std::io::Write;
+    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+    let fail = |err: std::io::Error| format!("{}: {err}", file.display());
+    if let Some(dir) = file.parent() {
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(dir)
+            .map_err(fail)?;
+    }
+    let bytes: Vec<u8> = scanned.iter().copied().filter(|byte| *byte != 0).collect();
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(file)
+        .and_then(|mut out| out.write_all(&bytes))
+        .map_err(fail)
+}
 
 /// What `script-set` changes; `None` keeps what is there.
 pub(super) struct Change {
@@ -50,6 +77,7 @@ pub(super) struct Change {
     pub bridge: Option<bool>,
     pub cec: Option<Vec<String>>,
     pub presence: Option<Vec<String>>,
+    pub scanner: Option<Vec<String>>,
 }
 
 /// Who asked for a run, the first word of its instance.
@@ -169,6 +197,9 @@ impl Control {
                 }
                 if let Some(presence) = change.presence {
                     spec.presence = presence;
+                }
+                if let Some(scanner) = change.scanner {
+                    spec.scanner = scanner;
                 }
                 let id = all.scripts[at].id.clone();
                 let others: Vec<&Script> =
@@ -308,25 +339,35 @@ impl Control {
             None => event.to_string(),
         };
         let wanted = |script: &Script| protocol::cec::runs_on(&script.spec.cec, event, key);
-        self.event_scripts("cec", "CEC", &word, wanted).await;
+        self.event_scripts("cec", "CEC", &word, wanted, None).await;
     }
 
     /// The same for a presence event (`arrived`, `left`, `near`, `far`).
     pub(super) async fn presence_scripts(&self, event: &str) {
         let wanted = |script: &Script| protocol::presence::runs_on(&script.spec.presence, event);
-        self.event_scripts("presence", "presence", event, wanted)
+        self.event_scripts("presence", "presence", event, wanted, None)
+            .await;
+    }
+
+    /// The same for a scan of `scanner`. What it said goes to each run in a
+    /// file of its own (`scripts::run_shell`).
+    pub(super) async fn scanner_scripts(&self, scanner: &str, scanned: &[u8]) {
+        let wanted = |script: &Script| protocol::scanner::runs_on(&script.spec.scanner, scanner);
+        self.event_scripts("scanner", "scanner", scanner, wanted, Some(scanned))
             .await;
     }
 
     /// Start a run of every script `wanted` picks, as `<trigger>-<word>-...`,
     /// with each script's runs on `trigger` events held to `EVENT_BURST` in
-    /// `EVENT_WINDOW`. `what` names the events in the journal.
+    /// `EVENT_WINDOW`. `what` names the events in the journal. `payload` is
+    /// left in `scans/<run>` for the run to read, root's alone.
     async fn event_scripts(
         &self,
         trigger: &str,
         what: &str,
         word: &str,
         wanted: impl Fn(&Script) -> bool,
+        payload: Option<&[u8]>,
     ) {
         if !self.paths.manage_schedules {
             return;
@@ -368,6 +409,19 @@ impl Control {
                 continue;
             };
             let instance = format!("{trigger}-{word}-{started}-{}", protocol::hex(&random));
+            if let Some(payload) = payload {
+                let file = self.paths.scans_dir().join(&instance);
+                let bytes = payload.to_vec();
+                if let Err(err) = blocking("keeping the scan for its script", move || {
+                    keep_scan(&file, &bytes)
+                })
+                .await
+                {
+                    self.log
+                        .info(format!("script {name}: keeping the scan for it: {err}"));
+                    continue;
+                }
+            }
             match self.bus.start(&scripts::run_unit(script, &instance)).await {
                 Ok(_) => self.log.info(format!(
                     "script {name} ({}) run {instance} started by the {what} event {word}",
@@ -378,6 +432,30 @@ impl Control {
                     .info(format!("script {name}: starting a run for {word}: {err}")),
             }
         }
+    }
+
+    /// Scans no run took: a run that never started, or failed before its
+    /// shell did, leaves its file behind. Older than `SCAN_KEEP`, removed.
+    pub(super) async fn prune_scans(&self) {
+        let dir = self.paths.scans_dir();
+        let _ = blocking("pruning old scans", move || {
+            let Ok(entries) = std::fs::read_dir(&dir) else {
+                return Ok(());
+            };
+            for entry in entries.filter_map(Result::ok) {
+                let old = entry
+                    .metadata()
+                    .and_then(|meta| meta.modified())
+                    .ok()
+                    .and_then(|modified| modified.elapsed().ok())
+                    .is_some_and(|age| age > SCAN_KEEP);
+                if old {
+                    let _ = std::fs::remove_file(entry.path());
+                }
+            }
+            Ok(())
+        })
+        .await;
     }
 
     /// Room for one more run of script `id` on `trigger` events in

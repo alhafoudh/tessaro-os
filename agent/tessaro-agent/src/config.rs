@@ -166,6 +166,21 @@ pub struct Config {
     /// `camera.presence.*`, which the presence watcher follows
     /// (`control/presence.rs`).
     pub presence: Presence,
+    /// `scanner.*`, which the scanners' supervisor follows
+    /// (`control/scanners.rs`).
+    pub scanner: Scanner,
+}
+
+/// The barcode scanners as the settings have them; which they are is the
+/// `scanners` table's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Scanner {
+    /// `scanner.enable`: read them at all.
+    pub enable: bool,
+    /// `scanner.page`: `tessaro:scanner` events.
+    pub page: bool,
+    /// `scanner.scripts`: the scripts that run on scans.
+    pub scripts: bool,
 }
 
 /// Presence detection as the settings have it. The decimals are kept in
@@ -314,6 +329,11 @@ impl Config {
                 linger: hundredths(env, "KIOSK_PRESENCE_LINGER", 300).max(50),
                 page: flag(env, "KIOSK_PRESENCE_PAGE", true),
                 scripts: flag(env, "KIOSK_PRESENCE_SCRIPTS", true),
+            },
+            scanner: Scanner {
+                enable: flag(env, "KIOSK_SCANNER", false),
+                page: flag(env, "KIOSK_SCANNER_PAGE", true),
+                scripts: flag(env, "KIOSK_SCANNER_SCRIPTS", true),
             },
         }
     }

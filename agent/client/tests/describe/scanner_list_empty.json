@@ -1,0 +1,54 @@
+{
+  "function": "scanner::list",
+  "input": {
+    "enabled": false,
+    "scanners": []
+  },
+  "output": [
+    [
+      [
+        "warn",
+        "no scanners;",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "cmd",
+        "tessaro-ctl scanner identify",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "names the device you scan with",
+        0
+      ]
+    ],
+    [],
+    [
+      [
+        "warn",
+        "scanners are not read; turn them on with",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "cmd",
+        "tessaro-ctl config set scanner.enable=1",
+        0
+      ]
+    ]
+  ]
+}

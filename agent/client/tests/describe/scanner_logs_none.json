@@ -1,0 +1,16 @@
+{
+  "function": "scanner::logs",
+  "input": {
+    "entries": [],
+    "next": 0
+  },
+  "output": [
+    [
+      [
+        "muted",
+        "nothing has happened to a scanner yet",
+        0
+      ]
+    ]
+  ]
+}

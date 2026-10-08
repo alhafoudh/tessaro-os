@@ -544,7 +544,14 @@ they need from us is kernel drivers and file permissions.
   with `hexdump -C /sys/class/hidraw/hidrawN/device/report_descriptor`: HID POS
   contains `05 8c`. A TMS/TEEMI-type scanner (`f126:0288`) never changes its
   descriptor, whatever "HID POS" codes it is given; its CDC serial port is the
-  non-keyboard channel it actually has.
+  non-keyboard channel it actually has. A scanner the agent reads
+  (`tessaro-ctl scanner`) is out of the page's reach in any mode: the agent
+  hands its scans to the page as `tessaro:scanner` events instead
+  ([scanners.md](scanners.md)).
+* **A designated scanner is root's alone.** The scanners' udev rule makes its
+  tty and hidraw nodes `root` `0600` with `:=`, over `70-tessaro-devices.rules`
+  below, so `navigator.serial` and `navigator.hid` no longer open it; it stays
+  in `getPorts()` with nothing behind it.
 * **Device nodes are group-owned, not `uaccess`.** Chromium's device service
   is in-process and opens the node itself, so the `weston` user needs the
   permission directly. `dialout` covers `/dev/tty*`; `70-tessaro-devices.rules`

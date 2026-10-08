@@ -11,7 +11,7 @@ use std::path::Path;
 
 use serde_json::{json, Value};
 use tessaro_client::describe::{
-    audio, browser, camera, cec, device, net, playlist, printer, screen, time,
+    audio, browser, camera, cec, device, net, playlist, printer, scanner, screen, time,
 };
 use tessaro_client::ping;
 use tessaro_client::text::{Fact, Line};
@@ -293,6 +293,52 @@ fn render(function: &str, input: &Value) -> Value {
             })
         }
         "printer::queued" => line(&printer::queued(&from(input))),
+        "scanner::list" => lines(&scanner::list(&from(input))),
+        "scanner::show" => facts(&scanner::show(&from(input))),
+        "scanner::candidates" => {
+            let found: Vec<protocol::scanner::ScannerCandidate> = from(input);
+            json!({
+                "found": found.iter().map(|one| lines(&scanner::candidate(one))).collect::<Vec<_>>(),
+                "hint": line(&scanner::candidates_hint(&found)),
+                "none": line(&scanner::candidates_hint(&[])),
+            })
+        }
+        "scanner::identified" => {
+            let heard: Vec<Option<protocol::scanner::ScannerCandidate>> = from(input);
+            Value::Array(
+                heard
+                    .iter()
+                    .map(|one| lines(&scanner::identified(one.as_ref())))
+                    .collect(),
+            )
+        }
+        "scanner::scan" => {
+            let scans: Vec<protocol::scanner::Scan> = from(input);
+            Value::Array(scans.iter().map(|one| line(&scanner::scan(one))).collect())
+        }
+        "scanner::logs" => lines(&scanner::logs(&from(input))),
+        "scanner::visible" => {
+            let texts: Vec<String> = from(input);
+            json!(texts
+                .iter()
+                .map(|text| scanner::visible(text))
+                .collect::<Vec<_>>())
+        }
+        // The scanners a script runs on, what `--scanner` and the script
+        // dialogs make of what was typed, and the triggers in words.
+        "scanner::triggers" => {
+            let typed: Vec<String> = from(input);
+            json!(typed
+                .iter()
+                .map(|typed| match protocol::scanner::triggers(typed) {
+                    Ok(triggers) => json!({
+                        "ok": triggers,
+                        "words": tessaro_client::script::scanner_triggers(&triggers),
+                    }),
+                    Err(err) => json!({ "err": err }),
+                })
+                .collect::<Vec<_>>())
+        }
         // --- playlists and the timetable ---
         "playlist::list" => {
             let playlists: Vec<protocol::playlist::PlaylistInfo> = from(input);

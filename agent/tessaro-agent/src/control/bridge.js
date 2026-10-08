@@ -73,6 +73,10 @@
       faces(detail) {
         window.dispatchEvent(new CustomEvent("tessaro:faces", { detail: Object.freeze(detail) }));
       },
+      // A scan began or ended, a scanner came or went (scanner.page).
+      scanner(detail) {
+        window.dispatchEvent(new CustomEvent("tessaro:scanner", { detail: Object.freeze(detail) }));
+      },
       // A new DevTools session to the same page: its binding replaces the
       // one that went with the old session.
       rebind() {
@@ -117,6 +121,7 @@
       jobs: (printer) => call("printer.jobs", printer),
     },
     scripts: { list: () => call("scripts.list") },
+    scanner: { list: () => call("scanner.list") },
     playlist: { status: () => call("playlist.status") },
     screen: { show: () => call("screen.show") },
     presence: {
@@ -215,4 +220,10 @@
     value: Object.freeze(api),
     enumerable: true,
   });
+
+  // A frame of the player gets tessaro:scanner too: the agent reaches it in
+  // the context this call comes from, until that context is gone.
+  if (window !== window.top) {
+    call("scanner.listen").catch(() => {});
+  }
 })();

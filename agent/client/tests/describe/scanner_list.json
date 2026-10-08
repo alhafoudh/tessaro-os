@@ -1,0 +1,222 @@
+{
+  "function": "scanner::list",
+  "input": {
+    "enabled": true,
+    "scanners": [
+      {
+        "enabled": true,
+        "last_scan": "21:04:05.123",
+        "layout": "sk(qwerty)",
+        "name": "front",
+        "node": "/dev/input/event3",
+        "port": "1-1.2",
+        "product": "0b61",
+        "scans": 42,
+        "state": "reading",
+        "transport": "keyboard",
+        "vendor": "0c2e"
+      },
+      {
+        "baud": 115200,
+        "enabled": true,
+        "message": "/dev/ttyUSB0: Device or resource busy",
+        "name": "till",
+        "node": "/dev/ttyUSB0",
+        "product": "7523",
+        "serial": "S1234",
+        "state": "failed",
+        "terminator": "lf",
+        "transport": "serial",
+        "vendor": "1a86"
+      },
+      {
+        "enabled": false,
+        "name": "back",
+        "port": "1-1.4",
+        "product": "1300",
+        "state": "disabled",
+        "transport": "hidpos",
+        "vendor": "05e0"
+      }
+    ]
+  },
+  "output": [
+    [
+      [
+        "heading",
+        "front",
+        16
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "label",
+        "keyboard",
+        8
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "ok",
+        "reading",
+        0
+      ],
+      [
+        "plain",
+        "  ",
+        0
+      ],
+      [
+        "muted",
+        "last scan 21:04:05.123",
+        0
+      ]
+    ],
+    [
+      [
+        "plain",
+        "    ",
+        0
+      ],
+      [
+        "muted",
+        "keyboard:0c2e:0b61:@1-1.2",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "on /dev/input/event3",
+        0
+      ]
+    ],
+    [
+      [
+        "heading",
+        "till",
+        16
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "label",
+        "serial",
+        8
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "bad",
+        "failed",
+        0
+      ]
+    ],
+    [
+      [
+        "plain",
+        "    ",
+        0
+      ],
+      [
+        "muted",
+        "serial:1a86:7523:S1234",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "on /dev/ttyUSB0",
+        0
+      ]
+    ],
+    [
+      [
+        "plain",
+        "    ",
+        0
+      ],
+      [
+        "bad",
+        "/dev/ttyUSB0: Device or resource busy",
+        0
+      ]
+    ],
+    [
+      [
+        "heading",
+        "back",
+        16
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "label",
+        "hidpos",
+        8
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "disabled",
+        0
+      ]
+    ],
+    [
+      [
+        "plain",
+        "    ",
+        0
+      ],
+      [
+        "muted",
+        "hidpos:05e0:1300:@1-1.4",
+        0
+      ]
+    ],
+    [],
+    [
+      [
+        "ok",
+        "scanners are read",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "(scanner.enable)",
+        0
+      ]
+    ]
+  ]
+}

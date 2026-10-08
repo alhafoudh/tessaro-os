@@ -1,6 +1,7 @@
 //! Long work on a device, each on a connection of its own so the window's
 //! worker keeps polling: the device's own jobs (`network ping`, the speed
-//! test, growing `/data`, looking for printers), files going up or down, an
+//! test, growing `/data`, looking for printers and scanners, a scanner's
+//! test), files going up or down, an
 //! image update, the DevTools and VNC tunnels, and a script's run followed
 //! to its end.
 //!
@@ -9,7 +10,8 @@
 //! the device; the shared flows see it as `Report::stopped` at their next
 //! step, and for a call in flight a watcher thread shuts the connection
 //! down. The flows themselves are `tessaro_client`'s (`files`, `update`,
-//! `ping`, `storage`, `devtools`, `vnc`, `printer`, `script`), the same as
+//! `ping`, `storage`, `devtools`, `vnc`, `printer`, `scanner`, `script`),
+//! the same as
 //! `tessaro-ctl`'s.
 
 use std::collections::BTreeMap;
@@ -35,7 +37,7 @@ use tessaro_client::text::{Line, Tone};
 use tessaro_client::tunnel::{self, Prompts, Tunnel};
 use tessaro_client::update::{self, Plan, Sent};
 use tessaro_client::{
-    describe, devtools, files, network, ping, printer, script, ssh, storage, vnc,
+    describe, devtools, files, network, ping, printer, scanner, script, ssh, storage, vnc,
 };
 
 use crate::worker;
@@ -62,6 +64,14 @@ pub enum Kind {
     /// `tessaro-ctl printer discover`: every printer the device finds, as
     /// the job's values.
     Discover,
+    /// `tessaro-ctl scanner discover`: every device that may be a scanner,
+    /// as the job's values.
+    ScannerDiscover,
+    /// `tessaro-ctl scanner identify`: the device the next scan comes from,
+    /// as the job's value.
+    ScannerIdentify,
+    /// `tessaro-ctl scanner test`: a scanner's scans as the job's lines.
+    ScannerTest(String),
     /// `tessaro-ctl script run`: the script's output as the job's lines,
     /// then how the run ended.
     Script(String),
@@ -160,7 +170,13 @@ fn run(spec: &Spec, out: &ui::UnboundedSender<Event>) -> Result<String, String> 
     // tunnel the same: it stops the mirror as it closes.
     let watched = !matches!(
         spec.kind,
-        Kind::Stream(_) | Kind::Discover | Kind::Script(_) | Kind::Vnc
+        Kind::Stream(_)
+            | Kind::Discover
+            | Kind::ScannerDiscover
+            | Kind::ScannerIdentify
+            | Kind::ScannerTest(_)
+            | Kind::Script(_)
+            | Kind::Vnc
     );
     if let Some(tcp) = session.shutdown_handle().filter(|_| watched) {
         let (out, done) = (out.clone(), done.clone());
@@ -190,6 +206,9 @@ fn run(spec: &Spec, out: &ui::UnboundedSender<Event>) -> Result<String, String> 
         Kind::DevTools => open_devtools(&mut session, &mut report),
         Kind::Vnc => open_vnc(&mut session, &mut report),
         Kind::Discover => discover(&mut session, out),
+        Kind::ScannerDiscover => scanner_discover(&mut session, out),
+        Kind::ScannerIdentify => scanner_identify(&mut session, out),
+        Kind::ScannerTest(name) => scanner_test(&mut session, name, out),
         Kind::Script(name) => script_run(&mut session, name, out),
         Kind::Reload => session
             .call::<api::browser::Reload>(Empty {}, ())
@@ -282,6 +301,57 @@ fn discover(session: &mut Session, out: &ui::UnboundedSender<Event>) -> Result<S
         }
     })?;
     Ok(describe::printer::found_hint(&found).to_string())
+}
+
+/// `tessaro-ctl scanner discover`: each device as it comes, for the page to
+/// list, and what to do with them at the end.
+fn scanner_discover(
+    session: &mut Session,
+    out: &ui::UnboundedSender<Event>,
+) -> Result<String, String> {
+    let found = scanner::discover(session, &|| out.is_closed(), |candidate| {
+        if let Ok(value) = serde_json::to_value(candidate) {
+            let _ = out.unbounded_send(Event::Value(value));
+        }
+    })?;
+    Ok(describe::scanner::candidates_hint(&found).to_string())
+}
+
+/// `tessaro-ctl scanner identify`: the device a scan came from, for the
+/// page to offer, or that nothing was scanned.
+fn scanner_identify(
+    session: &mut Session,
+    out: &ui::UnboundedSender<Event>,
+) -> Result<String, String> {
+    match scanner::identify(session, &|| out.is_closed())? {
+        Some(heard) => {
+            let said = format!("heard {}", heard.description);
+            if let Ok(value) = serde_json::to_value(&heard) {
+                let _ = out.unbounded_send(Event::Value(value));
+            }
+            Ok(said)
+        }
+        None => Err(describe::scanner::identified(None)
+            .first()
+            .map(ToString::to_string)
+            .unwrap_or_default()),
+    }
+}
+
+/// `tessaro-ctl scanner test`: each scan as a line as it comes.
+fn scanner_test(
+    session: &mut Session,
+    name: &str,
+    out: &ui::UnboundedSender<Event>,
+) -> Result<String, String> {
+    let scans = scanner::test(session, name, &|| out.is_closed(), |scan| {
+        let _ = out.unbounded_send(Event::Line(describe::scanner::scan(scan)));
+    })?;
+    if scans.is_empty() {
+        Err("nothing was scanned".to_string())
+    } else {
+        Ok("done".to_string())
+    }
 }
 
 /// `tessaro-ctl script run`: each line as it comes, and a failed run is a

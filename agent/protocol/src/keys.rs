@@ -417,7 +417,7 @@ pub static KEYS: &[Key] = &[
     key(INPUT_MOUSE, "KIOSK_INPUT_MOUSE", Kind::Flag, WESTON,
         "Use mice, touchpads and pen tablets; 0 ignores them, and no cursor is drawn. A touch panel that reports itself as a mouse is ignored too."),
     key(INPUT_KEYBOARD, "KIOSK_INPUT_KEYBOARD", Kind::Flag, WESTON,
-        "Use keyboards, barcode scanners included; 0 ignores them, and screen.osk=auto shows the on-screen keyboard as if none were plugged in."),
+        "Use keyboards, a barcode scanner that types included; 0 ignores them, and screen.osk=auto shows the on-screen keyboard as if none were plugged in. A scanner of `tessaro-ctl scanner list` is never one of them while scanner.enable is on."),
     key(INPUT_TOUCH, "KIOSK_INPUT_TOUCH", Kind::Flag, WESTON,
         "Use touchscreens; 0 ignores them. Remote management and the VNC mirror keep working."),
     key(VNC, "KIOSK_VNC", Kind::Choice(&["on", "view-only", "off"]), WESTON,
@@ -494,6 +494,14 @@ pub static KEYS: &[Key] = &[
     // this only decides whether the page may use them.
     key(PRINTER_ENABLE, "KIOSK_PRINTING", Kind::Flag, BROWSER_AND_AGENT,
         "Let the page print: window.print() goes to the default printer without a dialog, and the page bridge's printer.print() to any printer. `tessaro-ctl printer` sets the printers up; it prints either way."),
+    // The scanners themselves are in their own table, `tessaro-ctl
+    // scanner`; these decide whether they are read and who hears of a scan.
+    key(SCANNER_ENABLE, "KIOSK_SCANNER", Kind::Flag, AGENT,
+        "Read the barcode scanners of `tessaro-ctl scanner list`: each is taken from the browser and the screen, so a keyboard scanner types nothing into the page, and its scans become events. 0 leaves every scanner a plain keyboard or serial port."),
+    key(SCANNER_PAGE, "KIOSK_SCANNER_PAGE", Kind::Flag, AGENT,
+        "Tell the page about scans: a tessaro:scanner event on window, and in playlist frames with the bridge, when a scan begins and ends and when a scanner is plugged in or out. Needs browser.bridge.mode config or actions."),
+    key(SCANNER_SCRIPTS, "KIOSK_SCANNER_SCRIPTS", Kind::Flag, AGENT,
+        "Run the scripts that run on scans (`tessaro-ctl script set --scanner`). 0 runs none of them."),
     // The playlists and the timetable are in their own tables, `tessaro-ctl
     // playlist`; this names the one that plays when no timetable entry does.
     key(PLAYLIST_DEFAULT, "KIOSK_PLAYLIST", Kind::Playlist, AGENT,
@@ -670,6 +678,9 @@ pub const TIMEZONE: &str = "time.timezone";
 pub const NTP_ENABLE: &str = "time.ntp.enable";
 pub const NTP_SERVERS: &str = "time.ntp.servers";
 pub const PRINTER_ENABLE: &str = "printer.enable";
+pub const SCANNER_ENABLE: &str = "scanner.enable";
+pub const SCANNER_PAGE: &str = "scanner.page";
+pub const SCANNER_SCRIPTS: &str = "scanner.scripts";
 pub const PLAYLIST_DEFAULT: &str = "playlist.default";
 pub const CAMERA_FORMAT: &str = "camera.format";
 pub const CAMERA_SIZE: &str = "camera.size";

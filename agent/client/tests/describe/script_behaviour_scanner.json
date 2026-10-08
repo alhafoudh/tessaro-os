@@ -1,0 +1,27 @@
+{
+  "function": "script::behaviour",
+  "input": [
+    {
+      "body": "true\n",
+      "name": "ticket",
+      "scanner": [
+        "front",
+        "back"
+      ]
+    },
+    {
+      "body": "true\n",
+      "name": "any",
+      "presence": [
+        "left"
+      ],
+      "scanner": [
+        "*"
+      ]
+    }
+  ],
+  "output": [
+    "stop on error, overlap, runs on scanner front back",
+    "stop on error, overlap, runs on presence left, runs on every scanner"
+  ]
+}

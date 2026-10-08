@@ -1,7 +1,8 @@
 //! `tessaro-ctl script ...`: shell scripts the device keeps and runs as
 //! root, now (`run`), for a schedule (`tessaro-ctl schedule`), for the
-//! kiosk page (`--bridge`), on the TV's HDMI-CEC events (`--cec`) or on
-//! presence events (`--presence`).
+//! kiosk page (`--bridge`), on the TV's HDMI-CEC events (`--cec`), on
+//! presence events (`--presence`) or on a barcode scanner's scans
+//! (`--scanner`).
 //!
 //! A body runs with `/bin/sh` from `/`, so a `tessaro-ctl` command in it is
 //! written out in full. `run` follows the run to its end and prints what it
@@ -37,6 +38,7 @@ pub enum ScriptCmd {
     ///   tessaro-ctl script create restock --file restock.sh --bridge --concurrency skip
     ///   tessaro-ctl script create back-off --body 'tessaro-ctl screen power off' --cec key:red
     ///   tessaro-ctl script create greet --body 'tessaro-ctl screen power on' --presence arrived
+    ///   tessaro-ctl script create ticket --body 'logger "$TESSARO_SCAN_TEXT"' --scanner front
     Create {
         /// Lower-case letters, digits and -.
         name: String,
@@ -126,6 +128,16 @@ pub struct Fields {
     /// far; empty for none. Needs camera.presence.enable.
     #[arg(long, value_name = "EVENTS", value_parser = presence_events)]
     presence: Option<String>,
+    /// Run it on every scan of these scanners, comma separated, or * for
+    /// every scanner; empty for none. The scan is in $TESSARO_SCAN_TEXT.
+    /// Needs scanner.enable.
+    #[arg(long, value_name = "SCANNERS", value_parser = scanner_names)]
+    scanner: Option<String>,
+}
+
+/// `--scanner` checked, the same way.
+fn scanner_names(typed: &str) -> Result<String, String> {
+    protocol::scanner::triggers(typed).map(|names| names.join(","))
 }
 
 /// `--cec` checked, as the comma-separated list it is stored as.
@@ -138,7 +150,8 @@ fn presence_events(typed: &str) -> Result<String, String> {
     protocol::presence::triggers(typed).map(|events| events.join(","))
 }
 
-/// The events `--cec` or `--presence` gave, one by one.
+/// The events `--cec` or `--presence` gave, or the scanners `--scanner`
+/// did, one by one.
 fn cec_list(checked: String) -> Vec<String> {
     checked
         .split(',')
@@ -191,6 +204,7 @@ pub fn run(session: &mut Session, command: ScriptCmd, json: bool) -> Result<(), 
                 bridge: fields.bridge,
                 cec: fields.cec.map(cec_list).unwrap_or_default(),
                 presence: fields.presence.map(cec_list).unwrap_or_default(),
+                scanner: fields.scanner.map(cec_list).unwrap_or_default(),
             };
             let info = session.send::<api::script::Create>(spec)?;
             print(json, &info, || {
@@ -224,6 +238,7 @@ pub fn run(session: &mut Session, command: ScriptCmd, json: bool) -> Result<(), 
                 bridge,
                 cec: fields.cec.map(cec_list),
                 presence: fields.presence.map(cec_list),
+                scanner: fields.scanner.map(cec_list),
             };
             let info = session.call::<api::script::Change>(ScriptRef { script }, change)?;
             print(json, &info, || {

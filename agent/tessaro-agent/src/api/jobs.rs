@@ -78,6 +78,10 @@ impl Jobs {
                     // naked: drain bounds following the run with its timeout and a margin
                     drain(&jobs, &job, steps, "following the run", total).await
                 }
+                Stream::Scanner { steps, what, total } => {
+                    // naked: drain bounds the whole run with the job's own total
+                    drain(&jobs, &job, steps, what, total).await
+                }
             };
             jobs.end(&job, outcome.err());
         });

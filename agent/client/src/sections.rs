@@ -21,7 +21,7 @@ pub const GROUPS: &[(&str, &[&str])] = &[
     ("Commands", &["device"]),
     (KIOSK, &["screen", "browser", "files"]),
     (PLAYER, &["playlist"]),
-    (PERIPHERALS, &["audio", "camera", "printer"]),
+    (PERIPHERALS, &["audio", "camera", "printer", "scanner"]),
     (NETWORK, &["network"]),
     (AUTOMATION, &["script", "schedule"]),
     (SECURITY, &["access", "ssh"]),

@@ -1062,6 +1062,88 @@ description = "Run the fake webcam's unit tests"
 dir = "{{config_root}}/test/usbcam"
 run = "ruby -Ilib -e 'Dir[\"test/*_test.rb\"].sort.each { require File.expand_path(_1) }'"
 
+# A fake USB barcode scanner for the qemu VM: test/usbscanner/usbscanner.rb
+# serves a keyboard, HID POS or CDC ACM serial scanner over USB/IP on this
+# host, the way usbcam:run serves its camera, and the guest attaches it
+# through vhci-hcd. A scan is a line on the control port; see
+# docs/scanners.md, Testing in qemu.
+[tasks."usbscanner:run"]
+description = "Serve a fake USB barcode scanner over USB/IP, and attach it to the qemu:run/qemu:vnc VM with --attach"
+dir = "{{config_root}}"
+raw = true
+usage = '''
+flag "--mode <mode>" default="keyboard" help="keyboard, hidpos or serial" {
+    choices "keyboard" "hidpos" "serial"
+}
+flag "--port <port>" default="3241" help="The USB/IP port"
+flag "--control <port>" default="3242" help="The port on 127.0.0.1 that takes a scan per line"
+flag "--scan <text>" help="Scan this once attached, and again every --every seconds"
+flag "--every <seconds>" help="With --scan: seconds between scans"
+flag "--attach" help="Also attach it in the VM on the 127.0.0.1:2222 forward, and detach it on exit"
+'''
+run = '''
+set -eu
+case "$TESSARO_MACHINE" in
+    qemux86-64|genericarm64) ;;
+    *)
+        echo "usbscanner:run only works for qemux86-64 and genericarm64, not $TESSARO_MACHINE" >&2
+        exit 1
+        ;;
+esac
+
+port={{ usage.port | default(value="3241") | quote }}
+set -- --mode {{ usage.mode | default(value="keyboard") | quote }} --port "$port" \
+    --control {{ usage.control | default(value="3242") | quote }}
+scan={{ usage.scan | default(value="") | quote }}
+every={{ usage.every | default(value="") | quote }}
+[ -n "$scan" ] && set -- "$@" --scan "$scan"
+[ -n "$every" ] && set -- "$@" --every "$every"
+
+if [ "{{ usage.attach | default(value='false') }}" != "true" ]; then
+    exec ruby test/usbscanner/usbscanner.rb "$@"
+fi
+
+# The VM of qemu:run and qemu:vnc over its SSH forward. The unclaimed image
+# has an empty root password.
+guest() {
+    ssh -p 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+        -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=5 root@127.0.0.1 "$@"
+}
+guest true 2>/dev/null || {
+    echo "no VM answers SSH on 127.0.0.1:2222; start one with: mise run qemu:run" >&2
+    exit 1
+}
+guest 'command -v usbip' >/dev/null || {
+    echo "the VM's image has no usbip; rebuild it with usbip-tools (docs/camera.md, Testing in qemu)" >&2
+    exit 1
+}
+log=$(mktemp)
+ruby test/usbscanner/usbscanner.rb "$@" 2>"$log" &
+server=$!
+tail -n +1 -f "$log" >&2 &
+shown=$!
+detach() {
+    guest 'usbip port | sed -n "s/^Port \([0-9]*\): .*/\1/p" | xargs -r -n1 usbip detach -p' || true
+    kill "$server" 2>/dev/null || true
+    wait "$server" 2>/dev/null || true
+    kill "$shown" 2>/dev/null || true
+    rm -f "$log"
+}
+trap detach EXIT INT TERM
+until grep -q '^usbscanner: listening on' "$log"; do
+    kill -0 "$server" 2>/dev/null || exit 1
+    sleep 0.2
+done
+guest "modprobe vhci-hcd && usbip --tcp-port $port attach -r 10.0.2.2 -b 1-1"
+echo "attached; the VM's tessaro-ctl scanner discover shows it. A line to 127.0.0.1:{{ usage.control | default(value="3242") }} scans it. Ctrl-C detaches." >&2
+wait "$server"
+'''
+
+[tasks."usbscanner:test"]
+description = "Run the fake barcode scanner's unit tests"
+dir = "{{config_root}}/test/usbscanner"
+run = "ruby -Ilib -e 'Dir[\"test/*_test.rb\"].sort.each { require File.expand_path(_1) }'"
+
 [tasks."dev:tunnel"]
 description = "Keep an SSH tunnel to the build host up: its VNC ports here, the local device's SSH there"
 dir = "{{config_root}}"

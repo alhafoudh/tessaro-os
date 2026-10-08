@@ -163,8 +163,10 @@ the API knows about it.** A tag is only what finds the devices.
   failing fails the run.
 * **What the ctl refuses on several devices** (`bulk_refused`): anything
   that holds the terminal for one device (`ssh connect`, `browser
-  devtools`, `screen vnc`, `device logs -f`, `screen cec messages -f`, `browser policies
-  edit`, a watched `camera snapshot`), opens something on this machine (`access webconfig`), writes
+  devtools`, `screen vnc`, `device logs -f`, `screen cec messages -f`,
+  `scanner logs -f`, `browser policies edit`, a watched `camera snapshot`),
+  listens for one thing on one device (`scanner identify`), opens something
+  on this machine (`access webconfig`), writes
   one local file every device would overwrite (`files download`, a named
   screenshot or snapshot), or reads stdin, which there is one of. A prompt
   that is reached anyway fails that device (`prompt::keyboard`).

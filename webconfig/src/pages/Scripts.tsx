@@ -212,6 +212,7 @@ function ScriptDialog({
           bridge: false,
           cec: "",
           presence: "",
+          scanner: "",
         },
   );
   const [error, setError] = useState<string | null>(null);
@@ -339,6 +340,17 @@ function ScriptDialog({
           value={typed.presence}
           onChange={(event) => edit({ presence: event.target.value })}
           placeholder="none, or arrived, left"
+          spellCheck={false}
+        />
+      </Field>
+      <Field
+        label="Run on scans of"
+        hint="comma separated scanner names, or * for every scanner; empty for none. The scan is in $TESSARO_SCAN_TEXT. Needs scanner.enable."
+      >
+        <input
+          value={typed.scanner}
+          onChange={(event) => edit({ scanner: event.target.value })}
+          placeholder="none, or front, or *"
           spellCheck={false}
         />
       </Field>

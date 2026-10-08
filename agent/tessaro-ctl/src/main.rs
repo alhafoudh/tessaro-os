@@ -23,6 +23,7 @@ mod policies;
 mod printer;
 mod progress;
 mod prompt;
+mod scanner;
 mod schedule;
 mod script;
 mod ssh;
@@ -225,6 +226,10 @@ enum Cmd {
     /// default for window.print(), a test page, printing, the jobs.
     #[command(subcommand)]
     Printer(printer::PrinterCmd),
+    /// The barcode scanners the device reads: find and add them by a scan,
+    /// how their scans end, a test, their log.
+    #[command(subcommand)]
+    Scanner(scanner::ScannerCmd),
     /// The device's network: addresses, profiles, WiFi, ping, speed test.
     #[command(subcommand)]
     Network(net::NetworkCmd),
@@ -795,6 +800,8 @@ fn bulk_refused(path: &str, leaf: &ArgMatches) -> Option<&'static str> {
         "camera snapshot" if given("watch") => Some("watches one camera until Ctrl-C"),
         "camera presence" if given("watch") => Some("watches one device until Ctrl-C"),
         "screen cec messages" if flag("follow") => Some("follows one device's CEC bus"),
+        "scanner logs" if flag("follow") => Some("follows one device's scanners"),
+        "scanner identify" => Some("names the scanner one scan came from, on one device"),
         "access webconfig" if !flag("print") => Some("opens a browser for one device"),
         "files download" => Some("writes one local file or directory"),
         "screen screenshot" | "camera snapshot" if given("output") => {
@@ -1243,6 +1250,7 @@ fn run_on(cli: Cli, target: Target, mut nodes: Nodes) -> Result<(), String> {
         Cmd::Script(command) => script::run(&mut session, command, json),
         Cmd::Schedule(command) => schedule::run(&mut session, command, json),
         Cmd::Printer(command) => printer::run(&mut session, command, json),
+        Cmd::Scanner(command) => scanner::run(&mut session, command, json),
         Cmd::Playlist(command) => playlist::run(&mut session, command, json),
         Cmd::Device(DeviceCmd::Restart { what }) => {
             done::<api::device::Restart>(&mut session, Empty {}, api::RestartBody { what }, json)

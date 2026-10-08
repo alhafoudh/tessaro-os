@@ -60,6 +60,7 @@ mod probe;
 mod proc;
 mod qr;
 mod render;
+mod scanner;
 mod schedules;
 #[cfg(test)]
 mod screenshots;
@@ -362,6 +363,7 @@ async fn start_control(
     control.watch_vnc();
     control.watch_cec();
     control.watch_presence();
+    control.watch_scanners();
     control.watch_playlist();
     control.watch_media();
     // Before the agent's first navigation, so the page it opens already

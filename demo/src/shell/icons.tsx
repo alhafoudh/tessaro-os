@@ -14,6 +14,7 @@ export type IconName =
   | "remote"
   | "network"
   | "printer"
+  | "scanner"
   | "script"
   | "files"
   | "plug"
@@ -96,6 +97,12 @@ const PATHS: Record<IconName, ReactNode> = {
       <path d="M7 9V3.5h10V9" />
       <rect x="3.5" y="9" width="17" height="7.5" rx="1.8" />
       <path d="M7 14h10v6.5H7z" />
+    </>
+  ),
+  scanner: (
+    <>
+      <path d="M3.5 7.5V5A1.5 1.5 0 0 1 5 3.5h2.5M16.5 3.5H19A1.5 1.5 0 0 1 20.5 5v2.5M20.5 16.5V19a1.5 1.5 0 0 1-1.5 1.5h-2.5M7.5 20.5H5A1.5 1.5 0 0 1 3.5 19v-2.5" />
+      <path d="M7.5 8v8M10 8v8M13 8v8M16.5 8v8" />
     </>
   ),
   script: (

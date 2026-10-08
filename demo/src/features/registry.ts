@@ -18,6 +18,7 @@ import { PlaylistSection } from "../sections/Playlist";
 import { PresenceSection } from "../sections/Presence";
 import { PrintingSection } from "../sections/Printing";
 import { RemoteSection } from "../sections/Remote";
+import { ScannerSection } from "../sections/Scanner";
 import { ScriptsSection } from "../sections/Scripts";
 import { TouchSection } from "../sections/Touch";
 import { VideoSection } from "../sections/Video";
@@ -111,6 +112,14 @@ export const SECTIONS: Section[] = [
     blurb: "Print a receipt from the page",
     detect: detect.printing,
     component: PrintingSection,
+  },
+  {
+    id: "scanner",
+    title: "Barcode scanner",
+    icon: "scanner",
+    blurb: "Every scan as an event, never keystrokes",
+    detect: detect.scanner,
+    component: ScannerSection,
   },
   {
     id: "scripts",

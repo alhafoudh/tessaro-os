@@ -83,6 +83,29 @@ describe("printing", () => {
   });
 });
 
+describe("barcode scanners", () => {
+  it("is off without scanner.enable, with the command to switch it on", async () => {
+    const status = await detect.scanner(probe({ config: { "scanner.enable": "0" } }));
+    expect(status.kind).toBe("off");
+    if (status.kind === "off") expect(status.enable.commands).toContain("tessaro-ctl config set scanner.enable=1");
+  });
+
+  it("is off when the page is not told", async () => {
+    expect((await detect.scanner(probe({ config: { "scanner.page": "0" } }))).kind).toBe("off");
+  });
+
+  it("has nothing to read without a scanner set up", async () => {
+    const status = await detect.scanner(probe({ scanner: false }));
+    expect(status.kind).toBe("no-hardware");
+    if (status.kind === "no-hardware") expect(status.enable?.commands[0]).toBe("tessaro-ctl scanner identify");
+  });
+
+  it("is ready with a scanner reading, in either bridge mode", async () => {
+    expect((await detect.scanner(probe())).kind).toBe("ready");
+    expect((await detect.scanner(probe({ mode: "config" }))).kind).toBe("ready");
+  });
+});
+
 describe("scripts", () => {
   it("explains how to mark one for the page", async () => {
     const status = await detect.scripts(probe({ scripts: 0 }));

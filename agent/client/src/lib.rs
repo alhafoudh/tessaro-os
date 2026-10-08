@@ -32,6 +32,7 @@ pub mod playlist;
 pub mod policies;
 pub mod printer;
 pub mod report;
+pub mod scanner;
 pub mod schedule;
 pub mod script;
 pub mod sections;
