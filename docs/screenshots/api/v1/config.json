@@ -290,6 +290,12 @@
       "source": "default"
     },
     {
+      "key": "camera.presence.demographics",
+      "env": "KIOSK_PRESENCE_DEMOGRAPHICS",
+      "value": null,
+      "source": "default"
+    },
+    {
       "key": "camera.presence.confidence",
       "env": "KIOSK_PRESENCE_CONFIDENCE",
       "value": null,

@@ -114,7 +114,8 @@ are on WiFi, not Network), and only where the scope has settings.
   It is not remembered across reloads. While presence detection watches the
   camera, its faces are an SVG over the picture (`viewBox="0 0 1 1"`, so the
   boxes' shares of the frame are its coordinates), refreshed with the Live
-  snapshots.
+  snapshots; each box's title is its id, distance and, once settled, the
+  estimated age and gender (the ported `estimate`).
 * **Tags are badges, in the GUI's colours** (`ui/Badge.tsx`, its `BADGES`
   the list in `theme.rs`, picked by the ported `describe/tags.ts`, which the
   `tags_colour` fixture keeps equal). Overview's Tags and Quick Setup's

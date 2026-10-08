@@ -10,6 +10,7 @@ import { useQuery } from "@tanstack/react-query";
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
 
 import { answer, client } from "../api/client";
+import { estimate } from "../describe/camera";
 import { fixed } from "../describe/common";
 import { useDevice } from "../device/DeviceContext";
 import { Button } from "../ui/controls";
@@ -104,7 +105,11 @@ export function CameraPanel({ device, onClose }: { device: string; onClose: () =
                     vectorEffect="non-scaling-stroke"
                     className={face.near ? "stroke-success" : "stroke-primary"}
                   >
-                    <title>{`#${face.id} ${fixed(face.distance, 1)} m${face.facing ? ", facing" : ""}`}</title>
+                    <title>
+                      {`#${face.id} ${fixed(face.distance, 1)} m${face.facing ? ", facing" : ""}${
+                        face.demographics ? `, ${estimate(face.demographics)}` : ""
+                      }`}
+                    </title>
                   </rect>
                 ))}
               </svg>

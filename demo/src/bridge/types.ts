@@ -42,6 +42,8 @@ export interface PresenceSummary {
   present: boolean;
   near: boolean;
   count: number;
+  /** With camera.presence.demographics on. */
+  genders?: Genders;
 }
 
 export interface DeviceStatus {
@@ -255,6 +257,8 @@ export interface FaceBox {
 
 export type Point = [number, number];
 
+export type Gender = "male" | "female" | "unknown";
+
 export interface Face {
   id: number;
   box: FaceBox;
@@ -270,6 +274,18 @@ export interface Face {
     rightEar: Point;
     leftEar: Point;
   };
+  /** Once settled, with camera.presence.demographics on: estimated years. */
+  age?: number;
+  gender?: Gender;
+  /** How likely the face is a man's, 0 to 1. */
+  male?: number;
+}
+
+/** The faces by estimated gender; a face not settled yet is in none. */
+export interface Genders {
+  male: number;
+  female: number;
+  unknown: number;
 }
 
 export interface PresenceStatus {
@@ -278,7 +294,11 @@ export interface PresenceStatus {
   present: boolean;
   near: boolean;
   nearMeters: number | null;
+  /** camera.presence.demographics. */
+  demographics?: boolean;
   count: number;
+  /** With demographics on. */
+  genders?: Genders;
   last: { event: string; at: Moment } | null;
   faces: Face[];
 }
@@ -291,11 +311,15 @@ export interface FacesDetail {
 }
 
 export interface PresenceDetail {
-  event: "arrived" | "left" | "near" | "far";
+  event: "arrived" | "left" | "near" | "far" | "classified";
   present: boolean;
   near: boolean;
   count: number;
   faces: Face[];
+  /** With camera.presence.demographics on. */
+  genders?: Genders;
+  /** For `classified`: the face whose age and gender settled. */
+  face?: Face;
 }
 
 /** A change on the bus: the TV's power, its input, a key of its remote. */

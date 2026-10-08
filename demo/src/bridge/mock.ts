@@ -39,6 +39,7 @@ export const MOCK_CONFIG: Record<string, string> = {
   "screen.cec.keys": "1",
   "camera.presence.enable": "1",
   "camera.presence.page": "1",
+  "camera.presence.demographics": "1",
   "printer.enable": "1",
   "scanner.enable": "1",
   "scanner.page": "1",
@@ -71,6 +72,10 @@ function face(id: number, t: number): Face {
       rightEar: at(0.04, 0.42),
       leftEar: at(0.96, 0.42),
     },
+    // As camera.presence.demographics settles it.
+    age: 34,
+    gender: "female",
+    male: 0.12,
   };
 }
 
@@ -174,7 +179,7 @@ export function createMock(options: MockOptions = {}): Tessaro {
     memory: { total: 8_000 * MB, available: (5_200 + Math.round(Math.random() * 400)) * MB },
     cpuPercent: Math.round(8 + Math.random() * 22),
     playlist: null,
-    presence: { present: true, near: false, count: 1 },
+    presence: { present: true, near: false, count: 1, genders: { male: 0, female: 1, unknown: 0 } },
   });
 
   const presence = (): PresenceStatus => {
@@ -186,7 +191,9 @@ export function createMock(options: MockOptions = {}): Tessaro {
       present: faces.length > 0,
       near: faces.some((one) => one.near),
       nearMeters: 1.2,
+      demographics: presenceOn,
       count: faces.length,
+      genders: presenceOn ? { male: 0, female: faces.length, unknown: 0 } : undefined,
       last: presenceOn ? { event: "arrived", at: { unix: Math.floor(now / 1000) - 42, local: "just now" } } : null,
       faces,
     };

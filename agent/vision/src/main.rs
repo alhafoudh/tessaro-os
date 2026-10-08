@@ -2,7 +2,7 @@
 //!
 //! ```text
 //! tessaro-vision
-//! tessaro-vision --bench [--model NAME] [--models DIR] FRAME.jpg...
+//! tessaro-vision --bench [--model NAME] [--models DIR] [--demographics] FRAME.jpg...
 //! ```
 //!
 //! The agent starts `tessaro-vision.service` while camera.presence.enable is
@@ -17,11 +17,17 @@
 //! means - confidence, distance, arriving and leaving - is the agent's, so
 //! its settings apply live without restarting this.
 //!
+//! With camera.presence.demographics on (`KIOSK_PRESENCE_DEMOGRAPHICS`), a
+//! face that has not settled its age and gender yet is cut out of a frame
+//! decoded large enough for it and run through HSE FaceRes, a few times,
+//! until its track settles them (`demographics`, `track`).
+//!
 //! How it is doing goes to `/run/tessaro-vision/status.json`. No frame is
 //! ever written anywhere.
 //!
 //! `--bench` runs the model on JPEG files instead and prints the faces and
 //! how long decoding and inference took: what to run on a new board.
+//! `--demographics` adds each face's age and gender and how long that took.
 
 use std::env;
 use std::fs::{self, File, OpenOptions};
@@ -35,12 +41,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::sleep;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use protocol::presence::{VisionFrame, VisionStatus};
+use protocol::presence::{Detection, VisionFrame, VisionStatus};
 use protocol::CameraInfo;
 use tessaro_camera::choice::MJPEG;
 use tessaro_camera::v4l2::Capture;
 use tessaro_camera::write_whole;
 use tessaro_vision::blazeface::{self, Model};
+use tessaro_vision::demographics::{self, Classifier};
 use tessaro_vision::detector::Detector;
 use tessaro_vision::picture::{self, Rgb};
 use tessaro_vision::track::Tracker;
@@ -110,7 +117,9 @@ fn main() -> ExitCode {
         return bench(&args[1..]);
     }
     if !args.is_empty() {
-        eprintln!("usage: tessaro-vision [--bench [--model NAME] [--models DIR] FRAME.jpg...]");
+        eprintln!(
+            "usage: tessaro-vision [--bench [--model NAME] [--models DIR] [--demographics] FRAME.jpg...]"
+        );
         return ExitCode::from(64);
     }
     stop_on_signals();
@@ -119,10 +128,18 @@ fn main() -> ExitCode {
     let state = path_from("KIOSK_VISION_DIR", STATE_DIR).join("status.json");
     let mut status = VisionStatus {
         model: settings.model.name.to_string(),
+        demographics: settings.demographics,
         ..VisionStatus::default()
     };
-    let detector = match Detector::load(&settings.models, settings.model) {
-        Ok(detector) => detector,
+    let loaded = Detector::load(&settings.models, settings.model).and_then(|detector| {
+        let classifier = match settings.demographics {
+            true => Some(Classifier::load(&settings.models)?),
+            false => None,
+        };
+        Ok((detector, classifier))
+    });
+    let (detector, classifier) = match loaded {
+        Ok(loaded) => loaded,
         Err(why) => {
             // Said in the status and waited out: restarting into the same
             // missing file helps nobody.
@@ -136,8 +153,14 @@ fn main() -> ExitCode {
         }
     };
     eprintln!(
-        "looking for faces with {} at up to {} fps",
-        settings.model.name, settings.fps
+        "looking for faces with {} at up to {} fps{}",
+        settings.model.name,
+        settings.fps,
+        if classifier.is_some() {
+            ", estimating their age and gender"
+        } else {
+            ""
+        }
     );
 
     let mut sender = Sender::new(path_from("KIOSK_VISION_SOCKET", SOCKET));
@@ -165,6 +188,7 @@ fn main() -> ExitCode {
             &camera,
             &settings,
             &detector,
+            classifier.as_ref(),
             &mut sender,
             &state,
             &mut status,
@@ -191,6 +215,7 @@ struct Settings {
     camera: String,
     model: Model,
     fps: u32,
+    demographics: bool,
     models: PathBuf,
     camera_dir: PathBuf,
 }
@@ -211,10 +236,13 @@ impl Settings {
             .and_then(|value| value.trim().parse::<u32>().ok())
             .filter(|fps| (1..=MAX_FPS).contains(fps))
             .unwrap_or(DEFAULT_FPS);
+        let demographics =
+            env::var("KIOSK_PRESENCE_DEMOGRAPHICS").is_ok_and(|value| value.trim() == "1");
         Settings {
             camera,
             model,
             fps,
+            demographics,
             models: path_from("KIOSK_VISION_MODELS", MODELS),
             camera_dir: path_from("KIOSK_CAMERA_DIR", CAMERA_DIR),
         }
@@ -327,6 +355,7 @@ fn watch(
     camera: &Picked,
     settings: &Settings,
     detector: &Detector,
+    classifier: Option<&Classifier>,
     sender: &mut Sender,
     state: &Path,
     status: &mut VisionStatus,
@@ -402,12 +431,14 @@ fn watch(
         let t = now_ms();
 
         let started = Instant::now();
-        let picture = if mode.format == MJPEG {
-            picture::jpeg(&bytes, side)
-        } else {
-            picture::yuyv(&bytes, mode.width as usize, mode.height as usize, side)
+        let decode = |side| {
+            if mode.format == MJPEG {
+                picture::jpeg(&bytes, side)
+            } else {
+                picture::yuyv(&bytes, mode.width as usize, mode.height as usize, side)
+            }
         };
-        let picture = match picture {
+        let picture = match decode(side) {
             Ok(picture) => picture,
             Err(why) => {
                 status.error = Some(format!("a frame that does not decode: {why}"));
@@ -419,12 +450,76 @@ fn watch(
         let faces = detector.detect(&picture, FLOOR)?;
         status.inference_ms = average(status.inference_ms, ms(started.elapsed()));
         status.error = None;
+        let mut faces = tracker.update(faces);
+        if let Some(classifier) = classifier {
+            let (width, height) = (mode.width as usize, mode.height as usize);
+            classify(
+                classifier,
+                &mut tracker,
+                &mut faces,
+                status,
+                |wanted| {
+                    // The frame decoded again, large enough for the smallest
+                    // face still to settle; the detector's picture when it is.
+                    if wanted <= side {
+                        return Ok(None);
+                    }
+                    decode(wanted).map(Some)
+                },
+                (width, height),
+                &picture,
+            )?;
+        }
         sender.send(&VisionFrame {
             t,
             width: mode.width,
             height: mode.height,
-            faces: tracker.update(faces),
+            faces,
         });
+    }
+    Ok(())
+}
+
+/// One more look at every face in `faces` whose age and gender have not
+/// settled and that is big enough to tell, its estimate set on the face in
+/// the frame where it settles. `decode` gives the frame at a longer side, or
+/// `None` when `small` already is that large. A frame that does not decode
+/// larger is a frame without looks, not an error.
+fn classify(
+    classifier: &Classifier,
+    tracker: &mut Tracker,
+    faces: &mut [Detection],
+    status: &mut VisionStatus,
+    decode: impl Fn(usize) -> Result<Option<Rgb>, String>,
+    (width, height): (usize, usize),
+    small: &Rgb,
+) -> Result<(), String> {
+    let pending: Vec<usize> = (0..faces.len())
+        .filter(|&i| faces[i].demographics.is_none())
+        .filter(|&i| {
+            demographics::face_pixels(&faces[i].area, width, height) >= demographics::MIN_FACE
+        })
+        .collect();
+    let Some(wanted) = pending
+        .iter()
+        .map(|&i| demographics::decode_side(&faces[i].area, width, height))
+        .max()
+    else {
+        return Ok(());
+    };
+    let large = match decode(wanted) {
+        Ok(large) => large,
+        Err(_) => return Ok(()),
+    };
+    let picture = large.as_ref().unwrap_or(small);
+    for i in pending {
+        let face = &mut faces[i];
+        let started = Instant::now();
+        let look = classifier.look(demographics::square(picture, &face.area, &face.keypoints))?;
+        status.classify_ms = average(status.classify_ms, ms(started.elapsed()));
+        if let Some(settled) = tracker.look(face.id, look) {
+            face.demographics = Some(settled);
+        }
     }
     Ok(())
 }
@@ -448,10 +543,12 @@ fn open(device: &str) -> Result<File, String> {
 fn bench(args: &[String]) -> ExitCode {
     let mut model = blazeface::FULL;
     let mut models = path_from("KIOSK_VISION_MODELS", MODELS);
+    let mut demographics = false;
     let mut files = Vec::new();
     let mut args = args.iter();
     while let Some(arg) = args.next() {
         match arg.as_str() {
+            "--demographics" => demographics = true,
             "--model" => match args.next().and_then(|name| blazeface::model(name)) {
                 Some(found) => model = found,
                 None => {
@@ -478,6 +575,25 @@ fn bench(args: &[String]) -> ExitCode {
         }
     };
     println!("{} loaded in {:.0} ms", model.name, ms(started.elapsed()));
+    let classifier = if demographics {
+        let started = Instant::now();
+        match Classifier::load(&models) {
+            Ok(classifier) => {
+                println!(
+                    "{} loaded in {:.0} ms",
+                    demographics::FILE,
+                    ms(started.elapsed())
+                );
+                Some(classifier)
+            }
+            Err(why) => {
+                eprintln!("{why}");
+                return ExitCode::FAILURE;
+            }
+        }
+    } else {
+        None
+    };
     const RUNS: u32 = 10;
     for file in files {
         let bytes = match fs::read(&file) {
@@ -509,11 +625,28 @@ fn bench(args: &[String]) -> ExitCode {
             ms(infer / RUNS),
             faces.len()
         );
-        for (area, score, _) in faces {
+        let small = picture::jpeg(&bytes, model.size).ok();
+        for (area, score, keypoints) in faces {
             println!(
                 "  {:.2} at x {:.3} y {:.3} w {:.3} h {:.3}",
                 score, area.x, area.y, area.w, area.h
             );
+            let (Some(classifier), Some(small)) = (&classifier, &small) else {
+                continue;
+            };
+            let side = demographics::decode_side(&area, small.width, small.height).max(model.size);
+            let started = Instant::now();
+            let look = picture::jpeg(&bytes, side)
+                .and_then(|large| classifier.look(demographics::square(&large, &area, &keypoints)));
+            match look {
+                Ok(look) => println!(
+                    "    about {:.0}, {:.2} likely male, {:.1} ms with its decode",
+                    look.age,
+                    look.male,
+                    ms(started.elapsed())
+                ),
+                Err(why) => println!("    {why}"),
+            }
         }
     }
     ExitCode::SUCCESS

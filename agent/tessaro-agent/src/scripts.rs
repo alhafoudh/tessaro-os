@@ -361,7 +361,10 @@ pub fn render(
 /// `cec-key:red-<unix>-<hex>`, `presence-arrived-<unix>-<hex>`,
 /// `scanner-front-<unix>-<hex>`. What a scan said cannot be in a unit's
 /// name: the agent leaves it in `scans/<run>` (`Paths::scans_dir`), and the
-/// run takes it from there, its trailing newlines kept, and removes it.
+/// run takes it from there, its trailing newlines kept, and removes it. A
+/// presence run with camera.presence.demographics on finds its variables
+/// there the same way, as `NAME=value` lines of numbers and fixed words the
+/// agent wrote (`control/presence.rs`, `script_env`), which it sources.
 fn run_shell(strict: &str, scans: &Path) -> String {
     format!(
         "export TESSARO_TRIGGER=\"${{TESSARO_RUN%%-*}}\"; \
@@ -370,7 +373,8 @@ fn run_shell(strict: &str, scans: &Path) -> String {
          case \"$TESSARO_CEC_EVENT\" in key:*) \
          export TESSARO_CEC_KEY=\"${{TESSARO_CEC_EVENT#key:}}\" TESSARO_CEC_EVENT=key;; esac; fi; \
          if [ \"$TESSARO_TRIGGER\" = presence ]; then \
-         e=\"${{TESSARO_RUN#presence-}}\"; e=\"${{e%-*}}\"; export TESSARO_PRESENCE_EVENT=\"${{e%-*}}\"; fi; \
+         e=\"${{TESSARO_RUN#presence-}}\"; e=\"${{e%-*}}\"; export TESSARO_PRESENCE_EVENT=\"${{e%-*}}\"; \
+         f=\"{scans}/$TESSARO_RUN\"; if [ -f \"$f\" ]; then set -a; . \"$f\"; set +a; rm -f \"$f\"; fi; fi; \
          if [ \"$TESSARO_TRIGGER\" = scanner ]; then \
          e=\"${{TESSARO_RUN#scanner-}}\"; e=\"${{e%-*}}\"; export TESSARO_SCANNER=\"${{e%-*}}\"; \
          f=\"{scans}/$TESSARO_RUN\"; if [ -f \"$f\" ]; then \
@@ -763,6 +767,38 @@ mod tests {
             (ended.trigger.as_str(), ended.event.as_deref()),
             ("presence", Some("left"))
         );
+    }
+
+    #[test]
+    fn a_presence_run_gets_the_age_and_gender_left_for_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let body = dir.path().join("body");
+        fs::write(
+            &body,
+            "echo \"$TESSARO_PRESENCE_EVENT|$TESSARO_PRESENCE_FEMALE|$TESSARO_PRESENCE_GENDER|$TESSARO_PRESENCE_AGE\"; \
+             sh -c 'echo \"$TESSARO_PRESENCE_AGE\"'\n",
+        )
+        .unwrap();
+        let instance = "presence-classified-1700000000-4f2a";
+        fs::write(
+            dir.path().join(instance),
+            "TESSARO_PRESENCE_MALE=0\nTESSARO_PRESENCE_FEMALE=1\nTESSARO_PRESENCE_UNKNOWN=0\n\
+             TESSARO_PRESENCE_GENDER=female\nTESSARO_PRESENCE_AGE=34\n",
+        )
+        .unwrap();
+        let out = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg(run_shell("", dir.path()))
+            .arg(&body)
+            .env("TESSARO_RUN", instance)
+            .output()
+            .unwrap();
+        // Exported: a child shell sees them too.
+        assert_eq!(
+            String::from_utf8(out.stdout).unwrap(),
+            "classified|1|female|34\n34\n"
+        );
+        assert!(!dir.path().join(instance).exists(), "the file is removed");
     }
 
     #[test]

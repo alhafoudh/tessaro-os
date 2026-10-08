@@ -334,7 +334,7 @@ function ScriptDialog({
       </Field>
       <Field
         label="Run on presence events"
-        hint="comma separated: arrived, left, near, far; empty for none. Needs camera.presence.enable."
+        hint="comma separated: arrived, left, near, far, classified; empty for none. Needs camera.presence.enable."
       >
         <input
           value={typed.presence}

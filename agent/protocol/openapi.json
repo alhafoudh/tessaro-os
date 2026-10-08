@@ -6130,6 +6130,17 @@
             "format": "uint32",
             "minimum": 0,
             "description": "Faces in the newest frame."
+          },
+          "genders": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Genders"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Those faces by estimated gender, with camera.presence.demographics on."
           }
         },
         "required": [
@@ -6138,6 +6149,32 @@
           "count"
         ],
         "description": "Presence in `device status`, with camera.presence.enable on."
+      },
+      "Genders": {
+        "type": "object",
+        "properties": {
+          "male": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "female": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "unknown": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "male",
+          "female",
+          "unknown"
+        ],
+        "description": "How many faces of a frame were estimated as each gender. A face whose\nestimate has not settled yet is in none of them."
       },
       "BridgeStatus": {
         "type": "object",
@@ -9799,6 +9836,20 @@
             "description": "Inference of one frame, in milliseconds.",
             "default": null
           },
+          "demographics": {
+            "type": "boolean",
+            "description": "camera.presence.demographics.",
+            "default": false
+          },
+          "classify_ms": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Estimating the age and gender of one face, in milliseconds.",
+            "default": null
+          },
           "error": {
             "type": [
               "string",
@@ -9869,7 +9920,7 @@
         "properties": {
           "event": {
             "type": "string",
-            "description": "`arrived`, `left`, `near` or `far`."
+            "description": "One of `EVENTS`."
           },
           "at": {
             "$ref": "#/components/schemas/Moment"
@@ -9949,6 +10000,17 @@
           },
           "keypoints": {
             "$ref": "#/components/schemas/Keypoints"
+          },
+          "demographics": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Demographics"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Its estimated age and gender, once settled, with\ncamera.presence.demographics on."
           }
         },
         "required": [
@@ -10057,6 +10119,40 @@
           "left_ear"
         ],
         "description": "The landmarks of a face, as `Point`s."
+      },
+      "Demographics": {
+        "type": "object",
+        "properties": {
+          "age": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "Estimated age in years."
+          },
+          "gender": {
+            "$ref": "#/components/schemas/Gender"
+          },
+          "male": {
+            "type": "number",
+            "format": "double",
+            "description": "How likely the face is a man's, 0 to 1, averaged over its looks."
+          }
+        },
+        "required": [
+          "age",
+          "gender",
+          "male"
+        ],
+        "description": "What camera.presence.demographics estimates of a face, settled from a few\nlooks at it and never changed after: an estimate from the face alone, not\nan identity."
+      },
+      "Gender": {
+        "type": "string",
+        "enum": [
+          "male",
+          "female",
+          "unknown"
+        ],
+        "description": "A face's gender as FaceRes estimates it from the face alone: `unknown`\nwhen its looks do not lean far enough either way."
       },
       "CalibrateBody": {
         "type": "object",

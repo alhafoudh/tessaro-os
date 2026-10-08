@@ -30,6 +30,7 @@ const MIRRORS = "camera.mirrors";
 const PRESENCE_ENABLE = "camera.presence.enable";
 const PRESENCE_CAMERA = "camera.presence.camera";
 const PRESENCE_NEAR = "camera.presence.near";
+const PRESENCE_DEMOGRAPHICS = "camera.presence.demographics";
 /** protocol::keys::CAMERA_FORMATS. */
 const FORMATS = ["auto", "mjpeg", "yuyv"];
 /** 1 to protocol::keys::CAMERA_MIRRORS_MAX. */
@@ -223,8 +224,8 @@ export function Camera({ info }: { info: PageInfo }) {
 }
 
 /**
- * `tessaro-ctl camera presence on|off --camera --near`: camera.presence.enable, and with it on the
- * camera and the near distance where given.
+ * `tessaro-ctl camera presence on|off --camera --near --demographics`: camera.presence.enable, and
+ * with it on the camera and the near distance where given, and whether age and gender are estimated.
  */
 function PresenceDialog({
   status,
@@ -239,6 +240,7 @@ function PresenceDialog({
   const [on, setOn] = useState(status.enabled);
   const [watched, setWatched] = useState(status.camera ?? "");
   const [near, setNear] = useState(status.near_m != null ? String(status.near_m) : "off");
+  const [demographics, setDemographics] = useState(status.demographics ?? false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -249,6 +251,7 @@ function PresenceDialog({
       const values: Record<string, string> = { [PRESENCE_ENABLE]: on ? "1" : "0" };
       if (on && watched.trim() !== "") values[PRESENCE_CAMERA] = watched.trim();
       if (on && near.trim() !== "") values[PRESENCE_NEAR] = near.trim();
+      if (on) values[PRESENCE_DEMOGRAPHICS] = demographics ? "1" : "0";
       await set(values);
       onDone();
       onClose();
@@ -290,6 +293,18 @@ function PresenceDialog({
           onChange={(event) => setNear(event.target.value)}
           placeholder="1.5, or off"
           spellCheck={false}
+        />
+      </Field>
+      <Field
+        label="Estimate age and gender"
+        hint="an estimate from the face alone, never an identity; whether it may be used where the device stands is the owner's decision"
+      >
+        <input
+          type="checkbox"
+          checked={demographics}
+          disabled={!on}
+          onChange={(event) => setDemographics(event.target.checked)}
+          className="h-4 w-4 self-start"
         />
       </Field>
       {error && <p className="text-sm text-danger">{error}</p>}

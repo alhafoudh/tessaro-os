@@ -1426,10 +1426,11 @@ fn page_status(status: &protocol::Status) -> Value {
 }
 
 /// A face as the page gets it, in `tessaro:presence`, `tessaro:faces` and
-/// `presence.status()`.
+/// `presence.status()`: with `age`, `gender` and `male` once its estimate
+/// settled, with camera.presence.demographics on.
 pub(super) fn page_face(face: &protocol::presence::Face) -> Value {
     let keypoints = &face.keypoints;
-    json!({
+    let mut out = json!({
         "id": face.id,
         "box": face.area,
         "score": face.score,
@@ -1444,7 +1445,13 @@ pub(super) fn page_face(face: &protocol::presence::Face) -> Value {
             "rightEar": keypoints.right_ear,
             "leftEar": keypoints.left_ear,
         },
-    })
+    });
+    if let Some(estimate) = face.demographics {
+        out["age"] = json!(estimate.age);
+        out["gender"] = json!(estimate.gender);
+        out["male"] = json!(estimate.male);
+    }
+    out
 }
 
 /// A frame's faces as the page gets them: `tessaro:faces`.
@@ -1461,19 +1468,25 @@ pub(super) fn page_faces(frame: &protocol::presence::FacesFrame) -> Value {
 /// camera's name and how the detection runs are left out with the rest of
 /// what describes the device's insides.
 fn page_presence_status(status: &protocol::presence::PresenceStatus) -> Value {
-    json!({
+    let faces = status
+        .frame
+        .as_ref()
+        .map_or(&[][..], |frame| frame.faces.as_slice());
+    let mut out = json!({
         "enabled": status.enabled,
         "running": status.running,
         "present": status.present,
         "near": status.near,
         "nearMeters": status.near_m,
-        "count": status.frame.as_ref().map_or(0, |frame| frame.faces.len()),
+        "demographics": status.demographics,
+        "count": faces.len(),
         "last": status.last,
-        "faces": status
-            .frame
-            .as_ref()
-            .map_or_else(Vec::new, |frame| frame.faces.iter().map(page_face).collect()),
-    })
+        "faces": faces.iter().map(page_face).collect::<Vec<_>>(),
+    });
+    if status.demographics {
+        out["genders"] = json!(protocol::presence::Genders::of(faces));
+    }
+    out
 }
 
 /// `playlist status` as the page gets it: `tessaro.playlist.status()` and

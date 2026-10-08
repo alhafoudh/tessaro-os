@@ -186,6 +186,7 @@ pub fn presence_event(event: &str) -> String {
         "left" => "everyone leaving".to_string(),
         "near" => "someone coming near".to_string(),
         "far" => "everyone near stepping back".to_string(),
+        "classified" => "a face's age and gender settling".to_string(),
         other => other.to_string(),
     }
 }

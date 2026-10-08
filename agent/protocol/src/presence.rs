@@ -9,8 +9,9 @@ use crate::Moment;
 
 /// What the agent reports when the people in front of the screen change, to
 /// the journal, the page (`tessaro:presence`) and the scripts that run on
-/// them.
-pub const EVENTS: &[&str] = &["arrived", "left", "near", "far"];
+/// them. `classified` is a face's age and gender settling, with
+/// camera.presence.demographics on.
+pub const EVENTS: &[&str] = &["arrived", "left", "near", "far", "classified"];
 
 /// The face detectors camera.presence.model picks from, each a MediaPipe
 /// BlazeFace converted to ONNX: `face-full` sees faces up to about 5 m,
@@ -76,6 +77,66 @@ pub struct Detection {
     /// nose tip, the mouth, the right ear and the left ear, the person's own
     /// right and left.
     pub keypoints: [Point; 6],
+    /// The face's estimated age and gender, once settled, with
+    /// camera.presence.demographics on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub demographics: Option<Demographics>,
+}
+
+/// A face's gender as FaceRes estimates it from the face alone: `unknown`
+/// when its looks do not lean far enough either way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum Gender {
+    Male,
+    Female,
+    Unknown,
+}
+
+impl Gender {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Gender::Male => "male",
+            Gender::Female => "female",
+            Gender::Unknown => "unknown",
+        }
+    }
+}
+
+/// What camera.presence.demographics estimates of a face, settled from a few
+/// looks at it and never changed after: an estimate from the face alone, not
+/// an identity.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct Demographics {
+    /// Estimated age in years.
+    pub age: u32,
+    pub gender: Gender,
+    /// How likely the face is a man's, 0 to 1, averaged over its looks.
+    pub male: f64,
+}
+
+/// How many faces of a frame were estimated as each gender. A face whose
+/// estimate has not settled yet is in none of them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+pub struct Genders {
+    pub male: u32,
+    pub female: u32,
+    pub unknown: u32,
+}
+
+impl Genders {
+    pub fn of(faces: &[Face]) -> Genders {
+        let mut out = Genders::default();
+        for face in faces {
+            match face.demographics.map(|d| d.gender) {
+                Some(Gender::Male) => out.male += 1,
+                Some(Gender::Female) => out.female += 1,
+                Some(Gender::Unknown) => out.unknown += 1,
+                None => {}
+            }
+        }
+        out
+    }
 }
 
 /// What `tessaro-vision` sends the agent for every frame it looks at, as one
@@ -109,6 +170,13 @@ pub struct VisionStatus {
     pub decode_ms: Option<f64>,
     #[serde(default)]
     pub inference_ms: Option<f64>,
+    /// camera.presence.demographics, as it runs.
+    #[serde(default)]
+    pub demographics: bool,
+    /// Estimating the age and gender of one face, averaged over the last
+    /// ones.
+    #[serde(default)]
+    pub classify_ms: Option<f64>,
     /// Why it is not looking: no camera, the camera has no hidden mirror, a
     /// model that does not load.
     #[serde(default)]
@@ -159,6 +227,10 @@ pub struct Face {
     /// guess, not gaze tracking.
     pub facing: bool,
     pub keypoints: Keypoints,
+    /// Its estimated age and gender, once settled, with
+    /// camera.presence.demographics on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub demographics: Option<Demographics>,
 }
 
 /// The faces of one frame.
@@ -176,7 +248,7 @@ pub struct FacesFrame {
 /// One presence event and when it happened.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct PresenceEvent {
-    /// `arrived`, `left`, `near` or `far`.
+    /// One of `EVENTS`.
     pub event: String,
     pub at: Moment,
 }
@@ -200,6 +272,12 @@ pub struct PresenceStatus {
     /// Inference of one frame, in milliseconds.
     #[serde(default)]
     pub inference_ms: Option<f64>,
+    /// camera.presence.demographics.
+    #[serde(default)]
+    pub demographics: bool,
+    /// Estimating the age and gender of one face, in milliseconds.
+    #[serde(default)]
+    pub classify_ms: Option<f64>,
     /// Why it is not looking.
     #[serde(default)]
     pub error: Option<String>,
@@ -228,6 +306,9 @@ pub struct PresenceSummary {
     pub near: bool,
     /// Faces in the newest frame.
     pub count: u32,
+    /// Those faces by estimated gender, with camera.presence.demographics on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub genders: Option<Genders>,
 }
 
 /// What `tessaro-ctl camera calibrate` measured and saved.
@@ -279,10 +360,27 @@ mod tests {
                 },
                 score: 0.75,
                 keypoints: [[0.5, 0.5]; 6],
+                demographics: None,
             }],
         };
         let json = serde_json::to_string(&frame).unwrap();
         assert!(json.contains("\"box\":{"));
+        assert!(!json.contains("demographics"));
         assert_eq!(serde_json::from_str::<VisionFrame>(&json).unwrap(), frame);
+    }
+
+    #[test]
+    fn a_settled_estimate_travels_too() {
+        let estimate = Demographics {
+            age: 34,
+            gender: Gender::Female,
+            male: 0.125,
+        };
+        let json = serde_json::to_string(&estimate).unwrap();
+        assert_eq!(json, r#"{"age":34,"gender":"female","male":0.125}"#);
+        assert_eq!(
+            serde_json::from_str::<Demographics>(&json).unwrap(),
+            estimate
+        );
     }
 }

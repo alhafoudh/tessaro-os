@@ -12,7 +12,8 @@
       "arrived",
       "left",
       "near",
-      "far"
+      "far",
+      "classified"
     ],
     "typed": [
       {
@@ -36,14 +37,15 @@
         ]
       },
       {
-        "err": "\"gone\" is not a presence event; one of arrived, left, near, far"
+        "err": "\"gone\" is not a presence event; one of arrived, left, near, far, classified"
       }
     ],
     "words": [
       "someone arriving",
       "everyone leaving",
       "someone coming near",
-      "everyone near stepping back"
+      "everyone near stepping back",
+      "a face's age and gender settling"
     ]
   }
 }

@@ -10,7 +10,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use protocol::keys;
 use protocol::presence::{
-    Calibrated, PresenceEvent, PresenceStatus, PresenceSummary, VisionFrame, VisionStatus,
+    Calibrated, Face, Genders, PresenceEvent, PresenceStatus, PresenceSummary, VisionFrame,
+    VisionStatus,
 };
 use serde_json::json;
 use tokio::net::UnixDatagram;
@@ -19,7 +20,7 @@ use super::bridge::{page_face, page_faces};
 use super::{Caller, Control, Reply};
 use crate::config;
 use crate::deadline::blocking;
-use crate::presence::{self, Settings};
+use crate::presence::{self, Event, Settings};
 use crate::sync::lock;
 
 /// How often time is looked at with no frame coming: someone gone for
@@ -134,11 +135,11 @@ impl Control {
                 events.extend(state.frame(now, frame, &thresholds));
             }
             if let Some(event) = events.last() {
-                state.last = Some((event, unix_now()));
+                state.last = Some((event.name, unix_now()));
             }
             (events, state.frame.as_ref().map(|(_, frame)| frame.clone()))
         };
-        for event in events {
+        for event in &events {
             self.presence_event(event, &settings).await;
         }
         if settings.page {
@@ -160,55 +161,66 @@ impl Control {
             let mut state = lock(&self.presence);
             let events = state.tick(Instant::now(), &Settings::from(&settings));
             if let Some(event) = events.last() {
-                state.last = Some((event, unix_now()));
+                state.last = Some((event.name, unix_now()));
             }
             events
         };
-        for event in events {
+        for event in &events {
             self.presence_event(event, &settings).await;
         }
     }
 
     /// One event to the journal, the page and the scripts that run on it.
-    async fn presence_event(&self, event: &'static str, settings: &config::Presence) {
-        let (detail, count) = {
+    /// With camera.presence.demographics on, it carries the faces by gender,
+    /// and `classified` the face that settled.
+    async fn presence_event(&self, event: &Event, settings: &config::Presence) {
+        let (mut detail, faces) = {
             let state = lock(&self.presence);
-            let faces: Vec<serde_json::Value> =
-                state.frame.as_ref().map_or_else(Vec::new, |(_, frame)| {
-                    frame.faces.iter().map(page_face).collect()
-                });
-            let count = faces.len();
+            let faces: Vec<Face> = state
+                .frame
+                .as_ref()
+                .map_or_else(Vec::new, |(_, frame)| frame.faces.clone());
             (
                 json!({
-                    "event": event,
+                    "event": event.name,
                     "present": state.present,
                     "near": state.near,
-                    "count": count,
-                    "faces": faces,
+                    "count": faces.len(),
+                    "faces": faces.iter().map(page_face).collect::<Vec<_>>(),
                 }),
-                count,
+                faces,
             )
         };
-        self.log
-            .info(format!("presence: {event}, with {count} face(s) in view"));
+        let genders = settings.demographics.then(|| Genders::of(&faces));
+        if let Some(genders) = genders {
+            detail["genders"] = json!(genders);
+        }
+        if let Some(face) = &event.face {
+            detail["face"] = page_face(face);
+        }
+        self.log.info(journal_line(event, faces.len()));
         if settings.page {
             self.bridge_presence(detail).await;
         }
         if settings.scripts {
-            self.presence_scripts(event).await;
+            let payload = genders.map(|genders| script_env(&genders, event.face.as_ref()));
+            self.presence_scripts(event.name, payload.as_deref()).await;
         }
     }
 
     /// Presence in `device status`, while camera.presence.enable is on.
     pub(super) fn presence_summary(&self) -> Option<PresenceSummary> {
-        if !self.current.borrow().config.presence.enable {
+        let settings = self.current.borrow().config.presence.clone();
+        if !settings.enable {
             return None;
         }
         let state = lock(&self.presence);
+        let faces = state.faces(Instant::now(), FRESH);
         Some(PresenceSummary {
             present: state.present,
             near: state.near,
-            count: state.count(Instant::now(), FRESH),
+            count: faces.len() as u32,
+            genders: settings.demographics.then(|| Genders::of(faces)),
         })
     }
 
@@ -248,6 +260,8 @@ impl Control {
             model: settings.model,
             fps: vision.fps,
             inference_ms: vision.inference_ms,
+            demographics: settings.demographics,
+            classify_ms: vision.classify_ms,
             error: vision.error,
             present,
             near,
@@ -316,4 +330,96 @@ impl Control {
 /// A datagram as a frame; anything else is dropped.
 fn parse(body: &[u8]) -> Option<VisionFrame> {
     serde_json::from_slice(body).ok()
+}
+
+/// What the journal says of an event: `classified` names the face.
+fn journal_line(event: &Event, count: usize) -> String {
+    match event
+        .face
+        .as_ref()
+        .and_then(|face| Some((face.id, face.demographics?)))
+    {
+        Some((id, estimate)) => format!(
+            "presence: classified face #{id} as {}, about {}",
+            estimate.gender.as_str(),
+            estimate.age
+        ),
+        None => format!("presence: {}, with {count} face(s) in view", event.name),
+    }
+}
+
+/// The variables a run on a presence event gets with
+/// camera.presence.demographics on, one `NAME=value` a line for its shell to
+/// read (`scripts::run_shell`): the faces in view by gender and, for
+/// `classified`, the face's own. Every value is a number or one of
+/// `Gender`'s words, so the file is safe to source.
+fn script_env(genders: &Genders, face: Option<&Face>) -> Vec<u8> {
+    let mut out = format!(
+        "TESSARO_PRESENCE_MALE={}\nTESSARO_PRESENCE_FEMALE={}\nTESSARO_PRESENCE_UNKNOWN={}\n",
+        genders.male, genders.female, genders.unknown
+    );
+    if let Some(estimate) = face.and_then(|face| face.demographics) {
+        out.push_str(&format!(
+            "TESSARO_PRESENCE_GENDER={}\nTESSARO_PRESENCE_AGE={}\n",
+            estimate.gender.as_str(),
+            estimate.age
+        ));
+    }
+    out.into_bytes()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use protocol::presence::{Demographics, FaceBox, Gender, Keypoints};
+
+    fn face() -> Face {
+        Face {
+            id: 3,
+            area: FaceBox::default(),
+            score: 0.9,
+            distance: 1.0,
+            near: true,
+            facing: true,
+            keypoints: Keypoints::from([[0.5, 0.5]; 6]),
+            demographics: Some(Demographics {
+                age: 34,
+                gender: Gender::Female,
+                male: 0.12,
+            }),
+        }
+    }
+
+    #[test]
+    fn classified_names_the_face_in_the_journal_and_for_scripts() {
+        let event = Event {
+            name: "classified",
+            face: Some(face()),
+        };
+        assert_eq!(
+            journal_line(&event, 2),
+            "presence: classified face #3 as female, about 34"
+        );
+        let genders = Genders {
+            male: 1,
+            female: 1,
+            unknown: 0,
+        };
+        assert_eq!(
+            String::from_utf8(script_env(&genders, event.face.as_ref())).unwrap(),
+            "TESSARO_PRESENCE_MALE=1\nTESSARO_PRESENCE_FEMALE=1\nTESSARO_PRESENCE_UNKNOWN=0\n\
+             TESSARO_PRESENCE_GENDER=female\nTESSARO_PRESENCE_AGE=34\n"
+        );
+        let arrived = Event {
+            name: "arrived",
+            face: None,
+        };
+        assert_eq!(
+            journal_line(&arrived, 2),
+            "presence: arrived, with 2 face(s) in view"
+        );
+        assert!(!String::from_utf8(script_env(&genders, None))
+            .unwrap()
+            .contains("AGE"));
+    }
 }

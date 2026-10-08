@@ -775,6 +775,22 @@
     }
   },
   {
+    "name": "camera.presence.demographics",
+    "env": "KIOSK_PRESENCE_DEMOGRAPHICS",
+    "applies": [
+      "agent",
+      "vision"
+    ],
+    "guarded": false,
+    "doc": "Estimate the age and gender of every face in front of the screen: a few looks at each face settle them, then they go with its face to the journal, the page and scripts, with a classified event. An estimate from the face alone, never an identity, and nothing is kept. Whether it may be used where the device stands is the owner's decision. Off by default. `tessaro-ctl camera presence on --demographics on`.",
+    "values": "1 or 0 (on/off, true/false, yes/no)",
+    "default": null,
+    "value": null,
+    "input": {
+      "kind": "flag"
+    }
+  },
+  {
     "name": "camera.presence.confidence",
     "env": "KIOSK_PRESENCE_CONFIDENCE",
     "applies": [

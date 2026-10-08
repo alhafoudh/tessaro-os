@@ -138,6 +138,20 @@ export function presence(status: Schemas["PresenceStatus"]): Line[] {
     camera = camera.add("muted", `  ${fixed(status.inference_ms, 0)} ms a frame`);
   }
   lines.push(camera);
+  if (status.demographics) {
+    const genders = { male: 0, female: 0, unknown: 0 };
+    for (const face of status.frame?.faces ?? []) {
+      if (face.demographics) genders[face.demographics.gender] += 1;
+    }
+    let estimate = new Line()
+      .pad("label", "estimate", 9)
+      .text(" age and gender  ")
+      .add("plain", `${genders.male} male, ${genders.female} female, ${genders.unknown} unknown`);
+    if (status.classify_ms != null) {
+      estimate = estimate.add("muted", `  ${fixed(status.classify_ms, 0)} ms a look`);
+    }
+    lines.push(estimate);
+  }
   if (status.error) {
     lines.push(Line.plain("          ").add("bad", status.error));
   }
@@ -166,7 +180,7 @@ export function presence(status: Schemas["PresenceStatus"]): Line[] {
   return lines;
 }
 
-/** One face: `face     #3 1.2 m near facing (0.93)`. */
+/** One face: `face     #3 1.2 m near facing (0.93)`, then `female, about 34` once settled. */
 function faceLine(face: Schemas["Face"]): Line {
   let line = Line.plain("    ")
     .pad("label", "face", 5)
@@ -174,10 +188,23 @@ function faceLine(face: Schemas["Face"]): Line {
   if (face.near) {
     line = line.text(" ").add("ok", "near");
   }
-  return line
+  line = line
     .text(" ")
     .add("plain", face.facing ? "facing" : "turned away")
     .add("muted", ` (${fixed(face.score, 2)})`);
+  if (face.demographics) {
+    line = line.text("  ").add("plain", estimate(face.demographics));
+  }
+  return line;
+}
+
+/**
+ * A face's settled age and gender: `female, about 34`, `gender unknown, about 52`. The camera
+ * panel labels its face boxes with it too.
+ */
+export function estimate(estimate: Schemas["Demographics"]): string {
+  const gender = estimate.gender === "unknown" ? "gender unknown" : estimate.gender;
+  return `${gender}, about ${estimate.age}`;
 }
 
 /** What `camera calibrate` saved. */

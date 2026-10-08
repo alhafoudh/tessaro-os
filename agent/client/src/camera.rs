@@ -115,22 +115,28 @@ pub fn watch_presence(
 }
 
 /// The settings `camera presence on|off` saves: camera.presence.enable, and
-/// with `on` the camera and the near distance where given (empty is not
-/// given). Off with either is refused, as the command line refuses it.
+/// with `on` the camera, the near distance and whether age and gender are
+/// estimated (camera.presence.demographics), where given (empty is not
+/// given). Off with any of them is refused, as the command line refuses it.
 pub fn presence_change(
     on: bool,
     camera: Option<&str>,
     near: Option<&str>,
+    demographics: Option<bool>,
 ) -> Result<BTreeMap<String, String>, String> {
     let camera = camera.map(str::trim).filter(|value| !value.is_empty());
     let near = near.map(str::trim).filter(|value| !value.is_empty());
-    if !on && (camera.is_some() || near.is_some()) {
-        return Err("--camera and --near go with `tessaro-ctl camera presence on`".to_string());
+    if !on && (camera.is_some() || near.is_some() || demographics.is_some()) {
+        return Err(
+            "--camera, --near and --demographics go with `tessaro-ctl camera presence on`"
+                .to_string(),
+        );
     }
-    let mut values = BTreeMap::from([(
-        keys::PRESENCE_ENABLE.to_string(),
-        if on { "1" } else { "0" }.to_string(),
-    )]);
+    let flag = |on: bool| if on { "1" } else { "0" }.to_string();
+    let mut values = BTreeMap::from([(keys::PRESENCE_ENABLE.to_string(), flag(on))]);
+    if let Some(demographics) = demographics {
+        values.insert(keys::PRESENCE_DEMOGRAPHICS.to_string(), flag(demographics));
+    }
     for (key, value) in [(keys::PRESENCE_CAMERA, camera), (keys::PRESENCE_NEAR, near)] {
         if let Some(value) = value {
             let key_info = keys::find(key).ok_or_else(|| format!("no key {key}"))?;
@@ -184,16 +190,20 @@ mod tests {
     use protocol::CameraInfo;
 
     #[test]
-    fn presence_on_takes_a_camera_and_a_near_distance_and_off_takes_neither() {
-        let on = presence_change(true, Some("HD Webcam"), Some("1.50")).unwrap();
+    fn presence_on_takes_a_camera_a_near_distance_and_demographics_and_off_takes_none() {
+        let on = presence_change(true, Some("HD Webcam"), Some("1.50"), Some(true)).unwrap();
         assert_eq!(on[keys::PRESENCE_ENABLE], "1");
         assert_eq!(on[keys::PRESENCE_CAMERA], "HD Webcam");
         assert_eq!(on[keys::PRESENCE_NEAR], "1.5");
-        let off = presence_change(false, None, Some(" ")).unwrap();
+        assert_eq!(on[keys::PRESENCE_DEMOGRAPHICS], "1");
+        let plain = presence_change(true, None, None, None).unwrap();
+        assert!(!plain.contains_key(keys::PRESENCE_DEMOGRAPHICS));
+        let off = presence_change(false, None, Some(" "), None).unwrap();
         assert_eq!(off.len(), 1);
         assert_eq!(off[keys::PRESENCE_ENABLE], "0");
-        assert!(presence_change(false, None, Some("2")).is_err());
-        assert!(presence_change(true, None, Some("far")).is_err());
+        assert!(presence_change(false, None, Some("2"), None).is_err());
+        assert!(presence_change(false, None, None, Some(false)).is_err());
+        assert!(presence_change(true, None, Some("far"), None).is_err());
     }
 
     fn list(devices: &[&str]) -> CameraList {

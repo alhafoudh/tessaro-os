@@ -342,10 +342,12 @@ impl Control {
         self.event_scripts("cec", "CEC", &word, wanted, None).await;
     }
 
-    /// The same for a presence event (`arrived`, `left`, `near`, `far`).
-    pub(super) async fn presence_scripts(&self, event: &str) {
+    /// The same for a presence event (`protocol::presence::EVENTS`). With
+    /// camera.presence.demographics on, `env` is the run's variables for the
+    /// faces' age and gender, left like a scan (`scripts::run_shell`).
+    pub(super) async fn presence_scripts(&self, event: &str, env: Option<&[u8]>) {
         let wanted = |script: &Script| protocol::presence::runs_on(&script.spec.presence, event);
-        self.event_scripts("presence", "presence", event, wanted, None)
+        self.event_scripts("presence", "presence", event, wanted, env)
             .await;
     }
 
@@ -360,7 +362,8 @@ impl Control {
     /// Start a run of every script `wanted` picks, as `<trigger>-<word>-...`,
     /// with each script's runs on `trigger` events held to `EVENT_BURST` in
     /// `EVENT_WINDOW`. `what` names the events in the journal. `payload` is
-    /// left in `scans/<run>` for the run to read, root's alone.
+    /// left in `scans/<run>` for the run to read, root's alone: what a scan
+    /// said, or a presence event's variables.
     async fn event_scripts(
         &self,
         trigger: &str,
@@ -412,13 +415,15 @@ impl Control {
             if let Some(payload) = payload {
                 let file = self.paths.scans_dir().join(&instance);
                 let bytes = payload.to_vec();
-                if let Err(err) = blocking("keeping the scan for its script", move || {
-                    keep_scan(&file, &bytes)
-                })
-                .await
+                if let Err(err) =
+                    blocking("keeping the event's payload for its script", move || {
+                        keep_scan(&file, &bytes)
+                    })
+                    .await
                 {
-                    self.log
-                        .info(format!("script {name}: keeping the scan for it: {err}"));
+                    self.log.info(format!(
+                        "script {name}: keeping the {what} event for it: {err}"
+                    ));
                     continue;
                 }
             }

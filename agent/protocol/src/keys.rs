@@ -306,6 +306,9 @@ const VISION: &[Consumer] = &[Consumer::Vision];
 /// camera.presence.enable: the mirrors add or drop the hidden one presence
 /// detection reads, and the vision service starts or stops.
 const CAMERA_AND_VISION: &[Consumer] = &[Consumer::Camera, Consumer::Vision];
+/// camera.presence.demographics: the vision service loads the estimator, and
+/// the agent says whether it is on.
+const AGENT_AND_VISION: &[Consumer] = &[Consumer::Agent, Consumer::Vision];
 /// The proxy keys: the local proxy. The agent, whose probe and public
 /// address lookup go through it, follows only it being switched on or off.
 const PROXY: &[Consumer] = &[Consumer::Proxy];
@@ -476,6 +479,8 @@ pub static KEYS: &[Key] = &[
         "The face detector: face-full sees faces up to about 5 m, face-short up to about 2 m for a fraction of the CPU."),
     key(PRESENCE_FPS, "KIOSK_PRESENCE_FPS", Kind::Int { min: 1, max: 15 }, VISION,
         "Frames a second presence detection looks at, at most. More notices people sooner and costs CPU; `tessaro-ctl camera presence` shows what the device keeps up with."),
+    key(PRESENCE_DEMOGRAPHICS, "KIOSK_PRESENCE_DEMOGRAPHICS", Kind::Flag, AGENT_AND_VISION,
+        "Estimate the age and gender of every face in front of the screen: a few looks at each face settle them, then they go with its face to the journal, the page and scripts, with a classified event. An estimate from the face alone, never an identity, and nothing is kept. Whether it may be used where the device stands is the owner's decision. Off by default. `tessaro-ctl camera presence on --demographics on`."),
     key(PRESENCE_CONFIDENCE, "KIOSK_PRESENCE_CONFIDENCE", Kind::Decimal { min: 30, max: 95, off: false }, AGENT,
         "How sure the detector has to be that it sees a face, 0.3 to 0.95. Lower finds faces further away and side-on, and mistakes a poster for one more often."),
     key(PRESENCE_NEAR, "KIOSK_PRESENCE_NEAR", Kind::Decimal { min: 30, max: 1000, off: true }, AGENT,
@@ -695,6 +700,7 @@ pub const PRESENCE_ENABLE: &str = "camera.presence.enable";
 pub const PRESENCE_CAMERA: &str = "camera.presence.camera";
 pub const PRESENCE_MODEL: &str = "camera.presence.model";
 pub const PRESENCE_FPS: &str = "camera.presence.fps";
+pub const PRESENCE_DEMOGRAPHICS: &str = "camera.presence.demographics";
 pub const PRESENCE_CONFIDENCE: &str = "camera.presence.confidence";
 pub const PRESENCE_NEAR: &str = "camera.presence.near";
 pub const PRESENCE_FOV: &str = "camera.presence.fov";
@@ -1955,6 +1961,11 @@ mod tests {
         assert_eq!(
             find(PRESENCE_ENABLE).unwrap().consumers,
             [Consumer::Camera, Consumer::Vision]
+        );
+        assert_eq!(check(PRESENCE_DEMOGRAPHICS, "1").unwrap(), "1");
+        assert_eq!(
+            find(PRESENCE_DEMOGRAPHICS).unwrap().consumers,
+            [Consumer::Agent, Consumer::Vision]
         );
     }
 

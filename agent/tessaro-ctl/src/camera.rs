@@ -79,6 +79,7 @@ pub enum CameraCmd {
     ///
     ///   tessaro-ctl camera presence
     ///   tessaro-ctl camera presence on --near 1.2
+    ///   tessaro-ctl camera presence on --demographics on
     ///   tessaro-ctl camera presence --watch 1
     Presence {
         state: Option<crate::Toggle>,
@@ -89,6 +90,11 @@ pub enum CameraCmd {
         /// With `on`: meters within which someone counts as near, or off.
         #[arg(long, value_name = "METERS")]
         near: Option<String>,
+        /// With `on`: estimate the age and gender of every face
+        /// (camera.presence.demographics). Whether that may be used where
+        /// the device stands is the owner's decision.
+        #[arg(long, value_name = "on|off")]
+        demographics: Option<crate::Toggle>,
         /// Show it again every SECONDS, until Ctrl-C.
         #[arg(long, value_name = "SECONDS", conflicts_with = "state")]
         watch: Option<f64>,
@@ -128,12 +134,14 @@ pub fn run(session: &mut Session, command: CameraCmd, json: bool) -> Result<(), 
             state: Some(state),
             camera,
             near,
+            demographics,
             ..
         } => {
             let values = camera::presence_change(
                 state == crate::Toggle::On,
                 camera.as_deref(),
                 near.as_deref(),
+                demographics.map(|toggle| toggle == crate::Toggle::On),
             )?;
             let applied = crate::set(session, values)?;
             print(json, &applied, || show_applied(&applied, false))

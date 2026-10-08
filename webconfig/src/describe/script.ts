@@ -136,6 +136,8 @@ export function presenceEvent(event: string): string {
       return "someone coming near";
     case "far":
       return "everyone near stepping back";
+    case "classified":
+      return "a face's age and gender settling";
     default:
       return event;
   }

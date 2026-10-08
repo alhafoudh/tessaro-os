@@ -1,7 +1,8 @@
-//! A camera frame as the network's input: decoded no larger than needed,
-//! then letterboxed into the model's square with its aspect ratio kept, as
+//! A camera frame as the networks' input: decoded no larger than needed,
+//! then letterboxed into the detector's square with its aspect ratio kept, as
 //! MediaPipe's `ImageToTensorCalculator` does (`keep_aspect_ratio`, zero
-//! border), with values from -1 to 1.
+//! border), with values from -1 to 1; or a face cut out of it, level, for
+//! the age and gender estimators.
 
 use std::io::Cursor;
 
@@ -130,33 +131,61 @@ pub fn tensor(picture: &Rgb, side: usize) -> (Vec<f32>, Letterbox) {
     let (inner_w, inner_h) = (letterbox.w * side as f32, letterbox.h * side as f32);
     let scale_x = picture.width as f32 / inner_w;
     let scale_y = picture.height as f32 / inner_h;
-    let at =
-        |x: usize, y: usize, c: usize| f32::from(picture.pixels[(y * picture.width + x) * 3 + c]);
     for ty in 0..side {
         let fy = (ty as f32 + 0.5 - top) * scale_y - 0.5;
         if fy < -0.5 || fy > picture.height as f32 - 0.5 {
             continue;
         }
-        let y0 = fy.floor().max(0.0) as usize;
-        let y1 = (y0 + 1).min(picture.height - 1);
-        let wy = (fy - y0 as f32).clamp(0.0, 1.0);
         for tx in 0..side {
             let fx = (tx as f32 + 0.5 - left) * scale_x - 0.5;
             if fx < -0.5 || fx > picture.width as f32 - 0.5 {
                 continue;
             }
-            let x0 = fx.floor().max(0.0) as usize;
-            let x1 = (x0 + 1).min(picture.width - 1);
-            let wx = (fx - x0 as f32).clamp(0.0, 1.0);
-            for c in 0..3 {
-                let top = at(x0, y0, c) * (1.0 - wx) + at(x1, y0, c) * wx;
-                let bottom = at(x0, y1, c) * (1.0 - wx) + at(x1, y1, c) * wx;
-                let value = top * (1.0 - wy) + bottom * wy;
+            let rgb = bilinear(picture, fx, fy);
+            for (c, value) in rgb.into_iter().enumerate() {
                 out[(ty * side + tx) * 3 + c] = value / 127.5 - 1.0;
             }
         }
     }
     (out, letterbox)
+}
+
+/// The colour at a point between pixel centres, 0 to 255, from the four
+/// pixels around it; a point past the edge takes the edge's.
+fn bilinear(picture: &Rgb, fx: f32, fy: f32) -> [f32; 3] {
+    let (last_x, last_y) = (picture.width - 1, picture.height - 1);
+    let fx = fx.clamp(0.0, last_x as f32);
+    let fy = fy.clamp(0.0, last_y as f32);
+    let (x0, y0) = (fx.floor() as usize, fy.floor() as usize);
+    let (x1, y1) = ((x0 + 1).min(last_x), (y0 + 1).min(last_y));
+    let (wx, wy) = (fx - x0 as f32, fy - y0 as f32);
+    let at =
+        |x: usize, y: usize, c: usize| f32::from(picture.pixels[(y * picture.width + x) * 3 + c]);
+    std::array::from_fn(|c| {
+        let top = at(x0, y0, c) * (1.0 - wx) + at(x1, y0, c) * wx;
+        let bottom = at(x0, y1, c) * (1.0 - wx) + at(x1, y1, c) * wx;
+        top * (1.0 - wy) + bottom * wy
+    })
+}
+
+/// A square of `picture` resized to `size`, bilinear, as NHWC floats from 0
+/// to 255: centred on `center` (in pixels), `side` pixels across and turned
+/// by `angle` radians, so a tilted head comes out level. A part past the
+/// picture's edge repeats the edge.
+pub fn crop(picture: &Rgb, center: [f32; 2], side: f32, angle: f32, size: usize) -> Vec<f32> {
+    let mut out = Vec::with_capacity(size * size * 3);
+    let step = side / size as f32;
+    let (sin, cos) = angle.sin_cos();
+    for ty in 0..size {
+        let dy = (ty as f32 + 0.5) * step - side / 2.0;
+        for tx in 0..size {
+            let dx = (tx as f32 + 0.5) * step - side / 2.0;
+            let fx = center[0] + dx * cos - dy * sin - 0.5;
+            let fy = center[1] + dx * sin + dy * cos - 0.5;
+            out.extend(bilinear(picture, fx, fy));
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -197,6 +226,45 @@ mod tests {
         let [r, g, b] = [picture.pixels[0], picture.pixels[1], picture.pixels[2]];
         assert_eq!((r, g), (g, b));
         assert!((r as i32 - 128).abs() <= 1);
+    }
+
+    /// 4x4, black on the left half and white on the right.
+    fn halves() -> Rgb {
+        let pixels = (0..16)
+            .flat_map(|i| [if i % 4 < 2 { 0 } else { 255 }; 3])
+            .collect();
+        Rgb {
+            width: 4,
+            height: 4,
+            pixels,
+        }
+    }
+
+    #[test]
+    fn a_crop_keeps_what_is_where() {
+        let out = crop(&halves(), [2.0, 2.0], 4.0, 0.0, 4);
+        // Same size and place: pixel for pixel.
+        assert_eq!(out[0], 0.0);
+        assert_eq!(out[3 * 3], 255.0);
+        assert_eq!(out.len(), 4 * 4 * 3);
+    }
+
+    #[test]
+    fn a_turned_crop_turns_the_picture() {
+        // The crop's x axis runs along `angle` in the picture: a quarter
+        // turn reads the picture top to bottom, so its right half (white)
+        // comes out on top.
+        let out = crop(&halves(), [2.0, 2.0], 4.0, std::f32::consts::FRAC_PI_2, 4);
+        let at = |x: usize, y: usize| out[(y * 4 + x) * 3];
+        assert_eq!(at(0, 0), 255.0);
+        assert_eq!(at(3, 0), 255.0);
+        assert_eq!(at(0, 3), 0.0);
+    }
+
+    #[test]
+    fn a_crop_past_the_edge_repeats_it() {
+        let out = crop(&halves(), [4.0, 2.0], 4.0, 0.0, 4);
+        assert_eq!(out[(4 - 1) * 3], 255.0);
     }
 
     #[test]

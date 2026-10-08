@@ -73,7 +73,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 '''
 
 [tasks."vision:models"]
-description = "Convert MediaPipe's face detectors into the ONNX files tessaro-vision runs (tf2onnx in docker)"
+description = "Convert MediaPipe's face detectors and HSE FaceRes, the age and gender estimator, into the ONNX files tessaro-vision runs (tf2onnx in docker)"
 dir = "{{config_root}}"
 run = '''
 set -e

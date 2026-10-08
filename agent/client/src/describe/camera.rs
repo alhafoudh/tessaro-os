@@ -2,7 +2,7 @@
 //! included.
 
 use protocol::keys;
-use protocol::presence::{Calibrated, Face, PresenceStatus};
+use protocol::presence::{Calibrated, Demographics, Face, Gender, Genders, PresenceStatus};
 use protocol::{CameraInfo, CameraList, CameraMode};
 
 use crate::text::{Line, Tone};
@@ -175,6 +175,23 @@ pub fn presence(status: &PresenceStatus) -> Vec<Line> {
         camera = camera.add(Tone::Muted, format!("  {ms:.0} ms a frame"));
     }
     lines.push(camera);
+    if status.demographics {
+        let genders = Genders::of(faces);
+        let mut estimate = Line::new()
+            .pad(Tone::Label, "estimate", 9)
+            .text(" age and gender  ")
+            .add(
+                Tone::Plain,
+                format!(
+                    "{} male, {} female, {} unknown",
+                    genders.male, genders.female, genders.unknown
+                ),
+            );
+        if let Some(ms) = status.classify_ms {
+            estimate = estimate.add(Tone::Muted, format!("  {ms:.0} ms a look"));
+        }
+        lines.push(estimate);
+    }
     if let Some(err) = &status.error {
         lines.push(Line::plain("          ").add(Tone::Bad, err));
     }
@@ -213,7 +230,8 @@ pub fn presence(status: &PresenceStatus) -> Vec<Line> {
     lines
 }
 
-/// One face: `face     #3 1.2 m near facing (0.93)`.
+/// One face: `face     #3 1.2 m near facing (0.93)`, then `female, about
+/// 34` once its age and gender settled.
 fn face_line(face: &Face) -> Line {
     let mut line = Line::plain("    ")
         .pad(Tone::Label, "face", 5)
@@ -221,12 +239,27 @@ fn face_line(face: &Face) -> Line {
     if face.near {
         line = line.text(" ").add(Tone::Ok, "near");
     }
-    line.text(" ")
+    line = line
+        .text(" ")
         .add(
             Tone::Plain,
             if face.facing { "facing" } else { "turned away" },
         )
-        .add(Tone::Muted, format!(" ({:.2})", face.score))
+        .add(Tone::Muted, format!(" ({:.2})", face.score));
+    if let Some(estimate) = &face.demographics {
+        line = line.text("  ").add(Tone::Plain, self::estimate(estimate));
+    }
+    line
+}
+
+/// A face's settled age and gender: `female, about 34`, `gender unknown,
+/// about 52`. The camera panels label their face boxes with it too.
+pub fn estimate(estimate: &Demographics) -> String {
+    let gender = match estimate.gender {
+        Gender::Unknown => "gender unknown",
+        known => known.as_str(),
+    };
+    format!("{gender}, about {}", estimate.age)
 }
 
 /// What `camera calibrate` saved.

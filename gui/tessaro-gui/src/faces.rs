@@ -1,5 +1,6 @@
 //! The faces presence detection sees, drawn over the camera panel's
-//! snapshot: a box each, green while near, with its distance. The snapshot
+//! snapshot: a box each, green while near, with its distance and, once
+//! settled, its estimated age and gender. The snapshot
 //! is shown contained, so the boxes are placed in the same rectangle: the
 //! frame's aspect ratio fitted to the panel and centred.
 
@@ -71,8 +72,13 @@ impl<M> canvas::Program<M> for Draw {
                 &Path::rectangle(at, size),
                 Stroke::default().with_width(2.0).with_color(color),
             );
+            let mut label = format!("#{} {:.1} m", face.id, face.distance);
+            if let Some(estimate) = &face.demographics {
+                label.push_str("  ");
+                label.push_str(&tessaro_client::describe::camera::estimate(estimate));
+            }
             frame.fill_text(Text {
-                content: format!("#{} {:.1} m", face.id, face.distance),
+                content: label,
                 position: Point::new(at.x, (at.y - 14.0).max(picture.y)),
                 color,
                 size: theme::SMALL.into(),

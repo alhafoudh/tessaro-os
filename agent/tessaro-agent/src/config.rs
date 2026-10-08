@@ -192,6 +192,9 @@ pub struct Presence {
     pub enable: bool,
     /// `camera.presence.model`, for the status; the vision service runs it.
     pub model: String,
+    /// `camera.presence.demographics`, for the status; the vision service
+    /// estimates.
+    pub demographics: bool,
     /// `camera.presence.confidence`, in hundredths.
     pub confidence: i64,
     /// `camera.presence.near` in centimeters; `None` when it is off.
@@ -319,6 +322,7 @@ impl Config {
             presence: Presence {
                 enable: flag(env, "KIOSK_PRESENCE", false),
                 model: string(env, "KIOSK_PRESENCE_MODEL", "face-full"),
+                demographics: flag(env, "KIOSK_PRESENCE_DEMOGRAPHICS", false),
                 confidence: hundredths(env, "KIOSK_PRESENCE_CONFIDENCE", 60),
                 near: match string(env, "KIOSK_PRESENCE_NEAR", "1.5").trim() {
                     "off" => None,

@@ -613,6 +613,8 @@ const CEC_EVENTS: &str = "Run on CEC events";
 const PRESENCE_EVENTS: &str = "Run on presence events";
 /// Its scanners, the same way as `--scanner` takes them.
 const SCANNER_TRIGGERS: &str = "Run on scans of";
+/// The presence dialog's camera.presence.demographics check.
+const ESTIMATE_DEMOGRAPHICS: &str = "Estimate age and gender";
 
 /// The script dialog: new, or `existing` to change.
 fn script_form(existing: Option<&ScriptInfo>) -> Form {
@@ -680,7 +682,7 @@ fn script_form(existing: Option<&ScriptInfo>) -> Form {
     .field(Field::text(
         PRESENCE_EVENTS,
         typed.presence,
-        "arrived, left, near, far",
+        "arrived, left, near, far, classified",
     ))
     .field(Field::text(
         SCANNER_TRIGGERS,
@@ -2853,12 +2855,14 @@ impl Device {
                 let near = status
                     .and_then(|status| status.near_m)
                     .map_or_else(|| "off".to_string(), |meters| format!("{meters}"));
+                let demographics = status.is_some_and(|status| status.demographics);
                 self.form(
                     Form::new("Presence detection", "Apply", Action::CameraPresence)
-                        .intro("Find the faces in front of the screen and tell the journal, the page and scripts when someone arrives, leaves or comes near. Each camera gets a hidden mirror for it, so the camera mirrors restart once. No picture is kept.")
+                        .intro("Find the faces in front of the screen and tell the journal, the page and scripts when someone arrives, leaves or comes near. Each camera gets a hidden mirror for it, so the camera mirrors restart once. No picture is kept. Estimating age and gender is an estimate from the face alone, never an identity; whether it may be used where the device stands is the owner's decision.")
                         .field(Field::check("Detect presence", on))
                         .field(Field::text("Camera", camera, "the first one"))
-                        .field(Field::text("Near (meters)", near, "1.5, or off")),
+                        .field(Field::text("Near (meters)", near, "1.5, or off"))
+                        .field(Field::check(ESTIMATE_DEMOGRAPHICS, demographics)),
                 );
             }
             Msg::CameraCalibrate => self.form(
@@ -3602,12 +3606,14 @@ impl Device {
                 self.call("camera", fetch::<api::camera::List>());
             }
             Action::CameraPresence => {
-                // As `tessaro-ctl camera presence on|off --camera --near`.
+                // As `tessaro-ctl camera presence on|off --camera --near
+                // --demographics`.
                 let on = form.checked("Detect presence");
                 let values = tessaro_client::camera::presence_change(
                     on,
                     on.then(|| form.value("Camera")),
                     on.then(|| form.value("Near (meters)")),
+                    on.then(|| form.checked(ESTIMATE_DEMOGRAPHICS)),
                 )?;
                 let values: Vec<(&str, &str)> = values
                     .iter()

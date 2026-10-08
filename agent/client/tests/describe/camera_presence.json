@@ -139,6 +139,154 @@
       "near": false,
       "present": false,
       "running": true
+    },
+    {
+      "camera": "HD Webcam",
+      "classify_ms": 41.3,
+      "demographics": true,
+      "enabled": true,
+      "fov": 65.0,
+      "fps": 5.0,
+      "frame": {
+        "faces": [
+          {
+            "box": {
+              "h": 0.16,
+              "w": 0.12,
+              "x": 0.41,
+              "y": 0.22
+            },
+            "demographics": {
+              "age": 34,
+              "gender": "female",
+              "male": 0.12
+            },
+            "distance": 0.94,
+            "facing": true,
+            "id": 3,
+            "keypoints": {
+              "left_ear": [
+                0.52,
+                0.28
+              ],
+              "left_eye": [
+                0.49,
+                0.27
+              ],
+              "mouth": [
+                0.465,
+                0.34
+              ],
+              "nose": [
+                0.465,
+                0.31
+              ],
+              "right_ear": [
+                0.42,
+                0.28
+              ],
+              "right_eye": [
+                0.44,
+                0.27
+              ]
+            },
+            "near": true,
+            "score": 0.931
+          },
+          {
+            "box": {
+              "h": 0.08,
+              "w": 0.06,
+              "x": 0.71,
+              "y": 0.3
+            },
+            "demographics": {
+              "age": 52,
+              "gender": "unknown",
+              "male": 0.48
+            },
+            "distance": 1.9,
+            "facing": false,
+            "id": 5,
+            "keypoints": {
+              "left_ear": [
+                0.77,
+                0.33
+              ],
+              "left_eye": [
+                0.75,
+                0.32
+              ],
+              "mouth": [
+                0.74,
+                0.36
+              ],
+              "nose": [
+                0.745,
+                0.34
+              ],
+              "right_ear": [
+                0.71,
+                0.33
+              ],
+              "right_eye": [
+                0.73,
+                0.32
+              ]
+            },
+            "near": false,
+            "score": 0.82
+          },
+          {
+            "box": {
+              "h": 0.05,
+              "w": 0.04,
+              "x": 0.12,
+              "y": 0.4
+            },
+            "distance": 2.9,
+            "facing": true,
+            "id": 6,
+            "keypoints": {
+              "left_ear": [
+                0.16,
+                0.42
+              ],
+              "left_eye": [
+                0.15,
+                0.415
+              ],
+              "mouth": [
+                0.14,
+                0.44
+              ],
+              "nose": [
+                0.14,
+                0.43
+              ],
+              "right_ear": [
+                0.12,
+                0.42
+              ],
+              "right_eye": [
+                0.13,
+                0.415
+              ]
+            },
+            "near": false,
+            "score": 0.74
+          }
+        ],
+        "height": 480,
+        "t": 1791367923512,
+        "width": 640
+      },
+      "inference_ms": 98.0,
+      "model": "face-full",
+      "near": true,
+      "near_m": 1.5,
+      "present": true,
+      "running": true
     }
   ],
   "output": [
@@ -561,6 +709,270 @@
         [
           "plain",
           " off  ",
+          0
+        ],
+        [
+          "label",
+          "fov",
+          0
+        ],
+        [
+          "plain",
+          " 65°",
+          0
+        ]
+      ],
+      [
+        [
+          "muted",
+          "change them with",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "cmd",
+          "tessaro-ctl config set camera.presence.near=METERS",
+          0
+        ],
+        [
+          "muted",
+          ",",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "cmd",
+          "tessaro-ctl camera calibrate --distance 1",
+          0
+        ]
+      ]
+    ],
+    [
+      [
+        [
+          "label",
+          "presence",
+          9
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "ok",
+          "someone is there, near",
+          0
+        ]
+      ],
+      [
+        [
+          "plain",
+          "    ",
+          0
+        ],
+        [
+          "label",
+          "face",
+          5
+        ],
+        [
+          "plain",
+          " #3 0.9 m",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "ok",
+          "near",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "plain",
+          "facing",
+          0
+        ],
+        [
+          "muted",
+          " (0.93)",
+          0
+        ],
+        [
+          "plain",
+          "  ",
+          0
+        ],
+        [
+          "plain",
+          "female, about 34",
+          0
+        ]
+      ],
+      [
+        [
+          "plain",
+          "    ",
+          0
+        ],
+        [
+          "label",
+          "face",
+          5
+        ],
+        [
+          "plain",
+          " #5 1.9 m",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "plain",
+          "turned away",
+          0
+        ],
+        [
+          "muted",
+          " (0.82)",
+          0
+        ],
+        [
+          "plain",
+          "  ",
+          0
+        ],
+        [
+          "plain",
+          "gender unknown, about 52",
+          0
+        ]
+      ],
+      [
+        [
+          "plain",
+          "    ",
+          0
+        ],
+        [
+          "label",
+          "face",
+          5
+        ],
+        [
+          "plain",
+          " #6 2.9 m",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "plain",
+          "facing",
+          0
+        ],
+        [
+          "muted",
+          " (0.74)",
+          0
+        ]
+      ],
+      [
+        [
+          "label",
+          "camera",
+          9
+        ],
+        [
+          "plain",
+          " HD Webcam  ",
+          0
+        ],
+        [
+          "label",
+          "model",
+          0
+        ],
+        [
+          "plain",
+          " face-full",
+          0
+        ],
+        [
+          "muted",
+          "  5.0 fps",
+          0
+        ],
+        [
+          "muted",
+          "  98 ms a frame",
+          0
+        ]
+      ],
+      [
+        [
+          "label",
+          "estimate",
+          9
+        ],
+        [
+          "plain",
+          " age and gender  ",
+          0
+        ],
+        [
+          "plain",
+          "0 male, 1 female, 1 unknown",
+          0
+        ],
+        [
+          "muted",
+          "  41 ms a look",
+          0
+        ]
+      ],
+      [],
+      [
+        [
+          "label",
+          "saved",
+          9
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "label",
+          "near",
+          0
+        ],
+        [
+          "plain",
+          " 1.5 m  ",
           0
         ],
         [

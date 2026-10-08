@@ -539,16 +539,17 @@ fn setting(effective: &state::Effective, env: &str, default: &str) -> String {
 }
 
 /// vision.env, for `tessaro-vision.service`: the camera it watches, the
-/// model and how many frames a second, every key always there. What the
-/// agent decides with (confidence, distances, timing) stays out, so changing
-/// it restarts nothing.
+/// model, how many frames a second and whether it estimates age and gender,
+/// every key always there. What the agent decides with (confidence,
+/// distances, timing) stays out, so changing it restarts nothing.
 fn render_vision(paths: &Paths, effective: &state::Effective) -> Result<bool, String> {
     let value = |env, default: &str| setting(effective, env, default);
     let body = format!(
-        "KIOSK_PRESENCE_CAMERA={}\nKIOSK_PRESENCE_MODEL={}\nKIOSK_PRESENCE_FPS={}\n",
+        "KIOSK_PRESENCE_CAMERA={}\nKIOSK_PRESENCE_MODEL={}\nKIOSK_PRESENCE_FPS={}\nKIOSK_PRESENCE_DEMOGRAPHICS={}\n",
         value("KIOSK_PRESENCE_CAMERA", "auto"),
         value("KIOSK_PRESENCE_MODEL", "face-full"),
         value("KIOSK_PRESENCE_FPS", "5"),
+        value("KIOSK_PRESENCE_DEMOGRAPHICS", "0"),
     );
     let path = &paths.vision_env;
     store::replace_if_changed(path, body.as_bytes(), 0o644)
@@ -1690,7 +1691,7 @@ mod tests {
         all(&paths, &defaults, &settings(&[]), &log).unwrap();
         assert_eq!(
             std::fs::read_to_string(&paths.vision_env).unwrap(),
-            "KIOSK_PRESENCE_CAMERA=auto\nKIOSK_PRESENCE_MODEL=face-full\nKIOSK_PRESENCE_FPS=5\n"
+            "KIOSK_PRESENCE_CAMERA=auto\nKIOSK_PRESENCE_MODEL=face-full\nKIOSK_PRESENCE_FPS=5\nKIOSK_PRESENCE_DEMOGRAPHICS=0\n"
         );
 
         let set = settings(&[
@@ -1715,6 +1716,16 @@ mod tests {
         nearer.insert("camera.presence.near".into(), "1".into());
         let rendered = all(&paths, &defaults, &nearer, &log).unwrap();
         assert!(!rendered.camera_changed && !rendered.vision_changed);
+
+        // Age and gender are the vision service's to estimate: it restarts,
+        // the mirrors do not.
+        let mut demographics = nearer.clone();
+        demographics.insert("camera.presence.demographics".into(), "1".into());
+        let rendered = all(&paths, &defaults, &demographics, &log).unwrap();
+        assert!(!rendered.camera_changed && rendered.vision_changed);
+        assert!(std::fs::read_to_string(&paths.vision_env)
+            .unwrap()
+            .ends_with("KIOSK_PRESENCE_DEMOGRAPHICS=1\n"));
     }
 
     #[test]

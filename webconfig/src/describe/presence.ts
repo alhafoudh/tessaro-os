@@ -3,7 +3,7 @@
 // messages equal to the Rust's.
 
 /** What the agent reports when the people in front of the screen change (`EVENTS`). */
-export const EVENTS = ["arrived", "left", "near", "far"];
+export const EVENTS = ["arrived", "left", "near", "far", "classified"];
 
 /** The face detectors camera.presence.model picks from (`MODELS`). */
 export const MODELS = ["face-full", "face-short"];

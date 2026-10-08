@@ -1,9 +1,11 @@
 // Presence detection as a page gets it: the device watches its camera
 // itself (tessaro-vision on a hidden mirror) and tells the page who is
 // there - an event when someone arrives, leaves, comes near or steps back,
-// and every frame's faces while the page watches (docs/presence.md). The
-// page never sees a picture from it; the preview here is the page's own
-// mirror, drawn under the faces the device found.
+// and every frame's faces while the page watches (docs/presence.md). With
+// camera.presence.demographics on, each face also gets an estimated age and
+// gender once they settle, with a classified event. The page never sees a
+// picture from it; the preview here is the page's own mirror, drawn under
+// the faces the device found.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -15,12 +17,18 @@ import { useCamera } from "./useCamera";
 
 const SCALE_METERS = 3;
 
-const GREETINGS: Record<PresenceDetail["event"], string> = {
+const GREETINGS: Partial<Record<PresenceDetail["event"], string>> = {
   arrived: "Hello there!",
   near: "Nice to see you up close",
   far: "Step closer, there is more to see",
   left: "See you soon",
 };
+
+/** A face's settled age and gender, `female, 34`, or nothing before it settles. */
+export function estimate(face: Face): string | null {
+  if (face.gender === undefined || face.age === undefined) return null;
+  return `${face.gender === "unknown" ? "gender unknown" : face.gender}, ${face.age}`;
+}
 
 function Overlay({ frame }: { frame: FacesDetail | null }) {
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -59,7 +67,7 @@ function Overlay({ frame }: { frame: FacesDetail | null }) {
       }
       const label = `#${face.id}${face.distance !== null ? `  ${face.distance.toFixed(1)} m` : ""}${
         face.near ? "  near" : ""
-      }`;
+      }${estimate(face) ? `  ${estimate(face)}` : ""}`;
       c.font = "600 18px system-ui, sans-serif";
       const width = c.measureText(label).width + 20;
       c.fillStyle = "rgba(10,13,20,0.8)";
@@ -145,8 +153,11 @@ export function PresenceSection(_: SectionProps) {
     useCallback(
       (event) => {
         const detail = event.detail;
+        const settled = detail.face && estimate(detail.face);
         add(
-          `${detail.event}: ${detail.count} ${detail.count === 1 ? "person" : "people"}${detail.near ? ", near" : ""}`,
+          settled
+            ? `classified: #${detail.face?.id} ${settled}`
+            : `${detail.event}: ${detail.count} ${detail.count === 1 ? "person" : "people"}${detail.near ? ", near" : ""}`,
         );
         setGreeting(GREETINGS[detail.event] ?? null);
       },
@@ -197,6 +208,12 @@ export function PresenceSection(_: SectionProps) {
               <Stat label="Faces" value={faces.length} />
               <Stat label="Near" value={faces.some((one) => one.near) || value?.near ? "yes" : "no"} />
               <Stat label="Facing" value={faces.filter((one) => one.facing).length} />
+              {value?.demographics && (
+                <>
+                  <Stat label="Women" value={faces.filter((one) => one.gender === "female").length} />
+                  <Stat label="Men" value={faces.filter((one) => one.gender === "male").length} />
+                </>
+              )}
             </div>
           </Panel>
           <Panel title="How far">
@@ -213,8 +230,9 @@ export function PresenceSection(_: SectionProps) {
         <Panel title="Privacy">
           <Hint>
             No picture leaves the device and the page gets none from it: only boxes, distances and a track number that
-            is never an identity. Whether the device watches at all is the operator's switch, tessaro-ctl camera
-            presence on or off - a page cannot turn it on.
+            is never an identity, and an estimated age and gender only where the owner switched that on. Whether the
+            device watches at all is the operator's switch, tessaro-ctl camera presence on or off - a page cannot turn
+            it on.
           </Hint>
         </Panel>
       </div>

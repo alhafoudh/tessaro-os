@@ -25,8 +25,10 @@ records), `control/scripts.rs` (the commands and following a run) and
   `TESSARO_SCRIPT` (its name), `TESSARO_RUN` (its instance) and
   `TESSARO_TRIGGER` (`manual`, `bridge`, `schedule`, `cec`, `presence` or
   `scanner`); a CEC run also gets `TESSARO_CEC_EVENT`, and `TESSARO_CEC_KEY`
-  for a remote key, a presence run `TESSARO_PRESENCE_EVENT`, a scan's run
-  `TESSARO_SCANNER` and `TESSARO_SCAN_TEXT`.
+  for a remote key, a presence run `TESSARO_PRESENCE_EVENT` (and the age and
+  gender variables of [presence.md](presence.md)'s **Events** with
+  camera.presence.demographics on), a scan's run `TESSARO_SCANNER` and
+  `TESSARO_SCAN_TEXT`.
 * **The body is a file, never escaped into a unit.** It is written to
   `/run/tessaro-kiosk/scripts/<id>-<hash>.sh`, `0600`, and the run unit
   execs `/bin/sh` on it. Only the fixed wrapper line goes through `exec_arg`
@@ -64,12 +66,15 @@ records), `control/scripts.rs` (the commands and following a run) and
   cannot pile up root shells. `screen.cec.scripts=0` starts none, and the
   rest of the CEC events are [cec.md](cec.md)'s.
 * **A script runs on the presence events in its `presence` list**
-  (`script create|set --presence`): `arrived`, `left`, `near`, `far`
-  (`protocol::presence`). Started the same way, with a burst window of its
-  own (`EVENT_BURST` again, kept apart from the CEC one), so someone
-  stepping in and out of view cannot pile up runs either.
-  `camera.presence.scripts=0` starts none; what the events mean is
-  [presence.md](presence.md)'s.
+  (`script create|set --presence`): `arrived`, `left`, `near`, `far`,
+  `classified` (`protocol::presence`). Started the same way, with a burst
+  window of its own (`EVENT_BURST` again, kept apart from the CEC one), so
+  someone stepping in and out of view cannot pile up runs either. With
+  camera.presence.demographics on, the agent leaves the run's age and gender
+  variables in `/run/tessaro-kiosk/scans/<run>` like a scan, as `NAME=value`
+  lines of numbers and fixed words only, and the wrapper line sources and
+  removes it. `camera.presence.scripts=0` starts none; what the events mean
+  is [presence.md](presence.md)'s.
 * **A script runs on the scans of the scanners in its `scanner` list**
   (`script create|set --scanner`): scanner names, or `*` for every scanner
   (`protocol::scanner`). Started the same way, with a burst window of its

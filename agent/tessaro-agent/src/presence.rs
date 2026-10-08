@@ -1,11 +1,13 @@
 //! What the faces tessaro-vision sends mean: which are confident enough,
 //! how far away each is and whether it faces the screen, and when someone
-//! has arrived, left, come near or gone far again. Pure, so it is tested
-//! without a camera, a socket or a clock; `control/presence.rs` feeds it.
+//! has arrived, left, come near or gone far again, or had their age and
+//! gender settled. Pure, so it is tested without a camera, a socket or a
+//! clock; `control/presence.rs` feeds it.
 //!
 //! Every threshold is a live setting (`config::Presence`): the vision service
 //! only finds faces, so changing what counts restarts nothing.
 
+use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use protocol::presence::{Detection, Face, FacesFrame, Keypoints, VisionFrame};
@@ -92,6 +94,21 @@ fn face(detection: &Detection, settings: &Settings) -> Face {
         near: settings.near.is_some_and(|near| distance <= near),
         facing: facing(&keypoints),
         keypoints,
+        demographics: detection.demographics,
+    }
+}
+
+/// One event, one of `protocol::presence::EVENTS`, and for `classified` the
+/// face whose age and gender settled.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Event {
+    pub name: &'static str,
+    pub face: Option<Face>,
+}
+
+impl Event {
+    fn new(name: &'static str) -> Event {
+        Event { name, face: None }
     }
 }
 
@@ -108,17 +125,16 @@ pub struct Presence {
     pub frame: Option<(Instant, FacesFrame)>,
     /// The last event and when it happened, seconds since the epoch.
     pub last: Option<(&'static str, i64)>,
+    /// The faces `classified` was said of, by id, and when each was last
+    /// seen: each is said once while it stays, and forgotten once it is
+    /// gone for good.
+    classified: BTreeMap<u64, Instant>,
 }
 
 impl Presence {
     /// One frame from the vision service, at `now`: its faces become the
     /// newest frame, and what changed is returned as events, in order.
-    pub fn frame(
-        &mut self,
-        now: Instant,
-        frame: &VisionFrame,
-        settings: &Settings,
-    ) -> Vec<&'static str> {
+    pub fn frame(&mut self, now: Instant, frame: &VisionFrame, settings: &Settings) -> Vec<Event> {
         let faces: Vec<Face> = frame
             .faces
             .iter()
@@ -157,23 +173,39 @@ impl Presence {
                 .is_some_and(|since| now.duration_since(since) >= settings.arrive)
         {
             self.present = true;
-            events.push("arrived");
+            events.push(Event::new("arrived"));
         }
         if self.present && !faces.is_empty() {
             match settings.near {
                 Some(near) if !self.near && nearest <= near => {
                     self.near = true;
-                    events.push("near");
+                    events.push(Event::new("near"));
                 }
                 Some(near) if self.near && nearest > near * (1.0 + HYSTERESIS) => {
                     self.near = false;
-                    events.push("far");
+                    events.push(Event::new("far"));
                 }
                 None if self.near => {
                     self.near = false;
-                    events.push("far");
+                    events.push(Event::new("far"));
                 }
                 _ => {}
+            }
+        }
+        // A face's age and gender are said once someone is there, so a
+        // passer-by who settles before arriving is said on arrival.
+        let forget = settings.linger + GAP;
+        self.classified
+            .retain(|_, seen| now.duration_since(*seen) < forget);
+        for face in &faces {
+            if let Some(seen) = self.classified.get_mut(&face.id) {
+                *seen = now;
+            } else if self.present && face.demographics.is_some() {
+                self.classified.insert(face.id, now);
+                events.push(Event {
+                    name: "classified",
+                    face: Some(face.clone()),
+                });
             }
         }
         events.extend(self.tick(now, settings));
@@ -182,7 +214,7 @@ impl Presence {
 
     /// Time passing with or without frames: someone not seen for `linger`
     /// has left, and someone near goes far first.
-    pub fn tick(&mut self, now: Instant, settings: &Settings) -> Vec<&'static str> {
+    pub fn tick(&mut self, now: Instant, settings: &Settings) -> Vec<Event> {
         let gone = self
             .last_seen
             .is_none_or(|at| now.duration_since(at) >= settings.linger);
@@ -192,27 +224,35 @@ impl Presence {
         let mut events = Vec::new();
         if self.near {
             self.near = false;
-            events.push("far");
+            events.push(Event::new("far"));
         }
         self.present = false;
         self.seen_since = None;
-        events.push("left");
+        events.push(Event::new("left"));
         events
     }
 
-    /// Faces in the newest frame that came within `fresh`.
-    pub fn count(&self, now: Instant, fresh: Duration) -> u32 {
+    /// The newest frame's faces, if it came within `fresh`.
+    pub fn faces(&self, now: Instant, fresh: Duration) -> &[Face] {
         match &self.frame {
-            Some((at, frame)) if now.duration_since(*at) <= fresh => frame.faces.len() as u32,
-            _ => 0,
+            Some((at, frame)) if now.duration_since(*at) <= fresh => &frame.faces,
+            _ => &[],
         }
+    }
+}
+
+/// An event is its name, for the tests' lists of what happened.
+#[cfg(test)]
+impl PartialEq<&str> for Event {
+    fn eq(&self, other: &&str) -> bool {
+        self.name == *other
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use protocol::presence::FaceBox;
+    use protocol::presence::{Demographics, FaceBox, Gender};
 
     fn settings() -> Settings {
         Settings {
@@ -248,8 +288,20 @@ mod tests {
                     [0.4, 0.37],
                     [0.6, 0.37],
                 ],
+                demographics: None,
             }],
         }
+    }
+
+    /// The same, its age and gender settled.
+    fn classified(width: f64) -> VisionFrame {
+        let mut frame = with_face(width, 0.9);
+        frame.faces[0].demographics = Some(Demographics {
+            age: 34,
+            gender: Gender::Female,
+            male: 0.12,
+        });
+        frame
     }
 
     fn empty() -> VisionFrame {
@@ -303,10 +355,9 @@ mod tests {
             let now = start + Duration::from_millis(ms);
             assert!(presence.frame(now, &with_face(at(1.0), 0.5), &s).is_empty());
         }
-        assert_eq!(
-            presence.count(start + Duration::from_millis(1200), Duration::from_secs(2)),
-            0
-        );
+        assert!(presence
+            .faces(start + Duration::from_millis(1200), Duration::from_secs(2))
+            .is_empty());
     }
 
     #[test]
@@ -374,6 +425,38 @@ mod tests {
     }
 
     #[test]
+    fn a_settled_face_is_classified_once_after_arriving() {
+        let mut presence = Presence::default();
+        let start = Instant::now();
+        let s = Settings {
+            near: None,
+            ..settings()
+        };
+        // Settled before anyone arrived: said with the arrival.
+        assert!(presence.frame(start, &classified(at(3.0)), &s).is_empty());
+        let now = start + Duration::from_millis(600);
+        let events = presence.frame(now, &classified(at(3.0)), &s);
+        assert_eq!(events, ["arrived", "classified"]);
+        let face = events[1].face.as_ref().unwrap();
+        assert_eq!(face.id, 1);
+        assert_eq!(face.demographics.unwrap().gender, Gender::Female);
+        // Once only, while it stays.
+        let now = start + Duration::from_millis(800);
+        assert!(presence.frame(now, &classified(at(3.0)), &s).is_empty());
+        // Gone for good and back with the same id, after the vision service
+        // started over: said again.
+        let now = start + Duration::from_secs(10);
+        assert_eq!(presence.tick(now, &s), ["left"]);
+        let now = start + Duration::from_secs(11);
+        assert!(presence.frame(now, &classified(at(3.0)), &s).is_empty());
+        let now = start + Duration::from_millis(11600);
+        assert_eq!(
+            presence.frame(now, &classified(at(3.0)), &s),
+            ["arrived", "classified"]
+        );
+    }
+
+    #[test]
     fn a_face_turned_away_is_not_facing() {
         let mut keypoints = Keypoints::from(with_face(0.1, 0.9).faces[0].keypoints);
         assert!(facing(&keypoints));
@@ -386,6 +469,7 @@ mod tests {
         let config = config::Presence {
             enable: true,
             model: "face-full".into(),
+            demographics: false,
             confidence: 60,
             near: Some(150),
             fov: 65,

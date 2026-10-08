@@ -94,8 +94,11 @@ await tessaro.device.status();
   `name` and `acked` (**Raw CEC from the page** in [cec.md](cec.md)).
 * **Someone arriving, leaving, coming near or stepping back is a
   `tessaro:presence` event**, with `camera.presence.page` on: `detail.event`
-  (`arrived`, `left`, `near`, `far`), `present`, `near`, `count` and the
-  `faces` ([presence.md](presence.md)). Fired the same way.
+  (`arrived`, `left`, `near`, `far`, and `classified` when a face's age and
+  gender settle), `present`, `near`, `count` and the `faces`; with
+  `camera.presence.demographics` on, `genders` (`male`, `female` and
+  `unknown` counts), and for `classified` the settled `face`
+  ([presence.md](presence.md)). Fired the same way.
 * **The faces of every frame are `tessaro:faces` events, only while the page
   watches them**: `tessaro.presence.watch()` takes a lease the agent keeps
   for 10s (`WATCH_LEASE`), which the preamble renews every few seconds until
@@ -105,7 +108,10 @@ await tessaro.device.status();
   track, never an identity), `box` `{x, y, w, h}` and `keypoints`
   (`leftEye`, `rightEye`, `nose`, `mouth`, `leftEar`, `rightEar`) as shares
   of the frame in the camera's own view, `score`, `distance` in meters,
-  `near` and `facing`.
+  `near` and `facing`; once its estimate settled with
+  `camera.presence.demographics` on, `age` in years, `gender` (`male`,
+  `female` or `unknown`) and `male`, how likely it is a man's. Every face
+  the bridge hands out has the same fields.
 * **A barcode scan is a `tessaro:scanner` event**, with `scanner.page` on:
   `detail.event` `begin` when its first byte comes and `end` with the scan
   (`text` when it is UTF-8, always `bytes` in base64, `length`, `ms`,
@@ -131,7 +137,7 @@ answers everything:
 | `printer.jobs(printer)` | config | `printer jobs`: every printer's, or the one named |
 | `scripts.list()` | config | `script list`, only the scripts with `--bridge`, without their bodies: name, description, concurrency, runs going, the last run |
 | `playlist.status()` | config | `playlist status`: whether the player is on screen, what plays and why, the item on screen, what was gone past, the media cache; also `device.status().playlist` |
-| `presence.status()` | config | `camera presence`, without the camera's name, the model and how fast it runs: `enabled`, `running`, `present`, `near`, `nearMeters`, `count`, the `last` event and the newest frame's `faces`; also `device.status().presence` (`present`, `near`, `count`) |
+| `presence.status()` | config | `camera presence`, without the camera's name, the model and how fast it runs: `enabled`, `running`, `present`, `near`, `nearMeters`, `demographics`, `count`, `genders` with demographics on, the `last` event and the newest frame's `faces`; also `device.status().presence` (`present`, `near`, `count`, `genders`) |
 | `presence.watch()`, `presence.unwatch()` | config | nothing the ctl has: start and stop `tessaro:faces` |
 | `scanner.list()` | config | `scanner list`: whether scanner.enable is on, and each scanner, its device, how it is read, its `state`, `node`, `scans` and `last_scan` |
 | `network.publicIp()` | actions | `config get network.public_ip`: asked now |

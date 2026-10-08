@@ -3,8 +3,15 @@
 //! smoothed with it, so a page can follow one face and its box does not
 //! jitter. An id is a box's, never a person's: a face that leaves and comes
 //! back gets a new one.
+//!
+//! With camera.presence.demographics on, a track also collects a few looks
+//! at its face's age and gender and then settles them for good: the estimate
+//! is the person's while they stay, not each frame's, so it does not flicker
+//! and costs nothing once settled.
 
-use protocol::presence::{Detection, FaceBox, Point};
+use protocol::presence::{Demographics, Detection, FaceBox, Gender, Point};
+
+use crate::demographics::Look;
 
 /// A face matches a box from before that overlaps it by at least this.
 const MATCH_IOU: f64 = 0.3;
@@ -16,12 +23,41 @@ const KEEP_MISSED: u32 = 2;
 /// How much of a new box goes into the smoothed one: the rest is the old.
 const SMOOTHING: f64 = 0.6;
 
+/// Looks at a face before its age and gender settle.
+pub const LOOKS: u32 = 5;
+
+/// A face is a man's when its looks average at least this likely male, a
+/// woman's at most `1 - SURE`, and `unknown` in between.
+pub const SURE: f64 = 0.65;
+
 #[derive(Debug, Clone)]
 struct Track {
     id: u64,
     area: FaceBox,
     keypoints: [Point; 6],
     missed: u32,
+    /// The looks so far: how many, and their sums.
+    looks: u32,
+    age: f64,
+    male: f64,
+    settled: Option<Demographics>,
+}
+
+/// What `LOOKS` looks add up to.
+fn settle(looks: u32, age: f64, male: f64) -> Demographics {
+    let (age, male) = (age / f64::from(looks), male / f64::from(looks));
+    let gender = if male >= SURE {
+        Gender::Male
+    } else if male <= 1.0 - SURE {
+        Gender::Female
+    } else {
+        Gender::Unknown
+    };
+    Demographics {
+        age: age.round().max(0.0) as u32,
+        gender,
+        male: (male * 100.0).round() / 100.0,
+    }
 }
 
 #[derive(Debug, Default)]
@@ -86,6 +122,10 @@ impl Tracker {
                         area,
                         keypoints,
                         missed: 0,
+                        looks: 0,
+                        age: 0.0,
+                        male: 0.0,
+                        settled: None,
                     };
                     self.tracks.push(track.clone());
                     taken.push(true);
@@ -97,6 +137,7 @@ impl Tracker {
                 area: track.area,
                 score,
                 keypoints: track.keypoints,
+                demographics: track.settled,
             });
         }
         for (track, taken) in self.tracks.iter_mut().zip(&taken) {
@@ -106,6 +147,24 @@ impl Tracker {
         }
         self.tracks.retain(|track| track.missed <= KEEP_MISSED);
         out
+    }
+
+    /// One more look at the face of track `id`: its age and gender once this
+    /// was the last look they needed, and nothing before, after, or for a
+    /// track that is gone.
+    pub fn look(&mut self, id: u64, look: Look) -> Option<Demographics> {
+        let track = self.tracks.iter_mut().find(|track| track.id == id)?;
+        if track.settled.is_some() {
+            return None;
+        }
+        track.looks += 1;
+        track.age += look.age;
+        track.male += look.male;
+        if track.looks < LOOKS {
+            return None;
+        }
+        track.settled = Some(settle(track.looks, track.age, track.male));
+        track.settled
     }
 }
 
@@ -155,6 +214,34 @@ mod tests {
             tracker.update(vec![]);
         }
         assert_ne!(tracker.update(vec![at(0.1)])[0].id, id);
+    }
+
+    #[test]
+    fn a_face_settles_after_its_looks_and_keeps_it() {
+        let mut tracker = Tracker::default();
+        let id = tracker.update(vec![at(0.1)])[0].id;
+        let look = Look {
+            age: 30.0,
+            male: 0.2,
+        };
+        for _ in 1..LOOKS {
+            assert_eq!(tracker.look(id, look), None);
+        }
+        let settled = tracker.look(id, look).unwrap();
+        assert_eq!(settled.gender, Gender::Female);
+        assert_eq!(settled.age, 30);
+        // Settled once: no second announcement, and every frame carries it.
+        assert_eq!(tracker.look(id, look), None);
+        assert_eq!(tracker.update(vec![at(0.1)])[0].demographics, Some(settled));
+        assert_eq!(tracker.look(99, look), None);
+    }
+
+    #[test]
+    fn looks_that_do_not_agree_are_unknown() {
+        assert_eq!(settle(2, 60.0, 1.0).gender, Gender::Unknown);
+        assert_eq!(settle(2, 60.0, 1.4).gender, Gender::Male);
+        assert_eq!(settle(2, 60.0, 0.6).gender, Gender::Female);
+        assert_eq!(settle(2, 61.0, 1.0).age, 31);
     }
 
     #[test]

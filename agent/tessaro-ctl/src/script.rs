@@ -125,7 +125,9 @@ pub struct Fields {
     #[arg(long, value_name = "EVENTS", value_parser = cec_events)]
     cec: Option<String>,
     /// Run it on presence events, comma separated: arrived, left, near,
-    /// far; empty for none. Needs camera.presence.enable.
+    /// far, classified (a face's age and gender settled, with
+    /// camera.presence.demographics); empty for none. Needs
+    /// camera.presence.enable.
     #[arg(long, value_name = "EVENTS", value_parser = presence_events)]
     presence: Option<String>,
     /// Run it on every scan of these scanners, comma separated, or * for

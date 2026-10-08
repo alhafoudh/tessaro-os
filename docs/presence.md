@@ -7,7 +7,8 @@ the page: `tessaro-vision` reads a hidden mirror of the camera, runs
 MediaPipe's BlazeFace on it, and hands each frame's faces to the agent,
 which decides what they mean. `tessaro-ctl camera presence on|off` switches
 it (camera.presence.enable), `tessaro-ctl camera presence` shows who is
-there and how it runs.
+there and how it runs. With camera.presence.demographics on it also
+estimates each face's age and gender (**Age and gender** below).
 
 ```
 tessaro-camera@video0  (no decoding)
@@ -16,9 +17,10 @@ tessaro-camera@video0  (no decoding)
        -> tessaro-vision.service
             newest frame each tick -> scaled JPEG decode -> BlazeFace (tract)
             -> faces tracked between frames
+            [-> a face not settled yet: larger decode -> FaceRes (tract)]
             -> a datagram each frame to /run/tessaro-kiosk/vision.sock
 tessaro-agent
-  confidence, distance, facing, arrive / linger / near
+  confidence, distance, facing, arrive / linger / near / classified
   -> journal, scripts (--presence), page (tessaro:presence, tessaro:faces)
 ```
 
@@ -35,9 +37,16 @@ anywhere, and the snapshots of [camera.md](camera.md) are the mirror's,
 taken only while a client asks. What leaves it is a box, a score and
 keypoints per face. A face's `id` follows a box from frame to frame and is
 new when a face comes back: it is never an identity. There is no face
-recognition, embedding, age, gender or emotion, and none is planned: a
-public screen that estimates them is a different product under GDPR and
-the EU AI Act.
+recognition and no emotion.
+
+**Age and gender are estimated only where the owner switches it on**
+(camera.presence.demographics, off by default). Each is an estimate from
+the face alone, settled once per `id` and forgotten with it; the face
+descriptor FaceRes computes on the way is never read, so it never leaves
+the process. A screen in a public place that estimates them can fall under
+GDPR and the EU AI Act: whether it may be used where the device stands is
+the owner's decision, which is why it is a setting and not a default, and
+the key's doc, the ctl option and the dialogs all say so.
 
 ## The hidden mirror
 
@@ -116,7 +125,53 @@ vendor like any other.
   `TensorsToDetectionsCalculator`, `NonMaxSuppressionCalculator`).
 * **`tessaro-vision --bench FRAME.jpg...`** runs a model on pictures and
   prints decode and inference times: what to run on a new board.
-  `--model face-short` and `--models DIR` pick another model or directory.
+  `--model face-short` and `--models DIR` pick another model or directory,
+  `--demographics` adds each face's age and gender and how long a look
+  took.
+
+## Age and gender
+
+**With camera.presence.demographics on, the vision service looks at each
+face a few times with HSE FaceRes and settles its age and gender for as
+long as the face stays.** FaceRes is the estimator `@vladmandic/human` runs
+by default (Apache-2.0, from HSE-asavchenko/HSE_FaceRec_tf), converted from
+Human's TFJS graph to `faceres.onnx` by the same `convert.py` and run by
+tract like the detector (`demographics.rs`). The setting is
+`Consumer::Agent` and `Consumer::Vision`: the vision service restarts to
+load the model, the mirrors do not.
+
+* **A face not settled yet is cut out of a larger decode.** The detector's
+  picture is a few hundred pixels across, too small for FaceRes's 224x224
+  input, so the same frame is decoded again at the scale that gives the
+  smallest unsettled face its input's size, whole if that is more than the
+  frame has. Settled faces cost nothing, and a frame with none to settle
+  is not decoded twice.
+* **The square is cut around BlazeFace's box with a margin and turned so
+  the eyes are level** (`picture::crop`, `demographics::square`), as Human
+  straightens a face before FaceRes. The margin, 1.8 times the box, is the
+  one that told the test photos' men and women apart best.
+* **A face narrower than 48 pixels in the camera's frame is never looked
+  at**: its square would be mostly made up. It stays unsettled.
+* **Each face gets a few looks, then settles** (`track.rs`, `LOOKS`): the
+  age is their mean, and the gender `male` when the looks average at least
+  0.65 likely male, `female` at most 0.35, and `unknown` in between, so a
+  face the network is unsure of does not get a coin toss. A settled face
+  is never looked at again; a face that comes back gets a new `id` and
+  starts over.
+* **The age is the expected value of FaceRes's 100 classes**, not Human's
+  reading (the likeliest year moved towards a neighbour): the classes peak
+  at years ending in 9, so the likeliest year jumps by ten between two looks
+  at the same face where the expected value moves by a year or two.
+* **Human's other estimators do not work here.** Its SSR-Net gender
+  weights (`gender-ssrnet-imdb`) answer about 0.99998 for every input,
+  noise included, in Human's own TFJS as in ONNX; its Oarriaga gender model
+  turns the same face from woman to man with the crop's margin.
+* **TFJS graphs need `TArgs` added** before tf2onnx takes them: Human's
+  converter left the attribute off every `_FusedConv2D`, and the TensorFlow
+  tf2onnx imports into refuses the node (`with_targs` in `convert.py`). The
+  weights are untouched.
+* **`faceres.onnx` is larger than Human's file**: the TFJS weights are
+  quantised to 16 bits, tf2onnx writes them as 32-bit floats.
 
 ## What the faces mean
 
@@ -141,19 +196,39 @@ vendor like any other.
   events.
 * **Facing** is the nose between the eyes (`facing`): a guess at a turned
   head, not gaze tracking.
+* **Classified** is said once per face whose age and gender settled, once
+  someone is present: a face that settles before anyone arrived is said
+  with the arrival. A face's `id` is remembered until it has been gone for
+  camera.presence.linger and a second, so a vision service that starts over
+  and hands out the same `id` again is said again.
 
 ## Events
 
 **Each event goes to the journal (`presence: arrived, with 2 face(s) in
-view`), then:**
+view`, `presence: classified face #3 as female, about 34`), then:**
 
 * **to the page as `tessaro:presence`** with camera.presence.page, while
   the page has the bridge ([bridge.md](bridge.md)): `event`, `present`,
-  `near`, `count` and the `faces`;
+  `near`, `count` and the `faces`; with camera.presence.demographics on,
+  `genders` (the faces by gender), and for `classified` the `face` that
+  settled;
 * **to the scripts that run on it** with camera.presence.scripts
   ([scripts.md](scripts.md)): `script create|set --presence
-  arrived,left,near,far`, `TESSARO_TRIGGER=presence` and
-  `TESSARO_PRESENCE_EVENT`.
+  arrived,left,near,far,classified`, `TESSARO_TRIGGER=presence` and
+  `TESSARO_PRESENCE_EVENT`; with camera.presence.demographics on,
+  `TESSARO_PRESENCE_MALE`, `_FEMALE` and `_UNKNOWN`, and for `classified`
+  `TESSARO_PRESENCE_GENDER` and `TESSARO_PRESENCE_AGE`. They cannot be in
+  the run's unit name, so the agent writes them to the run's file in
+  `scans/`, as `NAME=value` lines of numbers and fixed words only, and the
+  run's shell sources it (`script_env` in `control/presence.rs`,
+  `run_shell` in `scripts.rs`).
+
+**A face settled with camera.presence.demographics on carries `age`,
+`gender` (`male`, `female` or `unknown`) and `male`, how likely it is a
+man's**, everywhere a face goes: `tessaro:faces`, `tessaro:presence`,
+`tessaro.presence.status()` and `tessaro-ctl camera presence`. A face not
+settled yet has none of them. `device status` and the status add the
+counts by gender.
 
 **The faces of every frame reach the page as `tessaro:faces` only while it
 watches them** (`tessaro.presence.watch()`): a lease the preamble renews
@@ -165,13 +240,17 @@ ratio.
 ## Testing
 
 * **Unit tests** cover the anchors, decoding and suppression, the
-  letterbox, tracking, and both models on `agent/vision/tests/two-faces.jpg`
-  (two portrait photographs, CC0); the agent's state machine, distance and
-  calibration; the script trigger.
+  letterbox, the crop, tracking and settling, and both models on
+  `agent/vision/tests/two-faces.jpg` (two portrait photographs, CC0);
+  FaceRes on the man of that photo and on `woman.jpg` (CC0); the agent's
+  state machine, distance, calibration and `classified`; the script
+  trigger and its variables.
 * **The e2e `presence` lane** loops a clip made from that photo through the
   fake webcam ([e2e.md](e2e.md)): the hidden mirror and its permissions,
   arriving, near, far and leaving in the journal, a `--presence` script and
-  the page, the faces, the refused calibration, and switching it off.
+  the page, the faces, the refused calibration, age and gender settling
+  for the journal, a `classified` script and the page, and switching it
+  off.
 
 ## What does not work
 
@@ -181,3 +260,8 @@ ratio.
 * **Small boards.** It is meant for a Pi 4 and up; on a smaller board,
   `tessaro-vision --bench` shows whether inference keeps up with
   camera.presence.fps.
+* **Age and gender are only as good as the face.** The woman of
+  `two-faces.jpg`, a small black and white passport photo, comes out
+  `unknown`; accuracy at a distance, at an angle or in poor light has not
+  been measured. `tessaro-vision --bench --demographics` on pictures from
+  the device's own camera is how to find out.

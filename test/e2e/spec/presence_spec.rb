@@ -3,8 +3,9 @@
 module AgentE2E
   # Presence detection (docs/presence.md): the hidden Vision mirror the
   # camera mirrors add, tessaro-vision finding faces on it, and the agent
-  # turning them into events for the journal, a script and the page, then
-  # switching it all off again.
+  # turning them into events for the journal, a script and the page, the
+  # faces' age and gender with camera.presence.demographics, then switching
+  # it all off again.
   #
   # The camera is test/usbcam/usbcam.rb looping a clip made here from
   # agent/vision/tests/two-faces.jpg: 5 s of an empty grey frame, 10 s of the
@@ -118,6 +119,50 @@ module AgentE2E
       wait_until("two faces are in view", timeout: 40) { presence.dig("frame", "faces")&.size == 2 }
       out = guest.run("tessaro-ctl camera calibrate --distance 1 2>&1", allow_failure: true)
       expect(out).to include("exactly one face")
+    end
+
+    # The man on the left of the photo settles as male; the woman, a small
+    # black and white passport photo, may come out unknown (docs/presence.md,
+    # What does not work), so only her having an estimate is asserted.
+    it "presence-demographics: each face's age and gender settle, for the journal, a script and the page" do
+      eval_page('window.e2eClassified = []; ' \
+                'addEventListener("tessaro:presence", (e) => { ' \
+                'if (e.detail.event === "classified") e2eClassified.push(e.detail); }); 1')
+      guest.run("rm -f #{PRESENCE_MARKER}")
+      guest.run("cat > /tmp/e2e-presence-body",
+                input: "echo \"$TESSARO_PRESENCE_EVENT $TESSARO_PRESENCE_GENDER $TESSARO_PRESENCE_AGE " \
+                       "$TESSARO_PRESENCE_MALE\" >> #{PRESENCE_MARKER}\n")
+      guest.run("tessaro-ctl script create e2e-classified --file /tmp/e2e-presence-body --presence classified")
+      guest.run("tessaro-ctl camera presence on --demographics on")
+
+      journal.wait_for(/^presence: classified face #\d+ as male, about \d+$/, timeout: 90)
+      faces = wait_until("camera presence shows the faces settled", timeout: 30) do
+        found = presence.dig("frame", "faces")
+        found if found&.size == 2 && found.all? { _1["demographics"] }
+      end
+      man = faces.min_by { _1.dig("box", "x") }
+      expect(man.fetch("demographics")).to include("gender" => "male")
+      faces.each do |face|
+        expect(face.fetch("demographics").fetch("age")).to be_between(18, 80)
+        expect(%w[male female unknown]).to include(face.dig("demographics", "gender"))
+      end
+      expect(presence).to include("demographics" => true)
+      expect(guest.run("tessaro-ctl camera presence")).to include("age and gender", "male, about")
+      genders = JSON.parse(guest.run("tessaro-ctl --json device status")).dig("presence", "genders")
+      expect(genders.fetch("male")).to be >= 1
+
+      marker = wait_until("the script ran for classified", timeout: 20) do
+        found = guest.run("cat #{PRESENCE_MARKER}", allow_failure: true)
+        found if found.include?("classified male")
+      end
+      expect(marker).to match(/^classified male \d+ [12]$/)
+      classified = JSON.parse(eval_page("JSON.stringify(e2eClassified)").lines.last)
+      expect(classified).not_to be_empty
+      expect(classified.map { _1.dig("face", "gender") }).to include("male")
+      expect(classified.first.fetch("face")).to include("age", "gender", "male")
+      expect(classified.first.fetch("genders")).to include("male", "female", "unknown")
+    ensure
+      guest.run("tessaro-ctl script remove e2e-classified -y", allow_failure: true)
     end
 
     it "presence-switched-off: the service stops and the hidden mirror goes" do

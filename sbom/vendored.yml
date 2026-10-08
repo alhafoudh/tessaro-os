@@ -39,6 +39,16 @@
   source: https://github.com/google/mediapipe/blob/v0.8.9/mediapipe/modules/face_detection/face_detection_short_range.tflite
   path: agent/vision/models/face-short.onnx
 
+# HSE FaceRes, the age and gender estimator, as `@vladmandic/human` ships it
+# (MIT repository, the weights HSE-asavchenko's), converted to ONNX by the
+# same task, pinned to a commit and its sha256.
+- component: tessaro-kiosk
+  name: HSE FaceRes (age and gender)
+  version: bc66dc53bac03c96d35a7e6daaf717e72f3985f5
+  license: Apache-2.0
+  source: https://github.com/vladmandic/human-models/blob/bc66dc53bac03c96d35a7e6daaf717e72f3985f5/models/faceres.json
+  path: agent/vision/models/faceres.onnx
+
 # Two portrait photographs, scaled down: the faces the vision tests and the
 # e2e presence lane's clip are made of. Not shipped.
 - component: tests
@@ -47,3 +57,12 @@
   license: CC0-1.0
   source: https://commons.wikimedia.org/wiki/File:Opdracht_Bonera_2_pasfoto%27s,_Bestanddeelnr_902-7906.jpg
   path: agent/vision/tests/two-faces.jpg
+
+# A colour portrait, scaled down: the woman the age and gender test reads.
+# Not shipped.
+- component: tests
+  name: Outdoor portrait (Unsplash, Anthony Ginsbrook)
+  version: "1"
+  license: CC0-1.0
+  source: https://commons.wikimedia.org/wiki/File:Outdoor_portrait_(Unsplash).jpg
+  path: agent/vision/tests/woman.jpg
