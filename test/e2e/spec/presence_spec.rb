@@ -68,7 +68,11 @@ module AgentE2E
       expect(guest.run("stat -c '%U %a' #{vision.fetch('device')}").strip).to eq("root 600")
       expect(guest.run("getfacl -p #{vision.fetch('device')} 2>/dev/null || true")).not_to include("user:weston")
 
-      wait_until("the vision service reports running", timeout: 60) { presence["running"] }
+      # Running is a fresh status; the camera it names comes once the
+      # service has picked one, which can be a status later.
+      wait_until("the vision service reports running on a camera", timeout: 60) do
+        presence["running"] && presence["camera"]
+      end
       expect(guest.property("tessaro-vision.service", "ActiveState")).to eq("active")
       expect(presence.fetch("camera")).to eq(camera.fetch("name"))
     end

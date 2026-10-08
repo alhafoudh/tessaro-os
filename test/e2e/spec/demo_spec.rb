@@ -39,7 +39,8 @@ module AgentE2E
     it "demo-link: the welcome page links the demo, which nginx serves" do
       wait_until("the welcome page is on screen", timeout: 30) { page_value("location.href") == "http://127.0.0.1/" }
       expect(page_value("document.getElementById('demo').getAttribute('href')")).to eq("/demo/")
-      expect(guest.run("curl -sf #{DEMO_URL}")).to include('<div id="root">')
+      # busybox's wget: the image has no curl.
+      expect(guest.run("wget -qO- #{DEMO_URL}")).to include('<div id="root">')
     end
 
     it "demo-home: the demo renders its home page with the factory bridge, actions" do

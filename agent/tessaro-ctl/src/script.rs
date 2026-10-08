@@ -23,7 +23,7 @@ use tessaro_client::script::{self as shared, behaviour, event_line, last_run, ru
 use crate::connect::Session;
 use crate::schedule::journal;
 use crate::style::{self, pad, paint};
-use crate::{done, print, print_json, prompt};
+use crate::{done, print, print_json_line, prompt};
 
 #[derive(Subcommand)]
 pub enum ScriptCmd {
@@ -280,7 +280,7 @@ fn follow(session: &mut Session, script: &str, no_wait: bool, json: bool) -> Res
             started.set(true);
         }
         if json {
-            let _ = print_json(event);
+            let _ = print_json_line(event);
             return;
         }
         match event {

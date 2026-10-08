@@ -81,7 +81,9 @@ module AgentE2E
       listed = cameras
       expect(listed.slice("format", "size", "mirrors")).to eq("format" => "auto", "size" => "auto", "mirrors" => 2)
       expect(listed["cameras"]).to eq([])
-      expect(camera_env).to eq("KIOSK_CAMERA_FORMAT=auto\nKIOSK_CAMERA_SIZE=auto\nKIOSK_CAMERA_MIRRORS=2\n")
+      expect(camera_env).to eq(
+        "KIOSK_CAMERA_FORMAT=auto\nKIOSK_CAMERA_SIZE=auto\nKIOSK_CAMERA_MIRRORS=2\nKIOSK_CAMERA_VISION=0\n"
+      )
 
       report = {
         name: "E2E Webcam", device: "video9", bus: "usb-e2e-1",
@@ -107,7 +109,9 @@ module AgentE2E
 
       guest.run("tessaro-ctl camera format yuyv")
       guest.run("tessaro-ctl camera size 640x480")
-      expect(camera_env).to eq("KIOSK_CAMERA_FORMAT=yuyv\nKIOSK_CAMERA_SIZE=640x480\nKIOSK_CAMERA_MIRRORS=2\n")
+      expect(camera_env).to eq(
+        "KIOSK_CAMERA_FORMAT=yuyv\nKIOSK_CAMERA_SIZE=640x480\nKIOSK_CAMERA_MIRRORS=2\nKIOSK_CAMERA_VISION=0\n"
+      )
       expect(cameras.slice("format", "size")).to eq("format" => "yuyv", "size" => "640x480")
 
       written = modified(CAMERA_ENV)

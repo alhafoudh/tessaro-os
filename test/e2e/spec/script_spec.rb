@@ -106,8 +106,19 @@ module AgentE2E
        "and gets their output", :reconfigure do
       create("e2e-page", "echo from the page run\nexit 3\n", "--bridge --description 'page run'")
       create("e2e-hidden", "true\n")
+      # actions is the factory mode: setting it may change nothing, so wait
+      # for the call itself rather than for the journal to say so.
       guest.run("tessaro-ctl config set browser.bridge.mode=actions")
-      journal.wait_for(/^page bridge: (now )?actions/, timeout: 30)
+      step "wait up to 30s until the page can run scripts"
+      deadline = Time.now + 30
+      AgentE2E.quietly do
+        until guest.run("tessaro-ctl browser eval 'typeof tessaro?.scripts?.run'", allow_failure: true)
+                   .include?("function")
+          raise Failure, "the page cannot run scripts within 30s" if Time.now > deadline
+
+          sleep 1
+        end
+      end
 
       listed = guest.run("tessaro-ctl browser eval " \
                          "'tessaro.scripts.list().then((l) => JSON.stringify(l))'")

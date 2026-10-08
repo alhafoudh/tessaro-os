@@ -18,7 +18,9 @@ module AgentE2E
     # The vivid adapter named `vivid-000-<suffix>`: `vid-out0` is the
     # device's HDMI output, `vid-cap0` the input that plays the TV.
     def adapter(suffix)
-      found = guest.run(%(for d in /dev/cec*; do cec-ctl -d "$d" | grep -q 'vivid-000-#{suffix}' && echo "$d"; done))
+      # `; true`: the loop's status is its last adapter's, which is not the
+      # one wanted whenever the kernel numbered it first.
+      found = guest.run(%(for d in /dev/cec*; do cec-ctl -d "$d" | grep -q 'vivid-000-#{suffix}' && echo "$d"; done; true))
       found.lines.first&.strip or raise Failure, "no vivid #{suffix} CEC adapter"
     end
 
@@ -26,6 +28,10 @@ module AgentE2E
 
     # What the TV has received, as cec-follower logged it.
     def tv_log = guest.run("cat #{CEC_TV_LOG}", allow_failure: true)
+
+    # Forget what the TV has received so far. The shell's own `>`: the
+    # image has no truncate.
+    def clear_tv_log = guest.run(": > #{CEC_TV_LOG}")
 
     def shown = JSON.parse(quietly { guest.run("tessaro-ctl --json screen show") })
 
@@ -79,7 +85,7 @@ module AgentE2E
       expect(guest.run("tessaro-ctl screen show")).to include("HDMI-CEC", "e2e-kiosk", "E2E-TV")
 
       # Only once a boot: a restarted agent leaves the TV as it is.
-      guest.run("truncate -s 0 #{CEC_TV_LOG}")
+      clear_tv_log
       guest.restart_agent
       journal.wait_for(%r{^cec: /dev/cec\d+ as "e2e-kiosk"}, timeout: 30)
       pause 5, "give a wrong wake time to go out"
@@ -87,13 +93,13 @@ module AgentE2E
     end
 
     it "cec-power: screen power off puts the TV in standby, on wakes it and takes the input" do
-      guest.run("truncate -s 0 #{CEC_TV_LOG}")
+      clear_tv_log
       guest.run("tessaro-ctl screen power off")
       wait_until("the TV got standby", timeout: 15) { tv_log.include?("STANDBY") }
       wait_until("the TV reports standby", timeout: 30) { shown.fetch("adapters").first["tv"] == "standby" }
       expect(guest.run("tessaro-ctl device status")).to match(/tv\s+standby/)
 
-      guest.run("truncate -s 0 #{CEC_TV_LOG}")
+      clear_tv_log
       guest.run("tessaro-ctl screen power on")
       wait_until("the TV got the wake and the input", timeout: 15) do
         log = tv_log
@@ -155,13 +161,13 @@ module AgentE2E
     def screen_on? = guest.run("tessaro-ctl screen power").include?("the screen is on")
 
     it "cec-actions: screen cec acts on the TV without the screen, and the log keeps what went over the bus" do
-      guest.run("truncate -s 0 #{CEC_TV_LOG}")
+      clear_tv_log
       standby = act("standby")
       expect(standby.fetch("sent").first).to include("data" => "36", "to" => 0, "acked" => true)
       wait_until("the TV got standby", timeout: 15) { tv_log.include?("STANDBY") }
       expect(screen_on?).to be(true), "screen cec standby switched the screen"
 
-      guest.run("truncate -s 0 #{CEC_TV_LOG}")
+      clear_tv_log
       woke = act("wake")
       expect(woke.fetch("sent").map { _1["data"] }).to include("04")
       wait_until("the TV got the wake and the input", timeout: 15) do
@@ -218,7 +224,7 @@ module AgentE2E
       guest.run("tessaro-ctl config set screen.cec.enable=0")
       wait_until("screen show has no adapter", timeout: 30) { shown.fetch("adapters").empty? }
       expect(shown.fetch("cec")).to be(false)
-      guest.run("truncate -s 0 #{CEC_TV_LOG}")
+      clear_tv_log
       guest.run("tessaro-ctl screen power off")
       pause 5, "give a standby that must not go out time to"
       expect(tv_log).not_to include("STANDBY")

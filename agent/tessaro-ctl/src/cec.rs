@@ -14,7 +14,7 @@ use tessaro_client::describe::cec as describe;
 
 use crate::connect::Session;
 use crate::style;
-use crate::{print, print_json};
+use crate::{print, print_json_line};
 
 #[derive(Subcommand)]
 pub enum CecCmd {
@@ -123,7 +123,7 @@ pub fn run(session: &mut Session, command: CecCmd, json: bool) -> Result<(), Str
         CecCmd::Messages { follow } => {
             return cec::messages(session, 0, follow, &|| false, |message| {
                 if json {
-                    let _ = print_json(message);
+                    let _ = print_json_line(message);
                 } else {
                     println!("{}", style::line(&describe::message(message)));
                 }

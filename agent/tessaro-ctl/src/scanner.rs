@@ -15,7 +15,7 @@ use tessaro_client::scanner::{self as shared, Typed};
 
 use crate::connect::Session;
 use crate::style;
-use crate::{done, print, print_json, prompt};
+use crate::{done, print, print_json_line, prompt};
 
 #[derive(Subcommand)]
 pub enum ScannerCmd {
@@ -231,7 +231,7 @@ pub fn run(session: &mut Session, command: ScannerCmd, json: bool) -> Result<(),
             }
             let scans = shared::test(session, &scanner, &|| false, |scan| {
                 if json {
-                    let _ = print_json(scan);
+                    let _ = print_json_line(scan);
                 } else {
                     println!("{}", style::line(&describe::scan(scan)));
                 }
@@ -243,7 +243,7 @@ pub fn run(session: &mut Session, command: ScannerCmd, json: bool) -> Result<(),
         }
         ScannerCmd::Logs { follow } => shared::logs(session, 0, follow, &|| false, |entry| {
             if json {
-                let _ = print_json(entry);
+                let _ = print_json_line(entry);
             } else {
                 println!("{}", style::line(&describe::log_entry(entry)));
             }

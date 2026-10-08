@@ -166,7 +166,10 @@ struct Cli {
     /// Every device with this tag, known or found on the network; repeat it for
     /// devices with every one of them. `unclaimed` picks the devices nobody has
     /// claimed. With a command for a device, runs it on each of them.
-    #[arg(long = "tag", global = true, value_name = "TAG")]
+    // Its own id: a global argument shares its id with every subcommand, and
+    // `device tags add|remove` have positional `tags` of their own, which
+    // would otherwise be taken as `--tag`.
+    #[arg(id = "tag", long = "tag", global = true, value_name = "TAG")]
     tags: Vec<String>,
 
     /// How many devices a run on several works on at once.
@@ -1660,6 +1663,17 @@ pub(crate) fn print_json<T: serde::Serialize>(value: &T) -> Result<(), String> {
     Ok(())
 }
 
+/// One step of a stream with `--json`: compact, one per line, so a reader
+/// takes each line as it comes (`storage grow`, `script run`, `screen cec
+/// messages`, `scanner test` and `scanner logs`).
+pub(crate) fn print_json_line<T: serde::Serialize>(value: &T) -> Result<(), String> {
+    println!(
+        "{}",
+        serde_json::to_string(value).map_err(|err| err.to_string())?
+    );
+    Ok(())
+}
+
 fn show_key(key: &KeyInfo) {
     lines(describe::key(key));
 }
@@ -1953,6 +1967,16 @@ mod tests {
         // nodes list filters by the same --tag.
         let cli = Cli::try_parse_from(["tessaro-ctl", "nodes", "list", "--tag", "x"]).unwrap();
         assert_eq!(cli.tags, ["x"]);
+        // The tags `device tags add` takes are its own, never --tag.
+        let cli = Cli::try_parse_from(["tessaro-ctl", "device", "tags", "add", "Lobby", "floor-2"])
+            .unwrap();
+        assert!(cli.tags.is_empty(), "{:?}", cli.tags);
+        match cli.command {
+            Cmd::Device(DeviceCmd::Tags(TagsCmd::Add { tags })) => {
+                assert_eq!(tags, ["Lobby", "floor-2"])
+            }
+            _ => panic!("not device tags add"),
+        }
     }
 
     #[test]
