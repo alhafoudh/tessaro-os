@@ -6,7 +6,7 @@
       "agent"
     ],
     "guarded": false,
-    "doc": "The page the kiosk shows (default: the welcome page, http://127.0.0.1/; the self-test is http://127.0.0.1/selftest.html). A new origin also re-grants the device APIs to it.",
+    "doc": "The page the kiosk shows (default: the welcome page, http://127.0.0.1/, which opens the demo at http://127.0.0.1/demo/). A new origin also re-grants the device APIs to it.",
     "values": "an http, https, file or data URL; may contain {key} placeholders - any setting's key, e.g. {data.table} or {device.name}",
     "default": "http://127.0.0.1/",
     "value": "https://menu.example.com/",
@@ -141,9 +141,9 @@
       "agent"
     ],
     "guarded": false,
-    "doc": "What the page gets as window.tessaro: off, config (the settings, read-only) or actions (the settings and device actions). `tessaro-ctl browser bridge`.",
+    "doc": "What the page gets as window.tessaro: off, config (the settings, read-only) or actions (the settings and device actions, the default). `tessaro-ctl browser bridge`.",
     "values": "one of: off, config, actions",
-    "default": "off",
+    "default": "actions",
     "value": null,
     "input": {
       "kind": "choice",
@@ -258,7 +258,7 @@
       "browser"
     ],
     "guarded": false,
-    "doc": "Origins granted WebSerial and WebHID besides the kiosk and self-test origins.",
+    "doc": "Origins granted WebSerial and WebHID besides the kiosk's and the local pages' (http://127.0.0.1).",
     "values": "origins (scheme://host[:port]), space or comma separated",
     "default": "",
     "value": null,
@@ -1064,7 +1064,7 @@
       "agent"
     ],
     "guarded": false,
-    "doc": "Seconds between reloads of the kiosk page; 0 never reloads. Set 0 for a manual self-test pass.",
+    "doc": "Seconds between reloads of the kiosk page; 0 never reloads. The demo at http://127.0.0.1/demo/ is reloaded where it is.",
     "values": "a whole number, 0 to 86400",
     "default": "600",
     "value": null,

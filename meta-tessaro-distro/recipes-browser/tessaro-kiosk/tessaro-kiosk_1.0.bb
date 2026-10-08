@@ -58,7 +58,7 @@ DEPENDS += "libxcrypt"
 TESSARO_KIOSK_URL ?= "https://www.moonforgelinux.org"
 
 # The page maintenance mode shows. The default is tessaro-selftest's
-# maintenance.html, on the same loopback nginx as the self-test page.
+# maintenance.html, on the same loopback nginx as the welcome page.
 TESSARO_MAINTENANCE_URL ?= "http://127.0.0.1/maintenance.html"
 
 # The same site as an *origin* - scheme, host and port, no path. Chromium's
@@ -67,10 +67,10 @@ TESSARO_MAINTENANCE_URL ?= "http://127.0.0.1/maintenance.html"
 # has to be trimmed rather than pasted through.
 TESSARO_KIOSK_ORIGIN ?= "${@'/'.join((d.getVar('TESSARO_KIOSK_URL') or '').split('/')[:3])}"
 
-# Where nginx serves the self-test page. It has to appear in the policy in its
-# own right, not only as whatever TESSARO_KIOSK_URL happens to be: on a
-# deployed device the kiosk URL is the customer's site, and without this line
-# the diagnostic page would lose exactly the grants it exists to exercise.
+# Where nginx serves the welcome page and the demo. It has to appear in the
+# policy in its own right, not only as whatever TESSARO_KIOSK_URL happens to
+# be: on a deployed device the kiosk URL is the customer's site, and without
+# this line the demo would lose exactly the grants it exists to show.
 # Must match the listen address in tessaro-selftest's nginx conf.
 TESSARO_SELFTEST_ORIGIN ?= "http://127.0.0.1"
 

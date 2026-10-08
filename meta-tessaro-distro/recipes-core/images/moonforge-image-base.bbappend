@@ -88,18 +88,20 @@ CORE_IMAGE_EXTRA_INSTALL += " \
     ttf-dejavu-sans-mono \
 "
 
-# The self-test page, which is what a factory image opens: TESSARO_KIOSK_URL
-# defaults to http://127.0.0.1/ and a deployment repoints it. About 1.5 MB with
-# its media. Worth carrying even on a deployed device - the alternative is a
-# technician in front of a black screen with no way to tell a codec from a
-# compositor.
+# The welcome page, which is what a factory image opens (TESSARO_KIOSK_URL
+# defaults to http://127.0.0.1/ and a deployment repoints it), and the demo
+# it opens at /demo/ (docs/demo.md). Worth carrying even on a deployed
+# device - the demo checks fonts, inputs, codecs and every device API on the
+# screen itself, where the alternative is a technician in front of a black
+# screen with no way to tell a codec from a compositor.
 #
-# nginx arrives as its RDEPENDS rather than being named here, because serving
-# the page is that recipe's business: a file:// URL has a null origin and could
-# never be granted a serial port by policy. See the comment on
-# TESSARO_KIOSK_URL in tessaro.conf.
+# nginx arrives as tessaro-selftest's RDEPENDS rather than being named here,
+# because serving the pages is that recipe's business: a file:// URL has a
+# null origin and could never be granted a serial port by policy. See the
+# comment on TESSARO_KIOSK_URL in tessaro.conf.
 CORE_IMAGE_EXTRA_INSTALL += " \
     tessaro-selftest \
+    tessaro-demo \
 "
 
 # Webconfig, the device's management pages, which the agent serves at /

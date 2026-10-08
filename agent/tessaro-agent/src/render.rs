@@ -152,7 +152,7 @@ pub fn env_file(
     out
 }
 
-/// The device-API origins: the kiosk's, the self-test page's, and any extra
+/// The device-API origins: the kiosk's, the local pages', and any extra
 /// ones set, deduplicated and in that order. The kiosk's is browser.url's even
 /// in maintenance mode, so toggling it never changes the policy.
 pub fn device_origins(effective: &state::Effective, selftest_origin: &str) -> Vec<String> {
@@ -212,7 +212,7 @@ impl UrlLists {
 }
 
 /// The pages a URL block must never shut out, as URL patterns: the kiosk's
-/// origin, the self-test's (the welcome page and the file store), the
+/// origin, the local pages' (the welcome page, the demo and the file store), the
 /// maintenance and offline pages, and the directory the agent writes the
 /// shipped offline page and the debug screen to. Maintenance mode or not,
 /// so toggling it never changes the policy. A `data:` URL has no pattern.

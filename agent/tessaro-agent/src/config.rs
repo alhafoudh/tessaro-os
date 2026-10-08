@@ -125,6 +125,9 @@ pub struct Config {
     pub restart_backoff: i64,
 
     pub unit: String,
+    /// The loopback pages' origin (`KIOSK_SELFTEST_ORIGIN`), whose `/demo/`
+    /// the refresh timer reloads in place rather than leaving.
+    pub selftest_origin: String,
     pub agent_enable: bool,
     pub enforce_origin: bool,
     pub debug: bool,
@@ -270,6 +273,7 @@ impl Config {
             restart_backoff: int(env, "KIOSK_RESTART_BACKOFF", 300),
 
             unit: string(env, "KIOSK_UNIT", "tessaro-kiosk.service"),
+            selftest_origin: string(env, "KIOSK_SELFTEST_ORIGIN", "http://127.0.0.1"),
             agent_enable: flag(env, "KIOSK_AGENT_ENABLE", true),
             enforce_origin: flag(env, "KIOSK_ENFORCE_ORIGIN", true),
             debug: flag(env, "KIOSK_DEBUG", false),
@@ -277,7 +281,7 @@ impl Config {
             inject_script: string(env, "KIOSK_INJECT_SCRIPT", "")
                 .trim_matches('/')
                 .to_string(),
-            bridge: BridgeMode::parse(&string(env, "KIOSK_BRIDGE_MODE", "off")),
+            bridge: BridgeMode::parse(&string(env, "KIOSK_BRIDGE_MODE", "actions")),
             printing: flag(env, "KIOSK_PRINTING", false),
             player: flag(env, crate::state::PLAYER_MODE, false),
 

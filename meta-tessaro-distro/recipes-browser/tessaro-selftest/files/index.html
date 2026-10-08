@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!--
-  The welcome page: what a factory image shows at http://127.0.0.1/. The
-  self-test is beside it at /selftest.html.
+  The welcome page: what a factory image shows at http://127.0.0.1/. Its
+  button opens the demo, beside it at /demo/ (docs/demo.md).
 
   Styled like maintenance.html and, like it, everything inline: this is the
   page a device shows before anyone has set it up, often with no network.
@@ -17,6 +17,31 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Tessaro</title>
+<script>
+  // Back to the demo after its maintenance round trip, before anything is
+  // drawn. The demo turns maintenance on for a few seconds and off again,
+  // and off loads browser.url, which is this page; before it goes, it leaves
+  // a note in localStorage, which this origin shares, naming the section to
+  // come back to. The key and the 120s it is good for are RETURN_KEY and
+  // RETURN_FOR in demo/src/features/maintenance.ts. Only a URL on this
+  // origin is followed, and a note is used once.
+  (function () {
+    var KEY = "tessaro.demo.return";
+    var FOR_MS = 120000;
+    try {
+      var raw = localStorage.getItem(KEY);
+      if (!raw) return;
+      localStorage.removeItem(KEY);
+      var note = JSON.parse(raw);
+      var age = Date.now() - note.at;
+      if (typeof note.url !== "string" || !(age >= 0 && age < FOR_MS)) return;
+      if (new URL(note.url, location.href).origin !== location.origin) return;
+      location.replace(note.url);
+    } catch (e) {
+      // A note that does not parse is dropped; the welcome page stays.
+    }
+  })();
+</script>
 <style>
   :root {
     color-scheme: dark;
@@ -49,8 +74,11 @@
     user-select: none;
   }
 
-  /* The desktop wallpaper, redrawn as in maintenance.html: the page appears
-     over the desktop without a change, then the glows drift slowly. */
+  /* The desktop wallpaper, redrawn as in maintenance.html, so the page
+     appears over the desktop without a change. The glows stand still: a
+     drift repaints both full-screen layers every frame, which an integrated
+     GPU (an HD 530, measured) cannot do in one 60 Hz refresh. For the same
+     reason nothing here uses backdrop-filter. */
   .glow {
     position: fixed;
     left: 50%;
@@ -64,15 +92,11 @@
   .glow.a {
     background: radial-gradient(closest-side, rgba(18, 48, 77, 0.95), rgba(16, 36, 58, 0.35) 60%, rgba(16, 36, 58, 0));
     translate: -400px -340px;
-    animation: drift-a 38s ease-in-out infinite alternate;
   }
   .glow.b {
     background: radial-gradient(closest-side, rgba(36, 27, 68, 0.95), rgba(29, 23, 51, 0.35) 60%, rgba(29, 23, 51, 0));
     translate: 440px 380px;
-    animation: drift-b 46s ease-in-out infinite alternate;
   }
-  @keyframes drift-a { to { transform: translate(10vmin, 8vmin); } }
-  @keyframes drift-b { to { transform: translate(-9vmin, -7vmin); } }
   body::after {
     content: "";
     position: fixed;
@@ -240,6 +264,37 @@
     border-radius: 0.35em;
   }
 
+  /* The claim hint and the way into the demo share a row, so the page
+     still fits a screen with the setup QR up. */
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: clamp(10px, 2vmin, 24px) clamp(18px, 3.4vmin, 48px);
+  }
+
+  /* The way into the demo, the demo's own primary button made large. */
+  .demo {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.6em;
+    min-height: clamp(2.9rem, 6.4vmin, 4.6rem);
+    padding: 0 clamp(1.4rem, 3.6vmin, 2.8rem);
+    border-radius: 999px;
+    background: linear-gradient(110deg, var(--accent), var(--accent-2));
+    color: #071019;
+    font-size: clamp(1rem, 2.5vmin, 1.75rem);
+    font-weight: 650;
+    letter-spacing: 0.01em;
+    text-decoration: none;
+    white-space: nowrap;
+    transition: transform 120ms ease;
+  }
+  .demo:active { transform: scale(0.97); }
+  .demo svg { width: 0.9em; height: 0.9em; flex: none; }
+
   .stale { opacity: 0.45; transition: opacity 0.6s; }
 
   /* The waves of the QR's Wi-Fi icon (qr-wifi.svg) light up inner first,
@@ -255,7 +310,7 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .glow, .wifi-wave { animation: none; }
+    .wifi-wave { animation: none; }
   }
 </style>
 </head>
@@ -297,7 +352,12 @@
     </div>
   </div>
 
-  <p class="hint" id="hint" hidden>Set it up with <code id="claim-cmd"></code></p>
+  <div class="actions">
+    <p class="hint" id="hint" hidden>Set it up with <code id="claim-cmd"></code></p>
+    <a class="demo" id="demo" href="/demo/">Explore the demo
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13M13 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </a>
+  </div>
 </main>
 
 <script>

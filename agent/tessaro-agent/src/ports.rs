@@ -30,6 +30,9 @@ pub trait Cdp {
     /// Point the page target at a URL.
     async fn navigate(&self, url: &str) -> Result<()>;
 
+    /// Reload what the page target shows, where it is, bypassing the cache.
+    async fn reload(&self) -> Result<()>;
+
     /// Is a DevTools client other than the agent connected - a technician
     /// with the tab open in DevTools? Never fails: "cannot tell" is `false`,
     /// so the browser is never left unwatched on a guess.

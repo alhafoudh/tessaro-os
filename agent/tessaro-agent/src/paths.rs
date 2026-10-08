@@ -116,7 +116,8 @@ pub struct Paths {
     /// where the agent writes `tessaro.txt`. `None` on a device without that
     /// firmware. Set by the build per machine, never probed.
     pub boot_config_dir: Option<PathBuf>,
-    /// The self-test page's origin, always granted the device APIs.
+    /// The local pages' origin (the welcome page, the demo), always granted
+    /// the device APIs.
     pub selftest_origin: String,
     pub kiosk_unit: String,
     pub weston_unit: String,

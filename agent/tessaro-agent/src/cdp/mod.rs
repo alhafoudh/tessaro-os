@@ -86,6 +86,21 @@ impl Cdp for CdpClient<'_> {
         }
     }
 
+    /// The same `Page.reload` as `tessaro-ctl browser reload`
+    /// (`control/page.rs`).
+    async fn reload(&self) -> Result<()> {
+        self.session
+            .call(
+                &self.heartbeat,
+                "Page.reload",
+                json!({ "ignoreCache": true }),
+                self.timeout,
+            )
+            .await // naked: SessionHandle::call is under the heartbeat's within()
+            .map(drop)
+            .map_err(Error::Cdp)
+    }
+
     async fn inspected(&self) -> bool {
         let others = self
             .heartbeat

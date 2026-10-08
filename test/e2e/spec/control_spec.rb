@@ -621,7 +621,8 @@ module AgentE2E
       guest.run("tessaro-ctl browser inject on --script /inject.js")
       # "now": the running agent applies the change; one that restarted would
       # say it without.
-      journal.wait_for(/^page bridge: (now )?off, injecting inject\.js$/, timeout: 30)
+      # actions is the factory bridge mode.
+      journal.wait_for(/^page bridge: (now )?actions, injecting inject\.js$/, timeout: 30)
       wait_value.call("window.__e2e", "one", 30)
       expect(guest.run("tessaro-ctl device status")).to include("inject.js injected")
 

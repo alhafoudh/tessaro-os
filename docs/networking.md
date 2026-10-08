@@ -346,8 +346,8 @@ restarts `tessaro-proxy.service`, or stops it when the URL is emptied.
   <-loopback>`, added only while a proxy is set (`render::policy`). The
   address never changes, so only switching the proxy on or off changes the
   policy - and restarts the browser; a new upstream or password restarts
-  tinyproxy alone. Loopback is always direct, so the self-test page,
-  `/files/` and CDP are unaffected.
+  tinyproxy alone. Loopback is always direct, so the welcome page, the
+  demo, `/files/` and CDP are unaffected.
 * **The agent tunnels, and does no DNS of its own through a proxy.** The
   probe and the public address lookup (`HyperHttp::with_proxy`, never the
   CDP client) send `CONNECT host:port` to the local proxy for http and https

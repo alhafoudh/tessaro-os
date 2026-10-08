@@ -730,7 +730,7 @@ impl Control {
                 if let Some(url) = arg(1).as_str() {
                     values.insert(keys::MAINTENANCE_URL.to_string(), Some(url.to_string()));
                 }
-                match disrupt(bridge) {
+                match maintenance_gate(bridge, on) {
                     Err(refused) => (Err(refused), None),
                     Ok(()) => self.reply(
                         self.change(&caller, values, None, true, Default::default(), None)
@@ -1210,6 +1210,19 @@ fn disrupt(bridge: &Bridge) -> Result<(), Value> {
     Ok(())
 }
 
+/// `browser.maintenance`: on is gated like every other restart of the page;
+/// off never is. Off can only end a maintenance that an `on` already passed
+/// the gate for, so it cannot loop, and refusing it would leave a page that
+/// put itself into maintenance (the demo's round trip) stuck there until the
+/// gap ran out. It still counts as the last start, so the next `on` waits.
+fn maintenance_gate(bridge: &Bridge, on: bool) -> Result<(), Value> {
+    if on {
+        return disrupt(bridge);
+    }
+    *lock(&bridge.last_disrupt) = Instant::now();
+    Ok(())
+}
+
 /// One more document from the page, unless it printed `PRINT_BURST` in the
 /// last `PRINT_WINDOW`.
 fn print_allowed(bridge: &Bridge) -> Result<(), Value> {
@@ -1642,6 +1655,22 @@ mod tests {
         *lock(&settled.last_disrupt) = Instant::now() - DISRUPT_GAP - Duration::from_secs(1);
         assert!(disrupt(&settled).is_ok());
         assert!(disrupt(&settled).is_err(), "twice in a row");
+    }
+
+    #[test]
+    fn maintenance_off_is_never_refused_and_holds_off_the_next_on() {
+        let fresh = bridge(BridgeMode::Actions);
+        assert!(maintenance_gate(&fresh, true).is_err(), "on is gated");
+        assert!(maintenance_gate(&fresh, false).is_ok(), "off is not");
+
+        let settled = bridge(BridgeMode::Actions);
+        *lock(&settled.last_disrupt) = Instant::now() - DISRUPT_GAP - Duration::from_secs(1);
+        assert!(maintenance_gate(&settled, true).is_ok());
+        assert!(
+            maintenance_gate(&settled, false).is_ok(),
+            "straight after on"
+        );
+        assert!(maintenance_gate(&settled, true).is_err(), "on again waits");
     }
 
     #[test]

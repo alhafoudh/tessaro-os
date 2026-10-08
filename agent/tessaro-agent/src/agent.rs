@@ -374,11 +374,15 @@ impl<'a> Agent<'a> {
                 ));
             }
 
-            if self.nav_state != NavState::Live
-                || drifted.is_some()
-                || (config.refresh_interval > 0 && now - self.last_nav >= config.refresh_interval)
-            {
+            let refresh_due =
+                config.refresh_interval > 0 && now - self.last_nav >= config.refresh_interval;
+            if self.nav_state != NavState::Live || drifted.is_some() {
                 self.go_live(now).await;
+            } else if refresh_due {
+                match self.on_demo().await {
+                    Some(url) => self.reload_in_place(&url, now).await,
+                    None => self.go_live(now).await,
+                }
             }
         } else {
             self.fails += 1;
@@ -561,6 +565,39 @@ impl<'a> Agent<'a> {
         }
     }
 
+    /// The URL on screen when it is the demo, `/demo/` on the loopback
+    /// pages' origin, which the welcome page opens and browser.url never
+    /// names. Its sections are in the hash, so `starts_with` covers them.
+    async fn on_demo(&self) -> Option<String> {
+        let demo = format!(
+            "{}/demo/",
+            self.config().selftest_origin.trim_end_matches('/')
+        );
+        self.cdp
+            .current_url()
+            .await
+            .filter(|url| url.starts_with(&demo))
+    }
+
+    /// The refresh timer's turn while the demo is on screen: reloaded where
+    /// it is rather than sent back to browser.url, so the timer does not
+    /// take someone out of the demo mid-section. Drift, a crash, a restart
+    /// and the probe's recovery still go to browser.url (`go_live`).
+    async fn reload_in_place(&mut self, url: &str, now: i64) {
+        match self.cdp.reload().await {
+            Ok(()) => {
+                self.last_nav = now;
+                self.log.info(format!("reloaded the demo in place ({url})"));
+            }
+            Err(err) => {
+                self.ping_fails += 1;
+                self.report_cdp_failure(format!(
+                    "could not tell chromium to reload the demo ({err})"
+                ));
+            }
+        }
+    }
+
     async fn go_offline(&mut self, now: i64) {
         let offline_url = self.config().offline_url.clone();
         if offline_url == "none" {
@@ -728,6 +765,8 @@ mod tests {
         generation: Cell<u64>,
         /// A technician is connected to DevTools.
         inspected: Cell<bool>,
+        /// Reloads in place, where the page is.
+        reloads: Cell<usize>,
     }
 
     impl Default for FakeCdp {
@@ -741,6 +780,7 @@ mod tests {
                 redirect_to: RefCell::new(None),
                 generation: Cell::new(1),
                 inspected: Cell::new(false),
+                reloads: Cell::new(0),
             }
         }
     }
@@ -784,6 +824,14 @@ mod tests {
                 .clone()
                 .unwrap_or_else(|| url.to_string());
             *self.current_url.borrow_mut() = Some(landed);
+            Ok(())
+        }
+
+        async fn reload(&self) -> Result<()> {
+            if self.navigate_fails.get() {
+                return Err(Error::Cdp("reload refused".to_string()));
+            }
+            self.reloads.set(self.reloads.get() + 1);
             Ok(())
         }
     }
@@ -1184,6 +1232,41 @@ mod tests {
         agent.cycle(1600).await;
 
         assert_eq!(world.navigations().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn the_refresh_interval_reloads_the_demo_in_place() {
+        let world = World::new(&[("KIOSK_URL", "http://127.0.0.1/")]);
+        let mut agent = world.agent();
+
+        agent.cycle(1000).await;
+        agent.cycle(1010).await;
+        *world.cdp.current_url.borrow_mut() = Some("http://127.0.0.1/demo/#/audio".to_string());
+        agent.cycle(1600).await;
+
+        assert_eq!(world.navigations(), vec!["http://127.0.0.1/"]);
+        assert_eq!(world.cdp.reloads.get(), 1);
+
+        // Reset like a navigation: the next one is a whole interval away.
+        agent.cycle(1610).await;
+        assert_eq!(world.cdp.reloads.get(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_demo_on_another_origin_is_drift() {
+        let world = World::new(&[("KIOSK_URL", "http://kiosk.test/")]);
+        let mut agent = world.agent();
+
+        agent.cycle(1000).await;
+        agent.cycle(1010).await;
+        *world.cdp.current_url.borrow_mut() = Some("http://127.0.0.1/demo/".to_string());
+        agent.cycle(1020).await;
+
+        assert_eq!(
+            world.navigations(),
+            vec!["http://kiosk.test/", "http://kiosk.test/"]
+        );
+        assert_eq!(world.cdp.reloads.get(), 0);
     }
 
     #[tokio::test]

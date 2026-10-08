@@ -172,8 +172,8 @@ browser.
 **An image or video from anywhere but the device itself is copied to
 `/data/tessaro/media-cache/` and played from there**, so it plays with the
 network down and never waits on a slow server between two items. Sources
-under `http://127.0.0.1/` - the file store at `/files/`, the self-test's
-media - are played where they are (`protocol::playlist::is_local`).
+under `http://127.0.0.1/` - the file store at `/files/`, the local pages'
+`/media/` - are played where they are (`protocol::playlist::is_local`).
 
 * **Only playlists the player can play are copied**: the default and every
   one in the timetable.

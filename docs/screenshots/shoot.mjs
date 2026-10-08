@@ -50,6 +50,20 @@ function webconfig(url) {
   return [TYPES[extname(served)] ?? "application/octet-stream", readFileSync(served)];
 }
 
+/**
+ * The demo as the image serves it at /demo/: the build's files, its index
+ * for the directory. Anything else is refused, which the sections that
+ * stream from the internet show as offline.
+ */
+function demo(url) {
+  const path = new URL(url).pathname;
+  if (!path.startsWith("/demo/")) return undefined;
+  const rest = path.slice("/demo/".length) || "index.html";
+  const file = `${repo}build/demo/${rest}`;
+  if (!existsSync(file) || !statSync(file).isFile()) return undefined;
+  return [TYPES[extname(file)] ?? "application/octet-stream", readFileSync(file)];
+}
+
 /** Webconfig waits for the device before it shows anything of it. */
 const answered = () =>
   !!document.querySelector("main") &&
@@ -68,6 +82,18 @@ const shots = [
       "http://127.0.0.1/welcome.json": ["application/json", read("docs/screenshots/welcome.json")],
     },
     ready: () => document.getElementById("node").textContent !== "-",
+  },
+  {
+    // The demo's home page, on the pretend device its ?mock installs, once
+    // every tile has its badge. innerText is as drawn, upper case.
+    name: "demo-home",
+    url: "http://127.0.0.1/demo/?mock",
+    routes: demo,
+    ready: () =>
+      document.querySelectorAll(".tile").length > 0 &&
+      ![...document.querySelectorAll(".tile")].some((tile) => /checking/i.test(tile.innerText)),
+    // The top bar's clock, the same in every picture.
+    clock: 1_791_270_000 * 1000,
   },
   {
     // The message is the README's example.

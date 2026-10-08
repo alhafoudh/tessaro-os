@@ -101,9 +101,9 @@
 
   // Serial and HID are granted wholesale to the kiosk's own origin, from
   // TESSARO_KIOSK_URL, and to http://127.0.0.1, where nginx serves the
-  // self-test page. They collapse to one entry on a factory image, where those
-  // are the same thing. The self-test origin is what keeps the diagnostic page
-  // able to open a serial port on a *deployed* device, after TESSARO_KIOSK_URL
+  // welcome page and the demo. They collapse to one entry on a factory image,
+  // where those are the same thing. The local pages' origin is what keeps the
+  // demo able to open a serial port on a *deployed* device, after TESSARO_KIOSK_URL
   // has been pointed at a customer's site.
   //
   // These match on *origin* only - scheme, host and port - with no [*.]host
@@ -111,7 +111,7 @@
   // non-default port needs that port here.
   //
   // The lists below are what the image was built with: TESSARO_KIOSK_URL's
-  // origin and the self-test page's. On a device they are rewritten by
+  // origin and the local pages'. On a device they are rewritten by
   // tessaro-agent from browser.url as set there, plus browser.device_origins,
   // so pointing a shipped device at a new site moves the grants with it.
   //

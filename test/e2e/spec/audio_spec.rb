@@ -137,7 +137,7 @@ module AgentE2E
     # No microphone in the VM, so the page gets a monitor of an output or no
     # device at all - either proves the grant. A NotAllowedError would be the
     # policy missing; a prompt would never answer and time out.
-    it "audio-mic: getUserMedia on the self-test page is granted without a prompt" do
+    it "audio-mic: getUserMedia on the welcome page is granted without a prompt" do
       script = <<~JS
         navigator.mediaDevices.getUserMedia({ audio: true })
           .then((stream) => { stream.getTracks().forEach((t) => t.stop()); return "granted"; })

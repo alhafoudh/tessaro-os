@@ -62,8 +62,8 @@
     {
       "position": 4,
       "kind": "url",
-      "src": "../selftest.html",
-      "source": "../selftest.html",
+      "src": "../maintenance.html",
+      "source": "../maintenance.html",
       "duration_s": 8,
       "trim_start_ms": 0,
       "trim_end_ms": null,

@@ -126,14 +126,17 @@ module AgentE2E
     end
 
     it "printer-page: with printer.enable the page prints through the bridge and window.print()", :reconfigure do
-      refused = guest.run("tessaro-ctl browser eval 'typeof tessaro'")
-      expect(refused).to include("undefined")
+      # The factory bridge is actions, so the page has tessaro.printer
+      # already; window.print() stays the browser's until printer.enable.
+      native = "String(window.print).includes('[native code]')"
+      expect(page_value(native)).to eq(true)
 
       # The browser restarts for printer.enable's policy; the agent hands the
       # page its bridge without restarting.
       guest.run("tessaro-ctl config set browser.bridge.mode=actions printer.enable=1")
-      wait_until("the page has the print call", timeout: 60) do
-        page_value("typeof (window.tessaro && tessaro.printer.print)") == "function"
+      wait_until("the page has the agent's window.print()", timeout: 60) do
+        page_value("typeof (window.tessaro && tessaro.printer.print)") == "function" &&
+          page_value(native) == false
       end
       # Bracketed, so pgrep does not find this very command (Guest#signal_matching).
       expect(guest.run("pgrep -f -- '--kiosk-printin[g]'", allow_failure: true).strip).not_to be_empty,

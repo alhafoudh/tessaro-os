@@ -6,7 +6,7 @@
       tessaro-ctl browser maintenance off
 
   browser.maintenance.url points here by default, http://127.0.0.1/maintenance.html,
-  served by the self-test's loopback nginx. browser.url is left as it is, so
+  served by the welcome page's loopback nginx. browser.url is left as it is, so
   turning maintenance off goes straight back to the site.
 
   Everything is inline on purpose: maintenance is often exactly when the site
@@ -63,9 +63,9 @@
 
   /* The desktop wallpaper, background.svg in weston-init's files, redrawn:
      its glows and dot grid at the same pixels from the centre of the screen,
-     so the page appears over the desktop without a change. The glows then
-     drift slowly. Transform-only, so the compositor moves them without
-     repainting the page every frame. */
+     so the page appears over the desktop without a change. The glows stand
+     still: a drift repaints both full-screen layers every frame, which an
+     integrated GPU (an HD 530, measured) cannot do in one 60 Hz refresh. */
   .glow {
     position: fixed;
     left: 50%;
@@ -79,15 +79,11 @@
   .glow.a {
     background: radial-gradient(closest-side, rgba(18, 48, 77, 0.95), rgba(16, 36, 58, 0.35) 60%, rgba(16, 36, 58, 0));
     translate: -400px -340px;
-    animation: drift-a 38s ease-in-out infinite alternate;
   }
   .glow.b {
     background: radial-gradient(closest-side, rgba(36, 27, 68, 0.95), rgba(29, 23, 51, 0.35) 60%, rgba(29, 23, 51, 0));
     translate: 440px 380px;
-    animation: drift-b 46s ease-in-out infinite alternate;
   }
-  @keyframes drift-a { to { transform: translate(10vmin, 8vmin); } }
-  @keyframes drift-b { to { transform: translate(-9vmin, -7vmin); } }
   body::after {
     content: "";
     position: fixed;
@@ -166,7 +162,7 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .glow, .mark .big, .mark .small, .bar span { animation: none; }
+    .mark .big, .mark .small, .bar span { animation: none; }
     .bar span { width: 100%; opacity: 0.5; }
   }
 </style>

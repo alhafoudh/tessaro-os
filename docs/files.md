@@ -39,7 +39,7 @@ shared so both ends refuse the same paths.
   every component with `symlink_metadata` and opens with `O_NOFOLLOW`, and the
   location has `disable_symlinks on`. The agent never makes one; one made by
   hand could otherwise reach `/data/tessaro` and its tokens.
-* **The nginx location is in the self-test's server block**
+* **The nginx location is in the welcome page's server block**
   (`10-tessaro-selftest.conf`), because that is the one server on
   `127.0.0.1:80`. `autoindex off`, `Access-Control-Allow-Origin: *` and
   `Cache-Control: no-cache` - restated there, since a location's `add_header`

@@ -10,11 +10,15 @@ demonstration. It never talks to the device except through
 
 ## Where it runs
 
-**The demo is served from the device's file store, at
-`http://127.0.0.1/files/demo/`**, which `mise run demo:sync` builds into
-`/data/files/demo` and opens (`tessaro-ctl files sync`,
-[files.md](files.md)). That is the welcome page's origin, which matters
-twice:
+**The image carries the demo at `http://127.0.0.1/demo/`, and the
+welcome page's "Explore the demo" button opens it.** The
+`tessaro-demo` recipe builds `demo/` with bitbake's Node into
+`/usr/share/tessaro-demo`, and the loopback nginx serves that at `/demo/`
+(`10-tessaro-selftest.conf`). While the demo is developed, `mise run
+demo:sync` builds it into the file store instead, at
+`http://127.0.0.1/files/demo/`, and opens it (`tessaro-ctl files sync`,
+[files.md](files.md)); the build is the same, since its paths are
+relative. Both are on the welcome page's origin, which matters twice:
 
 * **The bridge answers it.** The bridge answers the origin of
   `browser.url` (**Who may call** in [bridge.md](bridge.md)), and the
@@ -25,13 +29,17 @@ twice:
   granted to the device origins by policy, and `http://127.0.0.1` is one of
   them (**Device APIs** in [kiosk-browser.md](kiosk-browser.md)).
 
-**The agent's refresh timer takes the browser back to `browser.url`**
-every `agent.refresh_interval` seconds, whatever page it is on; a page
-elsewhere on the same origin is not drift, but the timer still navigates.
-While working on the demo, `agent.refresh_interval=0` keeps it on screen.
+**The agent's refresh timer reloads `/demo/` where it is** instead of
+taking the browser back to `browser.url` (`on_demo` in `agent.rs`), so
+someone in the middle of a section is not sent to the welcome page every
+`agent.refresh_interval` seconds. Drift, a browser crash or restart and
+the probe's recovery still go to `browser.url`. The file store's copy at
+`/files/demo/` gets no such exception: while working on it,
+`agent.refresh_interval=0` keeps it on screen.
 
-**Most sections need `browser.bridge.mode=actions`.** With `config` the
-demo reads but cannot act, and with `off` it has no bridge at all; it
+**Most sections need `browser.bridge.mode=actions`, which is the factory
+mode**, so the demo works on a device fresh from the image. With `config`
+the demo reads but cannot act, and with `off` it has no bridge at all; it
 says so on the home page and in each section, with the command that
 changes it.
 
@@ -62,9 +70,10 @@ nothing from the device - the inputs, the synthesizer, WebGL, a camera
 preview - work with the bridge off.
 
 The registry of sections is `src/features/registry.ts`; the sections are
-`src/sections/`. The self-test page's checks (fonts and emoji, every input
-type, multi-touch, scrolling, codecs, WebSerial and WebHID with the
-serial port picked by USB id) live in the sections they belong to.
+`src/sections/`. The device's diagnostic checks (fonts and emoji, every
+input type, multi-touch, scrolling, codecs, WebSerial and WebHID with the
+serial port picked by USB id) live in the sections they belong to; the
+image has no separate self-test page.
 
 ## What it changes on the device
 
@@ -118,14 +127,18 @@ own.** It calls `browser.maintenance(true, url)` with its own
 `#/maintenance-return` as the URL. The bridge answers the maintenance URL's
 origin, which is the demo's, so that route can count down
 `MAINTENANCE_SECONDS` and call `browser.maintenance(false)`
-(`src/features/maintenance.ts`). When the agent refuses that for coming
-within `DISRUPT_GAP` of switching it on, the route asks again every second
-and shows the seconds left. Maintenance is a setting, so a device that
-restarts during it comes back on the same route, which switches it off.
+(`src/features/maintenance.ts`). The bridge gates switching maintenance
+on like any other start of the page, never switching it off
+(`maintenance_gate` in `control/bridge.rs`), so the round trip cannot get
+stuck; a refusal of off is still handled, by asking again every second
+and showing the seconds left. Maintenance is a setting, so a device that restarts
+during it comes back on the same route, which switches it off.
 
 **Switching maintenance off loads `browser.url`**, not the demo. The demo
 leaves `tessaro.demo.return` in `localStorage`, shared with every page on
-the origin, naming the section to come back to and when.
+the origin, naming the section to come back to and when. The welcome page
+reads it before it draws anything and, when it is under `RETURN_FOR` old
+and on the same origin, removes it and replaces itself with that section.
 
 ## Navigation
 

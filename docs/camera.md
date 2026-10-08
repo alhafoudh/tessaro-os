@@ -166,8 +166,8 @@ left.
 **`VideoCaptureAllowedUrls` grants the camera to the device origins**, like
 the microphone's `AudioCaptureAllowedUrls` ([audio.md](audio.md)), and moves
 with them (`ORIGIN_POLICIES` in `protocol/src/policy.rs`). The page still
-needs a secure context: https, or `http://127.0.0.1`. The self-test page has
-a camera preview for checking a device by hand.
+needs a secure context: https, or `http://127.0.0.1`. The demo's camera
+section has a preview for checking a device by hand ([demo.md](demo.md)).
 
 ## Testing in qemu
 

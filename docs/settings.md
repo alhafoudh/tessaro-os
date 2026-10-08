@@ -261,7 +261,7 @@ workstation, `source <(tessaro-ctl completion bash)` in `~/.bashrc`.
 - puts `browser.maintenance.url` on screen and leaves `browser.url` as it is, so `off`
 goes straight back to the site. The default page is
 `http://127.0.0.1/maintenance.html` (`TESSARO_MAINTENANCE_URL` in
-`tessaro.conf`), shipped by `tessaro-selftest` next to the self-test page,
+`tessaro.conf`), shipped by `tessaro-selftest` next to the welcome page,
 self-contained so it renders with the network down. It takes `?title=` and
 `?message=` as plain text, which is how a device customises it without an
 image: `browser maintenance on --url 'http://127.0.0.1/maintenance.html?message={data.msg}'`

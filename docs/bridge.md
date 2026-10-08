@@ -46,6 +46,14 @@ no symlink.
 **`browser.bridge.mode` is `off`, `config` or `actions`, and each includes the
 one before.** `off` puts nothing on the page at all.
 
+**The factory mode is `actions`** (`KIOSK_BRIDGE_MODE` in
+`tessaro-kiosk.env.in`), so the demo the welcome page opens can act on a
+device fresh from the image ([demo.md](demo.md)). The consequence is
+trust: every script that runs on `browser.url`'s origin, a third-party one
+included, can call the device actions until the mode is lowered. A
+deployment that points `browser.url` at a site it does not fully control
+sets `tessaro-ctl browser bridge config` or `off`.
+
 ```js
 tessaro.mode                 // "config" or "actions"
 tessaro.config["network.ip"] // any placeholder key, as {network.ip} in browser.url
@@ -207,8 +215,11 @@ The other commands no call mirrors are the operator's too:
   new URL, or shows the debug screen with the new value.
 * **Starting the page over is refused within 60s** (`DISRUPT_GAP`) of the
   agent's start and of the last time: `browser.reload`, `restart`, `home`,
-  `maintenance`, `device.reboot`, and a `data.set` a template uses. A
-  page that calls one on load would otherwise loop.
+  `maintenance(true)`, `device.reboot`, and a `data.set` a template uses. A
+  page that calls one on load would otherwise loop. `maintenance(false)` is
+  never refused, only noted as the last time (`maintenance_gate`): it can
+  only end a maintenance an `on` already passed the gate for, and refusing
+  it would strand a page that put itself into maintenance.
 * **`network.speedTest()` runs at most once in 10 minutes**: it moves real
   data over a link that may be metered.
 * **`printer.print()` needs `printer.enable`, and prints at most

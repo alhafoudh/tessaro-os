@@ -115,7 +115,7 @@ repos:
   # spelled out here now. Check with:
   #   kas-container dump kas/machine/<machine>.yml:kas/common/debug.yml
   #
-  # meta-webserver carries nginx, which serves the self-test page on the
+  # meta-webserver carries nginx, which serves the welcome page and the demo on the
   # loopback. A file:// page would need no server at all, but it would also
   # have a null origin, and Chromium's device-permission policies match on
   # origin - so the page could not be granted a serial port or a HID device

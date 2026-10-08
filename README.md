@@ -84,7 +84,7 @@ or from [Webconfig](#webconfig) in any browser:
 ### For developers
 
 - 🔓 **Locked down, never locked in**: full root access stays yours. Tessaro's services orchestrate standard systemd units and plain config files, so you can extend the system with your own services the usual Linux way.
-- 🌉 **A bridge into the device**: an injected script and `window.tessaro` let your page read status, print and run scripts.
+- 🌉 **A bridge into the device**: an injected script and `window.tessaro` let your page read status, print and run scripts. Device actions are on by default, for the built-in demo; turn them down to read-only or off for a site you do not fully control.
 - 📜 **A real HTTP API**, with an OpenAPI document and Swagger UI on the device.
 - 🐞 **Remote DevTools** and `browser eval`, for debugging the page as the screen runs it.
 - ⚙️ **Chromium your way**: extra flags, features and enterprise policies per device, no rebuild.
@@ -230,7 +230,15 @@ so a claim and settings last until you close it.
 ## Quick start
 
 1. **Flash** an image to an SD card, USB stick or disk and boot it with a
-   network cable in. The welcome page shows the device's name and address.
+   network cable in. The welcome page shows the device's name and address,
+   and its **Explore the demo** button shows every feature on the screen
+   itself, each tile saying whether it is ready on this device and how to
+   switch it on.
+
+   <p align="center">
+     <img src="docs/images/demo-home.jpg" width="70%" alt="The demo's home page: a tile for every feature with a badge saying whether it is ready">
+   </p>
+
 2. **Get the client** and find the device:
 
    ```sh

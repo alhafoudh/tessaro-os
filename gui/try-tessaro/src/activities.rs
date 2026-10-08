@@ -14,11 +14,12 @@ use crate::device;
 
 /// The welcome page, where the kiosk starts.
 const WELCOME: &str = "http://127.0.0.1/";
-const SELFTEST: &str = "http://127.0.0.1/selftest.html";
+/// The demo, beside it, which its button opens.
+const DEMO: &str = "http://127.0.0.1/demo/";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Activity {
-    SelfTest,
+    Demo,
     Tone,
     Website,
     Maintenance,
@@ -27,7 +28,7 @@ pub enum Activity {
 
 impl Activity {
     pub const ALL: [Activity; 5] = [
-        Activity::SelfTest,
+        Activity::Demo,
         Activity::Tone,
         Activity::Website,
         Activity::Maintenance,
@@ -36,7 +37,7 @@ impl Activity {
 
     pub fn title(self) -> &'static str {
         match self {
-            Activity::SelfTest => "Run the self-test page",
+            Activity::Demo => "Explore the demo",
             Activity::Tone => "Play a test tone",
             Activity::Website => "Show your own website",
             Activity::Maintenance => "Put up the maintenance screen",
@@ -46,8 +47,8 @@ impl Activity {
 
     pub fn blurb(self) -> &'static str {
         match self {
-            Activity::SelfTest => {
-                "The built-in diagnostic page: fonts, inputs, touch, audio and video, graded as you go."
+            Activity::Demo => {
+                "Every kiosk feature on the device's own screen: fonts, inputs, audio, video, devices and more."
             }
             Activity::Tone => "A one-second tone from the device, through this computer's speakers.",
             Activity::Website => {
@@ -68,8 +69,8 @@ impl Activity {
             url.trim()
         };
         match self {
-            Activity::SelfTest => vec![
-                format!("tessaro-ctl browser navigate {SELFTEST}"),
+            Activity::Demo => vec![
+                format!("tessaro-ctl browser navigate {DEMO}"),
                 format!("tessaro-ctl browser navigate {WELCOME}"),
             ],
             Activity::Tone => vec!["tessaro-ctl audio test".to_string()],
@@ -89,7 +90,7 @@ impl Activity {
 /// What a card's button asks for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
-    SelfTest,
+    Demo,
     Welcome,
     Tone,
     ShowWebsite(String),
@@ -101,7 +102,7 @@ pub enum Action {
 impl Action {
     pub fn activity(&self) -> Activity {
         match self {
-            Action::SelfTest | Action::Welcome => Activity::SelfTest,
+            Action::Demo | Action::Welcome => Activity::Demo,
             Action::Tone => Activity::Tone,
             Action::ShowWebsite(_) | Action::RestoreWebsite => Activity::Website,
             Action::Maintenance(_) => Activity::Maintenance,
@@ -129,9 +130,9 @@ pub fn run(api: u16, action: Action) -> Result<Outcome, String> {
     }
     let said = |text: &str| Outcome::Lines(vec![Line::of(Tone::Ok, text)]);
     match action {
-        Action::SelfTest | Action::Welcome => {
-            let url = if action == Action::SelfTest {
-                SELFTEST
+        Action::Demo | Action::Welcome => {
+            let url = if action == Action::Demo {
+                DEMO
             } else {
                 WELCOME
             };
@@ -214,7 +215,7 @@ mod tests {
 
     #[test]
     fn every_action_belongs_to_its_card() {
-        assert_eq!(Action::Welcome.activity(), Activity::SelfTest);
+        assert_eq!(Action::Welcome.activity(), Activity::Demo);
         assert_eq!(Action::RestoreWebsite.activity(), Activity::Website);
         assert_eq!(Action::Maintenance(false).activity(), Activity::Maintenance);
     }

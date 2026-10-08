@@ -260,8 +260,8 @@ of `MAX_URL_PATTERNS` each (`keys.rs`).
   each pattern once. Taking the keys over (`managed`) would refuse every
   document that already uses them and drop the stored ones from the render.
 * **While anything is blocked, the device's own pages are allowed**
-  (`render::own_pages`): the kiosk origin, the self-test origin (the welcome
-  page and the file store), the maintenance and offline pages, and the
+  (`render::own_pages`): the kiosk origin, the local pages' origin (the welcome
+  page, the demo and the file store), the maintenance and offline pages, and the
   directory of the shipped offline page and the debug screen
   (`file:///run/tessaro-kiosk/`). This holds for a document's block too, so no
   filter can shut the kiosk out of the pages the agent puts on screen. They
@@ -438,29 +438,26 @@ browser is there: the `frame-unlock` extension loaded with
 its frames first-party, the interactive items' origins in the device grants,
 and the probe and periodic refresh in player mode.
 
-## Self-test page
+## The demo and the local pages
 
-**It is `http://127.0.0.1/selftest.html`**, beside the welcome page.
+**The demo is at `http://127.0.0.1/demo/`, beside the welcome page, which
+opens it.** It shows every feature through the page bridge and carries the
+device's diagnostic checks (fonts, emoji, inputs, multi-touch, codecs,
+WebSerial and WebHID); how it works is [demo.md](demo.md). The welcome
+page, the maintenance page, the player and the nginx server for all of them
+are `meta-tessaro-distro/recipes-browser/tessaro-selftest/`, in
+`/usr/share/tessaro-selftest`; the demo is `tessaro-demo`, in
+`/usr/share/tessaro-demo`, served at `/demo/` by the same server.
 
-`meta-tessaro-distro/recipes-browser/tessaro-selftest/` ships it as a static
-page at `/usr/share/tessaro-selftest/selftest.html`, with its media beside it. It exercises
-rendering, fonts, emoji, every `<input>` type, touch and mouse scrolling plus
-multi-touch, WebSerial and WebHID, audio and video playback, and WebAudio
-synthesis - from local files, with the network down. Passive checks grade
-themselves in a strip at the top; interactive ones stay `pending` until someone
-does something. To open it on a device,
-`tessaro-ctl config set browser.url=http://127.0.0.1/selftest.html`, and
-`tessaro-ctl config unset browser.url` afterwards.
-
-* **It is served by nginx because the device grants need a real origin.** A
+* **They are served by nginx because the device grants need a real origin.** A
   `file://` page has a null origin, and `SerialAllowAllPortsForUrls` /
   `WebHidAllowAllDevicesForUrls` match on origin only. `http://127.0.0.1` is a
   real, potentially trustworthy origin, so the grants apply and the page is a
   secure context, which `navigator.serial` requires.
-* **The policy lists the self-test's origin next to the kiosk's.**
+* **The policy lists the local pages' origin next to the kiosk's.**
   `TESSARO_DEVICE_ORIGINS` in `tessaro-kiosk_1.0.bb` is `TESSARO_KIOSK_ORIGIN`
-  plus `TESSARO_SELFTEST_ORIGIN`, deduplicated. On a customer image the
-  self-test entry keeps the diagnostic page able to open a serial port.
+  plus `TESSARO_SELFTEST_ORIGIN`, deduplicated. On a customer image that
+  entry keeps the demo able to open a serial port.
   `TESSARO_SELFTEST_ORIGIN` must match the `listen` line in
   `tessaro-selftest`'s nginx conf.
 * **nginx serves from `/usr/lib/nginx/conf.d/`.**
@@ -469,19 +466,21 @@ does something. To open it on a device,
   `default_server` symlink, which would answer on `0.0.0.0:80` with the nginx
   welcome page. Ours binds `127.0.0.1` only; the captive portal's server is
   the one other, and answers only the hotspot's subnet.
-* **`tessaro-ctl config set agent.refresh_interval=0` before a manual pass.** The agent
-  re-navigates on that timer, 600s by default, and a reload closes any serial
-  port the page has open and wipes every form value. Put it back afterwards.
+* **The refresh timer reloads the demo where it is**, rather than going
+  back to `browser.url` (**Where it runs** in [demo.md](demo.md)). A reload
+  still closes any serial port the page has open and wipes every form value;
+  `tessaro-ctl config set agent.refresh_interval=0` before a long manual
+  pass, and put it back afterwards.
 * **The agent probes the local server**, so nginx dying puts the offline page
   on screen like any other outage.
 * **The text inputs need a USB keyboard or `screen.osk=always`** - see
   **On-screen keyboard** in [display.md](display.md).
-* **It is a separate recipe from `tessaro-kiosk` on purpose.** That recipe
+* **They are separate recipes from `tessaro-kiosk` on purpose.** That recipe
   `inherit`s cargo, so anything added to its `SRC_URI` drags the whole Rust
   build behind every edit to a `<div>`.
-* **The video clips are stand-ins**, generated with ffmpeg (H.264 high, 30 fps,
-  3 s, 1080p and 4K, AAC audio). Replace them by dropping files of the same
-  names into `files/media/`.
+* **`media/sample-video-3s-fullhd.mp4` is a stand-in**, generated with ffmpeg
+  (H.264 high, 30 fps, 3 s, 1080p, AAC audio), for a playlist that plays with
+  the network down (the e2e playlist lane, the player's dev sample).
 
 **Fonts are named explicitly.** `moonforge-image-base.bbappend` installs
 `ttf-noto-emoji-color` and DejaVu sans/serif/mono from meta-oe (hence
@@ -536,7 +535,7 @@ they need from us is kernel drivers and file permissions.
   `getInfo()`. That is the serial console, so `open()` on it fails with
   `NetworkError: Failed to open serial port.` - by design. A page that takes
   `ports[0]` never reaches the USB adapter. Select on
-  `getInfo().usbVendorId`; the self-test page does that and offers a picker.
+  `getInfo().usbVendorId`; the demo's serial section does that and offers a picker.
 * **WebHID lists keyboard-mode devices but never delivers their input.** A
   barcode scanner in keyboard emulation shows up with a single `1:6`
   (Generic Desktop / Keyboard) collection, and Chromium blocks reports from

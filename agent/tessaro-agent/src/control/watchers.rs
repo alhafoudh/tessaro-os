@@ -817,7 +817,7 @@ impl Control {
 }
 
 /// Is this browser.url template the welcome page? The page is `index.html`
-/// at the self-test origin, however the URL names it.
+/// at the local pages' origin, however the URL names it.
 fn is_welcome(template: &str, origin: &str) -> bool {
     let origin = origin.trim_end_matches('/');
     template

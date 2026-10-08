@@ -443,7 +443,7 @@ dir = "{{config_root}}/meta-tessaro-distro/recipes-browser/tessaro-selftest/file
 run = "node --test"
 
 # The directory the recipe installs from, so the sample playlist reaches the
-# self-test page and its sample video by the same relative paths as on disk.
+# local pages and their sample video by the same relative paths as on disk.
 # python3's http.server because it is already a mise tool and needs nothing
 # fetched; the page polls ?src= for changes, so editing dev/sample.json
 # shows within seconds.
@@ -468,6 +468,9 @@ set -e
 # Webconfig is shot as it is built for the image.
 [ -d webconfig/node_modules ] || mise run webconfig:setup
 mise run webconfig:build
+# The demo too, served at /demo/ as the image does.
+[ -d demo/node_modules ] || mise run demo:setup
+mise run demo:build
 # tessaro-gui draws itself, headless, from the same answers, into
 # build/screenshots, which shoot.mjs turns into JPEGs.
 (cd gui && CARGO_TARGET_DIR="$PWD/../build/gui-target" \

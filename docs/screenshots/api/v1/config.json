@@ -58,7 +58,7 @@
     {
       "key": "browser.bridge.mode",
       "env": "KIOSK_BRIDGE_MODE",
-      "value": "off",
+      "value": "actions",
       "source": "default"
     },
     {

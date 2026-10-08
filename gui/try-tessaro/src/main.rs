@@ -819,8 +819,8 @@ impl App {
         let can = ready && !self.busy.contains(&activity);
         let act = |action: Action| can.then_some(Message::Run(action));
         let buttons: Element<'_, Message> = match activity {
-            Activity::SelfTest => row![
-                small("Open it", act(Action::SelfTest)),
+            Activity::Demo => row![
+                small("Open it", act(Action::Demo)),
                 small("Back to welcome", act(Action::Welcome)),
             ]
             .spacing(6)
