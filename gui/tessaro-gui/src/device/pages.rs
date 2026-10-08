@@ -267,6 +267,9 @@ pub enum Msg {
     Rotation,
     ScreenPower(bool),
     Keyboard(bool),
+    /// `tessaro-ctl screen vnc`: the mirror forwarded for a viewer of the
+    /// user's own.
+    VncTunnel,
     // the TV over HDMI-CEC
     CecWake,
     CecStandby,
@@ -1988,6 +1991,11 @@ impl Device {
                     selector: None,
                 }),
             ),
+            Msg::VncTunnel => {
+                if !self.vnc_open() {
+                    self.start_job("screen", "VNC tunnel", jobs::Kind::Vnc);
+                }
+            }
             Msg::CecWake => self.call(
                 "screen.cec",
                 send::<api::screen::CecWake>(tessaro_client::cec::wake_body(true, "")),
@@ -4103,6 +4111,13 @@ impl Device {
             .any(|job| job.running && matches!(job.kind, jobs::Kind::DevTools))
     }
 
+    /// The VNC tunnel is up already; a viewer needs one.
+    fn vnc_open(&self) -> bool {
+        self.jobs
+            .iter()
+            .any(|job| job.running && matches!(job.kind, jobs::Kind::Vnc))
+    }
+
     /// A two-column table of facts.
     fn facts<'a>(
         &self,
@@ -4338,6 +4353,10 @@ impl Device {
             ),
             theme::tool("Show keyboard", self.when(Msg::Keyboard(true))),
             theme::tool("Hide keyboard", self.when(Msg::Keyboard(false))),
+            theme::tool(
+                "VNC tunnel",
+                self.when(Msg::VncTunnel).filter(|_| !self.vnc_open())
+            ),
         ]
         .spacing(4)
         .align_y(iced::alignment::Vertical::Center);
@@ -4375,12 +4394,18 @@ impl Device {
         ]
         .spacing(4)
         .align_y(iced::alignment::Vertical::Center);
+        let mut lines = self
+            .pages
+            .screen
+            .as_ref()
+            .map(describe::screen::show)
+            .unwrap_or_default();
+        // The VNC mirror, as `device status` says it.
+        if let Some(vnc) = self.status.as_ref().and_then(|(status, _)| status.vnc) {
+            lines.push(Line::plain("VNC: ").join(describe::screen::vnc(&vnc)));
+        }
         let show = Column::with_children(
-            self.pages
-                .screen
-                .as_ref()
-                .map(describe::screen::show)
-                .unwrap_or_default()
+            lines
                 .iter()
                 .map(|line| theme::text_line(line, iced::Font::MONOSPACE)),
         );

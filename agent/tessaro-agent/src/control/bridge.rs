@@ -1306,9 +1306,9 @@ fn page_printers(list: &protocol::PrinterList) -> Value {
 }
 
 /// `tessaro.device.status()`: what `device status` shows, without the
-/// node's fingerprint and claim, whether remote DevTools is open (it tells
-/// a page it can be driven) and the settings revision (the `tessaro:config`
-/// event says when they change).
+/// node's fingerprint and claim, whether remote DevTools or the VNC mirror
+/// is open (either tells a page it is watched and can be driven) and the
+/// settings revision (the `tessaro:config` event says when they change).
 fn page_status(status: &protocol::Status) -> Value {
     json!({
         "name": status.node.name,
@@ -1520,7 +1520,14 @@ mod tests {
                 "{shown} did not reach the page"
             );
         }
-        for hidden in ["fingerprint", "claimed", "node", "devtools", "revision"] {
+        for hidden in [
+            "fingerprint",
+            "claimed",
+            "node",
+            "devtools",
+            "vnc",
+            "revision",
+        ] {
             assert!(status.get(hidden).is_none(), "{hidden} reached the page");
         }
     }

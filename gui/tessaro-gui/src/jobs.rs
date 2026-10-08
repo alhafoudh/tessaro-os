@@ -1,15 +1,15 @@
 //! Long work on a device, each on a connection of its own so the window's
 //! worker keeps polling: the device's own jobs (`network ping`, the speed
 //! test, growing `/data`, looking for printers), files going up or down, an
-//! image update, the DevTools tunnel, and a script's run followed to its
-//! end.
+//! image update, the DevTools and VNC tunnels, and a script's run followed
+//! to its end.
 //!
 //! A job is a subscription keyed by its id. Cancelling it drops the
 //! subscription. A device job sees that between two polls and cancels it on
 //! the device; the shared flows see it as `Report::stopped` at their next
 //! step, and for a call in flight a watcher thread shuts the connection
 //! down. The flows themselves are `tessaro_client`'s (`files`, `update`,
-//! `ping`, `storage`, `devtools`, `printer`, `script`), the same as
+//! `ping`, `storage`, `devtools`, `vnc`, `printer`, `script`), the same as
 //! `tessaro-ctl`'s.
 
 use std::collections::BTreeMap;
@@ -34,7 +34,9 @@ use tessaro_client::report::{self, Report as _};
 use tessaro_client::text::{Line, Tone};
 use tessaro_client::tunnel::{self, Prompts, Tunnel};
 use tessaro_client::update::{self, Plan, Sent};
-use tessaro_client::{describe, devtools, files, network, ping, printer, script, ssh, storage};
+use tessaro_client::{
+    describe, devtools, files, network, ping, printer, script, ssh, storage, vnc,
+};
 
 use crate::worker;
 
@@ -53,6 +55,10 @@ pub enum Kind {
     /// `tessaro-ctl browser devtools`: the device's DevTools port forwarded
     /// to this machine until the job is cancelled.
     DevTools,
+    /// `tessaro-ctl screen vnc`: the device's VNC mirror started and
+    /// forwarded to this machine, for a viewer of the user's own, until the
+    /// job is cancelled.
+    Vnc,
     /// `tessaro-ctl printer discover`: every printer the device finds, as
     /// the job's values.
     Discover,
@@ -150,10 +156,11 @@ fn run(spec: &Spec, out: &ui::UnboundedSender<Event>) -> Result<String, String> 
     let (mut session, _) = worker::connect(&spec.node)?;
     let done = Arc::new(AtomicBool::new(false));
     // A device job stops by itself, and cancels on the device on the way:
-    // shutting its connection down would only lose that cancel.
+    // shutting its connection down would only lose that cancel. The VNC
+    // tunnel the same: it stops the mirror as it closes.
     let watched = !matches!(
         spec.kind,
-        Kind::Stream(_) | Kind::Discover | Kind::Script(_)
+        Kind::Stream(_) | Kind::Discover | Kind::Script(_) | Kind::Vnc
     );
     if let Some(tcp) = session.shutdown_handle().filter(|_| watched) {
         let (out, done) = (out.clone(), done.clone());
@@ -181,6 +188,7 @@ fn run(spec: &Spec, out: &ui::UnboundedSender<Event>) -> Result<String, String> 
         Kind::Update(update) => update_send(&mut session, &spec.node, update, &mut report),
         Kind::ControlPing { count } => control_ping(&mut session, *count, &mut report),
         Kind::DevTools => open_devtools(&mut session, &mut report),
+        Kind::Vnc => open_vnc(&mut session, &mut report),
         Kind::Discover => discover(&mut session, out),
         Kind::Script(name) => script_run(&mut session, name, out),
         Kind::Reload => session
@@ -400,5 +408,23 @@ fn open_devtools(session: &mut Session, report: &mut Report) -> Result<String, S
         report.line(line);
     }
     devtools::watch(session, &mut forward, report)?;
+    Ok("closed".to_string())
+}
+
+/// `tessaro-ctl screen vnc`: the mirror started and the tunnel to it, open
+/// until the job is cancelled or ssh ends, then the mirror stopped.
+fn open_vnc(session: &mut Session, report: &mut Report) -> Result<String, String> {
+    let mut opened = vnc::open(session, None, tunnel::VNC_LOCAL, Prompts::Never)?;
+    let port = opened.tunnel.port;
+    report.progress(
+        Line::of(Tone::Ok, format!("forwarding localhost:{port}")),
+        1,
+        1,
+    );
+    let mode = opened.vnc.mode.clone();
+    for line in vnc::explain(&session.node.name, port, &mode, "Cancel closes the tunnel") {
+        report.line(line);
+    }
+    vnc::watch(session, &mut opened.tunnel, report)?;
     Ok("closed".to_string())
 }

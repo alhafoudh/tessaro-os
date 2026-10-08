@@ -22,8 +22,9 @@ connector will be called, the config is generated per boot:
   to `/run/weston/weston.ini`. The drop-in then points `weston --config=` at it.
   It also writes `require-outputs=none` into `[core]` and a
   connected-connectors comment (see **Display hotplug**), `[input-method]`
-  (see **On-screen keyboard**) and `[screen-share]` (see
-  [remote-access.md](remote-access.md)).
+  (see **On-screen keyboard**) and `[screen-share]`, with
+  `start-on-startup=false`: the agent starts the mirror when a VNC tunnel
+  asks (**The mirror on demand** in [remote-access.md](remote-access.md)).
 * **Its log is `journalctl -t tessaro-weston-config`, not `-u weston`.** It runs
   as `ExecStartPre=`, and those lines do not come back under the unit even
   though the compositor's own do. Every decision it makes - connector, scale

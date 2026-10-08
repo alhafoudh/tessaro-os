@@ -106,7 +106,7 @@ answers everything:
 | Call | Mode | Does what `tessaro-ctl` does with |
 | --- | --- | --- |
 | `log(level, message)` | config | the journal, as `page (level): message`; `debug` only with `agent.debug` |
-| `device.status()` | config | `device status`, without the node's fingerprint and claim, whether remote DevTools is open (it tells a page it can be driven) and the settings revision (`tessaro:config` says when they change): its `name`, its `tags` (device.tags, never the `unclaimed` a client adds, which would tell the claim), the hardware and its serial, memory, `cpuPercent`, the clock (`time`), the TV over HDMI-CEC (`tv`: `power`, `showing`, `name`), the changes on probation (`pending`: `changes`, each a `key`, `value` and `previous`, and `secondsLeft`) and why the injected script is not in the page (`bridge.scriptProblem`) included |
+| `device.status()` | config | `device status`, without the node's fingerprint and claim, whether remote DevTools or the VNC mirror is open (either tells a page it is watched and can be driven) and the settings revision (`tessaro:config` says when they change): its `name`, its `tags` (device.tags, never the `unclaimed` a client adds, which would tell the claim), the hardware and its serial, memory, `cpuPercent`, the clock (`time`), the TV over HDMI-CEC (`tv`: `power`, `showing`, `name`), the changes on probation (`pending`: `changes`, each a `key`, `value` and `previous`, and `secondsLeft`) and why the injected script is not in the page (`bridge.scriptProblem`) included |
 | `network.status()` | config | `network show`, without the public address |
 | `audio.status()` | config | `audio show` |
 | `screen.show()` | config | `screen show`: the connected displays with their EDID identity, and the HDMI-CEC bus |
@@ -180,6 +180,9 @@ The other commands no call mirrors are the operator's too:
   `storage grow` repartitions the disk.
 * **`screen modes`, `confirm` and `screenshot`**: a wrong mode leaves the
   screen black, and a screenshot would show the page what else is on it.
+* **`screen vnc`**: the mirror is the operator's way to watch and drive the
+  screen from outside; a page that could start it or read its state would
+  know it is watched.
 * **`browser navigate`, `zoom`, `debug`, `devtools` and `eval`**: the page
   moves itself with `location`; the rest are tools to look at the page from
   outside.

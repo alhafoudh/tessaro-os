@@ -1,0 +1,284 @@
+From: Ahmed Al Hafoudh <alhafoudh@freevision.sk>
+Date: Thu, 08 Oct 2026 14:10:00 +0200
+Subject: [PATCH] screen-share: start and stop the share from a control socket
+
+A shared output costs the compositor all the time it is shared: every
+damaged region is read back from the renderer and the output stays off
+hardware planes. start-on-startup is the only way to share without a
+keyboard at the panel, so the share ran from boot whether anyone watched
+or not.
+
+Listen on screen-share.sock in the runtime directory, one line per
+connection, answered with the state afterwards ("on" or "off") or an
+error: "share" shares every output not shared yet, "unshare" ends every
+share, "status" changes nothing. Without a [screen-share] command, "share"
+answers "error: off". A failure to listen is logged and not fatal.
+
+shared_output_destroy() never took the share out of screen_share's list,
+so a share that ended on its own (the child exiting, the output going)
+stayed there, freed. Remove it.
+
+Upstream-Status: Inappropriate [Tessaro-specific control socket]
+---
+diff --git a/compositor/screen-share.c b/compositor/screen-share.c
+--- a/compositor/screen-share.c
++++ b/compositor/screen-share.c
+@@ -32,6 +32,8 @@
+ #include <string.h>
+ #include <unistd.h>
+ #include <sys/socket.h>
++#include <sys/stat.h>
++#include <sys/un.h>
+ #include <sys/mman.h>
+ #include <signal.h>
+ #include <linux/input.h>
+@@ -134,6 +136,19 @@
+ 	bool input;
+ 	/* The seat made here when the compositor has none, kept to the end. */
+ 	struct weston_seat *own_seat;
++	/* The control socket, screen-share.sock; listen_fd is -1 without it. */
++	int listen_fd;
++	char socket_path[108];
++	struct wl_event_source *listen_source;
++};
++
++/* One connection to the control socket, which sends one line. */
++struct ss_control {
++	struct screen_share *share;
++	int fd;
++	struct wl_event_source *source;
++	char line[64];
++	size_t len;
+ };
+
+ /* Note `code` held down, or no longer held. */
+@@ -1168,6 +1183,8 @@
+
+ 	wl_list_remove(&so->output_destroyed.link);
+ 	wl_list_remove(&so->frame_listener.link);
++	/* Otherwise a share that ended on its own stays in the list, freed. */
++	wl_list_remove(&so->output_link);
+
+ 	pixman_image_unref(so->cache_image);
+ 	free(so->tmp_data);
+@@ -1279,6 +1296,186 @@
+ 	weston_output_share(output, ss);
+ }
+
++static bool
++output_is_shared(struct screen_share *ss, struct weston_output *output)
++{
++	struct shared_output *so;
++
++	wl_list_for_each(so, &ss->output_list, output_link)
++		if (so->output == output)
++			return true;
++	return false;
++}
++
++/* Every output not shared yet, as start-on-startup does at boot. */
++static void
++share_all(struct screen_share *ss)
++{
++	struct weston_output *output;
++
++	wl_list_for_each(output, &ss->compositor->output_list, link)
++		if (!output_is_shared(ss, output))
++			weston_output_share(output, ss);
++}
++
++/* Ending the connection ends the child: it exits when its one client goes. */
++static void
++unshare_all(struct screen_share *ss)
++{
++	struct shared_output *so, *so_next;
++
++	wl_list_for_each_safe(so, so_next, &ss->output_list, output_link)
++		shared_output_destroy(so);
++}
++
++static void
++control_close(struct ss_control *control)
++{
++	wl_event_source_remove(control->source);
++	close(control->fd);
++	free(control);
++}
++
++static void
++control_answer(struct ss_control *control, const char *text)
++{
++	/* A few bytes to a fresh socket: the send buffer takes them whole, and a
++	 * client that is gone only costs the answer. */
++	ssize_t written = send(control->fd, text, strlen(text), MSG_NOSIGNAL);
++	(void)written;
++}
++
++static void
++control_handle(struct ss_control *control, const char *command)
++{
++	struct screen_share *ss = control->share;
++	bool shared = !wl_list_empty(&ss->output_list);
++
++	if (strcmp(command, "share") == 0) {
++		if (!ss->command) {
++			control_answer(control, "error: off\n");
++			return;
++		}
++		if (!shared)
++			weston_log("screen-share: sharing on request\n");
++		share_all(ss);
++	} else if (strcmp(command, "unshare") == 0) {
++		if (shared)
++			weston_log("screen-share: unsharing on request\n");
++		unshare_all(ss);
++	} else if (strcmp(command, "status") != 0) {
++		control_answer(control,
++			       "error: unknown command; send share, unshare or status\n");
++		return;
++	}
++	control_answer(control,
++		       wl_list_empty(&ss->output_list) ? "off\n" : "on\n");
++}
++
++static int
++control_readable(int fd, uint32_t mask, void *data)
++{
++	struct ss_control *control = data;
++	char *newline;
++	ssize_t got;
++
++	if (mask & (WL_EVENT_HANGUP | WL_EVENT_ERROR)) {
++		control_close(control);
++		return 0;
++	}
++
++	got = read(fd, control->line + control->len,
++		   sizeof control->line - 1 - control->len);
++	if (got < 0 && (errno == EAGAIN || errno == EINTR))
++		return 0;
++	if (got <= 0) {
++		control_close(control);
++		return 0;
++	}
++	control->len += got;
++	control->line[control->len] = '\0';
++
++	newline = strchr(control->line, '\n');
++	if (newline) {
++		*newline = '\0';
++		if (newline > control->line && newline[-1] == '\r')
++			newline[-1] = '\0';
++		control_handle(control, control->line);
++		control_close(control);
++	} else if (control->len == sizeof control->line - 1) {
++		control_answer(control, "error: line too long\n");
++		control_close(control);
++	}
++	return 0;
++}
++
++static int
++control_accept(int fd, uint32_t mask, void *data)
++{
++	struct screen_share *ss = data;
++	struct wl_event_loop *loop;
++	struct ss_control *control;
++	int accepted;
++
++	accepted = accept4(fd, NULL, NULL, SOCK_CLOEXEC | SOCK_NONBLOCK);
++	if (accepted < 0)
++		return 0;
++
++	control = zalloc(sizeof *control);
++	if (!control) {
++		close(accepted);
++		return 0;
++	}
++	control->share = ss;
++	control->fd = accepted;
++
++	loop = wl_display_get_event_loop(ss->compositor->wl_display);
++	control->source = wl_event_loop_add_fd(loop, accepted, WL_EVENT_READABLE,
++					       control_readable, control);
++	if (!control->source) {
++		close(accepted);
++		free(control);
++	}
++	return 0;
++}
++
++/*
++ * screen-share.sock in Weston's runtime directory takes one line per
++ * connection and answers the state afterwards, "on\n" or "off\n", or
++ * "error: ...\n":
++ *
++ *   share    share every output not shared yet
++ *   unshare  end every share
++ *   status   nothing changes
++ */
++static int
++control_listen(struct screen_share *ss)
++{
++	const char *dir = getenv("RUNTIME_DIRECTORY");
++	struct sockaddr_un address = { .sun_family = AF_UNIX };
++	int fd;
++
++	/* systemd's RuntimeDirectory=weston; the fallback is its default path. */
++	if (!dir || !*dir)
++		dir = "/run/weston";
++	if (snprintf(ss->socket_path, sizeof ss->socket_path,
++		     "%s/screen-share.sock", dir) >= (int)sizeof ss->socket_path)
++		return -1;
++	memcpy(address.sun_path, ss->socket_path, sizeof address.sun_path);
++
++	fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
++	if (fd < 0)
++		return -1;
++	unlink(ss->socket_path);
++	/* The owner only: Weston's user, and root, which tessaro-agent runs as. */
++	if (bind(fd, (struct sockaddr *)&address, sizeof address) < 0 ||
++	    chmod(ss->socket_path, 0600) < 0 || listen(fd, 4) < 0) {
++		close(fd);
++		return -1;
++	}
++	return fd;
++}
++
+ static void
+ compositor_destroy_listener(struct wl_listener *listener, void *data)
+ {
+@@ -1291,6 +1488,13 @@
+
+ 	wl_list_remove(&ss->compositor_destroy_listener.link);
+
++	if (ss->listen_source)
++		wl_event_source_remove(ss->listen_source);
++	if (ss->listen_fd >= 0) {
++		close(ss->listen_fd);
++		unlink(ss->socket_path);
++	}
++
+ 	if (ss->own_seat) {
+ 		weston_seat_release(ss->own_seat);
+ 		free(ss->own_seat);
+@@ -1332,6 +1536,19 @@
+ 				          MODIFIER_CTRL | MODIFIER_ALT,
+ 					  share_output_binding, ss);
+
++	ss->listen_fd = control_listen(ss);
++	if (ss->listen_fd < 0) {
++		/* Not fatal: start-on-startup and the key binding still share. */
++		weston_log("screen-share: cannot listen on %s: %s\n",
++			   ss->socket_path, strerror(errno));
++	} else {
++		ss->listen_source =
++			wl_event_loop_add_fd(wl_display_get_event_loop(compositor->wl_display),
++					     ss->listen_fd, WL_EVENT_READABLE,
++					     control_accept, ss);
++		weston_log("screen-share: listening on %s\n", ss->socket_path);
++	}
++
+ 	weston_config_section_get_bool(section, "start-on-startup",
+ 				       &start_on_startup, false);
+ 	if (start_on_startup) {

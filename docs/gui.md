@@ -46,7 +46,7 @@ into both. So `gui/` has its own `Cargo.lock` and builds into
   so the GUI validates a value with the same `keys::validate` the agent runs
   at `set`.
 * `agent/client` (`tessaro-client`) - everything both clients do: the
-  pinned session, the flows (update, file trees, ping, grow, DevTools), how
+  pinned session, the flows (update, file trees, ping, grow, DevTools, VNC), how
   a request is built and what an answer says in words. What is in it, and
   how it reports without printing, is in [clients.md](clients.md).
 
@@ -348,7 +348,7 @@ applies and stays, Default unsets.**
 | Page | Covers |
 | --- | --- |
 | Overview | `device status` and `id`, systemd units, `device ping`, `device tags` (Tags: one comma-separated field, `device.tags`), `device factory-reset` |
-| Screen | `screen show` above the modes table (each display's EDID identity, and the HDMI-CEC bus: the adapter, the TV's power and whether it shows the device, the rest of the bus, or how to switch CEC on), from the same `GET /api/v1/screen` answer as the table; `screen modes` with "use this mode", "Rotate" (`screen.rotation`), `screen screenshot` with a 3s live refresh and Save, `screen power`, `screen keyboard`; the TV over HDMI-CEC, while CEC is on and an adapter is there: `screen cec wake`, `standby`, `source` ("This input"), `key` volume-down, volume-up and mute, `scan`, each answer in Messages, and the CEC console |
+| Screen | `screen show` above the modes table (each display's EDID identity, and the HDMI-CEC bus: the adapter, the TV's power and whether it shows the device, the rest of the bus, or how to switch CEC on), from the same `GET /api/v1/screen` answer as the table; `screen modes` with "use this mode", "Rotate" (`screen.rotation`), `screen screenshot` with a 3s live refresh and Save, `screen power`, `screen keyboard`, `screen vnc` ("VNC tunnel", a job holding the tunnel until Cancel) with the mirror's state from `device status`; the TV over HDMI-CEC, while CEC is on and an adapter is there: `screen cec wake`, `standby`, `source` ("This input"), `key` volume-down, volume-up and mute, `scan`, each answer in Messages, and the CEC console |
 | Browser | what the browser shows, `browser navigate`, `reload`, `clear-cache`, `maintenance`, `debug`, `zoom`, `devtools` (a job holding the tunnel until Cancel), `inject`, `bridge`, `eval` (results in Messages) |
 | Policies | `browser policies list` in priority order with its `#` column, `set` and `edit` in one wide editor (from the template, a file, or the stored text, checked as you type, saved against the revision it opened), `move` as Move up and Move down (the moved row stays selected), `show` (the effective policy), `remove` |
 | Playlists | `playlist status` as facts above the lists, `playlist list` with "Make default" and "Clear default" (`playlist.default`), `create` and `set` in one dialog (name, transition and its length), `remove`; the selected playlist's items (`playlist show`) beside `items add` and `items set` in one dialog (an edit opens filled in, and what the chosen kind cannot carry is left out), `items move` as Move up and Move down (the moved item stays selected), `items remove` |
@@ -399,8 +399,9 @@ pauses.
 **Long work runs as a job on a second connection, so the worker keeps
 polling** (`jobs.rs`). The jobs are the device's own jobs (`network ping`,
 the speed test, `storage grow`, polled with `Session::job`), `device ping`,
-files going up or down, an image update, and the DevTools tunnel
-(localhost:9222, or a free port when 9222 is taken here). Each is the
+files going up or down, an image update, the DevTools tunnel
+(localhost:9222, or a free port when 9222 is taken here) and the VNC tunnel
+(localhost:5900 the same way). Each is the
 client's flow (`update::send`, `files::upload`, `ping::device`, ...), with
 the job as its `Report`. A job is a subscription keyed by its id: it
 reports progress, lines and a result to its page. Cancel drops it: a device
@@ -476,13 +477,16 @@ the rectangle the contained image fills.
 the mouse and keyboard to control it** (`vnc.rs`, the VNC toggle), unless
 the device is on `screen.vnc=view-only`.
 
-* The device's server listens on its loopback only (see
-  [remote-access.md](remote-access.md)). So the panel sends the SSH key and
-  pins the host key over the control connection (`tessaro_client::ssh`, as
-  `ssh connect` does), then runs the system's `ssh -N -L` from a free local
-  port to `127.0.0.1:5900`. An unclaimed device gets no key and ssh gets in
-  by its empty password (**SSH keys** in remote-access.md), so the panel
-  works before a claim too.
+* The device mirrors its screen only while a tunnel asks, and its server
+  listens on its loopback only (see **The mirror on demand** in
+  [remote-access.md](remote-access.md)). So the panel goes in through
+  `tessaro_client::vnc::open`, as `tessaro-ctl screen vnc` does: it starts the
+  mirror, sends the SSH key and pins the host key over the control connection,
+  then runs the system's `ssh -N -L` from a free local port to
+  `127.0.0.1:5900`, and stops the mirror when it closes. Its own connection
+  is the viewer that keeps the mirror going; a reconnect starts it again. An
+  unclaimed device gets no key and ssh gets in by its empty password (**SSH
+  keys** in remote-access.md), so the panel works before a claim too.
 * The server is neatvnc, which takes a login and no anonymous viewers: VeNCrypt
   with a plain login inside TLS, or the logins for viewers without TLS (the
   classic VNC password, Apple's, RSA-AES; see remote-access.md). The panel
@@ -516,7 +520,12 @@ the device is on `screen.vnc=view-only`.
   its own keymap.
 * `screen.vnc=view-only` shows the picture without taking input, and the
   device would drop it anyway (remote-access.md). `screen.vnc=off` shows a
-  note instead of a picture.
+  note instead of a picture: the device refuses the tunnel.
+* **For a viewer of the user's own, the Screen page's VNC tunnel job holds
+  the forward** (`open_vnc` in `jobs.rs`, `tessaro-ctl screen vnc`): it says
+  where to point the viewer and with which login, starts the mirror again
+  every 20s and says when viewers come and go, until Cancel, which stops the
+  mirror. One runs at a time.
 
 ## Adding a page
 

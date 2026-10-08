@@ -1,14 +1,64 @@
 # Remote access
 
 **A technician sees the real panel over VNC on `127.0.0.1:5900`**, reached
-through an SSH tunnel. It is the live screen with the live Chromium on it, not
+through an SSH tunnel that `tessaro-ctl screen vnc` (or the GUI's VNC tunnel
+and VNC panel) opens. It is the live screen with the live Chromium on it, not
 a second session.
 
 **The viewer can click and type, unless `screen.vnc=view-only`.** `on` (the
-default) is view and control, `view-only` is the picture alone, `off` is no
-mirror. Remote and local input share one seat: one cursor, one keyboard
+default) is view and control, `view-only` is the picture alone, `off` refuses
+the tunnel. Remote and local input share one seat: one cursor, one keyboard
 focus. On a touch-only panel a cursor appears while a viewer is connected
 and goes when they leave.
+
+## The mirror on demand
+
+**Nothing is mirrored until a tunnel asks, and the mirror stops once its
+viewer is gone.** A shared output costs Weston all the time it is shared:
+`weston_output_disable_planes_incr()` takes it off hardware overlay and
+cursor planes, and every damage rectangle goes through `read_pixels()`. A
+scroll damages the whole screen every frame, so a mirror nobody watched made
+touch scrolling visibly lag on an x86 box. Neither the compositor nor the
+browser restarts to start or stop it.
+
+* **Weston's screen-share module takes `share`, `unshare` and `status` on
+  `/run/weston/screen-share.sock`**, by
+  `0005-screen-share-control-socket.patch`: one line per connection, answered
+  with the state afterwards (`on`/`off`) or `error: ...`, the same protocol as
+  `tessaro-power.so` (**Screen power** in [display.md](display.md)), so
+  `power::exchange` in the agent speaks both. `share` shares every output not
+  shared yet; `unshare` ends every share, and the child Weston exits with its
+  one client (`handle_primary_client_destroyed`). Without a `[screen-share]`
+  command (`screen.vnc=off`) `share` answers `error: off`. The patch also takes
+  an ended share out of screen-share's list, which upstream leaves there
+  freed. `tessaro-weston-config` writes `start-on-startup=false`.
+* **`tessaro-ctl screen vnc` is `api::screen::VncStart` first**
+  (`control/vnc.rs`): refused with `screen.vnc=off`, otherwise `share`, then
+  a wait (10s at most) until something listens on 5900, read from
+  `/proc/net/tcp` rather than by connecting, which neatvnc would take for a
+  viewer. The answer is `VncSession { mode, port, lease_s }`. The client then
+  sends the key and opens the forward as `ssh connect` does
+  (`tessaro_client::vnc::open`).
+* **A start renews a 60s lease, and `watch_vnc` stops the mirror once no
+  viewer is connected and the lease has run out.** It looks every 5s.
+  Viewers are counted as DevTools clients are (`loopback.rs`, shared with
+  `cdp/clients.rs`): established loopback connections to 5900 that are not
+  the agent's own, and dropbear holds one per viewer through a tunnel. The
+  lease covers the time between the start and the viewer connecting, and a
+  client that vanished without a stop, Ctrl-C included, costs the device at
+  most that minute.
+* **The client holding the tunnel starts it again every 20s**
+  (`tessaro_client::vnc::watch`), as its keepalive, and stops it
+  (`VncStop`, best effort) when it closes. A Weston restart (a hotplug, a
+  `screen.*` setting) loses the share; the next keepalive, or the GUI panel's
+  reconnect, shares again.
+* **`Status.vnc` says whether the screen is mirrored and how many viewers
+  are connected**, as `vnc: mirroring, 1 viewer` in `device status`. It is
+  left out of the page bridge's `device.status()`
+  ([bridge.md](bridge.md)).
+* **The journal names who started and stopped it** (`VNC mirror started by
+  ...`, `stopped by ...`, `no VNC viewer; the mirror stops`), and Weston's
+  log says `screen-share: sharing on request`.
 
 **Remote input goes into the compositor's own seat, by a patch to
 `screen-share.c`** (`0002-screen-share-inject-remote-input-into-the-compositor-seat.patch`,
@@ -159,15 +209,14 @@ into this compositor's seat as described above.
   client died`). `0004-vnc-keep-one-seat-for-every-client.patch` keeps one
   seat for the backend's life and only adds and releases a viewer's pointer
   and keyboard.
-* **Sharing is not free while it is on.** `weston_output_disable_planes_incr()`
-  takes the output off hardware overlay and cursor planes for as long as it is
-  shared, and every damage rectangle goes through `read_pixels()`. A static
-  page is nearly free; full-screen video is a readback per frame. `screen.vnc=off`
-  is the first thing to try on a Pi that feels slow.
+* **Sharing costs only while a tunnel is open**, which is why it is on
+  demand (above): a static page is nearly free, a scroll or full-screen video
+  is a readback per frame.
 * **One client at a time** - a second connection disconnects the first - and
-  **only outputs present when Weston starts are shared**. A monitor plugged
-  in later is picked up by the agent's hotplug restart (see **Display
-  hotplug** in [display.md](display.md)), and the share with it.
+  **only outputs present when the share starts are shared**. A monitor
+  plugged in later is picked up by the agent's hotplug restart (see **Display
+  hotplug** in [display.md](display.md)), which ends the share; the next
+  keepalive shares the new outputs.
 * **SSH ships in every image**:
   `ssh-server-dropbear empty-root-password allow-empty-password` in
   `moonforge-image-base.bbappend`. `allow-empty-password` adds dropbear's

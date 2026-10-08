@@ -44,6 +44,7 @@ pub mod text;
 pub mod transfer;
 pub mod tunnel;
 pub mod update;
+pub mod vnc;
 pub mod webconfig;
 
 /// The same mDNS library `connect::browse` uses, for a caller that browses

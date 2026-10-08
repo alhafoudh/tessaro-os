@@ -1,7 +1,10 @@
 //! The screen: what `tessaro-ctl screen show` and the Screen page say about
-//! the connected displays (their EDID) and the TV over HDMI-CEC.
+//! the connected displays (their EDID), the TV over HDMI-CEC and the VNC
+//! mirror.
 
-use protocol::{CecAdapter, CecDevice, CecPower, Connector, DisplayIdentity, ScreenShow, TvStatus};
+use protocol::{
+    CecAdapter, CecDevice, CecPower, Connector, DisplayIdentity, ScreenShow, TvStatus, VncStatus,
+};
 
 use crate::text::{Line, Tone};
 
@@ -17,6 +20,22 @@ fn field(label: &str) -> Line {
 
 fn none() -> Line {
     Line::of(Tone::Muted, "(none)")
+}
+
+/// The VNC mirror in one line: `mirroring, 1 viewer`, or `off`.
+pub fn vnc(vnc: &VncStatus) -> Line {
+    if !vnc.sharing {
+        return Line::of(Tone::Muted, "off").text(" ").add(
+            Tone::Muted,
+            "- `tessaro-ctl screen vnc` mirrors the screen while its tunnel is open",
+        );
+    }
+    let viewers = match vnc.viewers {
+        0 => "no viewer".to_string(),
+        1 => "1 viewer".to_string(),
+        n => format!("{n} viewers"),
+    };
+    Line::of(Tone::Warn, "mirroring").text(format!(", {viewers}"))
 }
 
 /// Who made a display and what it calls itself: `Samsung SAMSUNG`, `DEL

@@ -205,6 +205,9 @@ pub fn status(status: &Status) -> StatusText {
     if let Some(tv) = &status.tv {
         more.push(Fact::new("tv", screen::tv(tv)));
     }
+    if let Some(vnc) = status.vnc.filter(|vnc| vnc.sharing) {
+        more.push(Fact::new("vnc", screen::vnc(&vnc)));
+    }
     if let Some(bridge) = &status.bridge {
         if bridge.mode != "off" {
             more.push(Fact::new("page bridge", bridge.mode.as_str()));

@@ -49,6 +49,9 @@ pub struct Paths {
     /// The socket of Weston's `tessaro-power.so`, which switches the outputs
     /// off and on.
     pub power_socket: PathBuf,
+    /// The socket of Weston's screen-share module, which starts and stops
+    /// the VNC mirror (`control/vnc.rs`).
+    pub screen_share_socket: PathBuf,
     pub cmdline: PathBuf,
     /// `/sys/class/net`: every interface, its MAC, state, MTU and kind.
     pub sys_net: PathBuf,
@@ -220,6 +223,7 @@ impl Paths {
                 "/usr/libexec/tessaro-weston-config",
             ),
             power_socket: path("KIOSK_POWER_SOCKET", "/run/weston/power.sock"),
+            screen_share_socket: path("KIOSK_SCREEN_SHARE_SOCKET", "/run/weston/screen-share.sock"),
             cmdline: path("KIOSK_CMDLINE", "/proc/cmdline"),
             sys_net: path("KIOSK_SYS_NET", "/sys/class/net"),
             proc_route: path("KIOSK_PROC_ROUTE", "/proc/net/route"),

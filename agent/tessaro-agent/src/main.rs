@@ -41,6 +41,7 @@ mod hotplug;
 mod http;
 mod identity;
 mod log;
+mod loopback;
 mod mdns;
 mod media;
 mod net;
@@ -358,6 +359,7 @@ async fn start_control(
     control.watch_printers();
     control.watch_welcome();
     control.watch_screen_power();
+    control.watch_vnc();
     control.watch_cec();
     control.watch_presence();
     control.watch_playlist();

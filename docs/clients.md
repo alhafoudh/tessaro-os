@@ -25,7 +25,8 @@ there is one copy, and both clients call it.
   * flows that take several requests: an image update (`update.rs`), whole
     trees to and from the file store and `files sync` (`files.rs`), device
     ping (`ping.rs`), growing `/data` (`storage.rs`), the DevTools forward
-    (`devtools.rs`), SSH keys (`ssh.rs`, `tunnel.rs`), chunked transfers
+    (`devtools.rs`), the VNC mirror started, forwarded and kept going
+    (`vnc.rs`), SSH keys (`ssh.rs`, `tunnel.rs`), chunked transfers
     (`transfer.rs`);
   * what a request is built from: network changes, the WiFi password, the
     proxy URL (`network.rs`), the clock and NTP, the root password
@@ -162,7 +163,7 @@ the API knows about it.** A tag is only what finds the devices.
   failing fails the run.
 * **What the ctl refuses on several devices** (`bulk_refused`): anything
   that holds the terminal for one device (`ssh connect`, `browser
-  devtools`, `device logs -f`, `screen cec messages -f`, `browser policies
+  devtools`, `screen vnc`, `device logs -f`, `screen cec messages -f`, `browser policies
   edit`, a watched `camera snapshot`), opens something on this machine (`access webconfig`), writes
   one local file every device would overwrite (`files download`, a named
   screenshot or snapshot), or reads stdin, which there is one of. A prompt

@@ -243,6 +243,7 @@ mod tests {
             "src/control/bridge.rs",
             "src/control/page.rs",
             "src/control/screen.rs",
+            "src/control/vnc.rs",
             "src/control/cec.rs",
             "src/control/presence.rs",
             "src/cec/io.rs",

@@ -423,7 +423,7 @@
       "weston"
     ],
     "guarded": false,
-    "doc": "Mirror the screen to VNC on 127.0.0.1:5900: on to view and control it, view-only to watch only, off for no mirror.",
+    "doc": "What a VNC tunnel (`tessaro-ctl screen vnc`) may do: on to view and control, view-only to watch, off refuses it. Nothing is mirrored until a tunnel asks.",
     "values": "one of: on, view-only, off",
     "default": "on",
     "value": null,

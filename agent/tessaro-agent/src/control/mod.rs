@@ -20,7 +20,8 @@
 //! `settings` (changing them, and probation), `access` (the claim, tokens,
 //! passwords, SSH keys), `network` (WiFi and the profiles' inputs),
 //! `watchers` (what is kept true with nobody asking), `page` (the page on
-//! screen: reload, eval, the keyboard), `screen` (its power), `bridge`
+//! screen: reload, eval, the keyboard), `screen` (its power), `vnc` (the
+//! VNC mirror on demand), `bridge`
 //! (`window.tessaro` and the injected script), `schedules` (the
 //! schedules and their systemd units), `certs` (the extra certificate
 //! authorities), `policies` (the browser policies) and `printers` (the
@@ -40,6 +41,7 @@ mod schedules;
 mod screen;
 mod scripts;
 mod settings;
+mod vnc;
 mod watchers;
 
 pub use bridge::BridgeSetup;
@@ -282,6 +284,9 @@ pub struct Control {
     /// When the page last asked for the faces (`presence.watch()`); they
     /// go to it while that is under `bridge::WATCH_LEASE` old.
     presence_watch: Mutex<Option<std::time::Instant>>,
+    /// When a client last started the VNC mirror or kept it going; it stops
+    /// `vnc::LEASE` after that with no viewer connected.
+    vnc_started: Mutex<Option<std::time::Instant>>,
 }
 
 impl Control {
@@ -350,6 +355,7 @@ impl Control {
             event_runs: Mutex::new(HashMap::new()),
             presence: Mutex::new(crate::presence::Presence::default()),
             presence_watch: Mutex::new(None),
+            vnc_started: Mutex::new(None),
         })
     }
 
@@ -640,6 +646,8 @@ impl Control {
                 self.keyboard(show, selector.as_deref()).await.into()
             }
             Command::ScreenPower { on } => self.screen_power(caller, on).await.into(),
+            Command::VncStart => self.vnc_start(caller).await.into(),
+            Command::VncStop => self.vnc_stop(caller).await.into(),
             Command::Logs {
                 unit,
                 lines,
@@ -1168,6 +1176,8 @@ impl Control {
         let time = self.time.summary(&self.bus).await;
         // naked: a /proc read under blocking()'s within()
         let devtools = self.session.others().await > 0;
+        // naked: a socket round trip under within() and a /proc read under blocking()
+        let vnc = self.vnc_status().await;
         let screen_on = crate::power::send(&self.paths.power_socket, "status")
             .await // naked: power::send bounds itself with within()
             .ok();
@@ -1192,6 +1202,7 @@ impl Control {
             maintenance: state::maintenance(&state.settings, &self.defaults),
             debug_screen: state::debug_screen(&state.settings, &self.defaults),
             devtools,
+            vnc,
             audio: Some(audio),
             time,
             hardware,

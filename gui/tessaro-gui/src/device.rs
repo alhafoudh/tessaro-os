@@ -860,7 +860,7 @@ impl Device {
         let mode = self.vnc_mode();
         let off = mode == "off";
         let picture: Element<'_, Message> = match (&self.vnc.frame, off) {
-            (_, true) => text("VNC is off on this device (screen.vnc=off)")
+            (_, true) => text("this device refuses VNC tunnels (screen.vnc=off)")
                 .size(theme::SMALL)
                 .style(text::warning)
                 .into(),

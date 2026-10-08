@@ -295,11 +295,13 @@ fi
 # input= is that patch's key: false (KIOSK_VNC=view-only) never binds the
 # child's seat, so the viewer sees the panel and nothing it sends arrives.
 #
-# The cost is real and continuous: sharing an output makes Weston stop using
-# hardware overlay and cursor planes for it, and every damage rectangle is read
-# back out of the renderer. A mostly static page is nearly free; full-screen
-# video is a readback per frame. KIOSK_VNC=off is the first thing to try if a
-# device feels slow, the Pi especially.
+# start-on-startup=false: nothing is shared until tessaro-agent asks over
+# screen-share.sock, when a VNC tunnel opens (the weston bbappend's fifth
+# patch). Sharing an output makes Weston stop using hardware overlay and cursor
+# planes for it and read every damage rectangle back out of the renderer, so a
+# scroll costs a full-screen readback per frame; on demand, that is paid only
+# while someone watches. KIOSK_VNC=off writes no section, and the agent refuses
+# a tunnel.
 #
 # Flags, and why each one:
 #
@@ -364,7 +366,7 @@ else
             mv -f "$VNC_PASSWORD_FILE.new" "$VNC_PASSWORD_FILE"
         fi
     fi
-    printf '\n[screen-share]\nstart-on-startup=true\ninput=%s\ncommand=%s\n' \
+    printf '\n[screen-share]\nstart-on-startup=false\ninput=%s\ncommand=%s\n' \
         "$input" \
         "/usr/bin/weston --backend=vnc-backend.so --shell=fullscreen-shell.so --no-config --address=$VNC_ADDRESS --port=$VNC_PORT --vnc-tls-cert=$VNC_TLS_CERT --vnc-tls-key=$VNC_TLS_KEY$password_option" \
         >> "$OUT"

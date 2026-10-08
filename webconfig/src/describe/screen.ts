@@ -1,5 +1,5 @@
 // agent/client/src/describe/screen.rs: what the Screen page says about the
-// connected displays (their EDID) and the TV over HDMI-CEC.
+// connected displays (their EDID), the TV over HDMI-CEC and the VNC mirror.
 
 import type { Schemas } from "../api/client";
 import { Line } from "../text/line";
@@ -100,6 +100,17 @@ function tvLine(state: CecPower | null, showing: boolean): Line {
     line = showing ? line.text(", showing this device") : line.text(", ").add("warn", "showing another input");
   }
   return line;
+}
+
+/** The VNC mirror in one line: `mirroring, 1 viewer`, or `off`. */
+export function vnc(status: Schemas["VncStatus"]): Line {
+  if (!status.sharing) {
+    return Line.of("muted", "off")
+      .text(" ")
+      .add("muted", "- `tessaro-ctl screen vnc` mirrors the screen while its tunnel is open");
+  }
+  const viewers = status.viewers === 0 ? "no viewer" : status.viewers === 1 ? "1 viewer" : `${status.viewers} viewers`;
+  return Line.of("warn", "mirroring").text(`, ${viewers}`);
 }
 
 /** The TV in `device status`: `on, showing this device (Samsung TV)`. */

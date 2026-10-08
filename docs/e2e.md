@@ -131,7 +131,10 @@ start.
 * **VNC is driven from the host the same way**, through a tunnel to the
   guest's `127.0.0.1:5900` on the worker's `vnc_tunnel` port (15900 plus the
   worker's offset), opened only for the case that needs it
-  (`spec/support/vnc.rb`). Its RFB client logs in the way TigerVNC does
+  (`spec/support/vnc.rb`). The mirror runs only on demand, so the case first
+  asks the API's `POST /api/v1/screen/vnc` from the host, as `tessaro-ctl
+  screen vnc` does (the guest's own ctl has no tunnel to open), and waits out
+  the 60s lease once to see the mirror stop. Its RFB client logs in the way TigerVNC does
   (VeNCrypt) or the way macOS Screen Sharing does (the classic VNC password,
   over RFB 3.8 or 3.3), and sends clicks and keys only; what reached the page
   is read over DevTools. The classic password's DES is triple DES with the

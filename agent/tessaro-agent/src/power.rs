@@ -20,6 +20,14 @@ const LIMIT: Duration = Duration::from_secs(3);
 
 /// What the module answers: `true` for on.
 pub async fn send(socket: &Path, command: &str) -> Result<bool, String> {
+    // naked: exchange bounds itself with within()
+    exchange("the screen power socket", socket, command).await
+}
+
+/// One line to a Weston module's control socket and the state it answers,
+/// `on` (`true`) or `off`. tessaro-power.so and screen-share's socket
+/// (`control/vnc.rs`) speak the same.
+pub async fn exchange(what: &'static str, socket: &Path, command: &str) -> Result<bool, String> {
     let failed = |err: std::io::Error| format!("{}: {err}", socket.display());
     let exchange = async {
         // naked: bounded by the within() below
@@ -44,7 +52,7 @@ pub async fn send(socket: &Path, command: &str) -> Result<bool, String> {
             )),
         }
     };
-    match within("the screen power socket", LIMIT, exchange).await {
+    match within(what, LIMIT, exchange).await {
         Ok(result) => result,
         Err(expired) => Err(expired.to_string()),
     }

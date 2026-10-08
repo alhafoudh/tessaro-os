@@ -729,14 +729,17 @@ module AgentE2E
       pause 5, "let Weston settle"
     end
 
-    # The VNC mirror's input lands in Weston's own seat, which Chromium binds
-    # (docs/remote-access.md). Checked with qemu's keyboard and tablet in the
-    # seat, after VeNCrypt and after the classic password over RFB 3.3, then
-    # with both devices ignored - a seat the mirror has to give a pointer and
-    # a keyboard of its own - and refused on view-only. Viewers that leave
-    # right after logging in must not take the mirror down.
-    it "vnc: a click and a key over VNC reach the page, with or without local input devices, over " \
-       "VeNCrypt or the classic password; quick logouts keep the mirror; screen.vnc=view-only drops them",
+    # The VNC mirror runs only once a tunnel asks for it, and stops after its
+    # lease with nobody connected (docs/remote-access.md). Its input lands in
+    # Weston's own seat, which Chromium binds. Checked with qemu's keyboard
+    # and tablet in the seat, after VeNCrypt and after the classic password
+    # over RFB 3.3, then with both devices ignored - a seat the mirror has to
+    # give a pointer and a keyboard of its own - and refused on view-only.
+    # Viewers that leave right after logging in must not take the mirror
+    # down; screen.vnc=off refuses the start.
+    it "vnc: nothing is mirrored until a start, which a lease ends; a click and a key over VNC reach the page, " \
+       "with or without local input devices, over VeNCrypt or the classic password; quick logouts keep the " \
+       "mirror; screen.vnc=view-only drops them, off refuses the start",
        :reconfigure do
       weston_started = -> { guest.run("systemctl show -p ActiveEnterTimestampMonotonic --value weston.service").strip }
       # Weston restarts for each of these keys, and the browser with it.
@@ -773,11 +776,18 @@ module AgentE2E
         result = cdp.command("Runtime.evaluate", expression: "JSON.stringify(window.e2eInput)", returnByValue: true)
         JSON.parse(result.dig("result", "value"))
       end
-      # The child compositor comes up a moment after Weston.
+      # What `tessaro-ctl screen vnc` asks first: the answer comes once the
+      # mirror listens. A Weston restart drops it, so every tunnel asks again.
+      start_mirror = lambda do
+        answer = api.post("/api/v1/screen/vnc")
+        expect(answer.status).to eq(200), "the mirror did not start: #{answer.body}"
+        answer.json
+      end
       over_vnc = lambda do |**login, &body|
+        start_mirror.call
         Vnc.tunnel do |port|
-          step "wait up to 30s for the VNC mirror to log in"
-          deadline = Time.now + 30
+          step "wait up to 10s for the VNC mirror to log in"
+          deadline = Time.now + 10
           begin
             quietly { Vnc.connect(port, **login, &body) }
           rescue Failure, SystemCallError, IOError, OpenSSL::SSL::SSLError
@@ -800,7 +810,11 @@ module AgentE2E
       end
       mirror_listens = -> { guest.run("netstat -ltn").include?("127.0.0.1:5900 ") }
 
-      expect(guest.run("grep -A2 '^\\[screen-share\\]' /run/weston/weston.ini")).to include("input=true")
+      expect(guest.run("grep -A2 '^\\[screen-share\\]' /run/weston/weston.ini"))
+        .to include("start-on-startup=false", "input=true")
+      expect(mirror_listens.call).to be(false), "the mirror runs with no tunnel asking for it"
+      expect(start_mirror.call).to include("mode" => "on", "port" => 5900)
+      expect(mirror_listens.call).to be(true), "the start answered before the mirror listened"
       record.call
       at = click_and_type.call
       seen = recorded.call
@@ -823,6 +837,16 @@ module AgentE2E
       pause 2, "give a crashed mirror time to go"
       expect(mirror_listens.call).to be(true), "a viewer that left at once took the mirror down"
 
+      # No viewer and no new start: the lease (60s) runs out, and the agent's
+      # watch (every 5s) stops the mirror.
+      lease = start_mirror.call.fetch("lease_s")
+      step "wait up to #{lease + 30}s for the mirror to stop with nobody connected"
+      quietly do
+        deadline = Time.now + lease + 30
+        sleep 5 while mirror_listens.call && Time.now < deadline
+      end
+      expect(mirror_listens.call).to be(false), "the mirror outlived its lease with nobody connected"
+
       apply.call("set screen.input.keyboard=0 screen.input.mouse=0")
       record.call
       click_and_type.call
@@ -835,6 +859,12 @@ module AgentE2E
       record.call
       click_and_type.call
       expect(recorded.call).to eq({ "pointer" => [], "keys" => [] }), "view-only let input through"
+
+      apply.call("set screen.vnc=off")
+      refused = api.post("/api/v1/screen/vnc")
+      expect(refused.status).not_to eq(200), "screen.vnc=off started the mirror"
+      expect(refused.body).to include("screen.vnc=on")
+      expect(mirror_listens.call).to be(false)
     ensure
       guest.run("tessaro-ctl config unset screen.vnc screen.input.keyboard screen.input.mouse", allow_failure: true)
       pause 5, "let Weston settle"

@@ -53,6 +53,15 @@
 # destroyed per viewer took its wl_seat global with it, and a viewer that left
 # right after logging in removed it while screen-share was still binding it -
 # a protocol error that ended the mirror until Weston restarted.
+#
+# The fifth makes the mirror on demand. A shared output is read back from the
+# renderer on every damaged frame and kept off hardware planes, which made
+# scrolling lag on a device nobody watched. screen-share listens on
+# screen-share.sock in Weston's runtime directory for share, unshare and
+# status, so tessaro-agent starts the mirror when a VNC tunnel asks and stops
+# it when the viewer is gone; tessaro-weston-config writes
+# start-on-startup=false. It also takes an ended share out of screen-share's
+# list, which upstream leaves there freed. See docs/remote-access.md.
 
 FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
 
@@ -61,6 +70,7 @@ SRC_URI += " \
     file://0002-screen-share-inject-remote-input-into-the-compositor-seat.patch \
     file://0003-vnc-offer-logins-for-viewers-without-TLS.patch \
     file://0004-vnc-keep-one-seat-for-every-client.patch \
+    file://0005-screen-share-control-socket.patch \
     file://weston-remote-access.pam \
     file://tessaro-vnc-auth \
 "

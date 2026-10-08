@@ -3,8 +3,9 @@
 //! `127.0.0.1:5900` (docs/remote-access.md) and Chromium's DevTools on
 //! `127.0.0.1:9222` (docs/kiosk-browser.md). The system's `ssh -N -L`, with
 //! the key sent and the host key pinned by `ssh::authorize` first.
-//! tessaro-gui runs one for its VNC panel and its DevTools job;
-//! `tessaro-ctl browser devtools` runs one in the foreground.
+//! tessaro-gui runs one for its VNC panel, its VNC tunnel job and its
+//! DevTools job; `tessaro-ctl screen vnc` and `browser devtools` run one in
+//! the foreground.
 
 use std::io::Read;
 use std::net::{TcpListener, TcpStream};
@@ -17,6 +18,10 @@ use crate::ssh::Authorized;
 pub const DEVTOOLS: &str = "127.0.0.1:9222";
 /// The port `chrome://inspect` looks at without being configured.
 pub const DEVTOOLS_LOCAL: u16 = 9222;
+/// Where the VNC mirror listens on the device, while it runs.
+pub const VNC: &str = "127.0.0.1:5900";
+/// The port a VNC viewer tries when given a host alone (display 0).
+pub const VNC_LOCAL: u16 = 5900;
 /// How long the forward may take to come up.
 const UP: Duration = Duration::from_secs(15);
 

@@ -171,6 +171,14 @@ fn render(function: &str, input: &Value) -> Value {
             ),
             None => lines(&screen::show(&from(input))),
         },
+        "screen::vnc" => Value::Array(
+            input
+                .as_array()
+                .expect("screen::vnc takes a list of cases")
+                .iter()
+                .map(|case| line(&screen::vnc(&from(case))))
+                .collect(),
+        ),
         "browser::policies" => {
             let policies: Vec<protocol::policy::PolicyInfo> = from(input);
             lines(&browser::policies(&policies))

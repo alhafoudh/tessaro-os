@@ -1,0 +1,76 @@
+{
+  "function": "screen::vnc",
+  "input": [
+    {
+      "sharing": false,
+      "viewers": 0
+    },
+    {
+      "sharing": true,
+      "viewers": 0
+    },
+    {
+      "sharing": true,
+      "viewers": 1
+    },
+    {
+      "sharing": true,
+      "viewers": 2
+    }
+  ],
+  "output": [
+    [
+      [
+        "muted",
+        "off",
+        0
+      ],
+      [
+        "plain",
+        " ",
+        0
+      ],
+      [
+        "muted",
+        "- `tessaro-ctl screen vnc` mirrors the screen while its tunnel is open",
+        0
+      ]
+    ],
+    [
+      [
+        "warn",
+        "mirroring",
+        0
+      ],
+      [
+        "plain",
+        ", no viewer",
+        0
+      ]
+    ],
+    [
+      [
+        "warn",
+        "mirroring",
+        0
+      ],
+      [
+        "plain",
+        ", 1 viewer",
+        0
+      ]
+    ],
+    [
+      [
+        "warn",
+        "mirroring",
+        0
+      ],
+      [
+        "plain",
+        ", 2 viewers",
+        0
+      ]
+    ]
+  ]
+}

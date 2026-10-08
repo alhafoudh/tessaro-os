@@ -137,6 +137,7 @@ export function status(status: Schemas["Status"]): StatusText {
     );
   }
   if (status.tv) more.push(fact("tv", screen.tv(status.tv)));
+  if (status.vnc?.sharing) more.push(fact("vnc", screen.vnc(status.vnc)));
   if (status.bridge) {
     if (status.bridge.mode !== "off") more.push(fact("page bridge", status.bridge.mode));
     if (status.bridge.script) {

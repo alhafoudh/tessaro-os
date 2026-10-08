@@ -420,8 +420,8 @@ pub static KEYS: &[Key] = &[
         "Use keyboards, barcode scanners included; 0 ignores them, and screen.osk=auto shows the on-screen keyboard as if none were plugged in."),
     key(INPUT_TOUCH, "KIOSK_INPUT_TOUCH", Kind::Flag, WESTON,
         "Use touchscreens; 0 ignores them. Remote management and the VNC mirror keep working."),
-    key("screen.vnc", "KIOSK_VNC", Kind::Choice(&["on", "view-only", "off"]), WESTON,
-        "Mirror the screen to VNC on 127.0.0.1:5900: on to view and control it, view-only to watch only, off for no mirror."),
+    key(VNC, "KIOSK_VNC", Kind::Choice(&["on", "view-only", "off"]), WESTON,
+        "What a VNC tunnel (`tessaro-ctl screen vnc`) may do: on to view and control, view-only to watch, off refuses it. Nothing is mirrored until a tunnel asks."),
     // HDMI-CEC, on the running agent; see `tessaro-ctl screen show` and
     // docs/cec.md.
     key(CEC_ENABLE, "KIOSK_CEC", Kind::Flag, AGENT,
@@ -642,6 +642,7 @@ pub const OSK: &str = "screen.osk";
 pub const INPUT_MOUSE: &str = "screen.input.mouse";
 pub const INPUT_KEYBOARD: &str = "screen.input.keyboard";
 pub const INPUT_TOUCH: &str = "screen.input.touch";
+pub const VNC: &str = "screen.vnc";
 pub const RESOLUTION: &str = "screen.resolution";
 pub const ROTATION: &str = "screen.rotation";
 pub const CEC_ENABLE: &str = "screen.cec.enable";

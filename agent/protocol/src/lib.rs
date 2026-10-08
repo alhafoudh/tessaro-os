@@ -313,6 +313,11 @@ pub enum Command {
         #[serde(default)]
         on: Option<bool>,
     },
+    /// Start the VNC mirror for a tunnel, or keep it going: a `VncSession`.
+    /// Refused with screen.vnc off.
+    VncStart,
+    /// Stop the VNC mirror: the tunnel is closing.
+    VncStop,
     /// A page of the journal: the last `lines` entries, or with `cursor`
     /// everything after it. A `LogPage`; following is asking again with its
     /// cursor.
@@ -929,6 +934,10 @@ pub struct Status {
     /// the same way.
     #[serde(default)]
     pub devtools: bool,
+    /// The VNC mirror and its viewers; `None` when the compositor cannot
+    /// say. Defaulted the same way.
+    #[serde(default)]
+    pub vnc: Option<VncStatus>,
     /// Where sound plays and at what volume. `None` from a device that
     /// predates audio.
     #[serde(default)]
@@ -2764,6 +2773,28 @@ pub struct EvalException {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ScreenPower {
     pub on: bool,
+}
+
+/// The VNC mirror, started for a tunnel: where it listens on the device's
+/// loopback and what a viewer may do.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct VncSession {
+    /// screen.vnc: `on` to view and control, `view-only` to watch.
+    pub mode: String,
+    /// On 127.0.0.1, for the tunnel to forward.
+    pub port: u16,
+    /// Seconds the mirror stays up with no viewer connected and no new start:
+    /// a client holding the tunnel starts it again well within this.
+    pub lease_s: u64,
+}
+
+/// The VNC mirror in `device status`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct VncStatus {
+    /// The screen is being mirrored.
+    pub sharing: bool,
+    /// Viewers connected through a tunnel.
+    pub viewers: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

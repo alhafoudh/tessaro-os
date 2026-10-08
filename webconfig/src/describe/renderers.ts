@@ -90,6 +90,7 @@ export const renderers: Record<string, (input: any) => unknown> = {
   // --- screen and browser ---
   "screen::show": (input) =>
     Array.isArray(input) ? input.map((one) => lines(screen.show(one))) : lines(screen.show(input)),
+  "screen::vnc": (input) => input.map((one: any) => spans(screen.vnc(one))),
   "browser::policies": (input) => lines(browser.policies(input)),
   "browser::policy_saved": (input) => input.map((one: any) => lines(browser.policySaved(one))),
   "browser::policy_removed": (input) => input.map((one: any) => lines(browser.policyRemoved(one))),

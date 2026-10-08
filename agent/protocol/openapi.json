@@ -1237,6 +1237,66 @@
         }
       }
     },
+    "/api/v1/screen/vnc": {
+      "post": {
+        "operationId": "screen.VncStart",
+        "tags": [
+          "screen"
+        ],
+        "summary": "Start mirroring the screen to VNC on the device's loopback, for an SSH tunnel, or keep it going: the mirror stops on its own once no viewer is connected and no start came for `lease_s`. Refused with screen.vnc off.",
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VncSession"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "screen.VncStop",
+        "tags": [
+          "screen"
+        ],
+        "summary": "Stop mirroring the screen to VNC.",
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Done"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/screen/keyboard": {
       "post": {
         "operationId": "screen.Keyboard",
@@ -5298,6 +5358,18 @@
             "description": "A DevTools client other than the agent is connected to the browser,\nso the agent leaves the tab alone (docs/kiosk-browser.md). Defaulted\nthe same way.",
             "default": false
           },
+          "vnc": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VncStatus"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The VNC mirror and its viewers; `None` when the compositor cannot\nsay. Defaulted the same way.",
+            "default": null
+          },
           "audio": {
             "anyOf": [
               {
@@ -5477,6 +5549,26 @@
           "key",
           "value"
         ]
+      },
+      "VncStatus": {
+        "type": "object",
+        "properties": {
+          "sharing": {
+            "type": "boolean",
+            "description": "The screen is being mirrored."
+          },
+          "viewers": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "Viewers connected through a tunnel."
+          }
+        },
+        "required": [
+          "sharing",
+          "viewers"
+        ],
+        "description": "The VNC mirror in `device status`."
       },
       "AudioStatus": {
         "type": "object",
@@ -7475,6 +7567,34 @@
         "required": [
           "on"
         ]
+      },
+      "VncSession": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "description": "screen.vnc: `on` to view and control, `view-only` to watch."
+          },
+          "port": {
+            "type": "integer",
+            "format": "uint16",
+            "minimum": 0,
+            "maximum": 65535,
+            "description": "On 127.0.0.1, for the tunnel to forward."
+          },
+          "lease_s": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Seconds the mirror stays up with no viewer connected and no new start:\na client holding the tunnel starts it again well within this."
+          }
+        },
+        "required": [
+          "mode",
+          "port",
+          "lease_s"
+        ],
+        "description": "The VNC mirror, started for a tunnel: where it listens on the device's\nloopback and what a viewer may do."
       },
       "KeyboardBody": {
         "type": "object",

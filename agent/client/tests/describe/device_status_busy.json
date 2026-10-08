@@ -124,6 +124,10 @@
       "tessaro-kiosk.service": "failed",
       "tessaro-proxy.service": "inactive",
       "weston.service": "active"
+    },
+    "vnc": {
+      "sharing": true,
+      "viewers": 1
     }
   },
   "output": {
@@ -586,6 +590,21 @@
           [
             "muted",
             "(TV)",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "vnc",
+        "value": [
+          [
+            "warn",
+            "mirroring",
+            0
+          ],
+          [
+            "plain",
+            ", 1 viewer",
             0
           ]
         ]

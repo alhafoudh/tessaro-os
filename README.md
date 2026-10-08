@@ -367,13 +367,15 @@ tessaro-ctl schedule create screen-off --on 'Mon..Fri 20:00' --script screen-off
 **Remote screen**
 
 ```sh
-tessaro-ctl ssh connect -- -N -L 5900:127.0.0.1:5900   # then point any VNC viewer at localhost:5900
-tessaro-ctl config set screen.vnc=view-only            # watch only; "on" lets the viewer click and type
+tessaro-ctl screen vnc                        # then point any VNC viewer at localhost:5900
+tessaro-ctl config set screen.vnc=view-only   # watch only; "on" lets the viewer click and type
 ```
 
-The mirror only listens on the device itself, so the SSH tunnel is the way in.
-macOS Screen Sharing, Royal TSX, RealVNC and the like ask for the password
-`tessaro`; TigerVNC and Remmina log in as `tessaro` / `tessaro`.
+The screen is mirrored only while the tunnel is open, so a device nobody
+watches pays nothing for it, and the mirror only listens on the device
+itself, so the SSH tunnel is the way in. macOS Screen Sharing, Royal TSX,
+RealVNC and the like ask for the password `tessaro`; TigerVNC and Remmina
+log in as `tessaro` / `tessaro`.
 
 **Updates and access**
 

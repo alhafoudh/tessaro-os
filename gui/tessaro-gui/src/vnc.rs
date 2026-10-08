@@ -1,10 +1,11 @@
 //! The device's screen, live, over VNC through an SSH tunnel.
 //!
-//! The device's VNC server listens on its loopback only (`127.0.0.1:5900`,
-//! docs/remote-access.md), so the way in is SSH: the key is sent and the
-//! host key pinned over the control connection (`tessaro_client::ssh`, the
-//! same as `tessaro-ctl ssh connect`), and the system's `ssh` forwards a
-//! free local port to it (`tessaro_client::tunnel`). An unclaimed device
+//! The device's VNC mirror runs only while a tunnel asks for it and listens
+//! on its loopback only (`127.0.0.1:5900`, docs/remote-access.md), so the
+//! way in is `tessaro_client::vnc`, the same as `tessaro-ctl screen vnc`:
+//! the mirror is started, the key is sent and the host key pinned over the
+//! control connection, and the system's `ssh` forwards a free local port to
+//! it; the mirror is stopped when the viewer closes. An unclaimed device
 //! takes no key; ssh gets in by its empty root password, even in
 //! `BatchMode`.
 //!
@@ -26,17 +27,11 @@ use iced::futures::channel::mpsc as ui;
 use iced::widget::image;
 use iced::Subscription;
 use tessaro_client::nodes::Node;
-use tessaro_client::ssh;
 use tessaro_client::tunnel::{Prompts, Tunnel};
+use tessaro_client::vnc::{self, PASSWORD, USER};
 
 use crate::worker;
 
-/// Where the device's VNC server listens, on its own loopback.
-const REMOTE: &str = "127.0.0.1:5900";
-/// The image's VNC login (`KIOSK_VNC_USER`/`KIOSK_VNC_PASSWORD`), an image
-/// property with no setting, per docs/remote-access.md.
-const USER: &str = "tessaro";
-const PASSWORD: &str = "tessaro";
 /// The fastest the picture is handed to the UI.
 const FRAME_EVERY: Duration = Duration::from_millis(150);
 /// The longest input waits while the screen is still.
@@ -124,13 +119,18 @@ fn watch(node: &Node, out: &ui::UnboundedSender<Event>) -> Result<(), String> {
     let state = |text: &str| {
         let _ = out.unbounded_send(Event::State(text.to_string()));
     };
-    state("opening the SSH tunnel");
-    let authorized = {
-        let (mut session, _) = worker::connect(node)?;
-        ssh::authorize(&mut session, None)?
-    };
-    let tunnel = Tunnel::open(&authorized, 0, REMOTE, Prompts::Never)?;
-    state("connecting to VNC");
+    state("starting the mirror and opening the SSH tunnel");
+    let (mut session, _) = worker::connect(node)?;
+    // The connection this viewer holds keeps the mirror going on the device;
+    // a Weston restart drops it, and the next round starts the mirror again.
+    let opened = vnc::open(&mut session, None, 0, Prompts::Never)?;
+    let viewed = view_through(opened.tunnel, out);
+    vnc::stop(&mut session);
+    viewed
+}
+
+fn view_through(tunnel: Tunnel, out: &ui::UnboundedSender<Event>) -> Result<(), String> {
+    let _ = out.unbounded_send(Event::State("connecting to VNC".to_string()));
     let tcp = TcpStream::connect(("127.0.0.1", tunnel.port))
         .map_err(|err| format!("the tunnel: {err}"))?;
 

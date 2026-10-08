@@ -30,6 +30,7 @@ mod storage;
 mod style;
 mod time;
 mod update;
+mod vnc;
 
 use std::collections::BTreeMap;
 use std::process::ExitCode;
@@ -461,6 +462,15 @@ enum ScreenCmd {
     /// what went over the bus. Needs screen.cec.enable.
     #[command(subcommand)]
     Cec(cec::CecCmd),
+    /// The screen in a VNC viewer on this machine: starts the device's VNC
+    /// mirror and forwards localhost:5900 over ssh to it, until Ctrl-C.
+    /// Open vnc://localhost:5900 and log in as tessaro / tessaro. Nothing is
+    /// mirrored while no tunnel is open; the mirror stops within a minute
+    /// once the tunnel and its viewer are gone. screen.vnc says what the
+    /// viewer may do. The key is sent as for `tessaro-ctl ssh connect`.
+    ///
+    ///   tessaro-ctl -n brave-otter-3fa2 screen vnc
+    Vnc(vnc::Options),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -778,7 +788,9 @@ fn bulk_refused(path: &str, leaf: &ArgMatches) -> Option<&'static str> {
             .is_some_and(|mut raw| raw.any(|value| value == "-"))
     });
     match path {
-        "ssh connect" | "browser devtools" => Some("holds the terminal for one device"),
+        "ssh connect" | "browser devtools" | "screen vnc" => {
+            Some("holds the terminal for one device")
+        }
         "browser policies edit" => Some("opens an editor for one device"),
         "device logs" if flag("follow") => Some("follows one device's journal"),
         "camera snapshot" if given("watch") => Some("watches one camera until Ctrl-C"),
@@ -1227,6 +1239,7 @@ fn run_on(cli: Cli, target: Target, mut nodes: Nodes) -> Result<(), String> {
         Cmd::Audio(command) => audio::run(&mut session, command, json),
         Cmd::Camera(command) => camera::run(&mut session, command, json),
         Cmd::Screen(ScreenCmd::Cec(command)) => cec::run(&mut session, command, json),
+        Cmd::Screen(ScreenCmd::Vnc(options)) => vnc::run(&mut session, options, json),
         Cmd::Time(command) => time::run(&mut session, command, json),
         Cmd::Script(command) => script::run(&mut session, command, json),
         Cmd::Schedule(command) => schedule::run(&mut session, command, json),

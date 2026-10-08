@@ -37,7 +37,7 @@ same change as the behaviour it describes.
 | [docs/display.md](docs/display.md) | Weston scaling and resolution, hotplug, on-screen keyboard, screen power, the connected displays' EDID, boot splash and wallpaper |
 | [docs/cec.md](docs/cec.md) | HDMI-CEC: which adapters, the claim and the OSD name, standby, wake and the input, following the bus, the events for the page, key presses and scripts, the vivid bus in qemu, what does not work |
 | [docs/bridge.md](docs/bridge.md) | the injected script, `window.tessaro` and its modes, who may call, `browser eval` |
-| [docs/remote-access.md](docs/remote-access.md) | VNC mirror and its PAM auth, SSH and `ssh connect` keys |
+| [docs/remote-access.md](docs/remote-access.md) | VNC mirror on demand (`screen vnc`, the control socket, the lease) and its PAM auth, SSH and `ssh connect` keys |
 | [docs/audio.md](docs/audio.md) | PipeWire units, how `audio.*` is applied, `auto` |
 | [docs/camera.md](docs/camera.md) | the camera mirrors and v4l2loopback, one reader per `Mirror N`, why not PipeWire, hiding the real cameras, how a format is picked, `camera.*`, snapshots and previews, the USB/IP test camera in qemu, what does not work |
 | [docs/presence.md](docs/presence.md) | presence detection: the hidden Vision mirror, `tessaro-vision` and its sandbox, the BlazeFace models and `vision:models`, what the agent decides (confidence, distance and calibration, arrive, linger, near), the events for scripts and the page, privacy, what does not work |
@@ -458,7 +458,8 @@ same thing. Keep to these rules when adding a command or a setting:
     growing `/data`.
   * `screen`: the physical display. What is plugged in and the TV over
     HDMI-CEC (`screen cec`: acting on it and its bus, the message log),
-    screenshot, modes, confirming a mode, power, the on-screen keyboard.
+    screenshot, modes, confirming a mode, power, the on-screen keyboard, the
+    VNC mirror through a tunnel (`screen vnc`).
   * `browser`: what the browser shows. Navigate, reload, maintenance, debug
     screen, zoom, remote DevTools, the injected script, the page bridge,
     `eval`, the extra Chromium policies.

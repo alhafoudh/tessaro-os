@@ -26,6 +26,7 @@
   "maintenance": false,
   "debug_screen": false,
   "devtools": false,
+  "vnc": null,
   "audio": {
     "running": true,
     "error": null,

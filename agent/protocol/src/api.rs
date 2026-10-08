@@ -40,7 +40,7 @@ use crate::{
     PrinterSpec, ProxyStatus, ProxyTested, Received, RestartTarget, ScheduleInfo, ScheduleSpec,
     ScreenPower, ScreenShow, ScriptInfo, ScriptSpec, Secret, Settings, SshAccess, SshKeyInfo,
     SshKeyRevoked, Storage, Ticket, TimeStatus, TokenCreated, TokenInfo, UpdateBegun, UpdateStatus,
-    Verify, WebSession, WelcomeInfo, WifiNetwork, WifiSecurity, WifiStatus,
+    Verify, VncSession, WebSession, WelcomeInfo, WifiNetwork, WifiSecurity, WifiStatus,
 };
 
 /// The API's version, in every path. A change a client of this version
@@ -1206,6 +1206,17 @@ pub mod screen {
         /// Switch the display on or off.
         PowerSet: Post "/api/v1/screen/power" (Empty, ScreenPowerBody) -> ScreenPower
             = |_, body| Action::Run(Command::ScreenPower { on: Some(body.on) });
+
+        /// Start mirroring the screen to VNC on the device's loopback, for
+        /// an SSH tunnel, or keep it going: the mirror stops on its own once
+        /// no viewer is connected and no start came for `lease_s`. Refused
+        /// with screen.vnc off.
+        VncStart: Post "/api/v1/screen/vnc" (Empty, ()) -> VncSession
+            = |_, _| Action::Run(Command::VncStart);
+
+        /// Stop mirroring the screen to VNC.
+        VncStop: Delete "/api/v1/screen/vnc" (Empty, ()) -> Done
+            = |_, _| Action::Run(Command::VncStop);
 
         /// Show or hide the on-screen keyboard.
         Keyboard: Post "/api/v1/screen/keyboard" (Empty, KeyboardBody) -> Done
