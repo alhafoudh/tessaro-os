@@ -6,6 +6,7 @@
 pub mod choice;
 pub mod loopback;
 pub mod mirrors;
+pub mod settings;
 pub mod snapshot;
 pub mod v4l2;
 

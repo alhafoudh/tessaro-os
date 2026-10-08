@@ -131,6 +131,16 @@ cannot get more than the mirror captures.
   showing a camera loses its picture for a moment and has to ask for it
   again; the browser and the agent stay. `tessaro-ctl camera format`,
   `camera size` and `camera mirrors` are the shorthands.
+* **A mirror never stays on settings `camera.env` no longer has.** `/run` is
+  empty at boot and udev starts the mirrors as soon as the cameras appear,
+  so `tessaro-camera@.service` is ordered `After=tessaro-config.service`,
+  which renders the file; without it a mirror would come up on the defaults,
+  with no `Vision` mirror while `camera.presence.enable` is on. As a
+  backstop for a restart the agent never sent (a failed render at boot, an
+  agent stopped between rendering and restarting), the mirror reads the file
+  back every 2s and, when it differs from what the mirror was started with,
+  tears its mirrors down and starts again in the same process
+  (`settings.rs`).
 
 ## Snapshots
 

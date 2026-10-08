@@ -11,13 +11,22 @@ Description=Camera mirror for /dev/%i
 BindsTo=dev-%i.device
 After=dev-%i.device
 
+# udev starts the mirrors at boot before tessaro-config.service has rendered
+# camera.env into the empty /run, and a mirror started first would run on the
+# defaults, without presence detection's hidden mirror. After=, not
+# Requires=: a failed render still leaves the cameras working. A camera
+# plugged in later finds the render long done, and a mirror that still runs
+# on old settings starts again by itself (settings.rs).
+After=tessaro-config.service
+
 [Service]
 Type=simple
 ExecStart=/usr/bin/tessaro-camera /dev/%i
 
 # camera.format and camera.size, as KIOSK_CAMERA_FORMAT and
 # KIOSK_CAMERA_SIZE. tessaro-agent renders the file and restarts every
-# mirror when it changes. Missing is auto.
+# mirror when it changes; the mirror also reads it back while it runs and
+# starts again on its own when it differs. Missing is auto.
 EnvironmentFile=-/run/tessaro-camera/camera.env
 
 # A camera that stalls or errors exits non-zero and is started afresh. Clean

@@ -19,7 +19,10 @@
 //! read at start only: the agent restarts the mirror when it changes. So is
 //! `KIOSK_CAMERA_VISION` (camera.presence.enable), which adds one more,
 //! `<camera> Vision`, that only root may open: tessaro-vision reads it for
-//! presence detection, and the page never sees it. What
+//! presence detection, and the page never sees it. The mirror also reads
+//! `camera.env` back while it runs and starts again, in the same process,
+//! when the file no longer says what it was started with; see `settings.rs`.
+//! What
 //! it captures goes to `/run/tessaro-camera/videoN.json` as a
 //! `protocol::CameraInfo`, which `tessaro-ctl camera list` reads back, and is
 //! removed on exit along with the virtual cameras. While the agent asks for
@@ -46,6 +49,7 @@ use protocol::{CameraInfo, CameraMirror, CameraMode};
 
 use tessaro_camera::choice::{self, Wanted};
 use tessaro_camera::loopback::{Control, Leftovers, Removed};
+use tessaro_camera::settings::Settings;
 use tessaro_camera::snapshot::Snapshots;
 use tessaro_camera::v4l2::{
     self, Capture, Interval, BUF_TYPE_VIDEO_CAPTURE, BUF_TYPE_VIDEO_OUTPUT,
@@ -65,6 +69,11 @@ const TICK_MS: i32 = 1000;
 /// A camera that sends nothing for this long is stuck; exiting non-zero
 /// has the unit start it afresh.
 const STALL: Duration = Duration::from_secs(10);
+
+/// How often a running mirror reads `camera.env` back. The agent restarts
+/// the mirror itself right after rendering it, so this only catches a
+/// restart that never came.
+const SETTINGS_EVERY: Duration = Duration::from_secs(2);
 
 static STOP: AtomicBool = AtomicBool::new(false);
 
@@ -96,6 +105,8 @@ fn stopping() -> bool {
 enum Stop {
     /// The camera is gone: a clean exit, udev starts a new mirror on replug.
     Unplugged,
+    /// `camera.env` says something else now: start again with it.
+    Changed(Settings),
     Failed(String),
 }
 
@@ -132,9 +143,19 @@ fn main() -> ExitCode {
         path: dir.join(format!("{name}.json")),
     };
     let mut snapshots = Snapshots::new(&dir, &name);
-    let result = run(&device, &name, &dir, &state, &mut snapshots);
-    state.remove();
-    snapshots.remove();
+    let mut applied = Applied::new(dir.join("camera.env"), Settings::from_env());
+    let result = loop {
+        let result = run(&device, &name, &dir, &mut applied, &state, &mut snapshots);
+        state.remove();
+        snapshots.remove();
+        match result {
+            Err(Stop::Changed(now)) => {
+                eprintln!("camera.env changed; starting the mirror again with it");
+                applied = Applied::new(applied.file, now);
+            }
+            result => break result,
+        }
+    };
 
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -142,6 +163,7 @@ fn main() -> ExitCode {
             eprintln!("{}: unplugged", device.display());
             ExitCode::SUCCESS
         }
+        Err(Stop::Changed(_)) => unreachable!("handled in the loop above"),
         Err(Stop::Failed(why)) => {
             eprintln!("{}: {why}", device.display());
             ExitCode::FAILURE
@@ -158,6 +180,7 @@ fn run(
     device: &Path,
     name: &str,
     dir: &Path,
+    applied: &mut Applied,
     state: &State,
     snapshots: &mut Snapshots,
 ) -> Result<()> {
@@ -212,10 +235,8 @@ fn run(
         );
     }
 
-    let (wanted, mut reasons) = Wanted::parse(
-        env::var("KIOSK_CAMERA_FORMAT").ok().as_deref(),
-        env::var("KIOSK_CAMERA_SIZE").ok().as_deref(),
-    );
+    let settings = applied.settings.clone();
+    let (wanted, mut reasons) = Wanted::parse(settings.format.as_deref(), settings.size.as_deref());
     let Some(choice) = choice::choose(&modes, &wanted) else {
         return state.idle(
             info,
@@ -234,7 +255,7 @@ fn run(
     let mut leftovers = Leftovers::load(&dir.join(format!("{name}.leftover")));
     leftovers.sweep(&control);
 
-    let (count, why) = mirrors::count(env::var("KIOSK_CAMERA_MIRRORS").ok().as_deref());
+    let (count, why) = mirrors::count(settings.mirrors.as_deref());
     if let Some(why) = why {
         eprintln!("{why}");
     }
@@ -260,7 +281,7 @@ fn run(
     // The hidden one presence detection reads, after the page's, so a
     // reader that counts mirrors from the first still finds its own.
     let mut vision = None;
-    if result.is_ok() && mirrors::vision(env::var("KIOSK_CAMERA_VISION").ok().as_deref()) {
+    if result.is_ok() && mirrors::vision(settings.vision.as_deref()) {
         let label = mirrors::vision_label(&camera_name);
         match control.add(&label) {
             Ok(nr) => {
@@ -282,6 +303,7 @@ fn run(
             vision,
             &mode,
             &mut info,
+            applied,
             state,
             snapshots,
             &control,
@@ -392,6 +414,7 @@ fn mirror(
     vision: Option<CameraMirror>,
     mode: &CameraMode,
     info: &mut CameraInfo,
+    applied: &mut Applied,
     state: &State,
     snapshots: &mut Snapshots,
     control: &Control,
@@ -428,6 +451,9 @@ fn mirror(
             leftovers.sweep(control);
         }
         snapshots.check();
+        if let Some(now) = applied.changed() {
+            return Err(Stop::Changed(now));
+        }
         let mut poll = libc::pollfd {
             fd: camera.as_raw_fd(),
             events: libc::POLLIN,
@@ -500,6 +526,33 @@ fn open_virtual(path: &str) -> Result<File> {
             }
             Err(err) => return Err(Stop::Failed(format!("{path}: {err}"))),
         }
+    }
+}
+
+/// The settings the mirror runs with, and the `camera.env` it compares them
+/// to every `SETTINGS_EVERY`.
+struct Applied {
+    file: PathBuf,
+    settings: Settings,
+    checked: Instant,
+}
+
+impl Applied {
+    fn new(file: PathBuf, settings: Settings) -> Applied {
+        Applied {
+            file,
+            settings,
+            checked: Instant::now(),
+        }
+    }
+
+    /// What the file says, once that differs from what the mirror runs with.
+    fn changed(&mut self) -> Option<Settings> {
+        if self.checked.elapsed() < SETTINGS_EVERY {
+            return None;
+        }
+        self.checked = Instant::now();
+        Settings::from_file(&self.file).filter(|now| *now != self.settings)
     }
 }
 
