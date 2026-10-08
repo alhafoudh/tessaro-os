@@ -371,11 +371,15 @@ tessaro-ctl screen vnc                        # then point any VNC viewer at loc
 tessaro-ctl config set screen.vnc=view-only   # watch only; "on" lets the viewer click and type
 ```
 
-The screen is mirrored only while the tunnel is open, so a device nobody
-watches pays nothing for it, and the mirror only listens on the device
-itself, so the SSH tunnel is the way in. macOS Screen Sharing, Royal TSX,
-RealVNC and the like ask for the password `tessaro`; TigerVNC and Remmina
-log in as `tessaro` / `tessaro`.
+VNC starts on demand: `tessaro-ctl screen vnc`, or the VNC tunnel and the
+live VNC view in `tessaro-gui`, start the mirror on the device when they
+open the tunnel and stop it when they close it. This is for performance:
+mirroring makes the compositor copy every changed frame off the GPU, which
+slows scrolling and video on the screen, so it runs only while someone
+watches. Nothing needs switching on first. The mirror only
+listens on the device itself, so the SSH tunnel is the way in. macOS Screen
+Sharing, Royal TSX, RealVNC and the like ask for the password `tessaro`;
+TigerVNC and Remmina log in as `tessaro` / `tessaro`.
 
 **Updates and access**
 
