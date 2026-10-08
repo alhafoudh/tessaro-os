@@ -68,7 +68,7 @@ class FeedCommandTest < Minitest::Test
   def test_test_pattern_mjpeg
     cmd = Usbcam::Feed.command(Mode.new(:mjpeg, 1280, 720, 30))
     assert_includes cmd.join(" "), "-f lavfi -i testsrc2=size=1280x720:rate=30"
-    assert_equal %w[-q:v 5 -f mjpeg pipe:1], cmd.last(5)
+    assert_equal %w[-pix_fmt yuvj420p -q:v 5 -f mjpeg pipe:1], cmd.last(7)
     refute_includes cmd, "-stream_loop"
   end
 
@@ -84,6 +84,9 @@ class FeedCommandTest < Minitest::Test
     assert_includes cmd.join(" "), "-f avfoundation -framerate 30 -video_size 1280x720 -pixel_format uyvy422 -i 0:none"
     assert_includes cmd.join(" "), "-vf #{Usbcam::Feed.fit(Mode.new(:mjpeg, 640, 480, 15))}"
     refute_includes cmd, "-stream_loop"
+    # The Mac's camera is 4:2:2, which ffmpeg would encode as a JPEG
+    # Chromium drops every frame of.
+    assert_equal %w[-pix_fmt yuvj420p -q:v 5 -f mjpeg pipe:1], cmd.last(7)
   end
 
   def test_fit_keeps_the_aspect

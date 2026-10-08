@@ -151,9 +151,13 @@ module Usbcam
         else
           ["-f", "lavfi", "-i", "testsrc2=size=#{mode.width}x#{mode.height}:rate=#{mode.fps}"]
         end
+      # MJPEG is always 4:2:0. ffmpeg encodes a 4:2:2 picture (the Mac's
+      # camera, many clips) with 2x2 luma and 1x2 chroma blocks, which an
+      # image decoder reads but Chromium's capture drops frame by frame: the
+      # page gets a live track and a black video.
       output =
         case mode.kind
-        when :mjpeg then ["-q:v", "5", "-f", "mjpeg"]
+        when :mjpeg then ["-pix_fmt", "yuvj420p", "-q:v", "5", "-f", "mjpeg"]
         when :yuyv then ["-pix_fmt", "yuyv422", "-f", "rawvideo"]
         end
       [ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", *input, "-an", *output, "pipe:1"]

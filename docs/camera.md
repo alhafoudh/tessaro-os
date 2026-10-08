@@ -226,6 +226,11 @@ from AVFoundation.
   camera is portrait 1080x1920. Every picture, a clip's too, is fitted into
   the committed mode with its aspect kept and black bars, never stretched
   (`Feed.fit`).
+* **The emulator's MJPEG is always 4:2:0** (`-pix_fmt yuvj420p` in
+  `Feed.command`). ffmpeg encodes a 4:2:2 picture, which the Mac's camera
+  and many clips are, with 2x2 luma and 1x2 chroma blocks: snapshots and
+  presence detection decode it, but Chromium's capture drops every frame,
+  so the page gets a live track and a black video.
 
 ## What does not work
 
