@@ -45,11 +45,14 @@ browser restarts to start or stop it.
   `cdp/clients.rs`): established loopback connections to 5900 that are not
   the agent's own, and dropbear holds one per viewer through a tunnel. The
   lease covers the time between the start and the viewer connecting, and a
-  client that vanished without a stop, Ctrl-C included, costs the device at
-  most that minute.
+  client that vanished without a stop (killed, its machine asleep, its
+  network gone) costs the device at most that minute.
 * **The client holding the tunnel starts it again every 20s**
   (`tessaro_client::vnc::watch`), as its keepalive, and stops it
-  (`VncStop`, best effort) when it closes. A Weston restart (a hotplug, a
+  (`VncStop`, best effort) when it closes. `tessaro-ctl screen vnc` catches
+  Ctrl-C and `kill` on unix for that (`interrupt` in its `vnc.rs`): the
+  terminal ends ssh, and the ctl sends the stop before it exits. The GUI's
+  Cancel and closing its VNC panel stop it the same way. A Weston restart (a hotplug, a
   `screen.*` setting) loses the share; the next keepalive, or the GUI panel's
   reconnect, shares again.
 * **`Status.vnc` says whether the screen is mirrored and how many viewers

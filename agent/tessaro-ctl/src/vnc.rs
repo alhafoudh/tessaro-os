@@ -3,7 +3,9 @@
 //! `127.0.0.1:5900`, which runs only while the tunnel asks for it.
 //!
 //! Starting the mirror, what the forward says and how it is kept are
-//! `tessaro_client::vnc`, shared with the GUI.
+//! `tessaro_client::vnc`, shared with the GUI. Ctrl-C is caught, so the
+//! mirror is stopped as the tunnel closes rather than when the device's lease
+//! runs out.
 
 use std::path::PathBuf;
 
@@ -54,24 +56,28 @@ pub fn run(session: &mut Session, options: Options, json: bool) -> Result<(), St
         options.local_port,
         Prompts::Terminal,
     )?;
+    // After the ssh prompts, which Ctrl-C should still end at once.
+    interrupt::catch();
     let port = opened.tunnel.port;
     if json {
         crate::print_json(&json!({ "port": port, "mode": opened.vnc.mode }))?;
     } else {
-        // Ctrl-C ends the process before it can say so; the device stops
-        // the mirror itself once its lease runs out.
-        let closing = format!(
-            "Ctrl-C closes the tunnel; the device stops mirroring within {}s",
-            opened.vnc.lease_s
-        );
-        for line in shared::explain(&session.node.name, port, &opened.vnc.mode, &closing) {
+        let closing = "Ctrl-C closes the tunnel and stops the mirror";
+        for line in shared::explain(&session.node.name, port, &opened.vnc.mode, closing) {
             println!("{}", style::line(&line));
         }
     }
-    shared::watch(session, &mut opened.tunnel, &mut Stdout { json })
+    shared::watch(session, &mut opened.tunnel, &mut Stdout { json })?;
+    if !json {
+        println!(
+            "{}",
+            paint(style::MUTED, "closed the tunnel and stopped the mirror")
+        );
+    }
+    Ok(())
 }
 
-/// The viewers' news on stdout; nothing with `--json`.
+/// The viewers' news on stdout; nothing with `--json`. Stopped by Ctrl-C.
 struct Stdout {
     json: bool,
 }
@@ -83,5 +89,49 @@ impl Report for Stdout {
         if !self.json {
             println!("{}", style::line(&line));
         }
+    }
+
+    fn stopped(&self) -> bool {
+        interrupt::caught()
+    }
+}
+
+/// Ctrl-C (and a plain `kill`) noted instead of ending the process, so the
+/// watch can stop the mirror on its way out. The terminal sends Ctrl-C to
+/// ssh too, which closes the tunnel by itself.
+#[cfg(unix)]
+mod interrupt {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    static CAUGHT: AtomicBool = AtomicBool::new(false);
+
+    extern "C" fn note(_: libc::c_int) {
+        CAUGHT.store(true, Ordering::SeqCst);
+    }
+
+    pub fn catch() {
+        let handler = note as extern "C" fn(libc::c_int) as libc::sighandler_t;
+        // SAFETY: the handler only stores to an atomic, which is
+        // async-signal-safe. signal() keeps SA_RESTART on Linux and macOS,
+        // so a request in flight carries on.
+        unsafe {
+            libc::signal(libc::SIGINT, handler);
+            libc::signal(libc::SIGTERM, handler);
+        }
+    }
+
+    pub fn caught() -> bool {
+        CAUGHT.load(Ordering::SeqCst)
+    }
+}
+
+/// Elsewhere Ctrl-C ends the process, and the device's lease stops the
+/// mirror.
+#[cfg(not(unix))]
+mod interrupt {
+    pub fn catch() {}
+
+    pub fn caught() -> bool {
+        false
     }
 }

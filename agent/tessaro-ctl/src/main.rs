@@ -465,9 +465,8 @@ enum ScreenCmd {
     /// The screen in a VNC viewer on this machine: starts the device's VNC
     /// mirror and forwards localhost:5900 over ssh to it, until Ctrl-C.
     /// Open vnc://localhost:5900 and log in as tessaro / tessaro. Nothing is
-    /// mirrored while no tunnel is open; the mirror stops within a minute
-    /// once the tunnel and its viewer are gone. screen.vnc says what the
-    /// viewer may do. The key is sent as for `tessaro-ctl ssh connect`.
+    /// mirrored while no tunnel is open; Ctrl-C closes the tunnel and stops
+    /// the mirror. screen.vnc says what the viewer may do. The key is sent as for `tessaro-ctl ssh connect`.
     ///
     ///   tessaro-ctl -n brave-otter-3fa2 screen vnc
     Vnc(vnc::Options),

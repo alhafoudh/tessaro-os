@@ -120,7 +120,8 @@ fn keep(session: &mut Session, tunnel: &mut Tunnel, report: &mut dyn Report) -> 
     let mut started = Instant::now();
     while !report.stopped() {
         if let Some(why) = tunnel.ended() {
-            return Err(why);
+            // A Ctrl-C reaches ssh too, and can end it first.
+            return if report.stopped() { Ok(()) } else { Err(why) };
         }
         if started.elapsed() >= KEEP {
             // A refusal is news (screen.vnc turned off); a missed answer is
