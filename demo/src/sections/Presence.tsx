@@ -181,7 +181,7 @@ export function PresenceSection(_: SectionProps) {
             )}
             <Overlay frame={frame} />
             {greeting && (
-              <div className="rise absolute inset-x-0 bottom-[8%] mx-auto w-fit rounded-full border border-[rgba(92,200,255,0.4)] bg-[rgba(10,13,20,0.82)] px-[2rem] py-[1rem] text-[clamp(1.6rem,4.4vmin,3rem)] font-semibold backdrop-blur-md">
+              <div className="rise absolute inset-x-0 bottom-[8%] mx-auto w-fit rounded-full border border-[rgba(92,200,255,0.4)] bg-[rgba(10,13,20,0.9)] px-[2rem] py-[1rem] text-[clamp(1.6rem,4.4vmin,3rem)] font-semibold">
                 <span className="title-gradient">{greeting}</span>
               </div>
             )}

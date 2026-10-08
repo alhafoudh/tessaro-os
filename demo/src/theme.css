@@ -75,8 +75,11 @@
 }
 
 @layer components {
-  /* The desktop wallpaper, redrawn as the welcome page does it: the demo
-     appears over the desktop without a change, then the glows drift. */
+  /* The desktop wallpaper, redrawn as the welcome page does it, so the demo
+     appears over the desktop without a change. The glows stand still: the
+     welcome page's drift repaints both full-screen layers every frame,
+     which an integrated GPU (an HD 530, measured) cannot do in one 60 Hz
+     refresh, and every touch then waits a 30 fps frame or two. */
   .backdrop {
     position: fixed;
     inset: 0;
@@ -95,12 +98,10 @@
   .backdrop .glow.a {
     background: radial-gradient(closest-side, rgba(18, 48, 77, 0.95), rgba(16, 36, 58, 0.35) 60%, rgba(16, 36, 58, 0));
     translate: -400px -340px;
-    animation: drift-a 38s ease-in-out infinite alternate;
   }
   .backdrop .glow.b {
     background: radial-gradient(closest-side, rgba(36, 27, 68, 0.95), rgba(29, 23, 51, 0.35) 60%, rgba(29, 23, 51, 0));
     translate: 440px 380px;
-    animation: drift-b 46s ease-in-out infinite alternate;
   }
   .backdrop::after {
     content: "";
@@ -118,11 +119,12 @@
     color: transparent;
   }
 
+  /* No backdrop-filter here or on anything that stays on screen: a blur is
+     recomputed whenever what is behind it changes, every frame of a scroll. */
   .panel {
     border: 1px solid var(--color-line);
     border-radius: var(--radius-card);
     background: var(--color-card);
-    backdrop-filter: blur(6px);
     padding: 1.1rem 1.3rem;
   }
 
@@ -351,30 +353,10 @@
   }
 }
 
-@keyframes drift-a {
-  to {
-    transform: translate(10vmin, 8vmin);
-  }
-}
-@keyframes drift-b {
-  to {
-    transform: translate(-9vmin, -7vmin);
-  }
-}
 @keyframes rise {
   from {
     opacity: 0;
     transform: translateY(0.8rem);
-  }
-}
-@keyframes pulse-ring {
-  0% {
-    transform: scale(0.9);
-    opacity: 0.9;
-  }
-  100% {
-    transform: scale(1.6);
-    opacity: 0;
   }
 }
 
@@ -383,7 +365,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .backdrop .glow,
   .rise {
     animation: none;
   }

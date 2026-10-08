@@ -86,7 +86,7 @@ export function Layout({ children }: { children: ReactNode }) {
       <main className="scroll-area relative z-10 min-h-0 flex-1 px-[clamp(1rem,3vw,2.4rem)] pb-4">{children}</main>
 
       {!home && (
-        <nav className="relative z-10 flex items-center gap-3 border-t border-line bg-[rgba(10,13,20,0.72)] px-[clamp(1rem,3vw,2.4rem)] py-3 backdrop-blur-md">
+        <nav className="relative z-10 flex items-center gap-3 border-t border-line bg-[rgba(10,13,20,0.94)] px-[clamp(1rem,3vw,2.4rem)] py-3">
           <button type="button" className="btn" onClick={() => navigate("/")}>
             <Icon name="home" className="h-6 w-6" />
             All demos
