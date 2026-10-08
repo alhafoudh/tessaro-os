@@ -457,8 +457,8 @@ same thing. Keep to these rules when adding a command or a setting:
   * `storage`: the disk the device runs from. Partitions, free space,
     growing `/data`.
   * `screen`: the physical display. What is plugged in and the TV over
-    HDMI-CEC, screenshot, modes, confirming a mode, power, the on-screen
-    keyboard.
+    HDMI-CEC (`screen cec`: acting on it and its bus, the message log),
+    screenshot, modes, confirming a mode, power, the on-screen keyboard.
   * `browser`: what the browser shows. Navigate, reload, maintenance, debug
     screen, zoom, remote DevTools, the injected script, the page bridge,
     `eval`, the extra Chromium policies.
@@ -491,7 +491,10 @@ same thing. Keep to these rules when adding a command or a setting:
   explicit `show` or `status` (`network show`, `network wifi status`).
 * **Nest a third level only for a collection with its own verbs**
   (`access token create|list|revoke`, `ssh keys list|revoke`,
-  `network profiles list|show`). Otherwise use two levels.
+  `network profiles list|show`). Otherwise use two levels. The one other
+  third level is `screen cec`: a protocol's own verbs (`wake`, `standby`,
+  `send`...) under the device it drives, which as two-level commands would
+  read as the screen's own (`screen standby` beside `screen power`).
 * **A new command goes into an existing group.** Add a group only when at least
   two commands would share it and none of the existing groups fits; a lone
   command goes to the nearest group.

@@ -12,6 +12,7 @@
 
 mod audio;
 mod camera;
+mod cec;
 mod connect;
 mod devtools;
 mod files;
@@ -455,6 +456,11 @@ enum ScreenCmd {
         #[arg(long)]
         selector: Option<String>,
     },
+    /// The TV and the rest of the HDMI-CEC bus, acted on without switching
+    /// the screen: wake, standby, its input, remote keys, any message, and
+    /// what went over the bus. Needs screen.cec.enable.
+    #[command(subcommand)]
+    Cec(cec::CecCmd),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -777,6 +783,7 @@ fn bulk_refused(path: &str, leaf: &ArgMatches) -> Option<&'static str> {
         "device logs" if flag("follow") => Some("follows one device's journal"),
         "camera snapshot" if given("watch") => Some("watches one camera until Ctrl-C"),
         "camera presence" if given("watch") => Some("watches one device until Ctrl-C"),
+        "screen cec messages" if flag("follow") => Some("follows one device's CEC bus"),
         "access webconfig" if !flag("print") => Some("opens a browser for one device"),
         "files download" => Some("writes one local file or directory"),
         "screen screenshot" | "camera snapshot" if given("output") => {
@@ -1219,6 +1226,7 @@ fn run_on(cli: Cli, target: Target, mut nodes: Nodes) -> Result<(), String> {
         }
         Cmd::Audio(command) => audio::run(&mut session, command, json),
         Cmd::Camera(command) => camera::run(&mut session, command, json),
+        Cmd::Screen(ScreenCmd::Cec(command)) => cec::run(&mut session, command, json),
         Cmd::Time(command) => time::run(&mut session, command, json),
         Cmd::Script(command) => script::run(&mut session, command, json),
         Cmd::Schedule(command) => schedule::run(&mut session, command, json),
@@ -1897,6 +1905,9 @@ mod tests {
         assert!(refused(&["files", "download", "/a"]).is_some());
         assert!(refused(&["screen", "screenshot", "-o", "a.jpg"]).is_some());
         assert!(refused(&["screen", "screenshot"]).is_none());
+        assert!(refused(&["screen", "cec", "messages", "-f"]).is_some());
+        assert!(refused(&["screen", "cec", "messages"]).is_none());
+        assert!(refused(&["screen", "cec", "key", "volume-up"]).is_none());
         assert!(refused(&["config", "set", "browser.url=https://example.com"]).is_none());
     }
 

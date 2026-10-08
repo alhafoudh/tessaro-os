@@ -298,14 +298,82 @@ export interface PresenceDetail {
   faces: Face[];
 }
 
-export interface CecDetail {
-  event: string;
+/** A change on the bus: the TV's power, its input, a key of its remote. */
+export interface CecChangeDetail {
+  event: "tv-on" | "tv-standby" | "source-gained" | "source-lost" | "key";
   connector: string | null;
   tv: CecPower | null;
   showing: boolean;
   key?: string;
   pressed?: boolean;
   repeat?: boolean;
+}
+
+/** Every message on the bus, either way; only in bridge actions mode. */
+export interface CecMessageDetail {
+  event: "message";
+  connector: string | null;
+  seq: number;
+  direction: "in" | "out";
+  from: number;
+  to: number;
+  /** The opcode and operands in hex, empty for a poll. */
+  data: string;
+  opcode: number | null;
+  /** The opcode's kebab-case name, null for one without a name. */
+  name: string | null;
+  acked: boolean | null;
+}
+
+export type CecDetail = CecChangeDetail | CecMessageDetail;
+
+/** One message of the device's message log (screen.cec.messages()). */
+export interface CecMessage {
+  seq: number;
+  at_ms: number;
+  /** The device's wall clock: `21:04:05.123`. */
+  time: string;
+  device: string;
+  direction: "in" | "out";
+  from: number;
+  to: number;
+  data: string;
+  acked?: boolean | null;
+}
+
+export interface CecMessages {
+  messages: CecMessage[];
+  next: number;
+}
+
+/** What an action did on one adapter. */
+export interface CecAdapterActed {
+  device: string;
+  connector?: string | null;
+  sent: { to: number; data: string; acked: boolean }[];
+  /** The answer send() waited for, when it came. */
+  reply?: CecMessage | null;
+  /** The addresses that answered a scan's polls. */
+  answered: number[];
+  tv?: CecPower | null;
+  /** Why the action did not go out on this adapter. */
+  error?: string | null;
+}
+
+export interface CecActed {
+  action: string;
+  adapters: CecAdapterActed[];
+}
+
+/** tessaro.screen.cec, in bridge actions mode only. */
+export interface CecActions {
+  wake(source?: boolean): Promise<CecActed>;
+  standby(all?: boolean): Promise<CecActed>;
+  source(): Promise<CecActed>;
+  key(name: string, to?: number): Promise<CecActed>;
+  scan(): Promise<CecActed>;
+  send(data: string, to: number, reply?: number): Promise<CecActed>;
+  messages(after?: number): Promise<CecMessages>;
 }
 
 export interface PrintRequest {
@@ -344,7 +412,12 @@ export interface TessaroReads {
   };
   scripts: { list(): Promise<BridgeScript[]>; run?(name: string): Promise<ScriptResult> };
   playlist: { status(): Promise<PlaylistStatus> };
-  screen: { show(): Promise<ScreenShow>; on?(): Promise<unknown>; off?(): Promise<unknown> };
+  screen: {
+    show(): Promise<ScreenShow>;
+    on?(): Promise<unknown>;
+    off?(): Promise<unknown>;
+    cec?: CecActions;
+  };
   presence: {
     status(): Promise<PresenceStatus>;
     watch(): Promise<unknown>;

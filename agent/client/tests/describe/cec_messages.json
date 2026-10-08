@@ -1,0 +1,235 @@
+{
+  "function": "cec::messages",
+  "input": {
+    "messages": [
+      {
+        "acked": true,
+        "at_ms": 1791300000001,
+        "data": "8f",
+        "device": "/dev/cec0",
+        "direction": "out",
+        "from": 4,
+        "seq": 40,
+        "time": "21:04:05.001",
+        "to": 0
+      },
+      {
+        "at_ms": 1791300000123,
+        "data": "90 00",
+        "device": "/dev/cec0",
+        "direction": "in",
+        "from": 0,
+        "seq": 41,
+        "time": "21:04:05.123",
+        "to": 4
+      },
+      {
+        "at_ms": 1791300001500,
+        "data": "44 72",
+        "device": "/dev/cec0",
+        "direction": "in",
+        "from": 0,
+        "seq": 42,
+        "time": "21:04:06.500",
+        "to": 4
+      },
+      {
+        "acked": true,
+        "at_ms": 1791300002000,
+        "data": "82 10 00",
+        "device": "/dev/cec0",
+        "direction": "out",
+        "from": 4,
+        "seq": 43,
+        "time": "21:04:07.000",
+        "to": 15
+      },
+      {
+        "acked": false,
+        "at_ms": 1791300003000,
+        "data": "",
+        "device": "/dev/cec0",
+        "direction": "out",
+        "from": 4,
+        "seq": 44,
+        "time": "21:04:08.000",
+        "to": 11
+      },
+      {
+        "at_ms": 1791300004000,
+        "data": "a0 00 00 f0 01",
+        "device": "/dev/cec0",
+        "direction": "in",
+        "from": 5,
+        "seq": 45,
+        "time": "21:04:09.000",
+        "to": 15
+      }
+    ],
+    "next": 45
+  },
+  "output": [
+    [
+      [
+        "muted",
+        "21:04:05.001",
+        13
+      ],
+      [
+        "label",
+        "out",
+        4
+      ],
+      [
+        "plain",
+        "playback 4 -> TV",
+        26
+      ],
+      [
+        "plain",
+        "give-device-power-status (8f)",
+        0
+      ],
+      [
+        "plain",
+        ", ",
+        0
+      ],
+      [
+        "ok",
+        "acknowledged",
+        0
+      ]
+    ],
+    [
+      [
+        "muted",
+        "21:04:05.123",
+        13
+      ],
+      [
+        "plain",
+        "in",
+        4
+      ],
+      [
+        "plain",
+        "TV -> playback 4",
+        26
+      ],
+      [
+        "plain",
+        "report-power-status (90) 00",
+        0
+      ]
+    ],
+    [
+      [
+        "muted",
+        "21:04:06.500",
+        13
+      ],
+      [
+        "plain",
+        "in",
+        4
+      ],
+      [
+        "plain",
+        "TV -> playback 4",
+        26
+      ],
+      [
+        "plain",
+        "user-control-pressed (44) 72 red",
+        0
+      ]
+    ],
+    [
+      [
+        "muted",
+        "21:04:07.000",
+        13
+      ],
+      [
+        "label",
+        "out",
+        4
+      ],
+      [
+        "plain",
+        "playback 4 -> everyone",
+        26
+      ],
+      [
+        "plain",
+        "active-source (82) 10 00",
+        0
+      ],
+      [
+        "plain",
+        ", ",
+        0
+      ],
+      [
+        "muted",
+        "sent",
+        0
+      ]
+    ],
+    [
+      [
+        "muted",
+        "21:04:08.000",
+        13
+      ],
+      [
+        "label",
+        "out",
+        4
+      ],
+      [
+        "plain",
+        "playback 4 -> playback 11",
+        26
+      ],
+      [
+        "plain",
+        "poll",
+        0
+      ],
+      [
+        "plain",
+        ", ",
+        0
+      ],
+      [
+        "warn",
+        "not acknowledged",
+        0
+      ]
+    ],
+    [
+      [
+        "muted",
+        "21:04:09.000",
+        13
+      ],
+      [
+        "plain",
+        "in",
+        4
+      ],
+      [
+        "plain",
+        "audio 5 -> everyone",
+        26
+      ],
+      [
+        "plain",
+        "vendor-command-with-id (a0) 00 00 f0 01",
+        0
+      ]
+    ]
+  ]
+}

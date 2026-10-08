@@ -11,7 +11,7 @@ use std::path::Path;
 
 use serde_json::{json, Value};
 use tessaro_client::describe::{
-    audio, browser, camera, device, net, playlist, printer, screen, time,
+    audio, browser, camera, cec, device, net, playlist, printer, screen, time,
 };
 use tessaro_client::ping;
 use tessaro_client::text::{Fact, Line};
@@ -151,6 +151,16 @@ fn render(function: &str, input: &Value) -> Value {
                     .collect::<Vec<_>>(),
             })
         }
+        "cec::acted" => {
+            let cases: Vec<protocol::CecActed> = from(input);
+            Value::Array(
+                cases
+                    .iter()
+                    .map(|acted| lines(&cec::acted(acted)))
+                    .collect(),
+            )
+        }
+        "cec::messages" => lines(&cec::messages(&from(input))),
         // --- screen and browser ---
         "screen::show" => match input.as_array() {
             Some(cases) => Value::Array(

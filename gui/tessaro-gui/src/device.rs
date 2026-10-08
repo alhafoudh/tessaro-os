@@ -33,10 +33,12 @@ use crate::grid::{bold, cell, col, grid, Col};
 use crate::messages::Messages;
 use crate::{logs, vnc};
 
+mod console;
 mod pages;
 use crate::section::{self, action};
 use crate::theme;
 use crate::worker::{Event, Request};
+pub use console::Console;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Link {
@@ -268,6 +270,12 @@ pub enum Message {
     Unconfigure(String),
     /// Something in the settings window with this prefix.
     Cfg(String, Cfg),
+    /// Open the CEC console, or raise it (`main.rs`).
+    CecConsole,
+    /// The CEC console was closed.
+    CecConsoleClosed,
+    /// Something in the CEC console.
+    Console(Console),
     Refresh,
     EditName(String),
     EditValue(String),
@@ -474,6 +482,10 @@ pub struct Device {
     settings: Option<Settings>,
     /// The open settings windows, by their prefix.
     configs: BTreeMap<String, Config>,
+    /// The CEC console, while its window is open.
+    console: Option<console::CecConsole>,
+    /// How many consoles were opened, each following a stream of its own.
+    consoles_opened: u64,
     log: Messages,
     log_open: bool,
     dialog: Option<Dialog>,
@@ -636,6 +648,8 @@ impl Device {
             keys: BTreeMap::new(),
             settings: None,
             configs: BTreeMap::new(),
+            console: None,
+            consoles_opened: 0,
             log: Messages::default(),
             log_open,
             dialog: None,
@@ -1250,6 +1264,14 @@ impl Device {
                 }
             }
             Message::Cfg(prefix, cfg) => return self.config_update(prefix, cfg),
+            Message::CecConsole => {
+                if self.console.is_none() {
+                    self.consoles_opened += 1;
+                    self.console = Some(console::CecConsole::new(self.consoles_opened));
+                }
+            }
+            Message::CecConsoleClosed => self.console = None,
+            Message::Console(message) => return self.console_update(message),
             Message::Page(page) => self.show(page),
             Message::Step(by) => {
                 if self.dialog.is_none() {

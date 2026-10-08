@@ -181,6 +181,16 @@
     Object.assign(api.screen, {
       on: () => call("screen.on"),
       off: () => call("screen.off"),
+      // The HDMI-CEC bus: the TV, its remote, and any message.
+      cec: Object.freeze({
+        wake: (source) => call("screen.cec.wake", source),
+        standby: (all) => call("screen.cec.standby", all),
+        source: () => call("screen.cec.source"),
+        key: (key, to) => call("screen.cec.key", key, to),
+        scan: () => call("screen.cec.scan"),
+        send: (data, to, reply) => call("screen.cec.send", data, to, reply),
+        messages: (after) => call("screen.cec.messages", after),
+      }),
     });
     api.files = { list: (path) => call("files.list", path) };
     Object.assign(api.printer, {

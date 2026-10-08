@@ -74,6 +74,8 @@ export const renderers: Record<string, (input: any) => unknown> = {
       }
     }),
   }),
+  "cec::acted": (input) => input.map((one: any) => lines(cec.acted(one))),
+  "cec::messages": (input) => lines(cec.messages(input)),
   "presence::triggers": (input) => ({
     events: presence.EVENTS,
     words: presence.EVENTS.map(script.presenceEvent),

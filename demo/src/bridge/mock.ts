@@ -4,6 +4,7 @@
 // one directly. It answers like the agent does, refusals included, so every
 // state of every section can be seen on a desktop.
 
+import { createCecBus } from "./mock-cec";
 import type { DeviceStatus, Face, Mode, PresenceStatus, Tessaro } from "./types";
 
 export interface MockOptions {
@@ -82,6 +83,12 @@ export function createMock(options: MockOptions = {}): Tessaro {
   let lastDisrupt = 0;
   let watching: ReturnType<typeof setInterval> | null = null;
   let maintenance = false;
+  let screenOn = true;
+  const bus = createCecBus({
+    enabled: () => flagOf(config["screen.cec.enable"]),
+    pageEvents: () => flagOf(config["screen.cec.page"]),
+    screenOn: () => screenOn,
+  });
 
   const disrupt = () => {
     const waited = (Date.now() - lastDisrupt) / 1000;
@@ -118,8 +125,8 @@ export function createMock(options: MockOptions = {}): Tessaro {
     browserAnswering: true,
     maintenance,
     debugScreen: false,
-    screenOn: true,
-    tv: { power: "on", showing: true, name: "Living room TV" },
+    screenOn,
+    tv: { power: bus.tv(), showing: bus.showing(), name: "Living room TV" },
     pending: null,
     bridge: { mode, script: null, scriptProblem: null },
     time: { timezone: config["time.timezone"] ?? null, synchronized: true, ntp: true },
@@ -360,14 +367,23 @@ export function createMock(options: MockOptions = {}): Tessaro {
             connector: "HDMI-A-1",
             name: "Tessaro",
             active: true,
-            tv: "on",
-            devices: [{ address: 0, kind: "tv", name: "Living room TV", vendor: "Samsung", power: "on" }],
+            tv: bus.tv(),
+            devices: [
+              { address: 0, kind: "tv", name: "Living room TV", vendor: "Samsung", power: bus.tv() },
+              { address: 5, kind: "audio", name: "Soundbar", vendor: "Samsung", power: "on" },
+            ],
             problem: null,
           },
         ],
       }),
-      on: action("screen.on", async () => null),
-      off: action("screen.off", async () => null),
+      on: action("screen.on", async () => {
+        screenOn = true;
+        return null;
+      }),
+      off: action("screen.off", async () => {
+        screenOn = false;
+        return null;
+      }),
     },
     presence: {
       status: async () => presence(),
@@ -414,6 +430,7 @@ export function createMock(options: MockOptions = {}): Tessaro {
         return null;
       },
     };
+    api.screen.cec = bus.actions;
     api.keyboard = { show: async () => null, hide: async () => null };
     api.files = {
       list: async () => ({
@@ -439,16 +456,36 @@ export function createMock(options: MockOptions = {}): Tessaro {
 
   if (options.live) {
     // The TV remote, pressed now and then.
-    const keys = ["ArrowUp", "ArrowRight", "Enter", "ArrowDown", "ArrowLeft", "ColorF0Red"];
+    // Each key is a message on the bus too, and the TV asks after the
+    // device's power now and then.
+    const keys: [string, number][] = [
+      ["ArrowUp", 0x01],
+      ["ArrowRight", 0x04],
+      ["Enter", 0x00],
+      ["ArrowDown", 0x02],
+      ["ArrowLeft", 0x03],
+      ["ColorF0Red", 0x72],
+    ];
     let next = 0;
     setInterval(() => {
-      const key = keys[next++ % keys.length];
+      const [key, code] = keys[next++ % keys.length]!;
+      bus.receive(0, [0x44, code]);
       window.dispatchEvent(
         new CustomEvent("tessaro:cec", {
-          detail: { event: "key", connector: "HDMI-A-1", tv: "on", showing: true, key, pressed: true, repeat: false },
+          detail: {
+            event: "key",
+            connector: "HDMI-A-1",
+            tv: bus.tv(),
+            showing: bus.showing(),
+            key,
+            pressed: true,
+            repeat: false,
+          },
         }),
       );
+      setTimeout(() => bus.receive(0, [0x45]), 120);
     }, 4000);
+    setInterval(() => bus.receive(0, [0x8f]), 9000);
   }
 
   return api;

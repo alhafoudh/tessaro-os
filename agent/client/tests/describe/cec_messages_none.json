@@ -1,0 +1,16 @@
+{
+  "function": "cec::messages",
+  "input": {
+    "messages": [],
+    "next": 0
+  },
+  "output": [
+    [
+      [
+        "muted",
+        "no messages yet",
+        0
+      ]
+    ]
+  ]
+}

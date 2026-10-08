@@ -1278,6 +1278,297 @@
         }
       }
     },
+    "/api/v1/screen/cec/wake": {
+      "post": {
+        "operationId": "screen.CecWake",
+        "tags": [
+          "screen"
+        ],
+        "summary": "Wake the TV over HDMI-CEC, and switch it to the device's input unless `source` is false. Refused while the screen is off.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CecWakeBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CecActed"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/screen/cec/standby": {
+      "post": {
+        "operationId": "screen.CecStandby",
+        "tags": [
+          "screen"
+        ],
+        "summary": "Put the TV in standby, or with `all` everything on the bus.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CecStandbyBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CecActed"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/screen/cec/source": {
+      "post": {
+        "operationId": "screen.CecSource",
+        "tags": [
+          "screen"
+        ],
+        "summary": "Switch the TV to the device's input.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CecBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CecActed"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/screen/cec/key": {
+      "post": {
+        "operationId": "screen.CecKey",
+        "tags": [
+          "screen"
+        ],
+        "summary": "Press and let go a key of the TV remote: volume, mute, the arrows...",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CecKeyBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CecActed"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/screen/cec/scan": {
+      "post": {
+        "operationId": "screen.CecScan",
+        "tags": [
+          "screen"
+        ],
+        "summary": "Poll the bus now and ask whoever answers what they are.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CecBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CecActed"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/screen/cec/send": {
+      "post": {
+        "operationId": "screen.CecSend",
+        "tags": [
+          "screen"
+        ],
+        "summary": "Send any message, and with `reply` wait for an answer.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CecSendBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CecActed"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/screen/cec/messages": {
+      "get": {
+        "operationId": "screen.CecMessages",
+        "tags": [
+          "screen"
+        ],
+        "summary": "What went over the bus, both ways, after `after`.",
+        "parameters": [
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0,
+              "default": 0
+            },
+            "description": "The last page's `next`; 0 for everything kept."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CecMessages"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Refused or failed: `code` says which, `error` why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/browser/navigate": {
       "post": {
         "operationId": "browser.Navigate",
@@ -7203,6 +7494,344 @@
         "required": [
           "show"
         ]
+      },
+      "CecWakeBody": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "boolean",
+            "description": "Also switch the TV to the device's input.",
+            "default": true
+          },
+          "connector": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          }
+        }
+      },
+      "CecActed": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "`wake`, `standby`..."
+          },
+          "adapters": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CecAdapterActed"
+            }
+          }
+        },
+        "required": [
+          "action",
+          "adapters"
+        ],
+        "description": "`screen cec wake|standby|source|key|scan|send`."
+      },
+      "CecAdapterActed": {
+        "type": "object",
+        "properties": {
+          "device": {
+            "type": "string"
+          },
+          "connector": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "sent": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CecSent"
+            },
+            "default": []
+          },
+          "reply": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CecMessage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The answer `send --reply` waited for, when it came.",
+            "default": null
+          },
+          "answered": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "uint8",
+              "minimum": 0,
+              "maximum": 255
+            },
+            "description": "The addresses that answered a scan's polls.",
+            "default": []
+          },
+          "tv": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CecPower"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The TV's power as the device knows it after the action.",
+            "default": null
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the action did not go out on this adapter.",
+            "default": null
+          }
+        },
+        "required": [
+          "device"
+        ],
+        "description": "What an action did on one adapter."
+      },
+      "CecSent": {
+        "type": "object",
+        "properties": {
+          "to": {
+            "type": "integer",
+            "format": "uint8",
+            "minimum": 0,
+            "maximum": 255
+          },
+          "data": {
+            "type": "string",
+            "description": "The opcode and operands in hex, empty for a poll."
+          },
+          "acked": {
+            "type": "boolean",
+            "description": "Acknowledged. A broadcast is never acknowledged by anyone."
+          }
+        },
+        "required": [
+          "to",
+          "data",
+          "acked"
+        ],
+        "description": "One message an action sent, and whether its destination took it."
+      },
+      "CecMessage": {
+        "type": "object",
+        "properties": {
+          "seq": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Grows by one per message, across every adapter."
+          },
+          "at_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Milliseconds since the epoch."
+          },
+          "time": {
+            "type": "string",
+            "description": "The device's wall clock: `21:04:05.123`."
+          },
+          "device": {
+            "type": "string"
+          },
+          "direction": {
+            "$ref": "#/components/schemas/CecDirection"
+          },
+          "from": {
+            "type": "integer",
+            "format": "uint8",
+            "minimum": 0,
+            "maximum": 255
+          },
+          "to": {
+            "type": "integer",
+            "format": "uint8",
+            "minimum": 0,
+            "maximum": 255
+          },
+          "data": {
+            "type": "string",
+            "description": "The opcode and operands in hex, empty for a poll."
+          },
+          "acked": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "For a sent message: whether its destination acknowledged it.",
+            "default": null
+          }
+        },
+        "required": [
+          "seq",
+          "at_ms",
+          "time",
+          "device",
+          "direction",
+          "from",
+          "to",
+          "data"
+        ],
+        "description": "One message of the bus, as the device's message log keeps it."
+      },
+      "CecDirection": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "in",
+            "description": "Received by the device."
+          },
+          {
+            "type": "string",
+            "const": "out",
+            "description": "Sent by the device."
+          }
+        ],
+        "description": "Which way a message went."
+      },
+      "CecStandbyBody": {
+        "type": "object",
+        "properties": {
+          "all": {
+            "type": "boolean",
+            "description": "Everything on the bus, not only the TV.",
+            "default": false
+          },
+          "connector": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          }
+        }
+      },
+      "CecBody": {
+        "type": "object",
+        "properties": {
+          "connector": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          }
+        },
+        "description": "The HDMI-CEC adapter an action goes out on, by its connector\n(`HDMI-A-2`); every adapter without one."
+      },
+      "CecKeyBody": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "A remote key's name: `volume-up`, `mute`, `select`..."
+          },
+          "to": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint8",
+            "minimum": 0,
+            "maximum": 255,
+            "description": "The logical address to send it to; the TV without one.",
+            "default": null
+          },
+          "connector": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "key"
+        ]
+      },
+      "CecSendBody": {
+        "type": "object",
+        "properties": {
+          "to": {
+            "type": "integer",
+            "format": "uint8",
+            "minimum": 0,
+            "maximum": 255,
+            "description": "The logical address, 0 (the TV) to 15 (everyone)."
+          },
+          "data": {
+            "type": "string",
+            "description": "The opcode and its operands in hex: `8f`, `44 41`."
+          },
+          "reply": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint8",
+            "minimum": 0,
+            "maximum": 255,
+            "description": "An opcode to wait for from `to`, answered as `reply`.",
+            "default": null
+          },
+          "connector": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "to",
+          "data"
+        ]
+      },
+      "CecMessagesQuery": {
+        "type": "object",
+        "properties": {
+          "after": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "The last page's `next`; 0 for everything kept.",
+            "default": 0
+          }
+        }
+      },
+      "CecMessages": {
+        "type": "object",
+        "properties": {
+          "messages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CecMessage"
+            }
+          },
+          "next": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "messages",
+          "next"
+        ],
+        "description": "A page of the message log: every message after a `seq`, and where to\nask from next."
       },
       "NavigateBody": {
         "type": "object",

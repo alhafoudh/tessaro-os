@@ -87,7 +87,8 @@ start.
   `tessaro-qemu-cec.cfg`), points the agent at the adapter of vivid's HDMI
   output with `KIOSK_CEC_DEVICES` in a drop-in under `/run`, and runs
   `cec-follower` as the TV on the input's adapter; `cec-ctl` sends the TV's
-  standby and its remote's keys. See **Testing in qemu** in [cec.md](cec.md).
+  standby and its remote's keys, and the follower's log shows what `screen
+  cec` and the page sent it. See **Testing in qemu** in [cec.md](cec.md).
 * **The printer lane prints to CUPS's own test printer.** qemu emulates no
   printer, so `printer_spec.rb` runs `ippeveprinter` (from the image's
   `cups` package) in the guest on a loopback port, keeping every job as a

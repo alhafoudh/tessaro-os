@@ -59,7 +59,7 @@ their tones (`theme::text_line`, `theme::toned`, and the highlighter in
 ## One window, inner windows
 
 **The app is one window: the node list fills its desk, and every opened
-device, its settings windows and the bulk windows float over it as inner
+device, its settings windows, its CEC console and the bulk windows float over it as inner
 windows, WinBox style** (`mdi.rs`). The node list is the main screen, not a window, so it
 cannot be closed or lost behind anything but the windows opened from it.
 The inner windows drag by the title bar, resize from the bottom-right
@@ -79,7 +79,7 @@ with the keyboard has the lighter one and a purple border.
   (`event::listen_with`, only then). The title bar only reports where on it
   the press was.
 * **Where a window was is remembered per kind, not per device** (`DEVICE`,
-  `SETTINGS` in `main.rs`), in the `gui_prefs` table of the client's
+  `SETTINGS`, `CONSOLE` in `main.rs`), in the `gui_prefs` table of the client's
   `tessaro.db` next to the nodes (see **The node list**), after every
   move, resize and maximize. The next window of that kind opens there, cascaded
   off any of its kind already at that spot. A maximized window is
@@ -274,6 +274,17 @@ table keeps its full width.
   one per group, Configure again raises it, and it closes with its device.
   It keeps its own selection and filter, and the edit dialog opens inside
   it; what a change did still goes to the device window's Messages.
+* **A CEC console belongs to its device window too** (`main.rs`,
+  `consoles`; `device/console.rs`): one per device, its button raises it,
+  and it closes with its device. It sends any message as `tessaro-ctl
+  screen cec send` (hex data, an address, an optional reply opcode; Enter
+  sends) and draws the answer under its fields, or in Messages once it is
+  closed. Below, the bus's message log is followed as `screen cec messages
+  -f` on a connection of its own (`cec_log.rs`), asked every
+  `cec::MESSAGES_POLL` from the last message shown, and only while the
+  console is open: closing it drops the subscription, which ends the
+  thread. It keeps the newest 500 lines, with Pause and Clear as on the Log
+  page.
 * **Each action is on one page only: the page of its command group.**
   Overview is the `device` group and nothing else, so it stays a summary; a
   `browser` command goes on Browser, not on Overview.
@@ -337,7 +348,7 @@ applies and stays, Default unsets.**
 | Page | Covers |
 | --- | --- |
 | Overview | `device status` and `id`, systemd units, `device ping`, `device tags` (Tags: one comma-separated field, `device.tags`), `device factory-reset` |
-| Screen | `screen show` above the modes table (each display's EDID identity, and the HDMI-CEC bus: the adapter, the TV's power and whether it shows the device, the rest of the bus, or how to switch CEC on), from the same `GET /api/v1/screen` answer as the table; `screen modes` with "use this mode", "Rotate" (`screen.rotation`), `screen screenshot` with a 3s live refresh and Save, `screen power`, `screen keyboard` |
+| Screen | `screen show` above the modes table (each display's EDID identity, and the HDMI-CEC bus: the adapter, the TV's power and whether it shows the device, the rest of the bus, or how to switch CEC on), from the same `GET /api/v1/screen` answer as the table; `screen modes` with "use this mode", "Rotate" (`screen.rotation`), `screen screenshot` with a 3s live refresh and Save, `screen power`, `screen keyboard`; the TV over HDMI-CEC, while CEC is on and an adapter is there: `screen cec wake`, `standby`, `source` ("This input"), `key` volume-down, volume-up and mute, `scan`, each answer in Messages, and the CEC console |
 | Browser | what the browser shows, `browser navigate`, `reload`, `clear-cache`, `maintenance`, `debug`, `zoom`, `devtools` (a job holding the tunnel until Cancel), `inject`, `bridge`, `eval` (results in Messages) |
 | Policies | `browser policies list` in priority order with its `#` column, `set` and `edit` in one wide editor (from the template, a file, or the stored text, checked as you type, saved against the revision it opened), `move` as Move up and Move down (the moved row stays selected), `show` (the effective policy), `remove` |
 | Playlists | `playlist status` as facts above the lists, `playlist list` with "Make default" and "Clear default" (`playlist.default`), `create` and `set` in one dialog (name, transition and its length), `remove`; the selected playlist's items (`playlist show`) beside `items add` and `items set` in one dialog (an edit opens filled in, and what the chosen kind cannot carry is left out), `items move` as Move up and Move down (the moved item stays selected), `items remove` |

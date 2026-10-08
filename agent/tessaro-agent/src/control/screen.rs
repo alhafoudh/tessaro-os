@@ -10,7 +10,6 @@ use std::time::Duration;
 use protocol::ScreenPower;
 
 use super::{Caller, Control};
-use crate::cec::Request;
 use crate::deadline::blocking;
 use crate::power;
 
@@ -52,7 +51,7 @@ impl Control {
             caller.describe()
         ));
         // The TV follows over HDMI-CEC, when screen.cec.enable is on.
-        self.cec_request(if on { Request::Wake } else { Request::Standby });
+        self.cec_power(on);
         Ok(ScreenPower { on: now })
     }
 

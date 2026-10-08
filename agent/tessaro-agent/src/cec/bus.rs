@@ -106,64 +106,8 @@ impl Msg {
     }
 }
 
-/// `1.0.0.0`.
-pub fn physical(address: u16) -> String {
-    format!(
-        "{}.{}.{}.{}",
-        address >> 12,
-        (address >> 8) & 0xf,
-        (address >> 4) & 0xf,
-        address & 0xf
-    )
-}
-
-/// What a logical address makes a device.
-pub fn kind(address: u8) -> &'static str {
-    match address {
-        0 => "tv",
-        1 | 2 | 9 => "recorder",
-        3 | 6 | 7 | 10 => "tuner",
-        4 | 8 | 11 => "playback",
-        5 => "audio",
-        12 | 13 => "backup",
-        14 => "specific",
-        _ => "unregistered",
-    }
-}
-
-/// The makers of TVs and what plugs into them, by the IEEE OUI their
-/// `<Device Vendor ID>` names.
-const VENDORS: &[(u32, &str)] = &[
-    (0x000039, "Toshiba"),
-    (0x0000f0, "Samsung"),
-    (0x0005cd, "Denon"),
-    (0x000678, "Marantz"),
-    (0x000982, "Loewe"),
-    (0x0009b0, "Onkyo"),
-    (0x000ce7, "MediaTek"),
-    (0x0010fa, "Apple"),
-    (0x001582, "Pulse-Eight"),
-    (0x001a11, "Google"),
-    (0x008045, "Panasonic"),
-    (0x00903e, "Philips"),
-    (0x00a0de, "Yamaha"),
-    (0x00d0d5, "Grundig"),
-    (0x00e036, "Pioneer"),
-    (0x00e091, "LG"),
-    (0x08001f, "Sharp"),
-    (0x080046, "Sony"),
-    (0x18c086, "Broadcom"),
-    (0x6b746d, "Vizio"),
-    (0x9c645e, "Harman Kardon"),
-];
-
-pub fn vendor(oui: u32) -> String {
-    VENDORS
-        .iter()
-        .find(|(known, _)| *known == oui)
-        .map(|(_, name)| name.to_string())
-        .unwrap_or_else(|| format!("{oui:06x}"))
-}
+// The names of addresses and makers are the clients' too.
+pub use protocol::cec::{kind, physical, vendor};
 
 fn power(status: u8) -> Option<CecPower> {
     match status {
@@ -295,6 +239,36 @@ impl Bus {
         vec![Out::Send(Msg::new(self.from(), TV, op::STANDBY, &[]))]
     }
 
+    /// Put everything on the bus in standby: `screen cec standby --all`.
+    pub fn standby_all(&mut self) -> Vec<Out> {
+        vec![Out::Send(Msg::new(
+            self.from(),
+            BROADCAST,
+            op::STANDBY,
+            &[],
+        ))]
+    }
+
+    /// A remote key pressed and let go, as the remote would send it to
+    /// `to`: the TV, or an audio system for its volume.
+    pub fn key(&self, code: u8, to: u8) -> Vec<Out> {
+        vec![
+            Out::Send(Msg::new(self.from(), to, op::USER_CONTROL_PRESSED, &[code])),
+            Out::Send(Msg::new(self.from(), to, op::USER_CONTROL_RELEASED, &[])),
+        ]
+    }
+
+    /// Any message: `data` is the opcode and its operands, the header is
+    /// the device's address and `to`.
+    pub fn raw(&self, to: u8, data: &[u8]) -> Vec<Out> {
+        vec![Out::Send(Msg {
+            from: self.from(),
+            to,
+            opcode: data.first().copied(),
+            args: data.get(1..).unwrap_or_default().to_vec(),
+        })]
+    }
+
     /// Ask the TV for its power.
     pub fn ask_power(&self) -> Vec<Out> {
         match self.logical {
@@ -338,7 +312,7 @@ impl Bus {
     }
 
     /// Broadcast `<Active Source>`: the TV switches to the device.
-    fn take_source(&mut self) -> Vec<Out> {
+    pub fn take_source(&mut self) -> Vec<Out> {
         let (Some(from), Some(physical)) = (self.logical, self.physical) else {
             return Vec::new();
         };
@@ -650,6 +624,21 @@ mod tests {
         assert_eq!(sent(&bus.wake(true)), vec![vec![0xf0, 0x04]]);
         assert_eq!(sent(&bus.standby()), vec![vec![0xf0, 0x36]]);
         assert!(bus.ask_power().is_empty());
+    }
+
+    #[test]
+    fn keys_standby_for_all_and_raw_messages_are_what_is_asked() {
+        let mut bus = bus();
+        assert_eq!(sent(&bus.standby_all()), vec![vec![0x4f, 0x36]]);
+        assert_eq!(
+            sent(&bus.key(0x41, protocol::cec::AUDIO)),
+            vec![vec![0x45, 0x44, 0x41], vec![0x45, 0x45]]
+        );
+        assert_eq!(sent(&bus.raw(0, &[0x8f])), vec![vec![0x40, 0x8f]]);
+        assert_eq!(
+            sent(&bus.raw(15, &[0x89, 1, 2])),
+            vec![vec![0x4f, 0x89, 1, 2]]
+        );
     }
 
     #[test]

@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use protocol::keys::{self, Placeholder};
-use protocol::{BridgeStatus, Command, RestartTarget};
+use protocol::{BridgeStatus, CecAction, Command, RestartTarget};
 use serde_json::{json, Value};
 use tokio::sync::{mpsc, watch, Notify};
 use tokio::time::Instant;
@@ -57,6 +57,12 @@ const SPEEDTEST_GAP: Duration = Duration::from_secs(600);
 /// in a loop empties the paper tray, not the device.
 const PRINT_BURST: usize = 10;
 const PRINT_WINDOW: Duration = Duration::from_secs(60);
+
+/// The most CEC actions a page does in `CEC_WINDOW`: plenty for a volume
+/// slider dragged by a person, too few to flood a bus of other people's
+/// equipment.
+const CEC_BURST: usize = 20;
+const CEC_WINDOW: Duration = Duration::from_secs(10);
 
 /// The most script runs a page starts in `SCRIPT_WINDOW`: each is a root
 /// shell, and a page that runs one in a loop must not pile them up.
@@ -171,6 +177,8 @@ pub(super) struct Bridge {
     prints: Mutex<Vec<Instant>>,
     /// When the page ran a script, within the last `SCRIPT_WINDOW`.
     script_runs: Mutex<Vec<Instant>>,
+    /// When the page acted on the CEC bus, within the last `CEC_WINDOW`.
+    cec_acts: Mutex<Vec<Instant>>,
     /// Held across a lookup, so calls at the same time share one request.
     public_ip: tokio::sync::Mutex<Option<(Instant, String)>>,
 }
@@ -200,6 +208,7 @@ impl Control {
             last_speedtest: Mutex::new(None),
             prints: Mutex::new(Vec::new()),
             script_runs: Mutex::new(Vec::new()),
+            cec_acts: Mutex::new(Vec::new()),
             public_ip: tokio::sync::Mutex::new(None),
         });
         let _ = self.bridge.set(Arc::clone(&bridge));
@@ -260,12 +269,35 @@ impl Control {
     /// page - when the page has the bridge - in the main frame, like
     /// `tessaro:config`.
     pub(super) async fn bridge_cec(&self, detail: Value) {
-        self.bridge_event("cec", detail).await;
+        self.bridge_event("cec", detail, BridgeMode::Config).await;
+    }
+
+    /// A message of the HDMI-CEC bus, as a `tessaro:cec` event with
+    /// `event: "message"`, only for a page in `actions` mode, which may
+    /// send them too. Queued for `bridge_cec_messages`, so the bus never
+    /// waits for the page; a page too slow to take them loses some.
+    pub(super) fn bridge_cec_message(&self, detail: Value) {
+        let actions = self
+            .bridge
+            .get()
+            .is_some_and(|bridge| lock(&bridge.offer).mode >= BridgeMode::Actions);
+        if let (true, Some(queue)) = (actions, self.cec_page.get()) {
+            let _ = queue.try_send(detail);
+        }
+    }
+
+    /// Hand the queued CEC messages to the page, one at a time.
+    pub(super) async fn bridge_cec_messages(&self, mut queue: mpsc::Receiver<Value>) {
+        // naked: the queue only waits for the bus's own messages
+        while let Some(detail) = queue.recv().await {
+            self.bridge_event("cec", detail, BridgeMode::Actions).await;
+        }
     }
 
     /// Someone arrived, left, came near or went far, as `tessaro:presence`.
     pub(super) async fn bridge_presence(&self, detail: Value) {
-        self.bridge_event("presence", detail).await;
+        self.bridge_event("presence", detail, BridgeMode::Config)
+            .await;
     }
 
     /// The faces of a frame, as `tessaro:faces`, while the page watches
@@ -275,17 +307,17 @@ impl Control {
         let watching =
             lock(&self.presence_watch).is_some_and(|since| since.elapsed() < WATCH_LEASE);
         if watching {
-            self.bridge_event("faces", detail).await;
+            self.bridge_event("faces", detail, BridgeMode::Config).await;
         }
     }
 
     /// `window[settle].<method>(detail)`, which dispatches the event, in the
-    /// main frame while the page has the bridge.
-    async fn bridge_event(&self, method: &str, detail: Value) {
+    /// main frame while the page has the bridge in at least `mode`.
+    async fn bridge_event(&self, method: &str, detail: Value, mode: BridgeMode) {
         let Some(bridge) = self.bridge.get() else {
             return;
         };
-        if lock(&bridge.offer).mode < BridgeMode::Config {
+        if lock(&bridge.offer).mode < mode {
             return;
         }
         let expression = format!(
@@ -750,6 +782,60 @@ impl Control {
                     .await
                     .and_then(to_value),
             ),
+            "screen.cec.messages" => {
+                let after = arg(0).as_u64().unwrap_or(0);
+                plain(self.cec_messages(after).await.and_then(to_value))
+            }
+            "screen.cec.wake" | "screen.cec.standby" | "screen.cec.source" | "screen.cec.key"
+            | "screen.cec.scan" | "screen.cec.send" => {
+                // The bus is shared with other people's equipment: a page
+                // in a loop must not flood it.
+                if let Err(refused) = cec_allowed(bridge) {
+                    return (Err(refused), None);
+                }
+                let address = |value: Value| value.as_u64().map(|to| to.min(255) as u8);
+                let action = match name {
+                    "screen.cec.wake" => CecAction::Wake {
+                        source: arg(0).as_bool().unwrap_or(true),
+                    },
+                    "screen.cec.standby" => CecAction::Standby {
+                        all: arg(0).as_bool().unwrap_or(false),
+                    },
+                    "screen.cec.source" => CecAction::Source,
+                    "screen.cec.key" => {
+                        let Some(key) = arg(0).as_str().map(str::to_string) else {
+                            return plain(Err(
+                                "screen.cec.key takes a key's name, e.g. volume-up".to_string()
+                            ));
+                        };
+                        CecAction::Key {
+                            key,
+                            to: address(arg(1)),
+                        }
+                    }
+                    "screen.cec.scan" => CecAction::Scan,
+                    _ => {
+                        let (Some(data), Some(to)) =
+                            (arg(0).as_str().map(str::to_string), address(arg(1)))
+                        else {
+                            return plain(Err(
+                                "screen.cec.send takes the bytes in hex and a logical address, e.g. send(\"8f\", 0)"
+                                    .to_string(),
+                            ));
+                        };
+                        CecAction::Send {
+                            to,
+                            data,
+                            reply: address(arg(2)),
+                        }
+                    }
+                };
+                let acted = self.cec_act(action, None).await;
+                if let Ok(acted) = &acted {
+                    self.log.info(format!("cec: {} by the page", acted.action));
+                }
+                plain(acted.and_then(to_value))
+            }
             "network.ping" => {
                 let Some(host) = arg(0).as_str().map(str::to_string) else {
                     return plain(Err("ping takes a host".to_string()));
@@ -1134,6 +1220,16 @@ fn print_allowed(bridge: &Bridge) -> Result<(), Value> {
     })
 }
 
+/// One more CEC action from the page, unless it did `CEC_BURST` in the last
+/// `CEC_WINDOW`.
+fn cec_allowed(bridge: &Bridge) -> Result<(), Value> {
+    burst(&bridge.cec_acts, CEC_BURST, CEC_WINDOW).map_err(|window| {
+        fail(format!(
+            "refused: the page acted on the HDMI-CEC bus {CEC_BURST} times in the last {window}s"
+        ))
+    })
+}
+
 /// One more script run from the page, unless it started `SCRIPT_BURST` in
 /// the last `SCRIPT_WINDOW`.
 fn script_run_allowed(bridge: &Bridge) -> Result<(), Value> {
@@ -1478,6 +1574,7 @@ mod tests {
             last_speedtest: Mutex::new(None),
             prints: Mutex::new(Vec::new()),
             script_runs: Mutex::new(Vec::new()),
+            cec_acts: Mutex::new(Vec::new()),
             public_ip: tokio::sync::Mutex::new(None),
         }
     }

@@ -19,26 +19,39 @@ const LINES: usize = 300;
 
 pub struct Messages {
     lines: Vec<Line>,
+    /// How many lines it keeps.
+    cap: usize,
     content: Content,
     tones: Tones,
 }
 
 impl Default for Messages {
     fn default() -> Self {
-        Self {
-            lines: Vec::new(),
-            content: Content::new(),
-            tones: Tones::default(),
-        }
+        Self::keeping(LINES)
     }
 }
 
 impl Messages {
+    /// An empty log keeping the newest `cap` lines.
+    pub fn keeping(cap: usize) -> Self {
+        Self {
+            lines: Vec::new(),
+            cap,
+            content: Content::new(),
+            tones: Tones::default(),
+        }
+    }
+
     /// Add `line`, one per line of its text, dropping the oldest past the cap.
     pub fn push(&mut self, line: Line) {
-        self.lines.extend(split(line));
-        if self.lines.len() > LINES {
-            self.lines.drain(..self.lines.len() - LINES);
+        self.extend(std::iter::once(line));
+    }
+
+    /// Add every line, with one rebuild for all of them.
+    pub fn extend(&mut self, lines: impl IntoIterator<Item = Line>) {
+        self.lines.extend(lines.into_iter().flat_map(split));
+        if self.lines.len() > self.cap {
+            self.lines.drain(..self.lines.len() - self.cap);
         }
         self.rebuild();
     }
@@ -63,12 +76,21 @@ impl Messages {
     /// The log, with a right-click menu copying the selection, or the whole
     /// log when nothing is selected.
     pub fn view<'a, M: Clone + 'a>(&'a self, on_action: fn(Action) -> M) -> Element<'a, M> {
+        self.view_in(on_action, Length::Fixed(140.0))
+    }
+
+    /// The log at `height`.
+    pub fn view_in<'a, M: Clone + 'a>(
+        &'a self,
+        on_action: fn(Action) -> M,
+        height: Length,
+    ) -> Element<'a, M> {
         let editor = iced::widget::text_editor(&self.content)
             .on_action(on_action)
             .font(Font::MONOSPACE)
             .size(theme::SMALL)
             .padding(0)
-            .height(Length::Fixed(140.0))
+            .height(height)
             .style(theme::log_text)
             .highlight_with::<ToneHighlighter>(self.tones.clone(), format);
         copy_menu_with(editor, move || self.to_copy())
@@ -233,6 +255,13 @@ mod tests {
         assert_eq!(messages.lines.len(), LINES);
         assert_eq!(messages.lines[0].to_string(), "5");
         assert!(messages.text().ends_with(&(LINES + 4).to_string()));
+    }
+
+    #[test]
+    fn a_log_of_its_own_size_keeps_the_newest_of_a_batch() {
+        let mut messages = Messages::keeping(3);
+        messages.extend((0..5).map(|at| Line::plain(at.to_string())));
+        assert_eq!(messages.text(), "2\n3\n4");
     }
 
     #[test]

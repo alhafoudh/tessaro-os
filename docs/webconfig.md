@@ -149,6 +149,15 @@ are on WiFi, not Network), and only where the scope has settings.
   display's EDID identity and the HDMI-CEC bus, from the ported
   `describe/screen.ts`. It is asked every 5 s while the device answers, and
   again when the revision or the status's TV moves ([cec.md](cec.md)).
+* **The Screen page's TV buttons are `tessaro-ctl screen cec`**: Wake,
+  Standby, This input, Vol -, Vol +, Mute and Scan go to every adapter, and
+  what each did goes to Messages in the ported words of `describe/cec.ts`
+  (the `cec_acted` fixture). They are enabled only while `screen.cec.enable`
+  is on and `screen show` lists an adapter. The CEC console is `screen cec
+  send` and `screen cec messages -f` in one dialog: what is typed is checked
+  in the page with the ported parsers before it is sent, and the log is
+  followed on `after` every second while the dialog is open and the tab
+  visible, the newest 500 kept (the `cec_messages` fixtures).
 * **The script dialog checks "Run on CEC events" before it sends**, with
   `describe/cec.ts`, a port of `protocol::cec::triggers` that the
   `cec_triggers` fixture keeps equal, its event and key names included.

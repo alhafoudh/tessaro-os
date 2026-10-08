@@ -15,6 +15,7 @@ pub mod access;
 pub mod actions;
 pub mod bulk;
 pub mod camera;
+pub mod cec;
 pub mod certs;
 pub mod clock;
 pub mod config;

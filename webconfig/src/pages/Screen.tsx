@@ -3,35 +3,43 @@
 // green Confirm that keeps a change on probation counting down beside them;
 // under the modes, what each display says it is and the HDMI-CEC bus
 // (`tessaro-ctl screen show`); below, what is on screen now, once or every
-// few seconds while Live is on.
+// few seconds while Live is on. The TV buttons are `tessaro-ctl screen cec`,
+// and its CEC console sends bytes of its own and follows the message log.
 
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
-import { answer, client, failure } from "../api/client";
+import { answer, client, failure, type Schemas } from "../api/client";
+import * as cec from "../describe/cec";
 import * as screen from "../describe/screen";
 import { useDevice } from "../device/DeviceContext";
 import { PageFrame } from "../shell/PageFrame";
 import { useSecondsLeft } from "../shell/StatusBar";
 import { LIVE_MS, saveShot, takeScreenshot, useAge, useShots } from "../shell/useScreenshot";
 import type { Line } from "../text/line";
-import { Button, ErrorLine, LineView } from "../ui/controls";
+import { Button, ErrorLine, LineView, Output, Separator } from "../ui/controls";
 import { Dialog, Field, Intro } from "../ui/Dialog";
 import { Table } from "../ui/Table";
 import type { PageInfo } from "./registry";
 
 /** How often the displays and the HDMI-CEC bus are asked for again. */
 const SHOW_MS = 5000;
+/** The CEC console's log: client/cec.rs MESSAGES_POLL, logs.rs RETRY, and how much of it is kept. */
+const MESSAGES_POLL_MS = 1000;
+const MESSAGES_RETRY_MS = 3000;
+const MESSAGES_KEPT = 500;
 
 /** protocol::keys::ROTATIONS. */
 const ROTATIONS = ["0", "90", "180", "270", "flipped", "flipped-90", "flipped-180", "flipped-270"];
 
 export function Screen({ info }: { info: PageInfo }) {
-  const { status, settings, link, set, log, refresh } = useDevice();
+  const { status, settings, link, set, log, logLines, refresh } = useDevice();
   const online = link === "online";
   const left = useSecondsLeft();
   const [selected, setSelected] = useState<string | null>(null);
   const [rotating, setRotating] = useState(false);
+  const [acting, setActing] = useState(false);
+  const [consoleOpen, setConsoleOpen] = useState(false);
   const rotation = settings?.settings.find((setting) => setting.key === "screen.rotation")?.value ?? "";
 
   const modes = useQuery({
@@ -88,6 +96,32 @@ export function Screen({ info }: { info: PageInfo }) {
     refresh();
   };
 
+  // The TV over HDMI-CEC: only with it on and an adapter on a connector.
+  const tvReady = online && !!shown.data?.cec && (shown.data.adapters ?? []).length > 0;
+  const act = async (pending: () => Promise<Schemas["CecActed"]>) => {
+    setActing(true);
+    try {
+      logLines(cec.acted(await pending()));
+    } catch (error) {
+      log(failure(error).message, "bad");
+    } finally {
+      setActing(false);
+    }
+    refresh();
+    void shown.refetch();
+  };
+  const key = (name: string) => () =>
+    answer(client.POST("/api/v1/screen/cec/key", { body: cec.keyBody(name, "", "") }));
+  const tvButtons: [string, () => Promise<Schemas["CecActed"]>][] = [
+    ["Wake", () => answer(client.POST("/api/v1/screen/cec/wake", { body: { source: true, connector: null } }))],
+    ["Standby", () => answer(client.POST("/api/v1/screen/cec/standby", { body: { all: false, connector: null } }))],
+    ["This input", () => answer(client.POST("/api/v1/screen/cec/source", { body: cec.on("") }))],
+    ["Vol -", key("volume-down")],
+    ["Vol +", key("volume-up")],
+    ["Mute", key("mute")],
+    ["Scan", () => answer(client.POST("/api/v1/screen/cec/scan", { body: cec.on("") }))],
+  ];
+
   return (
     <PageFrame
       title={info.title}
@@ -119,6 +153,15 @@ export function Screen({ info }: { info: PageInfo }) {
           >
             Hide keyboard
           </Button>
+          <Separator />
+          {tvButtons.map(([label, pending]) => (
+            <Button key={label} disabled={!tvReady || acting} onClick={() => void act(pending)}>
+              {label}
+            </Button>
+          ))}
+          <Button disabled={!tvReady} onClick={() => setConsoleOpen(true)}>
+            CEC console
+          </Button>
           {/* A guarded change reverts on its own: the countdown is on the
               button that keeps it. */}
           {status?.pending && left !== null && (
@@ -149,6 +192,7 @@ export function Screen({ info }: { info: PageInfo }) {
           onClose={() => setRotating(false)}
         />
       )}
+      {consoleOpen && <CecConsole onClose={() => setConsoleOpen(false)} />}
     </PageFrame>
   );
 }
@@ -207,6 +251,159 @@ function RotationDialog({
         </select>
       </Field>
       {error && <p className="text-sm text-danger">{error}</p>}
+    </Dialog>
+  );
+}
+
+type Following = { kind: "connecting" } | { kind: "following" } | { kind: "lost"; why: string };
+
+/**
+ * `tessaro-ctl screen cec send` and `screen cec messages --follow`: bytes of
+ * its own to an address, checked here before they go, and the device's
+ * message log followed by `after` while the dialog is open and the tab
+ * visible, kept on the newest message unless scrolled up.
+ */
+function CecConsole({ onClose }: { onClose: () => void }) {
+  const [data, setData] = useState("");
+  const [to, setTo] = useState("tv");
+  const [reply, setReply] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<Line[]>([]);
+  const [kept, setKept] = useState<Schemas["CecMessage"][]>([]);
+  const [state, setState] = useState<Following>({ kind: "connecting" });
+  const box = useRef<HTMLDivElement>(null);
+  const stuck = useRef(true);
+
+  useEffect(() => {
+    let stopped = false;
+    let after = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = async () => {
+      if (stopped) return;
+      if (document.visibilityState === "hidden") {
+        timer = setTimeout(() => void poll(), MESSAGES_POLL_MS);
+        return;
+      }
+      try {
+        const page = await answer(client.GET("/api/v1/screen/cec/messages", { params: { query: { after } } }));
+        if (stopped) return;
+        after = page.next;
+        if (page.messages.length > 0) setKept((now) => [...now, ...page.messages].slice(-MESSAGES_KEPT));
+        setState({ kind: "following" });
+        timer = setTimeout(() => void poll(), MESSAGES_POLL_MS);
+      } catch (problem) {
+        if (stopped) return;
+        setState({ kind: "lost", why: failure(problem).message });
+        timer = setTimeout(() => void poll(), MESSAGES_RETRY_MS);
+      }
+    };
+    void poll();
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    const scroller = box.current;
+    if (scroller && stuck.current) scroller.scrollTop = scroller.scrollHeight;
+  }, [kept]);
+
+  const send = async () => {
+    let body: Schemas["CecSendBody"];
+    try {
+      body = cec.sendBody(data, to, reply, "");
+    } catch (problem) {
+      setError((problem as Error).message);
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      setResult(cec.acted(await answer(client.POST("/api/v1/screen/cec/send", { body }))));
+    } catch (problem) {
+      setError(failure(problem).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const shown = cec.messages({ messages: kept, next: 0 });
+  const following =
+    state.kind === "lost" ? (
+      <span className="text-sm text-danger">{state.why}</span>
+    ) : state.kind === "following" ? (
+      <span className="text-sm text-success">following</span>
+    ) : (
+      <span className="text-sm text-muted">connecting</span>
+    );
+
+  return (
+    <Dialog
+      title="CEC console"
+      onClose={onClose}
+      onSubmit={() => void send()}
+      submit="Send"
+      busy={busy}
+      wide
+      closeLabel="Close"
+      extra={
+        <Button onClick={() => setKept([])} className="px-3.5 py-[0.1875rem]">
+          Clear
+        </Button>
+      }
+    >
+      <Intro>
+        Sends an opcode and its operands to an address and shows whether it was taken; with Reply, waits for that opcode
+        to come back. Below, every message on the bus as it goes.
+      </Intro>
+      <Field label="Data">
+        <input
+          value={data}
+          onChange={(event) => setData(event.target.value)}
+          placeholder="hex, e.g. 8f or 44 41"
+          spellCheck={false}
+          className="font-mono"
+        />
+      </Field>
+      <Field label="To">
+        <input
+          value={to}
+          onChange={(event) => setTo(event.target.value)}
+          placeholder="tv, audio, all, or 0 to 15"
+          spellCheck={false}
+        />
+      </Field>
+      <Field label="Reply">
+        <input
+          value={reply}
+          onChange={(event) => setReply(event.target.value)}
+          placeholder="an opcode to wait for, e.g. 90"
+          spellCheck={false}
+          className="font-mono"
+        />
+      </Field>
+      {error && <p className="text-sm text-danger">{error}</p>}
+      <Output lines={result} />
+      <div className="flex items-center gap-2">
+        <span className="text-sm font-bold">Messages</span>
+        {following}
+      </div>
+      <div
+        ref={box}
+        onScroll={(event) => {
+          const scroller = event.currentTarget;
+          stuck.current = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 8;
+        }}
+        className="h-72 overflow-auto border border-border bg-panel px-1.5 py-1 font-mono text-sm whitespace-pre"
+      >
+        {shown.map((line, at) => (
+          <div key={kept[at]?.seq ?? `none-${at}`}>
+            <LineView line={line} />
+          </div>
+        ))}
+      </div>
     </Dialog>
   );
 }

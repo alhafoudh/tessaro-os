@@ -77,10 +77,39 @@ The actions it offers are the bridge's: the screen switched off for 10
 seconds and on again (and on again if the section is left early), the
 on-screen keyboard raised and lowered, a ping, a speed test, a receipt
 printed, a script run, the browser reloaded, sent home, its cache cleared
-or restarted, maintenance for a few seconds, and a reboot behind a
-confirmation. A refusal for coming too soon after the last page restart
-(`DISRUPT_GAP`, the speed test's gap, the print and script bursts) is shown
-as a countdown on the button (`src/bridge/refusal.ts`).
+or restarted, maintenance for a few seconds, the TV woken, put to standby,
+switched to this input or sent a key or any message over HDMI-CEC, and a
+reboot behind a confirmation. A refusal for coming too soon after the last
+page restart (`DISRUPT_GAP`, the speed test's gap, the print, script and
+HDMI-CEC bursts) is shown as a countdown (`src/bridge/refusal.ts`).
+
+## The TV remote
+
+**The TV remote section follows the TV in every bridge mode, and acts on
+the bus only in `actions` mode, where the page has `tessaro.screen.cec`**
+([cec.md](cec.md), **Raw CEC from the page**). With `config` it is
+`limited`, and says the actions need `actions` mode instead of showing
+buttons that would only be refused.
+
+* **What the TV sends lights up a pretend remote**: every `tessaro:cec` key
+  event, and the keyboard's arrows, Enter and Escape alike. The TV's power,
+  whether it shows this device, and who else is on the bus come from
+  `device.status()` and `screen.show()`.
+* **The bus panel has the actions of `tessaro-ctl screen cec`**: wake,
+  standby, this input, a scan, a key pad (the arrows, OK, volume and mute)
+  sent to the TV or the audio system, and any message as hex to an address,
+  with an optional reply opcode and presets for the questions a TV answers.
+  Every action's answer goes to one place, which lists what each adapter
+  sent, whether it was acknowledged, the reply and the TV's power after.
+* **A refusal is shown as the agent's own words**, in red: HDMI-CEC off, the
+  screen off for a wake, no adapter. The burst limit (`CEC_BURST` in
+  `control/bridge.rs`) also counts down and holds every button until it
+  ends.
+* **The bus log is every `message` event**, in and out, with the opcode's
+  name and the acknowledgement, kept to the last `BUS_LOG` messages. It
+  starts with the tail of the device's own message log
+  (`screen.cec.messages()`), and the two are merged by `seq`, so nothing
+  shows twice.
 
 ## Maintenance for a few seconds
 
@@ -125,7 +154,10 @@ a route in the path would be a 404.
 * **`src/bridge/mock.ts` is a pretend device** that answers like the
   agent, refusals included. `demo:run` installs it, and so does `?mock`
   (`?mock=config` for the read-only bridge, `?mock=off` for none) on any
-  build; a real bridge always wins.
+  build; a real bridge always wins. Its HDMI-CEC bus
+  (`src/bridge/mock-cec.ts`) has a TV and a sound bar that answer the
+  common questions, keeps a message log, fires every message as a
+  `message` event and refuses the way the agent does, burst limit included.
 * **`bitbake-lock.json` follows `package-lock.json`**, made by
   `scripts/bitbake-lock.mjs`, Webconfig's script under the demo's name, and
   checked by `demo:test`.

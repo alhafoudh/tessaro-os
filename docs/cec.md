@@ -1,16 +1,19 @@
 # HDMI-CEC
 
 **The agent talks to the TV over the HDMI cable's CEC line: `screen power`
-puts the TV in standby and wakes it, the TV's state shows in `tessaro-ctl
-screen show`, and what happens on the bus reaches the page and the
-scripts.** A TV used for signage often ignores a signal that stops and stays
-on, or shows "no signal"; switching the output off is not enough. Everything
+puts the TV in standby and wakes it, `screen cec` acts on the TV and the
+rest of the bus on its own, the TV's state shows in `tessaro-ctl screen
+show`, and what happens on the bus reaches the page and the scripts.** A
+TV used for signage often ignores a signal that stops and stays on, or
+shows "no signal"; switching the output off is not enough. Everything
 here is off until `screen.cec.enable=1`: a monitor has no CEC, and a TV woken
 by a device nobody set up for it surprises its owner.
 
 The code is `agent/tessaro-agent/src/cec/` (the kernel interface in
 `uapi.rs`, an adapter in `io.rs`, what the agent knows of the bus and
-decides from it in `bus.rs`) and the worker in `control/cec.rs`. The
+decides from it in `bus.rs`, the message log in `log.rs`) and the worker in
+`control/cec.rs`. The names of opcodes, addresses and makers, and the
+parsing of what is typed, are `protocol::cec`, shared with the clients. The
 settings are `screen.cec.*` (`tessaro-ctl config keys`).
 
 ## Adapters
@@ -117,6 +120,58 @@ where the device starts from. Each goes to the journal (keys at debug) and:
   the media keys. Volume and power stay with the TV;
 * **to the scripts that run on it with `screen.cec.scripts`**
   (docs/scripts.md): a key when it goes down, not again while held.
+
+## Actions
+
+**`tessaro-ctl screen cec wake|standby|source|key|scan|send` acts on the bus
+without switching the screen, and answers with what each adapter sent and
+whether it was acknowledged.** The same actions are `POST
+/api/v1/screen/cec/*`, buttons on the Screen pages of `tessaro-gui` and
+Webconfig, and `tessaro.screen.cec.*` on the page. `screen power` stays the
+way to switch both the screen and the TV.
+
+* **Each action is a job for every adapter's worker**, or the one on
+  `--connector`, and `cec_act` waits for every answer (`control/cec.rs`,
+  `cec::Job`). `screen power` hands the workers the same jobs and waits for
+  none. The worker answers with the messages it sent and their acks, the
+  addresses that answered a scan, and the TV's power as it knows it then:
+  a TV that just woke may still say standby until the next ask.
+* **`wake` is refused while the screen is meant to be off.** The TV would
+  show "no signal"; `screen power on` wakes both.
+* **`standby --all` is the one broadcast standby**, for a sound bar or a
+  receiver too; plain `standby` stays the TV's alone.
+* **`key` presses and lets go a remote key**, `<User Control Pressed>` then
+  `<Released>`, to the TV or with `--to audio` an audio system: volume and
+  mute reach a TV or a sound bar that way. The names are the events' keys.
+* **`send` is any message**: the opcode and operands in hex, to an address,
+  from the device's own logical address (or 15 without one). With
+  `--reply OPCODE` the worker waits up to 2s (`REPLY_WAIT`) for that
+  opcode from the same address and answers with it. One waits at a time;
+  a second answers the first as it is.
+* **`source` and `scan` need a logical address**; without one they say so.
+
+## The message log
+
+**Every message either way goes into a log of the last 500
+(`cec::log::KEPT`), which `screen cec messages` reads and `-f` follows.**
+It is tapped where every message passes: the worker's receive loop and
+`cec_handle`, which sends; a scan logs only the polls that were answered.
+Each message has a `seq` that only grows, and a reader asks for what came
+`after` the last one it saw, so messages dropped off the front never break
+a cursor. The wall-clock time is filled in when a page is read: it reads
+`/etc/localtime`, which the bus's loop must not.
+
+## Raw CEC from the page
+
+**A page in bridge `actions` mode may act on the bus like the clients,
+send any message included, and gets every message as a `tessaro:cec` event
+with `event: "message"`** (with `screen.cec.page`), with no setting of its
+own: the operator who gives a page `actions` mode trusts it with the device.
+The events go through a queue (`bridge_cec_message`), so the bus never waits
+for the page, and a page too slow to take them loses some. Its actions are
+limited to 20 in 10s (`CEC_BURST` in `control/bridge.rs`): enough for a
+volume slider dragged by a person, too few to flood a bus that carries
+other people's equipment. In `config` mode the page has neither.
 
 ## Testing in qemu
 

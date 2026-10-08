@@ -1,0 +1,382 @@
+{
+  "function": "cec::acted",
+  "input": [
+    {
+      "action": "standby",
+      "adapters": [
+        {
+          "connector": "HDMI-A-1",
+          "device": "/dev/cec0",
+          "sent": [
+            {
+              "acked": true,
+              "data": "36",
+              "to": 0
+            }
+          ],
+          "tv": "standby"
+        },
+        {
+          "connector": "HDMI-A-2",
+          "device": "/dev/cec1",
+          "sent": [
+            {
+              "acked": false,
+              "data": "36",
+              "to": 0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "action": "wake",
+      "adapters": [
+        {
+          "device": "/dev/cec0",
+          "sent": [
+            {
+              "acked": true,
+              "data": "04",
+              "to": 0
+            },
+            {
+              "acked": true,
+              "data": "82 10 00",
+              "to": 15
+            }
+          ],
+          "tv": "turning-on"
+        }
+      ]
+    },
+    {
+      "action": "key",
+      "adapters": [
+        {
+          "connector": "HDMI-A-1",
+          "device": "/dev/cec0",
+          "sent": [
+            {
+              "acked": true,
+              "data": "44 41",
+              "to": 5
+            },
+            {
+              "acked": true,
+              "data": "45",
+              "to": 5
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "action": "scan",
+      "adapters": [
+        {
+          "answered": [
+            0,
+            5
+          ],
+          "connector": "HDMI-A-1",
+          "device": "/dev/cec0",
+          "tv": "on"
+        },
+        {
+          "answered": [],
+          "connector": "HDMI-A-2",
+          "device": "/dev/cec1"
+        },
+        {
+          "connector": "HDMI-A-3",
+          "device": "/dev/cec2",
+          "error": "no logical address yet: the TV gives none (switched off, or no hot-plug in standby)"
+        }
+      ]
+    },
+    {
+      "action": "send",
+      "adapters": [
+        {
+          "connector": "HDMI-A-1",
+          "device": "/dev/cec0",
+          "reply": {
+            "at_ms": 1791300000123,
+            "data": "90 00",
+            "device": "/dev/cec0",
+            "direction": "in",
+            "from": 0,
+            "seq": 41,
+            "time": "21:04:05.123",
+            "to": 4
+          },
+          "sent": [
+            {
+              "acked": true,
+              "data": "8f",
+              "to": 0
+            }
+          ],
+          "tv": "on"
+        }
+      ]
+    },
+    {
+      "action": "source",
+      "adapters": []
+    }
+  ],
+  "output": [
+    [
+      [
+        [
+          "heading",
+          "standby on HDMI-A-1",
+          0
+        ]
+      ],
+      [
+        [
+          "plain",
+          "    standby (36) to TV, ",
+          0
+        ],
+        [
+          "ok",
+          "acknowledged",
+          0
+        ]
+      ],
+      [
+        [
+          "plain",
+          "    the TV is ",
+          0
+        ],
+        [
+          "muted",
+          "standby",
+          0
+        ]
+      ],
+      [
+        [
+          "heading",
+          "standby on HDMI-A-2",
+          0
+        ]
+      ],
+      [
+        [
+          "plain",
+          "    standby (36) to TV, ",
+          0
+        ],
+        [
+          "warn",
+          "not acknowledged",
+          0
+        ]
+      ]
+    ],
+    [
+      [
+        [
+          "heading",
+          "wake on /dev/cec0",
+          0
+        ]
+      ],
+      [
+        [
+          "plain",
+          "    image-view-on (04) to TV, ",
+          0
+        ],
+        [
+          "ok",
+          "acknowledged",
+          0
+        ]
+      ],
+      [
+        [
+          "plain",
+          "    active-source (82) 10 00 to everyone, ",
+          0
+        ],
+        [
+          "muted",
+          "sent",
+          0
+        ]
+      ],
+      [
+        [
+          "plain",
+          "    the TV is ",
+          0
+        ],
+        [
+          "warn",
+          "turning on",
+          0
+        ]
+      ]
+    ],
+    [
+      [
+        [
+          "heading",
+          "key on HDMI-A-1",
+          0
+        ]
+      ],
+      [
+        [
+          "plain",
+          "    user-control-pressed (44) 41 volume-up to audio 5, ",
+          0
+        ],
+        [
+          "ok",
+          "acknowledged",
+          0
+        ]
+      ],
+      [
+        [
+          "plain",
+          "    user-control-released (45) to audio 5, ",
+          0
+        ],
+        [
+          "ok",
+          "acknowledged",
+          0
+        ]
+      ]
+    ],
+    [
+      [
+        [
+          "heading",
+          "scan on HDMI-A-1",
+          0
+        ]
+      ],
+      [
+        [
+          "plain",
+          "    answered: TV, audio 5",
+          0
+        ]
+      ],
+      [
+        [
+          "plain",
+          "    the TV is ",
+          0
+        ],
+        [
+          "ok",
+          "on",
+          0
+        ]
+      ],
+      [
+        [
+          "heading",
+          "scan on HDMI-A-2",
+          0
+        ]
+      ],
+      [
+        [
+          "plain",
+          "    ",
+          0
+        ],
+        [
+          "warn",
+          "nobody answered",
+          0
+        ]
+      ],
+      [
+        [
+          "heading",
+          "scan on HDMI-A-3",
+          0
+        ]
+      ],
+      [
+        [
+          "plain",
+          "    ",
+          0
+        ],
+        [
+          "bad",
+          "no logical address yet: the TV gives none (switched off, or no hot-plug in standby)",
+          0
+        ]
+      ]
+    ],
+    [
+      [
+        [
+          "heading",
+          "send on HDMI-A-1",
+          0
+        ]
+      ],
+      [
+        [
+          "plain",
+          "    give-device-power-status (8f) to TV, ",
+          0
+        ],
+        [
+          "ok",
+          "acknowledged",
+          0
+        ]
+      ],
+      [
+        [
+          "plain",
+          "    reply: ",
+          0
+        ],
+        [
+          "plain",
+          "report-power-status (90) 00 from TV",
+          0
+        ]
+      ],
+      [
+        [
+          "plain",
+          "    the TV is ",
+          0
+        ],
+        [
+          "ok",
+          "on",
+          0
+        ]
+      ]
+    ],
+    [
+      [
+        [
+          "warn",
+          "source: no adapter answered in time",
+          0
+        ]
+      ]
+    ]
+  ]
+}

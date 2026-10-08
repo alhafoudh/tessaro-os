@@ -67,6 +67,10 @@ describe("the TV remote", () => {
   it("is ready with an adapter and the page told", async () => {
     expect((await detect.remote(probe())).kind).toBe("ready");
   });
+
+  it("is partly there with a read-only bridge, which cannot act on the bus", async () => {
+    expect((await detect.remote(probe({ mode: "config" }))).kind).toBe("limited");
+  });
 });
 
 describe("printing", () => {

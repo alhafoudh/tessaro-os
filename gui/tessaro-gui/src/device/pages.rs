@@ -38,7 +38,7 @@ use protocol::policy::{
 };
 use protocol::{
     size_label, Applied, AudioDevice, AudioStatus, AudioTested, CalendarCheck, CameraList,
-    CertInfo, CertsAdded, Claimed, Concurrency, Connector, Done, HotspotCredentials, Net,
+    CecActed, CertInfo, CertsAdded, Claimed, Concurrency, Connector, Done, HotspotCredentials, Net,
     NetChange, NetProfile, NetProfileDetail, OnError, Password, PingEvent, PrintJob, PrintQueued,
     PrinterFound, PrinterInfo, PrinterKind, PrinterList, PrinterSpec, ProxyTested, ScheduleInfo,
     ScheduleSpec, ScreenShow, ScriptInfo, SpeedtestEvent, SshKeyInfo, SshKeyRevoked, Storage,
@@ -267,6 +267,13 @@ pub enum Msg {
     Rotation,
     ScreenPower(bool),
     Keyboard(bool),
+    // the TV over HDMI-CEC
+    CecWake,
+    CecStandby,
+    CecSource,
+    /// A key of the TV remote, by its name: `volume-up`.
+    CecKey(&'static str),
+    CecScan,
     // network
     NetLast,
     NetPing,
@@ -1109,7 +1116,7 @@ fn open_terminal(command: &str) -> Result<(), String> {
 const TABLE_HEIGHT: f32 = 170.0;
 
 impl Device {
-    fn call(&mut self, tag: &'static str, call: Call) {
+    pub(super) fn call(&mut self, tag: &'static str, call: Call) {
         self.send_call(tag, call, false);
     }
 
@@ -1124,7 +1131,7 @@ impl Device {
     }
 
     /// A call with this tag is on its way.
-    fn waiting(&self, tag: &str) -> bool {
+    pub(super) fn waiting(&self, tag: &str) -> bool {
         self.pages
             .in_flight
             .get(tag)
@@ -1327,6 +1334,10 @@ impl Device {
             "script.save" | "schedule.save" | "schedule.check" | "policy.save"
             | "printer.create" | "playlist.create" | "playlist.change" | "playlist.item.save"
             | "timetable.create" | "timetable.change" => match self.form_answer(tag, result) {
+                Some(result) => result,
+                None => return,
+            },
+            super::console::SEND => match self.console_answer(result) {
                 Some(result) => result,
                 None => return,
             },
@@ -1722,6 +1733,15 @@ impl Device {
                 self.log(Tone::Ok, if power.on { "screen on" } else { "screen off" });
                 self.refresh_page(Page::Overview);
             }
+            // A send lands here only once its console is closed.
+            "screen.cec" | super::console::SEND => {
+                let acted: CecActed = parse(value)?;
+                self.open_log();
+                for line in describe::cec::acted(&acted) {
+                    self.log_line(line);
+                }
+                self.refresh_page(Page::Screen);
+            }
             _ => {
                 // Everything else answers with a message and changes what
                 // its page shows.
@@ -1967,6 +1987,26 @@ impl Device {
                     show,
                     selector: None,
                 }),
+            ),
+            Msg::CecWake => self.call(
+                "screen.cec",
+                send::<api::screen::CecWake>(tessaro_client::cec::wake_body(true, "")),
+            ),
+            Msg::CecStandby => self.call(
+                "screen.cec",
+                send::<api::screen::CecStandby>(tessaro_client::cec::standby_body(false, "")),
+            ),
+            Msg::CecSource => self.call(
+                "screen.cec",
+                send::<api::screen::CecSource>(tessaro_client::cec::on("")),
+            ),
+            Msg::CecKey(key) => match tessaro_client::cec::key_body(key, "", "") {
+                Ok(body) => self.call("screen.cec", send::<api::screen::CecKey>(body)),
+                Err(why) => self.log(Tone::Bad, why),
+            },
+            Msg::CecScan => self.call(
+                "screen.cec",
+                send::<api::screen::CecScan>(tessaro_client::cec::on("")),
             ),
             Msg::NetLast => self.call("net.last", fetch::<api::network::Last>()),
             Msg::NetPing => self.form(
@@ -4312,6 +4352,29 @@ impl Device {
                 ));
             }
         }
+        // The TV over HDMI-CEC: only with CEC on and an adapter to send on.
+        let cec = self
+            .pages
+            .screen
+            .as_ref()
+            .is_some_and(|screen| screen.cec && !screen.adapters.is_empty());
+        let tv = |message: Msg| self.when(message).filter(|_| cec);
+        let tv_tools = row![
+            text("TV").size(theme::SMALL).style(theme::muted),
+            theme::tool("Wake", tv(Msg::CecWake)),
+            theme::tool("Standby", tv(Msg::CecStandby)),
+            theme::tool("This input", tv(Msg::CecSource)),
+            theme::tool("Vol -", tv(Msg::CecKey("volume-down"))),
+            theme::tool("Vol +", tv(Msg::CecKey("volume-up"))),
+            theme::tool("Mute", tv(Msg::CecKey("mute"))),
+            theme::tool("Scan", tv(Msg::CecScan)),
+            theme::tool(
+                "CEC console",
+                (self.online() && cec).then_some(Message::CecConsole)
+            ),
+        ]
+        .spacing(4)
+        .align_y(iced::alignment::Vertical::Center);
         let show = Column::with_children(
             self.pages
                 .screen
@@ -4323,6 +4386,7 @@ impl Device {
         );
         column![
             toolbar,
+            tv_tools,
             show,
             self.table("modes", COLUMNS, rows, Length::Fixed(TABLE_HEIGHT)),
         ]

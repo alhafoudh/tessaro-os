@@ -6,6 +6,7 @@ pub mod audio;
 pub mod browser;
 pub mod bulk;
 pub mod camera;
+pub mod cec;
 pub mod device;
 pub mod net;
 pub mod playlist;

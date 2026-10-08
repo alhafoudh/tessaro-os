@@ -1,6 +1,7 @@
 //! HDMI-CEC as clients and the agent name it: the events the agent turns the
-//! bus into, the TV remote's keys, and the CEC events a script runs on
-//! (docs/cec.md).
+//! bus into, the TV remote's keys, the CEC events a script runs on, and the
+//! names of addresses, opcodes and makers that `screen cec messages` reads a
+//! message with (docs/cec.md).
 
 /// What the agent reports from the bus, to the page (`tessaro:cec`) and to
 /// the scripts that run on it.
@@ -200,9 +201,268 @@ pub fn osd_name(name: &str) -> String {
         .to_string()
 }
 
+/// The TV's logical address, always.
+pub const TV: u8 = 0;
+/// The audio system's: a sound bar or a receiver.
+pub const AUDIO: u8 = 5;
+/// The destination of a broadcast, and the sender of a message from a
+/// device that has no logical address.
+pub const BROADCAST: u8 = 15;
+
+/// The most a message carries after its header: an opcode and operands.
+pub const DATA_MAX: usize = 15;
+
+/// `1.0.0.0`.
+pub fn physical(address: u16) -> String {
+    format!(
+        "{}.{}.{}.{}",
+        address >> 12,
+        (address >> 8) & 0xf,
+        (address >> 4) & 0xf,
+        address & 0xf
+    )
+}
+
+/// What a logical address makes a device.
+pub fn kind(address: u8) -> &'static str {
+    match address {
+        0 => "tv",
+        1 | 2 | 9 => "recorder",
+        3 | 6 | 7 | 10 => "tuner",
+        4 | 8 | 11 => "playback",
+        5 => "audio",
+        12 | 13 => "backup",
+        14 => "specific",
+        _ => "unregistered",
+    }
+}
+
+/// The makers of TVs and what plugs into them, by the IEEE OUI their
+/// `<Device Vendor ID>` names.
+const VENDORS: &[(u32, &str)] = &[
+    (0x000039, "Toshiba"),
+    (0x0000f0, "Samsung"),
+    (0x0005cd, "Denon"),
+    (0x000678, "Marantz"),
+    (0x000982, "Loewe"),
+    (0x0009b0, "Onkyo"),
+    (0x000ce7, "MediaTek"),
+    (0x0010fa, "Apple"),
+    (0x001582, "Pulse-Eight"),
+    (0x001a11, "Google"),
+    (0x008045, "Panasonic"),
+    (0x00903e, "Philips"),
+    (0x00a0de, "Yamaha"),
+    (0x00d0d5, "Grundig"),
+    (0x00e036, "Pioneer"),
+    (0x00e091, "LG"),
+    (0x08001f, "Sharp"),
+    (0x080046, "Sony"),
+    (0x18c086, "Broadcom"),
+    (0x6b746d, "Vizio"),
+    (0x9c645e, "Harman Kardon"),
+];
+
+/// A maker by its OUI, else the OUI in hex.
+pub fn vendor(oui: u32) -> String {
+    VENDORS
+        .iter()
+        .find(|(known, _)| *known == oui)
+        .map(|(_, name)| name.to_string())
+        .unwrap_or_else(|| format!("{oui:06x}"))
+}
+
+/// Every opcode of CEC 1.4 and 2.0, by the name `screen cec messages` gives
+/// it.
+const OPCODES: &[(u8, &str)] = &[
+    (0x00, "feature-abort"),
+    (0x04, "image-view-on"),
+    (0x05, "tuner-step-increment"),
+    (0x06, "tuner-step-decrement"),
+    (0x07, "tuner-device-status"),
+    (0x08, "give-tuner-device-status"),
+    (0x09, "record-on"),
+    (0x0a, "record-status"),
+    (0x0b, "record-off"),
+    (0x0d, "text-view-on"),
+    (0x0f, "record-tv-screen"),
+    (0x1a, "give-deck-status"),
+    (0x1b, "deck-status"),
+    (0x32, "set-menu-language"),
+    (0x33, "clear-analogue-timer"),
+    (0x34, "set-analogue-timer"),
+    (0x35, "timer-status"),
+    (0x36, "standby"),
+    (0x41, "play"),
+    (0x42, "deck-control"),
+    (0x43, "timer-cleared-status"),
+    (0x44, "user-control-pressed"),
+    (0x45, "user-control-released"),
+    (0x46, "give-osd-name"),
+    (0x47, "set-osd-name"),
+    (0x64, "set-osd-string"),
+    (0x67, "set-timer-program-title"),
+    (0x70, "system-audio-mode-request"),
+    (0x71, "give-audio-status"),
+    (0x72, "set-system-audio-mode"),
+    (0x7a, "report-audio-status"),
+    (0x7d, "give-system-audio-mode-status"),
+    (0x7e, "system-audio-mode-status"),
+    (0x80, "routing-change"),
+    (0x81, "routing-information"),
+    (0x82, "active-source"),
+    (0x83, "give-physical-address"),
+    (0x84, "report-physical-address"),
+    (0x85, "request-active-source"),
+    (0x86, "set-stream-path"),
+    (0x87, "device-vendor-id"),
+    (0x89, "vendor-command"),
+    (0x8a, "vendor-remote-button-down"),
+    (0x8b, "vendor-remote-button-up"),
+    (0x8c, "give-device-vendor-id"),
+    (0x8d, "menu-request"),
+    (0x8e, "menu-status"),
+    (0x8f, "give-device-power-status"),
+    (0x90, "report-power-status"),
+    (0x91, "get-menu-language"),
+    (0x92, "select-analogue-service"),
+    (0x93, "select-digital-service"),
+    (0x97, "set-digital-timer"),
+    (0x99, "clear-digital-timer"),
+    (0x9a, "set-audio-rate"),
+    (0x9d, "inactive-source"),
+    (0x9e, "cec-version"),
+    (0x9f, "get-cec-version"),
+    (0xa0, "vendor-command-with-id"),
+    (0xa1, "clear-external-timer"),
+    (0xa2, "set-external-timer"),
+    (0xa5, "give-features"),
+    (0xa6, "report-features"),
+    (0xa7, "request-current-latency"),
+    (0xa8, "report-current-latency"),
+    (0xc0, "initiate-arc"),
+    (0xc1, "report-arc-initiated"),
+    (0xc2, "report-arc-terminated"),
+    (0xc3, "request-arc-initiation"),
+    (0xc4, "request-arc-termination"),
+    (0xc5, "terminate-arc"),
+    (0xf8, "cdc-message"),
+    (0xff, "abort"),
+];
+
+/// An opcode's name, `None` for one the standard does not have.
+pub fn opcode_name(opcode: u8) -> Option<&'static str> {
+    OPCODES
+        .iter()
+        .find(|(known, _)| *known == opcode)
+        .map(|(_, name)| *name)
+}
+
+/// Bytes as `screen cec` shows and takes them: `44 41`.
+pub fn hex(data: &[u8]) -> String {
+    data.iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The bytes typed as hex: `44 41`, `44:41`, `0x44,0x41`, `4441`. At most
+/// `DATA_MAX`, never none.
+pub fn parse_data(typed: &str) -> Result<Vec<u8>, String> {
+    let digits: String = typed
+        .split(|ch: char| ch.is_whitespace() || ch == ':' || ch == ',')
+        .map(|part| part.trim_start_matches("0x").trim_start_matches("0X"))
+        .map(|part| {
+            if part.len() == 1 {
+                format!("0{part}")
+            } else {
+                part.to_string()
+            }
+        })
+        .collect();
+    if digits.is_empty() {
+        return Err("no bytes to send; an opcode in hex, e.g. 8f".to_string());
+    }
+    if !digits.len().is_multiple_of(2) || !digits.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return Err(format!("{:?} is not hex bytes, e.g. 44 41", typed.trim()));
+    }
+    let data: Vec<u8> = (0..digits.len())
+        .step_by(2)
+        .map(|at| u8::from_str_radix(&digits[at..at + 2], 16).unwrap_or_default())
+        .collect();
+    if data.len() > DATA_MAX {
+        return Err(format!(
+            "a message carries at most {DATA_MAX} bytes after its header, this has {}",
+            data.len()
+        ));
+    }
+    Ok(data)
+}
+
+/// A logical address as typed: `tv`, `audio`, `all`, or 0 to 15.
+pub fn parse_address(typed: &str) -> Result<u8, String> {
+    match typed.trim().to_ascii_lowercase().as_str() {
+        "tv" => Ok(TV),
+        "audio" => Ok(AUDIO),
+        "all" | "broadcast" => Ok(BROADCAST),
+        number => match number.parse::<u8>() {
+            Ok(address) if address <= 15 => Ok(address),
+            _ => Err(format!(
+                "{:?} is not a CEC address: tv, audio, all, or 0 to 15",
+                typed.trim()
+            )),
+        },
+    }
+}
+
+/// A remote key by its name, as `screen cec key` takes it.
+pub fn key_code(name: &str) -> Result<u8, String> {
+    let lower = name.trim().to_ascii_lowercase();
+    KEYS.iter()
+        .find(|key| key.name == lower)
+        .map(|key| key.code)
+        .ok_or_else(|| {
+            format!(
+                "{lower:?} is not a remote key; one of {}",
+                KEYS.iter()
+                    .map(|key| key.name)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn data_is_read_in_every_hex_spelling() {
+        assert_eq!(parse_data("44 41").unwrap(), vec![0x44, 0x41]);
+        assert_eq!(parse_data("0x44,0x41").unwrap(), vec![0x44, 0x41]);
+        assert_eq!(parse_data("44:41").unwrap(), vec![0x44, 0x41]);
+        assert_eq!(parse_data("8F").unwrap(), vec![0x8f]);
+        assert_eq!(parse_data("4 1").unwrap(), vec![0x04, 0x01]);
+        assert!(parse_data("").is_err());
+        assert!(parse_data("4g").is_err());
+        assert!(parse_data(&"00".repeat(16)).is_err());
+        assert_eq!(hex(&[0x44, 0x01]), "44 01");
+    }
+
+    #[test]
+    fn addresses_and_keys_are_read_by_name_or_number() {
+        assert_eq!(parse_address("TV").unwrap(), 0);
+        assert_eq!(parse_address("audio").unwrap(), 5);
+        assert_eq!(parse_address("all").unwrap(), 15);
+        assert_eq!(parse_address("11").unwrap(), 11);
+        assert!(parse_address("16").is_err());
+        assert_eq!(key_code("Volume-Up").unwrap(), 0x41);
+        assert!(key_code("nope").is_err());
+        assert_eq!(opcode_name(0x36), Some("standby"));
+        assert_eq!(opcode_name(0x30), None);
+        assert_eq!(vendor(0x0000f0), "Samsung");
+        assert_eq!(physical(0x1200), "1.2.0.0");
+    }
 
     #[test]
     fn every_key_has_its_own_code_and_name() {

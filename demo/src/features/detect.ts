@@ -158,6 +158,13 @@ export const remote: Detect = async (probe) => {
   } catch (error) {
     return { kind: "limited", note: message(error) };
   }
+  if (bridge.mode !== "actions") {
+    return {
+      kind: "limited",
+      note: "The TV and its remote are followed; waking the TV, sending keys and messages need the bridge's actions.",
+      enable: bridgeEnable("actions"),
+    };
+  }
   return { kind: "ready" };
 };
 

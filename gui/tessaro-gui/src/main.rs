@@ -7,6 +7,7 @@
 
 mod blocking;
 mod bulk_view;
+mod cec_log;
 mod copy_menu;
 mod device;
 mod dialog;
@@ -48,6 +49,7 @@ const WINDOW: Size = Size::new(1400.0, 860.0);
 const DEVICE_SIZE: Size = Size::new(1060.0, 640.0);
 const CONFIG_SIZE: Size = Size::new(760.0, 440.0);
 const BULK_SIZE: Size = Size::new(820.0, 520.0);
+const CONSOLE_SIZE: Size = Size::new(860.0, 520.0);
 /// How far the header's title starts from the window's left edge, in the
 /// screen's points: past the macOS traffic lights, which the zoom does not
 /// scale.
@@ -56,6 +58,7 @@ const TRAFFIC_LIGHTS: f32 = if cfg!(target_os = "macos") { 78.0 } else { 0.0 };
 const DEVICE: mdi::Kind = "device";
 const SETTINGS: mdi::Kind = "settings";
 const BULK: mdi::Kind = "bulk";
+const CONSOLE: mdi::Kind = "cec-console";
 
 fn main() -> iced::Result {
     let prefs = Prefs::load();
@@ -205,6 +208,8 @@ struct App {
     devices: BTreeMap<mdi::Id, Device>,
     /// The settings windows: each one's device window and prefix.
     configs: BTreeMap<mdi::Id, (mdi::Id, String)>,
+    /// The CEC consoles: each one's device window.
+    consoles: BTreeMap<mdi::Id, mdi::Id>,
     /// The bulk windows: one action on several marked devices.
     bulks: BTreeMap<mdi::Id, bulk_view::BulkView>,
     desk: mdi::Desk,
@@ -257,8 +262,12 @@ enum Message {
     Device(mdi::Id, device::Message),
     /// From a settings window, for its device.
     Settings(mdi::Id, device::Message),
+    /// From a CEC console, for its device.
+    Console(mdi::Id, device::Message),
     Worker(mdi::Id, worker::Event),
     Journal(mdi::Id, logs::Event),
+    /// The CEC message log a device's console follows.
+    CecLog(mdi::Id, cec_log::Event),
     Vnc(mdi::Id, vnc::Event),
     /// A VNC frame on the GPU, ready to show; not `Device`, which would
     /// raise the window on every frame.
@@ -298,6 +307,7 @@ impl App {
             table_preferences: prefs.tables.clone(),
             devices: BTreeMap::new(),
             configs: BTreeMap::new(),
+            consoles: BTreeMap::new(),
             bulks: BTreeMap::new(),
             desk: mdi::Desk::new(prefs.window_size(), prefs.windows.clone()),
             next: 1,
@@ -364,6 +374,19 @@ impl App {
                     Some(&(id, _)) => self.device_update(id, message),
                     None => Task::none(),
                 }
+            }
+            Message::Console(window, message) => {
+                self.desk.raise(window);
+                match self.consoles.get(&window) {
+                    Some(&id) => self.device_update(id, message),
+                    None => Task::none(),
+                }
+            }
+            Message::CecLog(id, event) => {
+                if let Some(device) = self.devices.get_mut(&id) {
+                    device.console_event(event);
+                }
+                Task::none()
             }
             Message::Worker(id, event) => {
                 // A device that moved or was claimed was written to the
@@ -518,6 +541,9 @@ impl App {
         if let device::Message::Configure(scope) = &message {
             self.configure(id, &scope.prefix);
         }
+        if let device::Message::CecConsole = &message {
+            self.console(id);
+        }
         let toggled = matches!(message, device::Message::ToggleLog);
         let remember = matches!(&message, device::Message::Table(_, event) if event.remember());
         let Some(device) = self.devices.get_mut(&id) else {
@@ -621,6 +647,18 @@ impl App {
             };
             return self.device_update(id, message);
         }
+        if let Some(&id) = self.consoles.get(&top) {
+            return match key {
+                Key::Escape => {
+                    self.close(top);
+                    Task::none()
+                }
+                Key::Enter => {
+                    self.device_update(id, device::Message::Console(device::Console::Send))
+                }
+                _ => Task::none(),
+            };
+        }
         let dialog = self.devices.get(&top).is_some_and(Device::has_dialog);
         let message = match key {
             Key::Escape if dialog => device::Message::Cancel,
@@ -676,13 +714,48 @@ impl App {
         self.desk.open(window, SETTINGS, CONFIG_SIZE);
     }
 
+    /// The CEC console of the device in window `id`, opened or raised; the
+    /// device keeps its state.
+    fn console(&mut self, id: mdi::Id) {
+        let open = self
+            .consoles
+            .iter()
+            .find(|(_, device)| **device == id)
+            .map(|(&window, _)| window);
+        if let Some(window) = open {
+            return self.desk.raise(window);
+        }
+        let window = self.next;
+        self.next += 1;
+        self.consoles.insert(window, id);
+        self.desk.open(window, CONSOLE, CONSOLE_SIZE);
+    }
+
     /// Dropping a device drops its subscriptions, and with them its worker
-    /// thread, its journal stream and their sessions. Its settings windows
-    /// close with it.
+    /// thread, its journal and CEC message streams and their sessions. Its
+    /// settings windows and its CEC console close with it. A console
+    /// closed alone drops its device's console state, and with it the
+    /// stream that followed the bus.
     fn close(&mut self, id: mdi::Id) {
         // Its jobs go with it, as a device window's do.
         if self.bulks.remove(&id).is_some() {
             return self.desk.close(id);
+        }
+        if let Some(device) = self.consoles.remove(&id) {
+            if let Some(device) = self.devices.get_mut(&device) {
+                let _ = device.update(device::Message::CecConsoleClosed);
+            }
+            return self.desk.close(id);
+        }
+        let consoles: Vec<mdi::Id> = self
+            .consoles
+            .iter()
+            .filter(|(_, device)| **device == id)
+            .map(|(&window, _)| window)
+            .collect();
+        for window in consoles {
+            self.consoles.remove(&window);
+            self.desk.close(window);
         }
         if let Some((device, prefix)) = self.configs.remove(&id) {
             if let Some(device) = self.devices.get_mut(&device) {
@@ -763,6 +836,18 @@ impl App {
                         },
                         None => empty(),
                     }
+                } else if let Some(device) = self.consoles.get(&id) {
+                    match self.devices.get(device) {
+                        Some(device) => mdi::Window {
+                            title: device.console_title(),
+                            closable: true,
+                            tools: None,
+                            content: device
+                                .console_view()
+                                .map(move |message| Message::Console(id, message)),
+                        },
+                        None => empty(),
+                    }
                 } else {
                     let to_device = move |message| Message::Device(id, message);
                     match self.devices.get(&id) {
@@ -793,6 +878,14 @@ impl App {
                 logs::subscription(device.node.clone(), unit, generation)
                     .with(id)
                     .map(|(id, event)| Message::Journal(id, event)),
+            )
+        });
+        let buses = self.devices.iter().filter_map(|(&id, device)| {
+            let generation = device.console_stream()?;
+            Some(
+                cec_log::subscription(device.node.clone(), generation)
+                    .with(id)
+                    .map(|(id, event)| Message::CecLog(id, event)),
             )
         });
         let viewers = self.devices.iter().filter_map(|(&id, device)| {
@@ -842,6 +935,7 @@ impl App {
             all.into_iter()
                 .chain(workers)
                 .chain(journals)
+                .chain(buses)
                 .chain(viewers)
                 .chain(work)
                 .chain(bulk_work),

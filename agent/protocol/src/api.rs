@@ -33,14 +33,14 @@ use crate::policy::{
     EffectiveEntry, PolicyDoc, PolicyInfo, PolicyMoved, PolicyRemoved, PolicySaved,
 };
 use crate::{
-    Applied, AudioStatus, AudioTested, CalendarCheck, CameraList, CertInfo, CertsAdded, Claimed,
-    Command, Concurrency, Connector, Done, EvalResult, HotspotCredentials, ImageUpload, JobPage,
-    JobStarted, KeyInfo, LogPage, Net, NetChange, NetProfile, NetProfileDetail, NodeInfo, OnError,
-    PrintJob, PrintQueued, PrinterInfo, PrinterList, PrinterSpec, ProxyStatus, ProxyTested,
-    Received, RestartTarget, ScheduleInfo, ScheduleSpec, ScreenPower, ScreenShow, ScriptInfo,
-    ScriptSpec, Secret, Settings, SshAccess, SshKeyInfo, SshKeyRevoked, Storage, Ticket,
-    TimeStatus, TokenCreated, TokenInfo, UpdateBegun, UpdateStatus, Verify, WebSession,
-    WelcomeInfo, WifiNetwork, WifiSecurity, WifiStatus,
+    Applied, AudioStatus, AudioTested, CalendarCheck, CameraList, CecActed, CecAction, CertInfo,
+    CertsAdded, Claimed, Command, Concurrency, Connector, Done, EvalResult, HotspotCredentials,
+    ImageUpload, JobPage, JobStarted, KeyInfo, LogPage, Net, NetChange, NetProfile,
+    NetProfileDetail, NodeInfo, OnError, PrintJob, PrintQueued, PrinterInfo, PrinterList,
+    PrinterSpec, ProxyStatus, ProxyTested, Received, RestartTarget, ScheduleInfo, ScheduleSpec,
+    ScreenPower, ScreenShow, ScriptInfo, ScriptSpec, Secret, Settings, SshAccess, SshKeyInfo,
+    SshKeyRevoked, Storage, Ticket, TimeStatus, TokenCreated, TokenInfo, UpdateBegun, UpdateStatus,
+    Verify, WebSession, WelcomeInfo, WifiNetwork, WifiSecurity, WifiStatus,
 };
 
 /// The API's version, in every path. A change a client of this version
@@ -508,6 +508,63 @@ pub struct KeyboardBody {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ScreenPowerBody {
     pub on: bool,
+}
+
+/// The HDMI-CEC adapter an action goes out on, by its connector
+/// (`HDMI-A-2`); every adapter without one.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct CecBody {
+    #[serde(default)]
+    pub connector: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct CecWakeBody {
+    /// Also switch the TV to the device's input.
+    #[serde(default = "crate::yes")]
+    pub source: bool,
+    #[serde(default)]
+    pub connector: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct CecStandbyBody {
+    /// Everything on the bus, not only the TV.
+    #[serde(default)]
+    pub all: bool,
+    #[serde(default)]
+    pub connector: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct CecKeyBody {
+    /// A remote key's name: `volume-up`, `mute`, `select`...
+    pub key: String,
+    /// The logical address to send it to; the TV without one.
+    #[serde(default)]
+    pub to: Option<u8>,
+    #[serde(default)]
+    pub connector: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct CecSendBody {
+    /// The logical address, 0 (the TV) to 15 (everyone).
+    pub to: u8,
+    /// The opcode and its operands in hex: `8f`, `44 41`.
+    pub data: String,
+    /// An opcode to wait for from `to`, answered as `reply`.
+    #[serde(default)]
+    pub reply: Option<u8>,
+    #[serde(default)]
+    pub connector: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct CecMessagesQuery {
+    /// The last page's `next`; 0 for everything kept.
+    #[serde(default)]
+    pub after: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -1156,6 +1213,54 @@ pub mod screen {
                 show: body.show,
                 selector: body.selector,
             });
+
+        /// Wake the TV over HDMI-CEC, and switch it to the device's input
+        /// unless `source` is false. Refused while the screen is off.
+        CecWake: Post "/api/v1/screen/cec/wake" (Empty, CecWakeBody) -> CecActed
+            = |_, body| Action::Run(Command::CecAct {
+                action: CecAction::Wake { source: body.source },
+                connector: body.connector,
+            });
+
+        /// Put the TV in standby, or with `all` everything on the bus.
+        CecStandby: Post "/api/v1/screen/cec/standby" (Empty, CecStandbyBody) -> CecActed
+            = |_, body| Action::Run(Command::CecAct {
+                action: CecAction::Standby { all: body.all },
+                connector: body.connector,
+            });
+
+        /// Switch the TV to the device's input.
+        CecSource: Post "/api/v1/screen/cec/source" (Empty, CecBody) -> CecActed
+            = |_, body| Action::Run(Command::CecAct {
+                action: CecAction::Source,
+                connector: body.connector,
+            });
+
+        /// Press and let go a key of the TV remote: volume, mute, the
+        /// arrows...
+        CecKey: Post "/api/v1/screen/cec/key" (Empty, CecKeyBody) -> CecActed
+            = |_, body| Action::Run(Command::CecAct {
+                action: CecAction::Key { key: body.key, to: body.to },
+                connector: body.connector,
+            });
+
+        /// Poll the bus now and ask whoever answers what they are.
+        CecScan: Post "/api/v1/screen/cec/scan" (Empty, CecBody) -> CecActed
+            = |_, body| Action::Run(Command::CecAct {
+                action: CecAction::Scan,
+                connector: body.connector,
+            });
+
+        /// Send any message, and with `reply` wait for an answer.
+        CecSend: Post "/api/v1/screen/cec/send" (Empty, CecSendBody) -> CecActed
+            = |_, body| Action::Run(Command::CecAct {
+                action: CecAction::Send { to: body.to, data: body.data, reply: body.reply },
+                connector: body.connector,
+            });
+
+        /// What went over the bus, both ways, after `after`.
+        CecMessages: Get "/api/v1/screen/cec/messages" (CecMessagesQuery, ()) -> crate::CecMessages
+            = |query, _| Action::Run(Command::CecMessages { after: query.after });
     }
 }
 

@@ -263,9 +263,14 @@ pub struct Control {
     /// What the configuration was last rendered with of the playlists'
     /// store (`playlists::Shared`): a change to it renders again.
     live_playlists: Mutex<crate::playlists::Shared>,
-    /// What every HDMI-CEC adapter's worker is asked: wake the TV, put it
-    /// in standby (`cec::Request`).
-    cec_requests: tokio::sync::broadcast::Sender<crate::cec::Request>,
+    /// Every running HDMI-CEC adapter's worker, by device path, and where
+    /// it takes its jobs (`cec::Job`): `screen power`'s and `screen cec`'s.
+    cec_workers: Mutex<BTreeMap<String, cec::Running>>,
+    /// The messages of every adapter's bus, both ways (`cec::log`).
+    cec_log: Mutex<crate::cec::log::Log>,
+    /// Where the bus's messages wait for a page in `actions` mode, set
+    /// once by `watch_cec` (`bridge_cec_message`).
+    cec_page: std::sync::OnceLock<tokio::sync::mpsc::Sender<Value>>,
     /// Every adapter in use and its bus, by device path, as its worker last
     /// saw it.
     cec_adapters: Mutex<BTreeMap<String, protocol::CecAdapter>>,
@@ -338,7 +343,9 @@ impl Control {
             player: Mutex::new(playlists::PlayerState::default()),
             playlist_wake: tokio::sync::Notify::new(),
             media_wake: tokio::sync::Notify::new(),
-            cec_requests: tokio::sync::broadcast::channel(8).0,
+            cec_workers: Mutex::new(BTreeMap::new()),
+            cec_log: Mutex::new(crate::cec::log::Log::default()),
+            cec_page: std::sync::OnceLock::new(),
             cec_adapters: Mutex::new(BTreeMap::new()),
             event_runs: Mutex::new(HashMap::new()),
             presence: Mutex::new(crate::presence::Presence::default()),
@@ -571,6 +578,15 @@ impl Control {
             Command::Keys => self.keys().await.into(),
             Command::Modes => self.modes().await.into(),
             Command::ScreenShow => self.screen_show().await.into(),
+            Command::CecAct { action, connector } => {
+                let acted = self.cec_act(action, connector).await;
+                if let Ok(acted) = &acted {
+                    self.log
+                        .info(format!("cec: {} by {}", acted.action, caller.describe()));
+                }
+                acted.into()
+            }
+            Command::CecMessages { after } => self.cec_messages(after).await.into(),
             Command::Net => self.net().await.into(),
             Command::Get { key } => self.get(key).await.into(),
             Command::Set {

@@ -146,6 +146,74 @@ module AgentE2E
       guest.run("tessaro-ctl script remove e2e-cec -y", allow_failure: true)
     end
 
+    # `screen cec` as JSON: what one action did on the lane's one adapter.
+    def act(command)
+      acted = JSON.parse(guest.run("tessaro-ctl --json screen cec #{command}"))
+      acted.fetch("adapters").first or raise Failure, "screen cec #{command} went out on no adapter"
+    end
+
+    def screen_on? = guest.run("tessaro-ctl screen power").include?("the screen is on")
+
+    it "cec-actions: screen cec acts on the TV without the screen, and the log keeps what went over the bus" do
+      guest.run("truncate -s 0 #{CEC_TV_LOG}")
+      standby = act("standby")
+      expect(standby.fetch("sent").first).to include("data" => "36", "to" => 0, "acked" => true)
+      wait_until("the TV got standby", timeout: 15) { tv_log.include?("STANDBY") }
+      expect(screen_on?).to be(true), "screen cec standby switched the screen"
+
+      guest.run("truncate -s 0 #{CEC_TV_LOG}")
+      woke = act("wake")
+      expect(woke.fetch("sent").map { _1["data"] }).to include("04")
+      wait_until("the TV got the wake and the input", timeout: 15) do
+        log = tv_log
+        log.include?("IMAGE_VIEW_ON") && log.include?("ACTIVE_SOURCE")
+      end
+
+      key = act("key volume-up")
+      expect(key.fetch("sent").map { _1["data"] }).to eq(["44 41", "45"])
+      wait_until("the TV got the key", timeout: 15) { tv_log.include?("USER_CONTROL_PRESSED") }
+
+      sent = act("send 8f --to tv --reply 90")
+      expect(sent.dig("reply", "data")).to start_with("90")
+      expect(act("scan").fetch("answered")).to include(0)
+
+      log = guest.run("tessaro-ctl screen cec messages")
+      expect(log).to include("standby (36)", "give-device-power-status (8f)", "report-power-status (90)")
+      messages = guest.run("tessaro-ctl --json screen cec messages").lines.map { JSON.parse(_1) }
+      expect(messages.map { _1["seq"] }).to eq(messages.map { _1["seq"] }.sort)
+
+      guest.run("tessaro-ctl screen power off")
+      refused = guest.run("tessaro-ctl screen cec wake 2>&1", allow_failure: true)
+      expect(refused).to include("the screen is off")
+    ensure
+      guest.run("tessaro-ctl screen power on", allow_failure: true)
+    end
+
+    it "cec-bridge: a page in actions mode acts on the bus and gets every message, one in config mode neither" do
+      guest.run("tessaro-ctl config set screen.cec.page=1")
+      wait_until("the page has the bridge", timeout: 30) do
+        eval_page("typeof tessaro").include?("object")
+      end
+      expect(eval_page("typeof tessaro.screen.cec")).to include("undefined")
+
+      guest.run("tessaro-ctl browser bridge actions")
+      journal.wait_for(/^page bridge: (now )?actions/, timeout: 30)
+      wait_until("the page has the CEC calls", timeout: 30) do
+        eval_page("typeof tessaro.screen.cec").include?("object")
+      end
+      eval_page('window.e2eBus = []; ' \
+                'addEventListener("tessaro:cec", (e) => e.detail.event === "message" && e2eBus.push(e.detail)); 1')
+      reply = eval_page('tessaro.screen.cec.send("8f", 0, 0x90).then((a) => a.adapters[0].reply.data)')
+      expect(reply).to include("90")
+      wait_until("the page saw the message and its reply", timeout: 15) do
+        names = JSON.parse(eval_page("JSON.stringify(e2eBus.map((m) => m.name))").lines.last)
+        names.include?("give-device-power-status") && names.include?("report-power-status")
+      end
+      journal.wait_for(/^cec: send by the page$/, timeout: 10)
+    ensure
+      guest.run("tessaro-ctl browser bridge config", allow_failure: true)
+    end
+
     it "cec-off: switching CEC off leaves the bus, and screen power leaves the TV alone" do
       guest.run("tessaro-ctl config set screen.cec.enable=0")
       wait_until("screen show has no adapter", timeout: 30) { shown.fetch("adapters").empty? }

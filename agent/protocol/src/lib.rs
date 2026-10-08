@@ -204,6 +204,17 @@ pub enum Command {
     Modes,
     /// The connected displays, what each says it is, and the HDMI-CEC bus.
     ScreenShow,
+    /// Act on the HDMI-CEC bus, on every adapter or the one on `connector`.
+    CecAct {
+        action: CecAction,
+        #[serde(default)]
+        connector: Option<String>,
+    },
+    /// The message log after `after`.
+    CecMessages {
+        #[serde(default)]
+        after: u64,
+    },
     /// The network as the device sees it: addresses, route, DNS,
     /// interfaces. Read-only.
     Net,
@@ -1516,6 +1527,132 @@ pub struct TvStatus {
     /// The name the TV gives itself.
     #[serde(default)]
     pub name: Option<String>,
+}
+
+/// What `screen cec` does on the bus (docs/cec.md, Actions).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "action", rename_all = "kebab-case")]
+pub enum CecAction {
+    /// `<Image View On>` to the TV, and with `source` `<Active Source>`.
+    Wake {
+        #[serde(default = "yes")]
+        source: bool,
+    },
+    /// `<Standby>` to the TV, or with `all` to everything on the bus.
+    Standby {
+        #[serde(default)]
+        all: bool,
+    },
+    /// `<Active Source>`: the TV switches to the device.
+    Source,
+    /// A remote key pressed and let go, to the TV or another address.
+    Key {
+        /// Its name, as `protocol::cec::KEYS` has it.
+        key: String,
+        #[serde(default)]
+        to: Option<u8>,
+    },
+    /// Poll the bus and ask whoever answers what they are.
+    Scan,
+    /// Any message to `to`: the opcode and its operands in hex. With
+    /// `reply`, wait for that opcode from `to`.
+    Send {
+        to: u8,
+        data: String,
+        #[serde(default)]
+        reply: Option<u8>,
+    },
+}
+
+impl CecAction {
+    pub fn name(&self) -> &'static str {
+        match self {
+            CecAction::Wake { .. } => "wake",
+            CecAction::Standby { .. } => "standby",
+            CecAction::Source => "source",
+            CecAction::Key { .. } => "key",
+            CecAction::Scan => "scan",
+            CecAction::Send { .. } => "send",
+        }
+    }
+}
+
+/// One message an action sent, and whether its destination took it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct CecSent {
+    pub to: u8,
+    /// The opcode and operands in hex, empty for a poll.
+    pub data: String,
+    /// Acknowledged. A broadcast is never acknowledged by anyone.
+    pub acked: bool,
+}
+
+/// What an action did on one adapter.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct CecAdapterActed {
+    pub device: String,
+    #[serde(default)]
+    pub connector: Option<String>,
+    #[serde(default)]
+    pub sent: Vec<CecSent>,
+    /// The answer `send --reply` waited for, when it came.
+    #[serde(default)]
+    pub reply: Option<CecMessage>,
+    /// The addresses that answered a scan's polls.
+    #[serde(default)]
+    pub answered: Vec<u8>,
+    /// The TV's power as the device knows it after the action.
+    #[serde(default)]
+    pub tv: Option<CecPower>,
+    /// Why the action did not go out on this adapter.
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+/// `screen cec wake|standby|source|key|scan|send`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct CecActed {
+    /// `wake`, `standby`...
+    pub action: String,
+    pub adapters: Vec<CecAdapterActed>,
+}
+
+/// Which way a message went.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum CecDirection {
+    /// Received by the device.
+    In,
+    /// Sent by the device.
+    Out,
+}
+
+/// One message of the bus, as the device's message log keeps it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct CecMessage {
+    /// Grows by one per message, across every adapter.
+    pub seq: u64,
+    /// Milliseconds since the epoch.
+    pub at_ms: i64,
+    /// The device's wall clock: `21:04:05.123`.
+    pub time: String,
+    pub device: String,
+    pub direction: CecDirection,
+    pub from: u8,
+    pub to: u8,
+    /// The opcode and operands in hex, empty for a poll.
+    pub data: String,
+    /// For a sent message: whether its destination acknowledged it.
+    #[serde(default)]
+    pub acked: Option<bool>,
+}
+
+/// A page of the message log: every message after a `seq`, and where to
+/// ask from next.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct CecMessages {
+    pub messages: Vec<CecMessage>,
+    pub next: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

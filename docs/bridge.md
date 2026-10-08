@@ -81,7 +81,9 @@ await tessaro.device.status();
   `detail.event`, `connector`, `tv` and `showing`, and for a key `key`,
   `pressed` and `repeat` ([cec.md](cec.md)). The agent fires it the way it
   fires `tessaro:config`, through the same hidden object; a page that is
-  loading misses it.
+  loading misses it. In `actions` mode every message on the bus is one too,
+  `event: "message"` with `direction`, `from`, `to`, `data`, `opcode`,
+  `name` and `acked` (**Raw CEC from the page** in [cec.md](cec.md)).
 * **Someone arriving, leaving, coming near or stepping back is a
   `tessaro:presence` event**, with `camera.presence.page` on: `detail.event`
   (`arrived`, `left`, `near`, `far`), `present`, `near`, `count` and the
@@ -126,6 +128,9 @@ answers everything:
 | `audio.inputVolume(percent)` | actions | `audio input-volume` |
 | `keyboard.show(selector)`, `keyboard.hide()` | actions | `screen keyboard show --selector` / `hide` |
 | `screen.off()`, `screen.on()` | actions | `screen power off` / `on` |
+| `screen.cec.wake(source)`, `standby(all)`, `source()`, `key(name, to)`, `scan()` | actions | `screen cec wake` / `standby` / `source` / `key` / `scan`; at most 20 CEC actions in 10s |
+| `screen.cec.send(data, to, reply)` | actions | `screen cec send DATA --to TO --reply OPCODE`: any message, `data` in hex, `to` 0 to 15, `reply` an opcode |
+| `screen.cec.messages(after)` | actions | `screen cec messages`: the message log after a `seq`, and `next` to ask after |
 | `network.ping(host)` | actions | `network ping`: every event, in order |
 | `network.speedTest()` | actions | `network speedtest`: every event, in order |
 | `files.list(path)` | actions | `files list` |
