@@ -137,19 +137,6 @@
     color: var(--fg);
   }
 
-  h1 {
-    margin: 0;
-    font-weight: 650;
-    line-height: 1.08;
-    letter-spacing: -0.02em;
-    font-size: clamp(2rem, 7.6vmin, 6rem);
-    background: linear-gradient(100deg, var(--fg) 30%, var(--accent) 70%, var(--accent-2));
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
-    overflow-wrap: anywhere;
-  }
-
   .card {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr);
@@ -177,6 +164,17 @@
     overflow-wrap: anywhere;
     font-variant-numeric: tabular-nums;
   }
+  /* The node name, the size of the other values in the logo's gradient.
+     Inline-block, so the gradient spans the name and not the whole row,
+     which left a short name almost white. */
+  .card dd .name {
+    display: inline-block;
+    font-weight: 600;
+    background: linear-gradient(100deg, var(--fg) 30%, var(--accent) 70%, var(--accent-2));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
   .card dd .ip { display: block; }
   .card dd .ip small { color: var(--dim); font-size: 0.6em; margin-left: 0.5em; }
 
@@ -197,7 +195,9 @@
 
   .panels {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    /* The details 3/5, the setup QR 2/5: the QR keeps its size, and the
+       addresses get the room to keep an interface name on one line. */
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
     align-items: stretch;
     width: 100%;
     gap: clamp(14px, 3vmin, 40px);
@@ -331,10 +331,10 @@
   </svg>
 
   <p class="product" id="product">tessaro-os</p>
-  <h1 id="node">Welcome</h1>
-
   <div class="panels stale" id="panels">
     <dl class="card" id="card">
+      <dt>Name</dt>
+      <dd><span class="name" id="node">-</span></dd>
       <dt>IP address</dt>
       <dd id="addresses">-</dd>
       <dt class="hotspot" hidden>Hotspot</dt>
