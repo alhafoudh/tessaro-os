@@ -561,16 +561,18 @@ impl Control {
                     let sending = Arc::clone(tx);
                     let message = msg.clone();
                     let result = blocking("sending on the HDMI-CEC bus", move || {
-                        io::transmit(&sending, &message).map_err(|err| err.to_string())
+                        io::transmit(&sending, &message).map_err(|err| not_sent(&err))
                     })
                     .await;
+                    // A message the kernel refused never went out: it is
+                    // neither in the log nor among what was sent.
                     let acked = match result {
                         Ok(acked) => acked,
                         Err(err) => {
                             self.log
                                 .debug(format!("cec: {}: sending {msg:?}: {err}", worker.device()));
                             failed.get_or_insert(err);
-                            false
+                            continue;
                         }
                     };
                     let logged = self.cec_logged(worker, CecDirection::Out, &msg, Some(acked));
@@ -795,6 +797,20 @@ struct Worker {
 impl Worker {
     fn device(&self) -> String {
         self.path.display().to_string()
+    }
+}
+
+/// Why the kernel would not send a message, in words. It refuses with
+/// ENONET while the adapter has no logical address: nothing is plugged into
+/// its connector, or the TV gives no physical address, and only `<Image
+/// View On>` from the unregistered address may go out then.
+fn not_sent(err: &std::io::Error) -> String {
+    match err.raw_os_error() {
+        Some(libc::ENONET) => "not sent: this adapter has no address on the bus - nothing is \
+                               plugged into its connector, or the TV gives none (switched off, \
+                               or no hot-plug in standby)"
+            .to_string(),
+        _ => format!("not sent: {err}"),
     }
 }
 

@@ -149,6 +149,10 @@ way to switch both the screen and the TV.
   opcode from the same address and answers with it. One waits at a time;
   a second answers the first as it is.
 * **`source` and `scan` need a logical address**; without one they say so.
+* **A message the kernel refuses is not sent, logged or reported as
+  sent**: the adapter's answer carries why instead (`not_sent`). ENONET is
+  an adapter with no address: nothing plugged into its connector, or a TV
+  that gives none.
 
 ## The message log
 
@@ -187,6 +191,11 @@ is checked on a Pi by hand.
 
 ## What does not work
 
+* **A monitor has no CEC, and nothing says so.** Its EDID still carries a
+  physical address, so the adapter claims one and every action goes out;
+  nobody acknowledges it, and `screen show` lists no TV and no bus.
+  Directed messages come back "not acknowledged"; a broadcast, `standby
+  --all`, has nobody to acknowledge it either way.
 * **TVs implement CEC loosely.** Some ignore `<Standby>` from a playback
   device, some switch input only on `<Image View On>` with a following
   `<Active Source>`, some forward the remote's keys only to devices they
