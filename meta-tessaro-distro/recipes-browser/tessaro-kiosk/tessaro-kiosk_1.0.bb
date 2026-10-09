@@ -271,6 +271,6 @@ RDEPENDS:${PN} = " \
 "
 
 # The module modules-load.d/tessaro-drivetemp.conf loads. A recommendation,
-# not a dependency: genericx86-64 brings every module already, and qemu,
-# which installs none on its own, still needs this one.
+# not a dependency: genericx86-64 and genericarm64 bring every module
+# already, and a machine that installs none on its own still needs this one.
 RRECOMMENDS:${PN} += "kernel-module-drivetemp"

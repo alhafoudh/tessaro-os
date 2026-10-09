@@ -205,12 +205,14 @@ from AVFoundation.
   through the host. ffmpeg starts for the mode the guest commits to, and
   the newest frame is what is sent, so a slow reader drops frames rather
   than falling behind.
-* **The guest side is in qemux86-64 and genericarm64**: on qemux86-64
-  `tessaro-qemu-usbip.cfg` for `usbip-core` and `vhci-hcd`, and
-  `usbip-tools` and uvcvideo installed through `MACHINE_EXTRA_RRECOMMENDS`
-  in `kas/machine/qemux86-64.yml`; on genericarm64 the modules come from
-  `tessaro-genericarm64.cfg` and `usbip-tools` from
-  `kas/machine/genericarm64.yml`.
+* **The guest side is in genericx86-64 and genericarm64, the images that
+  ship**: on genericx86-64 `tessaro-qemu-usbip.cfg` builds `usbip-core` and
+  `vhci-hcd`, which come with every other module, and `usbip-tools` is in
+  `MACHINE_EXTRA_RRECOMMENDS` in `kas/machine/genericx86-64.yml`; on
+  genericarm64 the modules come from `tessaro-genericarm64.cfg` and
+  `usbip-tools` from `kas/machine/genericarm64.yml`. Nothing loads the
+  modules or starts a USB/IP server: only `usbip attach`, run as root,
+  plugs anything in.
 * **`--attach` finds the VM on slirp or on a Mac's vmnet.** On slirp the
   guest reaches the host at `10.0.2.2` and is reached on the
   `127.0.0.1:2222` forward, and the server listens on `127.0.0.1`. On vmnet

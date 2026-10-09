@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 module AgentE2E
-  RSpec.describe "an image update", :reboot do
+  RSpec.describe "an image update", :reboot, extra_disk: EXTRA_DISK do
     include_context "a booted VM"
     include Update
 

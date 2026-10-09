@@ -141,9 +141,8 @@ Use the mise tasks rather than calling `kas-container` directly:
 
 | Task | Purpose |
 | --- | --- |
-| `mise run image:build` | Build the image for `$TESSARO_MACHINE` (plus OVMF on qemu) |
-| `mise run image:build:qemu` | Same, forced to `qemux86-64` |
-| `mise run image:build:x86` | Same, forced to `genericx86-64` |
+| `mise run image:build` | Build the image for `$TESSARO_MACHINE` (plus OVMF on x86) |
+| `mise run image:build:x86` | Same, forced to `genericx86-64` (PCs, and QEMU for development and e2e) |
 | `mise run image:build:arm64` | Same, forced to `genericarm64` (plus U-Boot for QEMU) |
 | `mise run image:build:rpi3` | Same, forced to `raspberrypi3-64` (Pi 3B / 3B+) |
 | `mise run image:build:rpi4` | Same, forced to `raspberrypi4-64` (Pi 4B / 400 / CM4) |
@@ -211,12 +210,18 @@ that belongs to no artifact. Renaming a task means a `git grep` over the whole
 repo, docs, comments and error messages included.
 
 **Every task acts on one machine**, `$TESSARO_MACHINE`, defaulting to
-`qemux86-64` (`image:sizes` and `image:list` excepted). The `image:build:*` tasks set it;
+`genericx86-64` (`image:sizes` and `image:list` excepted). The `image:build:*` tasks set it;
 anything else takes it from the environment (`TESSARO_MACHINE=raspberrypi3-64
 mise run image:shell`). Valid values are the basenames in `kas/machine/`. Each
 machine gets its own TOPDIR under `build/<machine>/`; `cache/` (`DL_DIR` +
-`SSTATE_DIR`) is shared. `qemu:*` boots qemux86-64 and genericarm64, the
-latter on a Mac too (`scripts/qemu-arm64.sh`); `e2e:*` is qemux86-64 only.
+`SSTATE_DIR`) is shared. `qemu:*` boots genericx86-64 and genericarm64, the
+latter on a Mac too (`scripts/qemu-arm64.sh`); `e2e:*` is genericx86-64 only.
+
+**There is no QEMU-only machine.** genericx86-64 is the image x86 PCs run and
+the one `qemu:*` and e2e boot, so e2e tests what ships. What only QEMU needs
+goes into `qemuboot.conf` (`QB_*`) or the host's QEMU, never into a second
+machine; what only e2e uses in the guest (USB/IP, vivid) ships as modules
+nothing loads unless asked to.
 
 For Yocto work on a single recipe, go through the kas shell:
 

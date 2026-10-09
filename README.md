@@ -155,7 +155,7 @@ The browser restarts only when the merged result actually changes. More in
 | arm64 | Raspberry Pi 5 (SD, USB or NVMe) | `raspberrypi5` | ✅ tested |
 | x86_64 | Other UEFI PCs and mini PCs | `genericx86-64` | 🧪 more to come, community testing appreciated |
 | arm64 | Apple silicon Mac, in a VM | `genericarm64` | ✅ [try it on a Mac](#try-it-on-a-mac) |
-| x86_64 | QEMU | `qemux86-64` | 🛠️ development and end-to-end tests |
+| x86_64 | QEMU | `genericx86-64` | 🛠️ development and end-to-end tests, on the image PCs run |
 
 Every machine runs the same software. On the Pi 3, plan around its 1 GB of
 memory, shared with the GPU. Tried Tessaro on other hardware? Open an issue
@@ -170,7 +170,7 @@ images for every machine are published on
 They are built by GitHub Actions on a **self-hosted runner** on a beefy build
 machine, which keeps the whole Yocto download and build cache warm between
 builds and has room for builds that run for hours. The same pipeline boots
-the qemu image and runs the end-to-end suite against it. How it all works is
+the `genericx86-64` image in QEMU and runs the end-to-end suite against it. How it all works is
 in [docs/ci.md](docs/ci.md).
 
 Every release also carries `tessaro-ctl` and `tessaro-gui` for Linux
@@ -436,7 +436,7 @@ it signed in.
 git clone git@github.com:alhafoudh/tessaro-os.git   # or https://github.com/alhafoudh/tessaro-os.git
 cd tessaro-os
 mise trust && mise install
-mise run image:build:rpi5     # or image:build:rpi3, image:build:rpi4, image:build:x86, image:build:arm64, image:build:qemu
+mise run image:build:rpi5     # or image:build:rpi3, image:build:rpi4, image:build:x86, image:build:arm64
 ```
 
 You need Linux with Docker, [kas](https://kas.readthedocs.io/) and

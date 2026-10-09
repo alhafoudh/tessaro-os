@@ -97,8 +97,8 @@ Things to know:
   partition table and the ESP's filesystem are never
   rewritten, so an unpinned new rootfs would name another build's `/boot` and
   fail `local-fs.target`. The pins differ per machine, which makes the layout
-  check a machine check too. qemux86-64 uses our own copy of Moonforge's wks
-  for this.
+  check a machine check too: an image for another machine, or a disk
+  written with another machine's image, needs `--repartition` or a reflash.
 * **The Pi cannot pin its disk signature** - this wic has no `--diskid`, and
   derives it from `SOURCE_DATE_EPOCH` - but nothing there names a PARTUUID
   (`root=LABEL=root`, filesystem labels in fstab), so for MBR images the

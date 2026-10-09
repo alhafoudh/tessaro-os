@@ -20,7 +20,6 @@ module Sbom
   # The Rust target each machine's agent is built for, keyed like
   # kas/machine/.
   TARGETS = {
-    "qemux86-64" => "x86_64-unknown-linux-gnu",
     "genericx86-64" => "x86_64-unknown-linux-gnu",
     "genericarm64" => "aarch64-unknown-linux-gnu",
     "raspberrypi3-64" => "aarch64-unknown-linux-gnu",

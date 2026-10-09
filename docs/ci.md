@@ -55,7 +55,7 @@ jobs show up inside the caller's run, as `image / build (<machine>)` and
   run here because they read what the image build left in the tree; the
   sources themselves stay in the store ([sbom.md](sbom.md), "Sources").
 * `e2e` runs after every build leg, on the self-hosted runner, when e2e is
-  asked for and qemux86-64 was built: `e2e:setup` and `e2e:run`, then
+  asked for and genericx86-64 was built: `e2e:setup` and `e2e:run`, then
   `build/e2e/` uploaded as `e2e-logs`.
 
 **`image.yml` has no concurrency of its own; the job that calls it does.**
@@ -65,10 +65,10 @@ called workflow in the same group as its caller waits for itself forever.
 
 ## By hand: `e2e.yml`
 
-**The qemu image of a branch, built and tested, without clients or a
-release**, from the Actions tab: pick the branch in "Use workflow from" (a
-pull request's branch is tested this way) and, optionally, the arguments for
-`e2e:run`. It calls `image.yml` with qemux86-64 and e2e. Pull requests do
+**The genericx86-64 image of a branch, built and tested, without clients
+or a release**, from the Actions tab: pick the branch in "Use workflow from"
+(a pull request's branch is tested this way) and, optionally, the arguments
+for `e2e:run`. It calls `image.yml` with genericx86-64 and e2e. Pull requests do
 not run it on their own, and a fork's branch cannot be picked: the jobs run
 on the build host (**Never trigger the image workflows from
 `pull_request`** below). It shows in the Actions tab once it is on the
@@ -78,7 +78,7 @@ default branch; from then on any branch can be picked.
 
 **Releases are built only when someone starts the workflow**, from the
 Actions tab ("Run workflow"). Its inputs pick the machines, whether e2e
-runs on the qemu image, the arguments for `e2e:run` (`-o '--tag
+runs on the genericx86-64 image, the arguments for `e2e:run` (`-o '--tag
 ~reboot'`), and whether the run becomes a GitHub release. That last one
 starts unticked, so a run is a dev build unless it is ticked; without it the
 images and clients stay workflow artifacts.
@@ -119,7 +119,7 @@ images and clients stay workflow artifacts.
   It tags the built commit `v<version>-<sha>` and attaches every image,
   bmap, SBOM bundle, license list, client archive and Try Tessaro package.
   `pick` fails up front when release is ticked without e2e or without
-  qemux86-64, or when a release of the same version (the part before the
+  genericx86-64, or when a release of the same version (the part before the
   sha) already exists, so no run builds for hours toward a release it
   cannot make. Every release therefore needs a new `DISTRO_VERSION` in
   `meta-tessaro-distro/conf/distro/tessaro.conf`.
@@ -164,8 +164,8 @@ on a run with several machines e2e starts after the last one.
   older waiting one, whichever of the workflows it came from.
 * **`e2e` first checks the tree holds this run's image**: `image:name` must
   be this run's version, and the deploy directory's
-  `tessaro-os-qemux86-64.rootfs.wic.zst` must point at that name. A failed
-  qemu build fails here instead of testing an older image.
+  `tessaro-os-genericx86-64.rootfs.wic.zst` must point at that name. A failed
+  genericx86-64 build fails here instead of testing an older image.
 * `E2E_WORKER_OFFSET=10` moves its ports away from a workstation's own VMs
   and `dev:tunnel`'s forwards on the same host. Its gems go under `build/`.
 * **`e2e` runs 8 VMs at a time (`E2E_JOBS`), so the longest lane sets its

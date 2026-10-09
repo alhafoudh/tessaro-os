@@ -97,10 +97,12 @@ module AgentE2E
       expect(status).to match(/^memory\s+\S+ \S+ free of \S+ \S+ \(\d+% used\)$/)
     end
 
-    # The emulated NVMe drive every qemux86-64 VM boots with (QB_OPT_APPEND
-    # in kas/machine/qemux86-64.yml) is the VM's one temperature sensor:
+    # The emulated NVMe drive every genericx86-64 VM boots with (QB_OPT_APPEND
+    # in kas/machine/genericx86-64.yml) is the VM's one temperature sensor:
     # QEMU reports 323 K under a 343 K warning threshold, which the kernel
-    # turns into millidegrees. A VM has no CPU sensor, so no cpu reading.
+    # turns into millidegrees. A VM has no CPU sensor, so no cpu reading:
+    # coretemp and k10temp are in the image, but QEMU's CPU models offer
+    # neither driver anything to bind to.
     it "temperatures: tessaro-ctl device status reads the NVMe drive's sensor" do
       status = JSON.parse(guest.run("tessaro-ctl --json device status"))
       nvme = status.fetch("temperatures").find { _1["sensor"] == "nvme" }

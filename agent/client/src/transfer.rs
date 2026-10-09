@@ -248,8 +248,8 @@ mod tests {
     #[test]
     fn the_bmap_is_found_next_to_the_image() {
         assert_eq!(
-            bmap_for(Path::new("out/tessaro-os-qemux86-64.rootfs.wic.zst")),
-            PathBuf::from("out/tessaro-os-qemux86-64.rootfs.wic.bmap")
+            bmap_for(Path::new("out/tessaro-os-genericx86-64.rootfs.wic.zst")),
+            PathBuf::from("out/tessaro-os-genericx86-64.rootfs.wic.bmap")
         );
         assert_eq!(
             bmap_for(Path::new("x.rootfs.wic.bz2")),

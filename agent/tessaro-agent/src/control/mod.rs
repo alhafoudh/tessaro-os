@@ -1806,7 +1806,7 @@ mod tests {
             Identity {
                 id: "0".repeat(32),
                 name: "test-node".to_string(),
-                machine: "qemux86-64".to_string(),
+                machine: "genericx86-64".to_string(),
                 fingerprint: "f".repeat(64),
             },
             shutdown,

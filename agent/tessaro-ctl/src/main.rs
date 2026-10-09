@@ -135,7 +135,7 @@ const HELP_STYLES: Styles = Styles::styled()
         \x20 tessaro-ctl printer test office && tessaro-ctl config set printer.enable=1   window.print() prints there\n\
         \x20 tessaro-ctl config unset browser.url           back to the image default\n\
         \x20 tessaro-ctl device logs -f -u tessaro-agent.service\n\
-        \x20 tessaro-ctl update send tessaro-os-qemux86-64.rootfs.wic.zst   a new image; settings are kept\n\
+        \x20 tessaro-ctl update send tessaro-os-genericx86-64.rootfs.wic.zst   a new image; settings are kept\n\
         \x20 tessaro-ctl files sync ./site-assets           the store now holds exactly that directory\n\
         \x20                                                the page reads it at http://127.0.0.1/files/...\n\
         \x20 tessaro-ctl files upload promo.mp4 media/      one file, keeping its name\n\
@@ -666,7 +666,7 @@ enum UpdateCmd {
     /// kernel file; /data is kept. Run it again after a dropped connection
     /// and it resumes.
     ///
-    ///   tessaro-ctl -n brave-otter-3fa2 update send tessaro-os-qemux86-64.rootfs.wic.zst
+    ///   tessaro-ctl -n brave-otter-3fa2 update send tessaro-os-genericx86-64.rootfs.wic.zst
     Send(update::Send),
     /// What is under way, and what the last update did.
     Status,

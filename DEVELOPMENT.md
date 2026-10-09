@@ -22,9 +22,8 @@ workstation, and test the agent. How each subsystem works is in
 ## Building
 
 ```sh
-mise run image:build        # the image for $TESSARO_MACHINE (plus OVMF on qemu)
-mise run image:build:qemu   # qemux86-64      - development, boots under QEMU
-mise run image:build:x86    # genericx86-64   - x86_64 PCs and mini PCs, UEFI
+mise run image:build        # the image for $TESSARO_MACHINE (plus OVMF on x86)
+mise run image:build:x86    # genericx86-64   - x86_64 PCs and mini PCs, UEFI; boots under QEMU, e2e runs on it
 mise run image:build:arm64  # genericarm64    - Arm64 UEFI, boots under QEMU here or on a Mac
 mise run image:build:rpi3   # raspberrypi3-64 - Pi 3B / 3B+, SD or USB storage
 mise run image:build:rpi4   # raspberrypi4-64 - Pi 4B / 400 / CM4, SD or USB storage
@@ -37,7 +36,8 @@ mise run image:clean                                   # drop build output, keep
 ```
 
 Every task acts on one machine, `$TESSARO_MACHINE`, which defaults to
-`qemux86-64`. Each target gets its own build directory, `build/<machine>/`,
+`genericx86-64`: the image x86 PCs run, and the one `qemu:*` and the e2e
+suite boot in QEMU. Each target gets its own build directory, `build/<machine>/`,
 and images land in `build/<machine>/tmp/deploy/images/<machine>/`. The
 download and sstate caches in `cache/` are shared, so the second target reuses
 most of the first one's work. On the build host `cache/` is a symlink to
@@ -313,7 +313,7 @@ go to the browser console.
 
 ## End-to-end tests
 
-`mise run e2e:run` boots the qemux86-64 image and provokes what the agent
+`mise run e2e:run` boots the genericx86-64 image in QEMU and provokes what the agent
 exists to handle - the site going down, the browser crashing or wedging, the
 agent itself wedging, settings, claiming, network changes, image updates -
 asserting on what the agent writes to its journal. It is an RSpec suite in
@@ -324,7 +324,7 @@ It tests the image as built and never builds one, so build first. It needs
 Ruby with Bundler on the host, and KVM to be quick; each VM takes 4 GB of RAM.
 
 ```sh
-mise run image:build        # the image under test (qemux86-64)
+mise run image:build        # the image under test (genericx86-64)
 mise run e2e:setup          # once: installs rspec and parallel_tests
 mise run e2e:run            # every lane, three VMs at a time
 ```
@@ -351,10 +351,10 @@ is in `build/e2e/`. Lanes, ports and the harness are explained in
 GitHub Actions lints and tests the agent, the desktop client and Webconfig,
 and checks their dependencies' licenses, on every push (`.github/workflows/ci.yml`). Releases are started by hand from
 the Actions tab (`release.yml`): the images on a self-hosted runner on the
-build host, with e2e on the qemu image, and `tessaro-ctl` and `tessaro-gui`
+build host, with e2e on the genericx86-64 image, and `tessaro-ctl` and `tessaro-gui`
 on GitHub's runners. To test a branch before merging it, a pull request's
 included, start `e2e.yml` from the Actions tab on that branch: it builds
-the qemu image and runs e2e on it, nothing else. Pull requests do not run
+the genericx86-64 image and runs e2e on it, nothing else. Pull requests do not run
 it on their own. The runner's setup is in [docs/ci.md](docs/ci.md).
 
 ## SBOM and licenses

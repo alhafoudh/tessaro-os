@@ -70,9 +70,8 @@ Things to know:
     `BAD_RECOMMENDATIONS` for them. So every blob lands in the image (a few
     hundred MB); the newer Intel ones come through `-iwlwifi-misc`. To trim
     it, `BAD_RECOMMENDATIONS` the split packages the board does not need, or
-    list only the ones it does.
-  - `qemux86-64`: neither, which is correct - QEMU emulates no wireless NIC,
-    so WiFi is tested on the Pi.
+    list only the ones it does. The same image under QEMU has the drivers
+    but no wireless NIC to use them on, so WiFi is tested on hardware.
 * **`NetworkManager-wait-online.service` *is* enabled** - `preset-all` at rootfs
   time creates `/etc/systemd/system/network-online.target.wants/NetworkManager-wait-online.service`,
   even though `SYSTEMD_SERVICE:networkmanager-daemon` never names it. It is

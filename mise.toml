@@ -22,9 +22,10 @@ node = "22.11.0"
 #
 #   TESSARO_MACHINE=raspberrypi3-64 mise run image:build
 #
-# or use the image:build:qemu / :x86 / :arm64 / :rpi3 / :rpi4 / :rpi5 wrappers. Valid values
-# are the basenames in kas/machine/.
-machine = "{{ env.TESSARO_MACHINE | default(value='qemux86-64') }}"
+# or use the image:build:x86 / :arm64 / :rpi3 / :rpi4 / :rpi5 wrappers. Valid values
+# are the basenames in kas/machine/. The default, genericx86-64, is the image
+# the qemu:* tasks and the e2e suite boot, and the one x86 PCs run.
+machine = "{{ env.TESSARO_MACHINE | default(value='genericx86-64') }}"
 
 [env]
 _.path = "/opt/homebrew/opt/coreutils/libexec/gnubin:/opt/nvim-linux-x86_64/bin"
@@ -32,7 +33,7 @@ KAS_CONTAINER_ENGINE = "docker"
 DL_DIR = "{{config_root}}/cache/downloads"
 SSTATE_DIR = "{{config_root}}/cache/sstate-cache"
 
-# Exported so the tasks can branch on it (OVMF and runqemu are QEMU-only).
+# Exported so the tasks can branch on it (OVMF and runqemu are x86-only).
 TESSARO_MACHINE = "{{vars.machine}}"
 
 # One machine fragment plus the shared debug fragment. The machine fragment
@@ -163,7 +164,7 @@ dir = "{{config_root}}/test/e2e"
 run = "bundle install"
 
 [tasks."e2e:run"]
-description = "Run the end-to-end suite, one qemux86-64 VM per lane, E2E_JOBS (3) at a time"
+description = "Run the end-to-end suite, one genericx86-64 VM per lane, E2E_JOBS (3) at a time"
 dir = "{{config_root}}/test/e2e"
 depends = ["qemu:unpack"]
 raw = true
@@ -176,8 +177,8 @@ raw = true
 # are in build/e2e/<lane>.log either way. Arguments go to parallel_rspec, e.g.
 # `-- -o '--tag ~reboot'` to leave out the update lanes.
 run = '''
-[ "$TESSARO_MACHINE" = "qemux86-64" ] || {
-    echo "e2e only works for qemux86-64, not $TESSARO_MACHINE" >&2
+[ "$TESSARO_MACHINE" = "genericx86-64" ] || {
+    echo "e2e only works for genericx86-64, not $TESSARO_MACHINE" >&2
     exit 1
 }
 rm -rf ../../build/e2e/progress && mkdir -p ../../build/e2e/progress
@@ -195,8 +196,8 @@ raw = true
 #   mise run e2e:one -- spec/network_spec.rb -e ping
 # With E2E_KEEP=1 the VM stays up afterwards, and E2E_REUSE=1 runs against it.
 run = '''
-[ "$TESSARO_MACHINE" = "qemux86-64" ] || {
-    echo "e2e only works for qemux86-64, not $TESSARO_MACHINE" >&2
+[ "$TESSARO_MACHINE" = "genericx86-64" ] || {
+    echo "e2e only works for genericx86-64, not $TESSARO_MACHINE" >&2
     exit 1
 }
 exec bundle exec rspec "$@"
@@ -485,28 +486,24 @@ docker run --rm --init --user "$(id -u):$(id -g)" -e HOME=/tmp \
 '''
 
 [tasks."image:build"]
-description = "Build the image for $TESSARO_MACHINE (default qemux86-64)"
+description = "Build the image for $TESSARO_MACHINE (default genericx86-64)"
 dir = "{{config_root}}"
 run = '''
-# OVMF is the UEFI firmware runqemu boots the image with, so it is built for
-# the QEMU target only. Real hardware brings its own. genericarm64 gets
-# U-Boot's qemu_arm64 build instead (UBOOT_MACHINE in genericarm64.conf),
-# which qemu:run boots it with on Linux; a Mac uses Homebrew's edk2.
+# OVMF is the UEFI firmware runqemu boots the x86 image with. It goes into the
+# deploy directory beside the image, never into it: real hardware brings its
+# own. genericarm64 gets U-Boot's qemu_arm64 build instead (UBOOT_MACHINE in
+# genericarm64.conf), which qemu:run boots it with on Linux; a Mac uses
+# Homebrew's edk2.
 case "$TESSARO_MACHINE" in
-    qemux86-64) set -- --target moonforge-image-base --target ovmf ;;
+    genericx86-64) set -- --target moonforge-image-base --target ovmf ;;
     genericarm64) set -- --target moonforge-image-base --target u-boot ;;
     *) set -- --target moonforge-image-base ;;
 esac
 kas-container build "$@" $KAS_CONFIG
 '''
 
-[tasks."image:build:qemu"]
-description = "Build the qemux86-64 image (development target)"
-dir = "{{config_root}}"
-run = "TESSARO_MACHINE=qemux86-64 mise run image:build"
-
 [tasks."image:build:x86"]
-description = "Build the genericx86-64 image (real x86_64 hardware)"
+description = "Build the genericx86-64 image (x86_64 PCs, and QEMU for development and e2e)"
 dir = "{{config_root}}"
 run = "TESSARO_MACHINE=genericx86-64 mise run image:build"
 
@@ -806,7 +803,7 @@ fi
 '''
 
 [tasks."qemu:run"]
-description = "Boot the qemux86-64 or genericarm64 image in QEMU with the serial console on this terminal, or --count N devices on one network"
+description = "Boot the genericx86-64 or genericarm64 image in QEMU with the serial console on this terminal, or --count N devices on one network"
 dir = "{{config_root}}"
 depends = ["qemu:unpack"]
 raw = true
@@ -818,8 +815,8 @@ count={{ usage.count | default(value="1") }}
 [ "$count" = 1 ] || exec sh scripts/qemu-devices.sh window "$count"
 # genericarm64 boots on Linux and on a Mac (HVF, a window and CoreAudio).
 [ "$TESSARO_MACHINE" = "genericarm64" ] && exec sh scripts/qemu-arm64.sh window
-[ "$TESSARO_MACHINE" = "qemux86-64" ] || {
-    echo "qemu:run only works for qemux86-64 and genericarm64, not $TESSARO_MACHINE" >&2
+[ "$TESSARO_MACHINE" = "genericx86-64" ] || {
+    echo "qemu:run only works for genericx86-64 and genericarm64, not $TESSARO_MACHINE" >&2
     exit 1
 }
 # /dev/kvm is root:kvm 0660. The kas entrypoint drops to the "builder" user
@@ -848,14 +845,14 @@ else
     GPU_OPT="nographic"
 fi
 # --network=host, so runqemu's slirp forwards (127.0.0.1:2222 ssh,
-# 127.0.0.1:7401 tessaro-ctl - QB_SLIRP_OPT in kas/machine/qemux86-64.yml)
+# 127.0.0.1:7401 tessaro-ctl - QB_SLIRP_OPT in kas/machine/genericx86-64.yml)
 # are the host's loopback and not the container's.
 kas-container --runtime-args "$KVM_RUNTIME $GPU_RUNTIME --network=host" shell $KAS_CONFIG \
     -c "runqemu $WIC ovmf slirp snapshot $KVM_OPT $GPU_OPT serialstdio"
 '''
 
 [tasks."qemu:vnc"]
-description = "Boot the qemux86-64 or genericarm64 image in QEMU with a VNC display on localhost:5901, or --count N devices on one network (5901 up)"
+description = "Boot the genericx86-64 or genericarm64 image in QEMU with a VNC display on localhost:5901, or --count N devices on one network (5901 up)"
 dir = "{{config_root}}"
 depends = ["qemu:unpack"]
 raw = true
@@ -866,8 +863,8 @@ run = '''
 count={{ usage.count | default(value="1") }}
 [ "$count" = 1 ] || exec sh scripts/qemu-devices.sh vnc "$count"
 [ "$TESSARO_MACHINE" = "genericarm64" ] && exec sh scripts/qemu-arm64.sh vnc
-[ "$TESSARO_MACHINE" = "qemux86-64" ] || {
-    echo "qemu:vnc only works for qemux86-64 and genericarm64, not $TESSARO_MACHINE" >&2
+[ "$TESSARO_MACHINE" = "genericx86-64" ] || {
+    echo "qemu:vnc only works for genericx86-64 and genericarm64, not $TESSARO_MACHINE" >&2
     exit 1
 }
 # /dev/kvm is root:kvm 0660. The kas entrypoint drops to the "builder" user
@@ -970,9 +967,9 @@ flag "--vm <address>" help="With --attach: the VM's address on vmnet; by default
 run = '''
 set -eu
 case "$TESSARO_MACHINE" in
-    qemux86-64|genericarm64) ;;
+    genericx86-64|genericarm64) ;;
     *)
-        echo "usbcam:run only works for qemux86-64 and genericarm64, not $TESSARO_MACHINE" >&2
+        echo "usbcam:run only works for genericx86-64 and genericarm64, not $TESSARO_MACHINE" >&2
         exit 1
         ;;
 esac
@@ -1084,9 +1081,9 @@ flag "--attach" help="Also attach it in the VM on the 127.0.0.1:2222 forward, an
 run = '''
 set -eu
 case "$TESSARO_MACHINE" in
-    qemux86-64|genericarm64) ;;
+    genericx86-64|genericarm64) ;;
     *)
-        echo "usbscanner:run only works for qemux86-64 and genericarm64, not $TESSARO_MACHINE" >&2
+        echo "usbscanner:run only works for genericx86-64 and genericarm64, not $TESSARO_MACHINE" >&2
         exit 1
         ;;
 esac

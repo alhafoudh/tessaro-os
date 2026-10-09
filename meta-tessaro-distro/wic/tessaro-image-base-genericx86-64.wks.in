@@ -1,8 +1,9 @@
 # short-description: EFI disk image for genericx86-64 with a persistent /data
 # long-description: meta-yocto-bsp's genericx86.wks.in without a /data
-# partition, which overlayfs-etc requires. The layout matches Moonforge's
-# qemux86-64 one, so /data is the third partition on both x86 targets; it is
-# mounted by its "data" label (OVERLAYFS_ETC_DEVICE in kas/common/tessaro.yml).
+# partition, which overlayfs-etc requires. The layout is Moonforge's: ESP,
+# rootfs, then /data as the third partition; it is mounted by its "data"
+# label (OVERLAYFS_ETC_DEVICE in kas/common/tessaro.yml). The same image
+# boots on hardware and under QEMU (kas/machine/genericx86-64.yml).
 #
 # /data is also the last partition. There is no swap partition after it, so
 # `tessaro-ctl storage grow` can extend it over whatever the disk has past
@@ -15,9 +16,9 @@
 # code when a wks asks for one, so without it the boot partition is typed
 # "Microsoft basic data" - which OVMF happily boots from anyway, but firmware
 # that follows the spec and looks for an ESP by type GUID will not. Upstream's
-# genericx86.wks.in and Moonforge's qemu one both omit it; this is hardware, so
-# it is set here. The fs label is "boot" rather than upstream's confusing
-# "msdos".
+# genericx86.wks.in and Moonforge's qemu one both omit it; this image runs on
+# hardware, so it is set here. The fs label is "boot" rather than upstream's
+# confusing "msdos".
 #
 # Nothing here names a disk at runtime, which is the point on hardware that may
 # boot off SATA, USB or NVMe: --use-uuid on / and /boot makes wic write

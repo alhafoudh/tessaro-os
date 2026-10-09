@@ -90,7 +90,7 @@ pub(crate) fn live() -> state::Live {
 }
 
 /// The image's defaults as `tessaro-kiosk.env.in` has them, the values
-/// bitbake fills in (`@...@`) as the qemu image's.
+/// bitbake fills in (`@...@`) as a built image has them.
 pub(crate) fn image_defaults() -> HashMap<String, String> {
     let env_in = fs::read_to_string(format!(
         "{ROOT}/meta-tessaro-distro/recipes-browser/tessaro-kiosk/files/tessaro-kiosk.env.in"

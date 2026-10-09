@@ -50,7 +50,7 @@
       "claimed": false,
       "fingerprint": "AB:CD:EF",
       "id": "3f2a9c1d",
-      "machine": "qemux86-64",
+      "machine": "genericx86-64",
       "name": "lobby-kiosk",
       "version": "1.0.0"
     },
@@ -96,7 +96,7 @@
         "value": [
           [
             "plain",
-            "qemux86-64",
+            "genericx86-64",
             0
           ]
         ]

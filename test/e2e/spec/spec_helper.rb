@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# End-to-end checks for tessaro-agent, against a real qemux86-64 image.
+# End-to-end checks for tessaro-agent, against a real genericx86-64 image in QEMU.
 #
 # Each case provokes one thing the agent exists to handle - the site going
 # down, the browser dying, wedging or wandering off, DNS swallowing queries,

@@ -108,12 +108,14 @@ Overview and the status bar), and the page bridge (`device.status()`, in
   k10temp on genericx86-64, which load by the CPU's family. The Pi's kernel
   has its SoC's sensor, NVMe's and drivetemp already. drivetemp has no
   modalias, so `tessaro-kiosk` ships `modules-load.d/tessaro-drivetemp.conf`
-  and recommends the module, which qemu would otherwise not install.
+  and recommends the module, for a machine that does not install every
+  module on its own.
 * **An NVMe or SATA reading is a command to the drive.** At the GUI's 2s
   status poll that is cheap, and it is why the readings are not sampled in
   the background like CPU use: nothing reads them when no one asks.
-* **Every qemux86-64 VM has one sensor**: an empty emulated NVMe drive on
-  QEMU's `null-co` driver (`QB_OPT_APPEND` in `kas/machine/qemux86-64.yml`),
+* **Every genericx86-64 VM has one sensor**: an empty emulated NVMe drive on
+  QEMU's `null-co` driver (`QB_OPT_APPEND` in `kas/machine/genericx86-64.yml`),
   whose controller reports a fixed 323 K under a 343 K warning threshold, so
   `qemu:run`, `qemu:vnc` and the e2e suite's control lane all show a reading.
-  It never changes, and qemu has no CPU sensor.
+  It never changes, and qemu has no CPU sensor: coretemp and k10temp are in
+  the image, but QEMU's CPU models give them nothing to bind to.

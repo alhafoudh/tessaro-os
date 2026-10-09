@@ -1,4 +1,4 @@
-# Build images by hand, run e2e on the qemu one, build tessaro-ctl and
+# Build images by hand, run e2e on the genericx86-64 one, build tessaro-ctl and
 # tessaro-gui for every platform, Try Tessaro around the genericarm64 image
 # when try is ticked, and publish them all as a release when that is ticked.
 # The images and e2e are image.yml's jobs, on the self-hosted runner on the
@@ -11,14 +11,10 @@ name: release
 on:
   workflow_dispatch:
     inputs:
-      qemux86-64:
-        description: qemux86-64 (development, QEMU)
+      genericx86-64:
+        description: genericx86-64 (x86_64 PCs; e2e runs on it in QEMU)
         type: boolean
         default: true
-      genericx86-64:
-        description: genericx86-64 (x86_64 PCs)
-        type: boolean
-        default: false
       genericarm64:
         description: genericarm64 (Arm64 UEFI, a VM on an Apple silicon Mac)
         type: boolean
@@ -40,7 +36,7 @@ on:
         type: boolean
         default: false
       e2e:
-        description: Run the e2e suite on the qemux86-64 image
+        description: Run the e2e suite on the genericx86-64 image
         type: boolean
         default: true
       e2e_args:
@@ -79,8 +75,8 @@ jobs:
         env:
           MISE_AUTO_INSTALL: "false"
         run: |
-          name=$(TESSARO_MACHINE=qemux86-64 mise run --quiet image:name | tail -n 1)
-          version=${name#tessaro-os-qemux86-64-}
+          name=$(TESSARO_MACHINE=genericx86-64 mise run --quiet image:name | tail -n 1)
+          version=${name#tessaro-os-genericx86-64-}
           version=${version%.wic.zst}
           echo "version: $version"
           echo "version=$version" >> "$GITHUB_OUTPUT"
@@ -92,14 +88,14 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           machines=$(jq -c '[to_entries[]
-            | select(.key == "qemux86-64" or .key == "genericx86-64" or .key == "genericarm64" or .key == "raspberrypi3-64" or .key == "raspberrypi4-64" or .key == "raspberrypi5")
+            | select(.key == "genericx86-64" or .key == "genericarm64" or .key == "raspberrypi3-64" or .key == "raspberrypi4-64" or .key == "raspberrypi5")
             | select(.value == true) | .key]' <<<"$PICKED")
           [ "$machines" != "[]" ] || { echo "::error::pick at least one machine"; exit 1; }
           # A release only follows a passed e2e, so fail now rather than
           # after hours of builds that could never be released.
           if [ "$(jq -r .release <<<"$PICKED")" = true ]; then
-            [ "$(jq -r .e2e <<<"$PICKED")" = true ] && jq -e 'index("qemux86-64")' <<<"$machines" >/dev/null \
-              || { echo "::error::a release needs e2e ticked and qemux86-64 picked"; exit 1; }
+            [ "$(jq -r .e2e <<<"$PICKED")" = true ] && jq -e 'index("genericx86-64")' <<<"$machines" >/dev/null \
+              || { echo "::error::a release needs e2e ticked and genericx86-64 picked"; exit 1; }
             # Every release needs a new semver; the sha after it only says
             # which commit. Drafts and prereleases count too.
             semver=${VERSION%%-*}
@@ -117,7 +113,7 @@ jobs:
           fi
           echo "machines=$machines" >> "$GITHUB_OUTPUT"
 
-  # The picked images and e2e on the qemu one, on the build host.
+  # The picked images and e2e on the genericx86-64 one, on the build host.
   image:
     needs: pick
     uses: ./.github/workflows/image.yml

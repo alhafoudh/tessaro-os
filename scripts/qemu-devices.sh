@@ -2,7 +2,7 @@
 # Several qemu devices on one network the host sees them on, so
 # `tessaro-ctl nodes list` and tessaro-gui's node list find every one over
 # mDNS: what `mise run qemu:run --count N` and `qemu:vnc --count N` run for
-# N > 1, on qemux86-64 and genericarm64 (docs/build.md "Several devices").
+# N > 1, on genericx86-64 and genericarm64 (docs/build.md "Several devices").
 #
 #   scripts/qemu-devices.sh window|vnc COUNT
 #

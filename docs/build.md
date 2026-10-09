@@ -23,8 +23,8 @@ pins from `kas/repo/meta-chromium.yml`, `meta-tessaro-distro`, and the disk
 layout: `IMAGE_DATA_MIN_SIZE`, `OVERLAYFS_ETC_DEVICE`, `TESSARO_ROOTFS_SIZE`,
 `TESSARO_ESP_SIZE`, the bundled initramfs) and adds only what is
 board-specific: the layer or repo fragment for that BSP, `WKS_FILE`, `distro`,
-`machine`, and board knobs (`QB_*` on qemu, `VC4DTBO` and the boot files on
-the Pi). Adding a target is one new file in `kas/machine/`; nothing else moves.
+`machine`, and board knobs (`QB_*` for runqemu on genericx86-64, `VC4DTBO`
+and the boot files on the Pi). Adding a target is one new file in `kas/machine/`; nothing else moves.
 
 The Pi machine fragments share `kas/common/raspberrypi.yml`, which includes
 the common Tessaro configuration and owns their firmware boot and storage
@@ -37,7 +37,7 @@ config chain on `:` and treats each element as a plain path, so only an
 
 Configuration arrives through chains that each span several files:
 
-1. **kas includes.** `kas/common/tessaro.yml` and the qemu and Pi machine
+1. **kas includes.** `kas/common/tessaro.yml` and the Pi machine
    fragments pull `meta-moonforge:kas/include/layer/meta-moonforge-*.yml`. Each *layer*
    fragment activates its layer, pulls the *repo* fragments it needs
    (`kas/include/repo/*.yml`, which carry the url/commit pins), and contributes
@@ -136,8 +136,7 @@ is how Chromium's `PACKAGECONFIG` and `CHROMIUM_EXTRA_ARGS` are set.
   So the preinit mounting `/data` by label is only half the job - without
   `--use-label` on that partition, fstab still says `/dev/sda3`, and on an NVMe
   board systemd fails `data.mount` after a perfectly good preinit. Our
-  genericx86-64 and Raspberry Pi wks files pass it. The qemux86-64 wks uses
-  the fixed device names of its QEMU setup.
+  genericx86-64, genericarm64 and Raspberry Pi wks files pass it.
 * **The x86 hardware image is UEFI-only.**
   `meta-tessaro-distro/wic/tessaro-image-base-genericx86-64.wks.in` is GPT plus
   an ESP with grub-efi. `genericx86-64` does declare the `pcbios`
@@ -176,7 +175,7 @@ is how Chromium's `PACKAGECONFIG` and `CHROMIUM_EXTRA_ARGS` are set.
   Intel's, virgl and swrast, and Weston and Chromium render in software on an
   AMD GPU. `tessaro.conf` enables them for x86-64, with the VA driver. Check
   the built drivers in `build/<machine>/tmp/work/*/mesa/*/image/usr/lib/dri`.
-* **runqemu needs a file path, not an image name.** `runqemu ... qemux86-64
+* **runqemu needs a file path, not an image name.** `runqemu ... genericx86-64
   moonforge-image-base wic` fails with `IMAGE_LINK_NAME wasn't set`: the image
   name is treated as a lazy rootfs, and the machine argument makes runqemu run
   `bitbake -e` with no recipe target, where `IMAGE_LINK_NAME` (set by the
@@ -196,7 +195,7 @@ is how Chromium's `PACKAGECONFIG` and `CHROMIUM_EXTRA_ARGS` are set.
   goes in as `-object secret` with `-vnc ...,password-secret=` (`mise.toml`),
   so no monitor command is needed, and VNC reads at most 8 characters of it.
   `PACKAGECONFIG:append:pn-qemu-system-native = " nettle"` in
-  `kas/machine/qemux86-64.yml` is a build-time dependency of the host's QEMU
+  `kas/machine/genericx86-64.yml` (and `genericarm64.yml`) is a build-time dependency of the host's QEMU
   only, which is why it is in the machine fragment and not `tessaro.conf`:
   the image gets no new package and no target recipe rebuilds.
 * **The kiosk needs a real GPU on the build host to render under QEMU.** Only
@@ -212,8 +211,18 @@ is how Chromium's `PACKAGECONFIG` and `CHROMIUM_EXTRA_ARGS` are set.
   no GPU driver loads at all and `modprobe amdgpu` fails with `Invalid
   argument`; that has to come off the kernel command line first.
 * **`runqemu`'s `QB_MEM` default is 256M**, which Chromium plus Weston will
-  not survive. Fixed at 4G in the `30_tessaro-qemu-kiosk` block of the kas
-  fragment.
+  not survive. Fixed at 4G in the `30_tessaro-qemu-kiosk` block of
+  `kas/machine/genericx86-64.yml`. That block only shapes the `qemuboot.conf`
+  runqemu reads and the host's QEMU, so the image a PC runs is the one QEMU
+  boots.
+* **genericx86-64's kernel is oe-core's linux-yocto 6.6, not
+  meta-yocto-bsp's.** meta-yocto-bsp pins the generic x86 machines to an
+  older `SRCREV_machine` and `LINUX_VERSION`
+  (`meta-yocto-bsp/recipes-kernel/linux/linux-yocto_6.6.bbappend`);
+  `meta-tessaro-distro/recipes-kernel/linux/linux-yocto_6.6.bbappend` sets
+  them back to `linux-yocto_6.6.bb`'s defaults, the ones genericarm64 builds.
+  Copy them again after an oe-core bump; a mismatch fails
+  `do_kernel_version_sanity_check` rather than building the wrong kernel.
 * **`QB_GRAPHICS` is the knob for the QEMU display, not `QB_OPT_APPEND`** -
   `runqemu` appends `QB_GRAPHICS` unconditionally, while
   `x86/qemuboot-x86.inc` already owns `QB_OPT_APPEND` (only an `:append`
@@ -234,7 +243,7 @@ is how Chromium's `PACKAGECONFIG` and `CHROMIUM_EXTRA_ARGS` are set.
   (`git grep ':moonforge'` over the layers) after a Moonforge bump or when
   enabling a new layer. Fix if needed: `DISTROOVERRIDES =. "moonforge:"` in `tessaro.conf`.
 * **Artifacts are named `tessaro-os-<machine>-<version>.*`**, e.g.
-  `tessaro-os-qemux86-64-0.1.0-1a2b3c4.wic.zst`: the `tessaro-os` prefix
+  `tessaro-os-genericx86-64-0.1.0-1a2b3c4.wic.zst`: the `tessaro-os` prefix
   is `IMAGE_BASENAME` in `moonforge-image-base.bbappend` (it defaults to `${PN}`,
   which would name the product after the upstream recipe), and the version is
   `IMAGE_VERSION` in `tessaro.conf`: `DISTRO_VERSION` (the semver marketing
@@ -351,8 +360,7 @@ kiosk.
 
 | Machine | Purpose | State |
 | --- | --- | --- |
-| `qemux86-64` | development, boots through `mise run qemu:vnc` | builds and boots; the e2e suite runs on it |
-| `genericx86-64` | shipping x86_64 hardware (UEFI), Intel or AMD GPU | tested on a Dell OptiPlex 7050; other PCs untested |
+| `genericx86-64` | shipping x86_64 hardware (UEFI), Intel or AMD GPU; the same image boots under QEMU for development (`mise run qemu:vnc`) and the e2e suite | tested on a Dell OptiPlex 7050, other PCs untested; the e2e suite runs on it |
 | `genericarm64` | Arm64 under UEFI: trying Tessaro in a VM on an Apple silicon Mac, `mise run qemu:run:arm64` | boots and shows the kiosk in QEMU on the x86 build host (TCG, U-Boot) and on a Mac (HVF, edk2, vmnet); Arm boards with UEFI firmware untested, and would need their storage and GPU drivers |
 | `raspberrypi3-64` | Raspberry Pi 3B / 3B+, SD or USB | tested on a Pi 3 Model B+ |
 | `raspberrypi4-64` | Raspberry Pi 4B / 400 / CM4, SD or USB | not yet tested on hardware |

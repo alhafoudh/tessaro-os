@@ -4,16 +4,19 @@
 # comments in each fragment for what each option is for.
 #
 # The wireless fragment comes after tessaro-devices.cfg, so its =m for btusb
-# wins over the =y there. It is genericx86-64 only: qemux86-64 has no wireless
-# NIC and installs no module set. genericx86-64 also gets HDMI-CEC over
-# DisplayPort (tessaro-x86-cec.cfg) and the CPU's temperature sensors
-# (tessaro-x86-sensors.cfg). qemux86-64 gets USB/IP's client instead,
-# for the test camera the host serves (tessaro-qemu-usbip.cfg), and vivid's
-# emulated CEC bus for the e2e suite (tessaro-qemu-cec.cfg). genericarm64 gets
-# V4L2, the VM sound cards and USB/IP, which its BSP config leaves out
-# (tessaro-genericarm64.cfg).
+# wins over the =y there. genericx86-64 also gets HDMI-CEC over DisplayPort
+# (tessaro-x86-cec.cfg), the CPU's temperature sensors
+# (tessaro-x86-sensors.cfg), USB sound cards (tessaro-x86-audio.cfg), and
+# what the e2e suite needs when the same image boots under QEMU: USB/IP's
+# client for the test camera and scanner the host serves
+# (tessaro-qemu-usbip.cfg) and vivid's emulated CEC bus
+# (tessaro-qemu-cec.cfg). Those are modules nothing loads unless asked to.
+# genericarm64 gets V4L2, the VM sound cards and USB/IP, which its BSP config
+# leaves out (tessaro-genericarm64.cfg).
 #
-# linux-yocto is the kernel on qemux86-64, genericx86-64 and genericarm64. raspberrypi3-64
+# genericx86-64's kernel version is in linux-yocto_6.6.bbappend.
+#
+# linux-yocto is the kernel on genericx86-64 and genericarm64. raspberrypi3-64
 # builds linux-raspberrypi instead, which this bbappend does not touch - check
 # meta-raspberrypi's defconfig with
 #
@@ -33,6 +36,5 @@
 FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
 
 SRC_URI += "file://tessaro-devices.cfg file://tessaro-sensors.cfg"
-SRC_URI:append:genericx86-64 = " file://tessaro-x86-wireless.cfg file://tessaro-x86-cec.cfg file://tessaro-x86-sensors.cfg"
-SRC_URI:append:qemux86-64 = " file://tessaro-qemu-usbip.cfg file://tessaro-qemu-cec.cfg"
+SRC_URI:append:genericx86-64 = " file://tessaro-x86-wireless.cfg file://tessaro-x86-cec.cfg file://tessaro-x86-sensors.cfg file://tessaro-x86-audio.cfg file://tessaro-qemu-usbip.cfg file://tessaro-qemu-cec.cfg"
 SRC_URI:append:genericarm64 = " file://tessaro-genericarm64.cfg"

@@ -1,4 +1,4 @@
-# Build the qemux86-64 image of a branch by hand and run e2e on it, without
+# Build the genericx86-64 image of a branch by hand and run e2e on it, without
 # the clients or a release: pick the branch (a pull request's included) in
 # "Use workflow from". image.yml's jobs, on the self-hosted runner on the
 # build host. Only workflow_dispatch triggers this, so only people with write
@@ -26,6 +26,6 @@ jobs:
       group: beef-yocto
       cancel-in-progress: false
     with:
-      machines: '["qemux86-64"]'
+      machines: '["genericx86-64"]'
       e2e: true
       e2e_args: ${{ inputs.e2e_args }}

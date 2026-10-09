@@ -1,5 +1,5 @@
 # Build images on the self-hosted runner on the build host and run e2e on the
-# qemu one. Called by release.yml and e2e.yml, both started by hand; the
+# genericx86-64 one, in QEMU. Called by release.yml and e2e.yml, both started by hand; the
 # caller sets the beef-yocto concurrency on the job that calls this. The
 # runner uses the shared download and sstate cache in place: it is far too
 # big for a cache store. Only workflow_dispatch callers, so only people with
@@ -12,11 +12,11 @@ on:
   workflow_call:
     inputs:
       machines:
-        description: JSON array of the machines to build, e.g. '["qemux86-64"]'
+        description: JSON array of the machines to build, e.g. '["genericx86-64"]'
         type: string
         required: true
       e2e:
-        description: Run the e2e suite on the qemux86-64 image
+        description: Run the e2e suite on the genericx86-64 image
         type: boolean
         default: false
       e2e_args:
@@ -57,8 +57,8 @@ jobs:
         env:
           MISE_AUTO_INSTALL: "false"
         run: |
-          name=$(TESSARO_MACHINE=qemux86-64 mise run --quiet image:name | tail -n 1)
-          version=${name#tessaro-os-qemux86-64-}
+          name=$(TESSARO_MACHINE=genericx86-64 mise run --quiet image:name | tail -n 1)
+          version=${name#tessaro-os-genericx86-64-}
           version=${version%.wic.zst}
           echo "version: $version"
           echo "version=$version" >> "$GITHUB_OUTPUT"
@@ -198,17 +198,18 @@ jobs:
   # so it can be re-run without the build. It waits for every build leg.
   e2e:
     needs: [version, build]
-    # A failed Pi leg does not keep the qemu image from its test; the check
-    # below fails if the qemu build is not the one in the tree.
+    # A failed Pi leg does not keep the genericx86-64 image from its test;
+    # the check below fails if the genericx86-64 build is not the one in the
+    # tree.
     if: >-
       always() && inputs.e2e && needs.version.result == 'success'
       && needs.build.result != 'cancelled'
-      && contains(fromJSON(inputs.machines), 'qemux86-64')
+      && contains(fromJSON(inputs.machines), 'genericx86-64')
     runs-on: [self-hosted, yocto]
     # The wait for the host below, plus the suite's 30.
     timeout-minutes: 400
     env:
-      TESSARO_MACHINE: qemux86-64
+      TESSARO_MACHINE: genericx86-64
     steps:
       # clean: false, so the build tree build left stays.
       - uses: actions/checkout@v5
@@ -222,10 +223,10 @@ jobs:
           EXPECTED: ${{ needs.version.outputs.version }}
         run: |
           name=$(mise run --quiet image:name | tail -n 1)
-          version=${name#tessaro-os-qemux86-64-}
+          version=${name#tessaro-os-genericx86-64-}
           version=${version%.wic.zst}
           [ "${version%-dirty}" = "$EXPECTED" ] || { echo "::error::the checkout is $version but the run is $EXPECTED"; exit 1; }
-          latest=$(readlink build/qemux86-64/tmp/deploy/images/qemux86-64/tessaro-os-qemux86-64.rootfs.wic.zst || true)
+          latest=$(readlink build/genericx86-64/tmp/deploy/images/genericx86-64/tessaro-os-genericx86-64.rootfs.wic.zst || true)
           [ "$latest" = "$name" ] || { echo "::error::the tree's latest image is ${latest:-missing}, not $name"; exit 1; }
           echo "testing $name"
 

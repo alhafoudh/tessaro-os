@@ -1,6 +1,7 @@
 # The agent's end-to-end checks
 
-`mise run e2e:run` boots the qemux86-64 image and runs the RSpec suite in
+`mise run e2e:run` boots the genericx86-64 image, the one x86 PCs run, in
+QEMU and runs the RSpec suite in
 `test/e2e/spec/` against it. Each case provokes one thing the agent exists to
 handle - a site going down, a crashed or wedged browser, a config change, a
 claim, a network change that has to roll back, an image update - and asserts
@@ -39,14 +40,16 @@ start.
   into the lane whose state it fits; a case that reboots goes into a file of
   its own, tagged `:reboot`. A lane gets a disk larger than the image with
   `extra_disk:` on its describe (`spec/support/vm.rb`), which boots a grown
-  sparse copy and leaves the image as built.
+  sparse copy and leaves the image as built. The update lanes all do, and
+  grow `/data` before the upload (`spec/support/update.rb`): the image does
+  not fit through its own 1 GB `/data`, upload and staging together.
 * **Every worker has its own ports**, from `TEST_ENV_NUMBER`
   (`spec/support/ports.rb`); worker 0 has the ports a single VM always had.
   `E2E_WORKER_OFFSET=1` moves every worker one up, for a host where
   something else holds worker 0's ports (`dev:tunnel` holds 7400 on the
   build host).
   The forwards are fixed in the image's qemuboot.conf, so each worker writes
-  its own copy, `tessaro-os-qemux86-64.e2e-worker-N.qemuboot.conf`, into the
+  its own copy, `tessaro-os-genericx86-64.e2e-worker-N.qemuboot.conf`, into the
   deploy directory and passes it to runqemu *after* the `.wic`: runqemu
   derives a conf from the image argument, only a later conf argument replaces
   it, and it takes the conf's own directory as `DEPLOY_DIR_IMAGE`, where it
@@ -65,7 +68,7 @@ start.
 * **The VM has sound cards `mise run qemu:run` does not.** `support/vm.rb` passes
   runqemu `qemuparams=` for an Intel HDA line out and a USB audio device,
   each on a `-audiodev wav` recording to
-  `build/qemux86-64/e2e-worker-N.{jack,usb}.wav`, so the audio lane reads
+  `build/genericx86-64/e2e-worker-N.{jack,usb}.wav`, so the audio lane reads
   which card a sound came out of from the host. They are not in the kas
   fragment, or every `mise run qemu:run` would write WAV files. QEMU's wav backend
   cannot capture, so the mic case only proves the grant.
@@ -83,8 +86,8 @@ start.
   so arriving and leaving come round every 20s without anyone in front of
   a camera ([presence.md](presence.md), Testing).
 * **The CEC lane talks over vivid's emulated HDMI-CEC bus.** qemu emulates
-  no CEC, so `cec_spec.rb` loads `vivid` (built for qemux86-64 only,
-  `tessaro-qemu-cec.cfg`), points the agent at the adapter of vivid's HDMI
+  no CEC, so `cec_spec.rb` loads `vivid` (a module in the image that
+  nothing else loads, `tessaro-qemu-cec.cfg`), points the agent at the adapter of vivid's HDMI
   output with `KIOSK_CEC_DEVICES` in a drop-in under `/run`, and runs
   `cec-follower` as the TV on the input's adapter; `cec-ctl` sends the TV's
   standby and its remote's keys, and the follower's log shows what `screen

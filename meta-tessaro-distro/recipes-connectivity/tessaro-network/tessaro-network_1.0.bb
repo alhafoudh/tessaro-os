@@ -82,8 +82,9 @@ RDEPENDS:${PN} += " \
 "
 
 # NetworkManager's masquerade table (table ip nm-shared-<iface>) needs the NAT
-# and conntrack parts of nftables, which linux-yocto builds as modules and
-# qemux86-64 does not install by default. Recommended, not required: on a
+# and conntrack parts of nftables, which linux-yocto builds as modules and a
+# machine without the full module set does not install by default.
+# Recommended, not required: on a
 # kernel that builds them in, the packages do not exist and nothing is lost.
 # The agent's own drop table needs only what CONFIG_NF_TABLES builds in.
 RRECOMMENDS:${PN} += " \

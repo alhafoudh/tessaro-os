@@ -11,10 +11,17 @@ module AgentE2E
   # --repartition, the whole disk from RAM. It goes to the guest over SSH and
   # is sent from there through the local socket, as a technician on the
   # device would.
+  #
+  # The image as built does not fit through its own 1 GB /data - the upload
+  # plus the staging - so every update lane boots with `extra_disk:` and grows
+  # /data first, as docs/updates.md asks of a real device.
+  EXTRA_DISK = 2 << 30
+
   module Update
     def push_image(guest)
       return if guest.run("test -f /data/e2e.wic.zst && echo yes", allow_failure: true).include?("yes")
 
+      guest.run("tessaro-ctl storage grow --yes", timeout: 600)
       %w[.zst .bmap].each do |suffix|
         guest.run("cat > /data/e2e.wic#{suffix}", input: File.binread(IMAGE + suffix), timeout: 600)
       end

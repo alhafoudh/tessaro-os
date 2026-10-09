@@ -30,7 +30,7 @@
 #   Mac and the guest and `nodes list` finds it. vmnet needs root, so QEMU
 #   runs under sudo.
 # * user: slirp, which carries no multicast, with the forwards qemu:run has
-#   on qemux86-64: 127.0.0.1:2222 to SSH and 127.0.0.1:7401 to the API,
+#   on genericx86-64: 127.0.0.1:2222 to SSH and 127.0.0.1:7401 to the API,
 #   Webconfig included (https://127.0.0.1:7401).
 # * tap (Linux only): the tap TESSARO_QEMU_TAP names, on the bridge
 #   scripts/qemu-net.sh built, for several devices at once

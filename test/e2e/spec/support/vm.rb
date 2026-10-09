@@ -6,18 +6,20 @@ module AgentE2E
 
   # The image the suite boots, as `mise run image:build` and `mise run qemu:unpack` leave
   # it. The suite never builds: a missing image is an error, a stale one a
-  # warning (see spec_helper.rb).
-  DEPLOY_DIR = File.join(ROOT, "build", "qemux86-64", "tmp", "deploy", "images", "qemux86-64")
+  # warning (see spec_helper.rb). It is the image x86 PCs run, booted under
+  # QEMU; mise's e2e tasks refuse any other TESSARO_MACHINE.
+  MACHINE = "genericx86-64"
+  DEPLOY_DIR = File.join(ROOT, "build", MACHINE, "tmp", "deploy", "images", MACHINE)
 
   # The checkout whose build dir this really is, where the VM is started
-  # from. In a worktree whose build/qemux86-64 is a symlink to the main
+  # from. In a worktree whose build/<machine> is a symlink to the main
   # checkout's, that is the main checkout: kas-container mounts the checkout
   # it runs in as /work, and the native qemu's ELF interpreter (uninative's
-  # ld-linux) is hard-coded under /work/build/qemux86-64 - through a symlink
+  # ld-linux) is hard-coded under /work/build/<machine> - through a symlink
   # that leaves /work it does not exist, and the exec fails with ENOENT on
   # qemu-system-x86_64 itself.
   def self.vm_root
-    build = File.join(ROOT, "build", "qemux86-64")
+    build = File.join(ROOT, "build", MACHINE)
     File.exist?(build) ? File.expand_path("../..", File.realpath(build)) : ROOT
   end
   # The emulated sound cards' output, as QEMU writes it: one WAV file per
@@ -25,13 +27,13 @@ module AgentE2E
   # inside the kas container. `jack` is an Intel HDA line out, `usb` a USB
   # audio device, so the audio lane can tell which card a sound came out of.
   def self.audio_capture(card)
-    File.join(vm_root, "build", "qemux86-64", audio_capture_name(card))
+    File.join(vm_root, "build", MACHINE, audio_capture_name(card))
   end
 
   def self.audio_capture_name(card) = "e2e-worker-#{Ports.worker}.#{card}.wav"
 
-  IMAGE = File.join(DEPLOY_DIR, "tessaro-os-qemux86-64.rootfs.wic")
-  QEMUBOOT = File.join(DEPLOY_DIR, "tessaro-os-qemux86-64.rootfs.qemuboot.conf")
+  IMAGE = File.join(DEPLOY_DIR, "tessaro-os-#{MACHINE}.rootfs.wic")
+  QEMUBOOT = File.join(DEPLOY_DIR, "tessaro-os-#{MACHINE}.rootfs.qemuboot.conf")
 
   # Boots the image with runqemu inside the kas container, sharing the host's
   # network namespace so runqemu's slirp forwards are the host's ports too.
@@ -117,7 +119,7 @@ module AgentE2E
     def disk
       return "$WIC" unless @extra_disk
 
-      name = "tessaro-os-qemux86-64.e2e-worker-#{Ports.worker}.rootfs.wic"
+      name = "tessaro-os-#{MACHINE}.e2e-worker-#{Ports.worker}.rootfs.wic"
       @grown = File.join(DEPLOY_DIR, name)
       AgentE2E.step("copy the image with #{@extra_disk >> 20} MiB more disk after it")
       unless system("cp", "--sparse=always", IMAGE, @grown)
@@ -125,7 +127,7 @@ module AgentE2E
       end
 
       File.truncate(@grown, File.size(IMAGE) + @extra_disk)
-      "tmp/deploy/images/qemux86-64/#{name}"
+      "tmp/deploy/images/#{MACHINE}/#{name}"
     end
 
     # Reaps the process once, and remembers that it did.
@@ -165,13 +167,13 @@ module AgentE2E
     # conf's directory as DEPLOY_DIR_IMAGE, where it finds the kernel and
     # OVMF. Returned relative to the build dir, which is the container's cwd.
     def worker_qemuboot
-      name = "tessaro-os-qemux86-64.e2e-worker-#{Ports.worker}.qemuboot.conf"
+      name = "tessaro-os-#{MACHINE}.e2e-worker-#{Ports.worker}.qemuboot.conf"
       conf = File.read(QEMUBOOT).gsub(/hostfwd=tcp:127\.0\.0\.1:\d+-:(\d+)/) do
         guest_port = Regexp.last_match(1).to_i
         "hostfwd=tcp:127.0.0.1:#{Ports.forwards.fetch(guest_port)}-:#{guest_port}"
       end
       File.write(File.join(DEPLOY_DIR, name), conf)
-      "tmp/deploy/images/qemux86-64/#{name}"
+      "tmp/deploy/images/#{MACHINE}/#{name}"
     end
 
     # Two sound cards, each recorded to a WAV file on the host: an Intel HDA

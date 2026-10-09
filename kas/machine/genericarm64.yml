@@ -37,7 +37,7 @@ local_conf_header:
     PACKAGE_EXTRA_ARCHS:tune-cortexa53 = "${PACKAGE_EXTRA_ARCHS:tune-armv8a-crc} cortexa53"
     BASE_LIB:tune-cortexa53 = "lib64"
     # qemu:vnc puts a password on the display, which needs DES from a crypto
-    # library QEMU is built without by default; as in qemux86-64.yml, only
+    # library QEMU is built without by default; as in genericx86-64.yml, only
     # the host's QEMU changes (scripts/qemu-arm64.sh).
     PACKAGECONFIG:append:pn-qemu-system-native = " nettle"
     # usbip to attach the test camera the host serves over USB/IP
