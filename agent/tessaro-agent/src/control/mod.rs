@@ -1759,7 +1759,7 @@ mod tests {
             "MemTotal:        4000000 kB\nMemAvailable:    3000000 kB\n",
         )
         .unwrap();
-        // The emulated NVMe drive the e2e suite attaches: no CPU sensor.
+        // The emulated NVMe drive every qemu VM boots with: no CPU sensor.
         let nvme = dir.path().join("hwmon/hwmon0");
         fs::create_dir_all(&nvme).unwrap();
         fs::write(nvme.join("name"), "nvme\n").unwrap();

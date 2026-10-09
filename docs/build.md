@@ -216,7 +216,8 @@ is how Chromium's `PACKAGECONFIG` and `CHROMIUM_EXTRA_ARGS` are set.
   fragment.
 * **`QB_GRAPHICS` is the knob for the QEMU display, not `QB_OPT_APPEND`** -
   `runqemu` appends `QB_GRAPHICS` unconditionally, while
-  `x86/qemuboot-x86.inc` already owns `QB_OPT_APPEND`. `runqemu`'s
+  `x86/qemuboot-x86.inc` already owns `QB_OPT_APPEND` (only an `:append`
+  survives it, which is how the emulated NVMe temperature sensor goes in). `runqemu`'s
   `setup_vga()` only adds `-device virtio-vga` on its `sdl`/`gtk`/
   `egl-headless` paths, never on `publicvnc`. This is a performance choice, not
   a prerequisite: QEMU's default std VGA plus `CONFIG_DRM_BOCHS=y` in

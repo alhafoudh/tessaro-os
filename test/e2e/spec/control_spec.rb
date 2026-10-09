@@ -4,7 +4,7 @@ module AgentE2E
   # The control plane: settings, the debug screen, maintenance mode, the
   # claim model, ssh keys, the resolution probation, the file store, eval,
   # the page bridge, screen power and Quick Setup's captive portal.
-  RSpec.describe "the control plane", nvme: true do
+  RSpec.describe "the control plane" do
     include_context "a booted VM"
 
     # CONFIRM_SECONDS in the protocol crate.
@@ -97,7 +97,8 @@ module AgentE2E
       expect(status).to match(/^memory\s+\S+ \S+ free of \S+ \S+ \(\d+% used\)$/)
     end
 
-    # The lane's emulated NVMe drive is the VM's one temperature sensor:
+    # The emulated NVMe drive every qemux86-64 VM boots with (QB_OPT_APPEND
+    # in kas/machine/qemux86-64.yml) is the VM's one temperature sensor:
     # QEMU reports 323 K under a 343 K warning threshold, which the kernel
     # turns into millidegrees. A VM has no CPU sensor, so no cpu reading.
     it "temperatures: tessaro-ctl device status reads the NVMe drive's sensor" do

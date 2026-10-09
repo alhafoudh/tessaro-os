@@ -39,6 +39,14 @@ local_conf_header:
     # runqemu shifts a port up by itself if it is taken, and says so in its
     # "Port forward:" line.
     QB_SLIRP_OPT = "-netdev user,id=net0,hostfwd=tcp:127.0.0.1:2222-:22,hostfwd=tcp:127.0.0.1:2323-:23,hostfwd=tcp:127.0.0.1:7401-:7400,tftp=${DEPLOY_DIR_IMAGE}"
+    # A temperature sensor for the VM: an empty emulated NVMe drive, whose
+    # controller reports a fixed 323 K under a 343 K warning threshold to the
+    # guest's hwmon (docs/hardware.md, Temperatures). Every qemu:run, qemu:vnc
+    # and e2e boot gets it from here. null-co needs no backing file: it reads
+    # zeros and drops writes. The drive is nvme0n1, so it never takes the root
+    # disk's name. An :append, because x86/qemuboot-x86.inc sets
+    # QB_OPT_APPEND after local.conf.
+    QB_OPT_APPEND:append = " -blockdev driver=null-co,node-name=sensor,size=67108864,read-zeroes=on -device nvme,serial=tessaro-sensor,drive=sensor"
     # Sound drivers for the emulated cards the e2e suite plugs in (Intel HDA
     # and a USB audio device, see test/e2e/spec/support/vm.rb). linux-yocto
     # builds them as modules, and oe-core's qemux86-64.conf recommends only

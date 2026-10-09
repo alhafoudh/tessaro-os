@@ -112,6 +112,8 @@ Overview and the status bar), and the page bridge (`device.status()`, in
 * **An NVMe or SATA reading is a command to the drive.** At the GUI's 2s
   status poll that is cheap, and it is why the readings are not sampled in
   the background like CPU use: nothing reads them when no one asks.
-* **qemu has one sensor in the e2e suite**: the control lane attaches an
-  emulated NVMe drive (`nvme: true`, docs/e2e.md), which reports a fixed
-  323 K under a 343 K warning threshold. qemu has no CPU sensor.
+* **Every qemux86-64 VM has one sensor**: an empty emulated NVMe drive on
+  QEMU's `null-co` driver (`QB_OPT_APPEND` in `kas/machine/qemux86-64.yml`),
+  whose controller reports a fixed 323 K under a 343 K warning threshold, so
+  `qemu:run`, `qemu:vnc` and the e2e suite's control lane all show a reading.
+  It never changes, and qemu has no CPU sensor.
