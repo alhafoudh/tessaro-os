@@ -1,12 +1,21 @@
-// The device as a page sees it: tessaro.device.status() every few seconds,
+// The device as a page sees it: tessaro.device.status() every few seconds
+// (load, temperatures, what it is),
 // tessaro.config with every change flashing as it arrives, a line into the
 // device's journal, and what the browser itself reports.
 
 import { useCallback, useMemo, useState } from "react";
 
 import { getBridge, useBridge, usePoll, useTessaroEvent } from "../bridge/bridge";
+import type { Temperature } from "../bridge/types";
 import type { SectionProps } from "../features/registry";
 import { ActionButton, bytes, Gauge, Hint, KV, Panel, Stat } from "../shell/ui";
+
+/** A reading's color against the sensor's own limits, as tessaro-ctl tones it. */
+function temperatureClass(t: Temperature): string {
+  const bad = t.crit ?? (t.max !== null ? t.max + 10 : 90);
+  const warn = Math.min(t.max ?? 80, bad);
+  return t.celsius >= bad ? "text-bad" : t.celsius >= warn ? "text-warn" : "text-ok";
+}
 
 function mq(query: string) {
   return window.matchMedia(query).matches;
@@ -109,6 +118,14 @@ export function DeviceSection(_: SectionProps) {
               caption={data ? `${bytes(data.available)} free` : undefined}
             />
           </div>
+          {value?.temperatures?.length ? (
+            <KV
+              rows={value.temperatures.map((t) => [
+                t.label ? `${t.sensor} ${t.label}` : t.sensor,
+                <span className={temperatureClass(t)}>{t.celsius.toFixed(1)} °C</span>,
+              ])}
+            />
+          ) : null}
           {status.state === "failed" && <span className="text-[0.85rem] text-bad">{status.error}</span>}
         </Panel>
 

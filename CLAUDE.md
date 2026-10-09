@@ -44,7 +44,7 @@ same change as the behaviour it describes.
 | [docs/time.md](docs/time.md) | timedated and timesyncd, how `time.*` is applied, DHCP's NTP servers, the persistent clock, where `time show`'s numbers come from |
 | [docs/scripts.md](docs/scripts.md) | scripts: the body file and the fire and run units, triggers and `TESSARO_TRIGGER`, concurrency, how each run is recorded, `script run` as a job, the page's scripts |
 | [docs/scheduler.md](docs/scheduler.md) | schedules: the systemd timer each is rendered into and the script it starts, the reconcile of every script and schedule unit, checking `OnCalendar` expressions |
-| [docs/hardware.md](docs/hardware.md) | vendor, model, board, CPU, serial and RAM in `device status`: DMI, the device tree, placeholders, where the serial goes |
+| [docs/hardware.md](docs/hardware.md) | vendor, model, board, CPU, serial, RAM and temperatures in `device status`: DMI, the device tree, placeholders, where the serial goes, the hwmon sensors, which reading is the CPU's and the drivers each machine needs |
 | [docs/files.md](docs/files.md) | the `/data/files` store served at `/files/` |
 | [docs/networking.md](docs/networking.md) | NetworkManager, the managed profiles and their transactions, hotspot, ping, speed test, the proxy (local tinyproxy, what goes through it), extra certificate authorities |
 | [docs/updates.md](docs/updates.md) | in-place updates, `--repartition`, growing `/data` |

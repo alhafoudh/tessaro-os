@@ -33,6 +33,7 @@
       "script_problem": "no such file"
     },
     "browser_answering": false,
+    "cpu_millicelsius": 82500,
     "cpu_percent": 97,
     "current_url": null,
     "data": {
@@ -109,6 +110,36 @@
     },
     "revision": 42,
     "screen_on": false,
+    "temperatures": [
+      {
+        "crit_millicelsius": 110000,
+        "label": null,
+        "max_millicelsius": null,
+        "millicelsius": 82500,
+        "sensor": "cpu_thermal"
+      },
+      {
+        "crit_millicelsius": 84850,
+        "label": "Composite",
+        "max_millicelsius": 81850,
+        "millicelsius": 41850,
+        "sensor": "nvme"
+      },
+      {
+        "crit_millicelsius": null,
+        "label": "Composite",
+        "max_millicelsius": 69850,
+        "millicelsius": 71850,
+        "sensor": "nvme"
+      },
+      {
+        "crit_millicelsius": null,
+        "label": null,
+        "max_millicelsius": null,
+        "millicelsius": 55000,
+        "sensor": "rp1_adc"
+      }
+    ],
     "time": {
       "ntp": true,
       "synchronized": false,
@@ -313,6 +344,46 @@
           [
             "ok",
             "(75% used)",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "cpu temp",
+        "value": [
+          [
+            "warn",
+            "82.5°C",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "nvme 1 temp",
+        "value": [
+          [
+            "ok",
+            "41.9°C",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "nvme 2 temp",
+        "value": [
+          [
+            "warn",
+            "71.8°C",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "rp1_adc temp",
+        "value": [
+          [
+            "ok",
+            "55.0°C",
             0
           ]
         ]

@@ -99,6 +99,8 @@ pub struct Paths {
     pub cpuinfo: PathBuf,
     /// `/proc/stat`: how busy the CPU is, sampled by `watch_cpu`.
     pub proc_stat: PathBuf,
+    /// `/sys/class/hwmon`: every temperature sensor, for `status`.
+    pub hwmon: PathBuf,
     /// The image's os-release, for `status`.
     pub os_release: PathBuf,
     /// Where PipeWire, WirePlumber and the Pulse server put their sockets:
@@ -265,6 +267,7 @@ impl Paths {
             device_tree: path("KIOSK_DEVICE_TREE", "/proc/device-tree"),
             cpuinfo: path("KIOSK_CPUINFO", "/proc/cpuinfo"),
             proc_stat: path("KIOSK_PROC_STAT", "/proc/stat"),
+            hwmon: path("KIOSK_HWMON", "/sys/class/hwmon"),
             os_release: path("KIOSK_OS_RELEASE", "/usr/lib/os-release"),
             audio_runtime: path("KIOSK_AUDIO_RUNTIME_DIR", "/run/tessaro-audio"),
             asound_cards: path("KIOSK_ASOUND_CARDS", "/proc/asound/cards"),

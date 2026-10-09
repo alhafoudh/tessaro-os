@@ -116,6 +116,20 @@ export function usageLevel(percent: number): Tone {
   return percent < 80 ? "ok" : percent < 95 ? "warn" : "bad";
 }
 
+/**
+ * How hot a sensor runs, in millidegrees Celsius: against its own `max` and
+ * `crit` where it has them (a threshold of 0 or below is a sensor that has
+ * none). Without `crit` it is bad 10°C past `max`; without either, 80°C
+ * warns and 90°C is bad.
+ */
+export function temperatureLevel(millicelsius: number, max: number | null, crit: number | null): Tone {
+  const ownMax = max != null && max > 0 ? max : null;
+  const ownCrit = crit != null && crit > 0 ? crit : null;
+  const bad = ownCrit ?? (ownMax != null ? ownMax + 10_000 : 90_000);
+  const warn = Math.min(ownMax ?? 80_000, bad);
+  return millicelsius >= bad ? "bad" : millicelsius >= warn ? "warn" : "ok";
+}
+
 /** `yes` healthy, `no` worth a look. */
 export function yesNo(yes: boolean): Line {
   return yes ? Line.of("ok", "yes") : Line.of("warn", "no");

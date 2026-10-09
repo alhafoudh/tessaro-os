@@ -1420,9 +1420,22 @@ fn page_status(status: &protocol::Status) -> Value {
         "hardware": status.hardware,
         "memory": status.memory,
         "cpuPercent": status.cpu_percent,
+        "cpuTemperature": status.cpu_millicelsius.map(celsius),
+        "temperatures": status.temperatures.iter().map(|t| json!({
+            "sensor": t.sensor,
+            "label": t.label,
+            "celsius": celsius(t.millicelsius),
+            "max": t.max_millicelsius.map(celsius),
+            "crit": t.crit_millicelsius.map(celsius),
+        })).collect::<Vec<_>>(),
         "playlist": status.playlist.as_ref().map(page_playlist),
         "presence": status.presence,
     })
+}
+
+/// Millidegrees as the page gets them: degrees Celsius, a plain number.
+fn celsius(millicelsius: i32) -> f64 {
+    f64::from(millicelsius) / 1000.0
 }
 
 /// A face as the page gets it, in `tessaro:presence`, `tessaro:faces` and
@@ -1597,6 +1610,11 @@ mod tests {
         assert_eq!(status["hardware"]["vendor"], "QEMU");
         assert_eq!(status["memory"]["total"], 4_000_000u64 * 1024);
         assert!(status.get("cpuPercent").is_some());
+        // The fixture's NVMe drive, in degrees; no CPU sensor in a VM.
+        assert_eq!(status["temperatures"][0]["sensor"], "nvme");
+        assert_eq!(status["temperatures"][0]["celsius"], 49.85);
+        assert_eq!(status["temperatures"][0]["max"], 69.85);
+        assert!(status["cpuTemperature"].is_null());
         for shown in [
             "name",
             "tags",

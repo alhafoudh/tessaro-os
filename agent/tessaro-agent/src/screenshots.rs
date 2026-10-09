@@ -238,6 +238,23 @@ async fn answers() -> BTreeMap<&'static str, serde_json::Value> {
         available: 2_900_000_000,
     });
     status.cpu_percent = Some(12);
+    status.temperatures = vec![
+        protocol::Temperature {
+            sensor: "cpu_thermal".into(),
+            label: None,
+            millicelsius: 52_100,
+            max_millicelsius: None,
+            crit_millicelsius: Some(110_000),
+        },
+        protocol::Temperature {
+            sensor: "nvme".into(),
+            label: Some("Composite".into()),
+            millicelsius: 38_850,
+            max_millicelsius: Some(81_850),
+            crit_millicelsius: Some(84_850),
+        },
+    ];
+    status.cpu_millicelsius = Some(52_100);
 
     let session = WebSession {
         claimed: false,

@@ -95,6 +95,23 @@
     "available": 2900000000
   },
   "cpu_percent": 12,
+  "temperatures": [
+    {
+      "sensor": "cpu_thermal",
+      "label": null,
+      "millicelsius": 52100,
+      "max_millicelsius": null,
+      "crit_millicelsius": 110000
+    },
+    {
+      "sensor": "nvme",
+      "label": "Composite",
+      "millicelsius": 38850,
+      "max_millicelsius": 81850,
+      "crit_millicelsius": 84850
+    }
+  ],
+  "cpu_millicelsius": 52100,
   "playlist": {
     "player": false,
     "playlist": null,

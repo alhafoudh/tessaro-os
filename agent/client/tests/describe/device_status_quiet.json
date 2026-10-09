@@ -58,6 +58,8 @@
     "pending": null,
     "revision": 1,
     "screen_on": true,
+    "cpu_millicelsius": null,
+    "temperatures": [],
     "time": {
       "ntp": false,
       "synchronized": null,

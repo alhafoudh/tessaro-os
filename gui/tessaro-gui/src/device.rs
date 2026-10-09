@@ -2130,6 +2130,12 @@ impl Device {
             if let Some(percent) = status.cpu_percent {
                 bar = bar.push(small(format!("CPU {percent}%")).style(theme::muted));
             }
+            if let Some(millicelsius) = status.cpu_millicelsius {
+                bar = bar.push(
+                    small(tessaro_client::describe::device::celsius(millicelsius))
+                        .style(theme::muted),
+                );
+            }
             if let Some(memory) = &status.memory {
                 bar =
                     bar.push(small(format!("RAM {}%", memory.used_percent())).style(theme::muted));

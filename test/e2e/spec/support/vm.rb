@@ -30,6 +30,9 @@ module AgentE2E
 
   def self.audio_capture_name(card) = "e2e-worker-#{Ports.worker}.#{card}.wav"
 
+  # The emulated NVMe drive's backing file, next to the WAV files.
+  def self.nvme_disk_name = "e2e-worker-#{Ports.worker}.nvme.img"
+
   IMAGE = File.join(DEPLOY_DIR, "tessaro-os-qemux86-64.rootfs.wic")
   QEMUBOOT = File.join(DEPLOY_DIR, "tessaro-os-qemux86-64.rootfs.qemuboot.conf")
 
@@ -41,9 +44,13 @@ module AgentE2E
     # boots a sparse copy of the image, grown by that much, instead of the
     # image itself: the update lanes send that image, so it must stay as
     # built.
-    def initialize(lane, extra_disk: nil)
+    #
+    # `nvme` adds an empty emulated NVMe drive (`nvme: true` on its describe),
+    # for the temperature QEMU's NVMe reports.
+    def initialize(lane, extra_disk: nil, nvme: false)
       @lane = lane
       @extra_disk = extra_disk
+      @nvme = nvme
       @log = File.join(LOG_DIR, "#{lane}.qemu.log")
     end
 
@@ -60,7 +67,7 @@ module AgentE2E
       # The conf comes after the image: runqemu derives a conf from the image
       # name, and only a later .qemuboot.conf argument replaces that.
       inner = %(runqemu #{disk} #{worker_qemuboot} ovmf slirp snapshot #{accel} #{display} serialstdio ) +
-              %(qemuparams='#{sound_cards}')
+              %(qemuparams='#{sound_cards}#{nvme_drive}')
       command = %(kas-container --runtime-args "#{kvm} #{gpu} --network=host" shell $KAS_CONFIG -c "#{inner}")
       root = AgentE2E.vm_root
       from = root == ROOT ? "" : ", from #{root}"
@@ -106,6 +113,7 @@ module AgentE2E
       nil
     ensure
       FileUtils.rm_f(@grown) if @grown
+      FileUtils.rm_f(@nvme_disk) if @nvme_disk
     end
 
     private
@@ -184,6 +192,20 @@ module AgentE2E
       usb = AgentE2E.audio_capture_name("usb")
       "-audiodev wav,id=jack,path=#{jack} -device intel-hda -device hda-output,audiodev=jack " \
         "-audiodev wav,id=usb,path=#{usb} -device usb-audio,audiodev=usb"
+    end
+
+    # An empty NVMe drive, for a lane that asks for one. QEMU's NVMe reports a
+    # fixed composite temperature of 323 K and a warning threshold of 343 K,
+    # which the guest's nvme driver gives to hwmon (docs/hardware.md). The
+    # backing file is sparse, in the build dir like the WAV files; the drive
+    # is nvme0n1, so it never takes the root disk's name.
+    def nvme_drive
+      return "" unless @nvme
+
+      name = AgentE2E.nvme_disk_name
+      @nvme_disk = File.join(AgentE2E.vm_root, "build", "qemux86-64", name)
+      File.open(@nvme_disk, "w") { _1.truncate(64 << 20) }
+      " -drive file=#{name},if=none,id=nvm,format=raw -device nvme,serial=e2e,drive=nvm"
     end
 
     # runqemu moves a forward whose host port is taken and says so in the

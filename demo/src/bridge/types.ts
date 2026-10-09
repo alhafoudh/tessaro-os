@@ -67,8 +67,23 @@ export interface DeviceStatus {
   hardware: Hardware | null;
   memory: { total: number; available: number } | null;
   cpuPercent: number | null;
+  /**
+   * The CPU's temperature in °C, null on a device without a sensor for it.
+   * Both are missing from an agent older than them.
+   */
+  cpuTemperature?: number | null;
+  temperatures?: Temperature[];
   playlist: PlaylistStatus | null;
   presence: PresenceSummary | null;
+}
+
+/** One reading of a hwmon sensor, in °C. */
+export interface Temperature {
+  sensor: string;
+  label: string | null;
+  celsius: number;
+  max: number | null;
+  crit: number | null;
 }
 
 export interface NetAddress {

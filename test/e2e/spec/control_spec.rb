@@ -4,7 +4,7 @@ module AgentE2E
   # The control plane: settings, the debug screen, maintenance mode, the
   # claim model, ssh keys, the resolution probation, the file store, eval,
   # the page bridge, screen power and Quick Setup's captive portal.
-  RSpec.describe "the control plane" do
+  RSpec.describe "the control plane", nvme: true do
     include_context "a booted VM"
 
     # CONFIRM_SECONDS in the protocol crate.
@@ -95,6 +95,20 @@ module AgentE2E
       expect(status).to match(/^cpu\s+\S/)
       expect(status).to match(/^cpu use\s+\d+%$/)
       expect(status).to match(/^memory\s+\S+ \S+ free of \S+ \S+ \(\d+% used\)$/)
+    end
+
+    # The lane's emulated NVMe drive is the VM's one temperature sensor:
+    # QEMU reports 323 K under a 343 K warning threshold, which the kernel
+    # turns into millidegrees. A VM has no CPU sensor, so no cpu reading.
+    it "temperatures: tessaro-ctl device status reads the NVMe drive's sensor" do
+      status = JSON.parse(guest.run("tessaro-ctl --json device status"))
+      nvme = status.fetch("temperatures").find { _1["sensor"] == "nvme" }
+      expect(nvme).to include("label" => "Composite", "millicelsius" => 49_850, "max_millicelsius" => 69_850)
+      expect(status["cpu_millicelsius"]).to be_nil
+
+      text = guest.run("tessaro-ctl device status")
+      expect(text).to match(/^nvme temp\s+49\.\d°C$/)
+      expect(text).not_to match(/^cpu temp/)
     end
 
     # The page's zone is what Chromium reads from /etc/localtime, which

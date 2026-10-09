@@ -141,6 +141,18 @@ export function createMock(options: MockOptions = {}): Tessaro {
     window.dispatchEvent(new CustomEvent("tessaro:config", { detail: { changed: [key] } }));
   };
 
+  // The Pi's SoC, a little warmer or cooler on each poll, and an NVMe drive.
+  const temperatures = (): Pick<DeviceStatus, "cpuTemperature" | "temperatures"> => {
+    const cpu = Math.round(480 + Math.random() * 60) / 10;
+    return {
+      cpuTemperature: cpu,
+      temperatures: [
+        { sensor: "cpu_thermal", label: null, celsius: cpu, max: null, crit: 110 },
+        { sensor: "nvme", label: "Composite", celsius: 38.85, max: 81.85, crit: 84.85 },
+      ],
+    };
+  };
+
   const status = (): DeviceStatus => ({
     name: config["device.name"] ?? "tessaro",
     tags: (config["device.tags"] ?? "").split(",").filter(Boolean),
@@ -178,6 +190,7 @@ export function createMock(options: MockOptions = {}): Tessaro {
     },
     memory: { total: 8_000 * MB, available: (5_200 + Math.round(Math.random() * 400)) * MB },
     cpuPercent: Math.round(8 + Math.random() * 22),
+    ...temperatures(),
     playlist: null,
     presence: { present: true, near: false, count: 1, genders: { male: 0, female: 1, unknown: 0 } },
   });

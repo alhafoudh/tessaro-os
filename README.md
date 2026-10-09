@@ -298,6 +298,7 @@ claimed      yes
 browser url  https://menu.example.com/
 showing      https://menu.example.com/
 browser      answering
+cpu temp     52.1°C
 audio        hdmi 80%
 time         Europe/Bratislava, in sync
 ```

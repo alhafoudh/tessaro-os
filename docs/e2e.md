@@ -39,7 +39,9 @@ start.
   into the lane whose state it fits; a case that reboots goes into a file of
   its own, tagged `:reboot`. A lane gets a disk larger than the image with
   `extra_disk:` on its describe (`spec/support/vm.rb`), which boots a grown
-  sparse copy and leaves the image as built.
+  sparse copy and leaves the image as built, and an empty emulated NVMe
+  drive with `nvme: true`, the VM's one temperature sensor (the control
+  lane's; **Temperatures** in [hardware.md](hardware.md)).
 * **Every worker has its own ports**, from `TEST_ENV_NUMBER`
   (`spec/support/ports.rb`); worker 0 has the ports a single VM always had.
   `E2E_WORKER_OFFSET=1` moves every worker one up, for a host where

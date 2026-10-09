@@ -3,12 +3,12 @@
 //! Browser pages.
 
 use protocol::keys::Consumer;
-use protocol::{Applied, EvalResult, Hardware, KeyInfo, NodeInfo, Pending, Status};
+use protocol::{Applied, EvalResult, Hardware, KeyInfo, NodeInfo, Pending, Status, Temperature};
 use serde_json::Value;
 
 use crate::describe::{audio, playlist, screen, time};
 use crate::storage::{free_line, usage_line};
-use crate::text::{unit_state, usage_level, yes_no, Fact, Line, Tone};
+use crate::text::{temperature_level, unit_state, usage_level, yes_no, Fact, Line, Tone};
 
 /// What keeps a change that is on probation.
 pub const CONFIRM_COMMAND: &str = "tessaro-ctl screen confirm";
@@ -82,6 +82,67 @@ pub fn hardware(hardware: &Hardware) -> Vec<Fact> {
     facts
 }
 
+/// One fact per temperature reading, `cpu temp 52.0°C`, toned by how close
+/// it runs to the sensor's own limits.
+pub fn temperatures(temperatures: &[Temperature]) -> Vec<Fact> {
+    let names: Vec<String> = temperatures.iter().map(sensor_name).collect();
+    temperatures
+        .iter()
+        .enumerate()
+        .map(|(i, t)| {
+            let name = &names[i];
+            // A name shared by several readings takes their labels when
+            // those tell them apart (k10temp's Tctl and Tccd1), else a
+            // number (two NVMe drives, each a "Composite").
+            let same: Vec<usize> = (0..names.len()).filter(|&j| names[j] == *name).collect();
+            let labels_differ = same.iter().all(|&j| {
+                temperatures[j].label.is_some()
+                    && same
+                        .iter()
+                        .filter(|&&k| temperatures[k].label == temperatures[j].label)
+                        .count()
+                        == 1
+            });
+            let label = match &t.label {
+                _ if same.len() == 1 => format!("{name} temp"),
+                Some(label) if labels_differ => format!("{name} {label} temp"),
+                _ => {
+                    let nth = same.iter().position(|&j| j == i).unwrap_or(0) + 1;
+                    format!("{name} {nth} temp")
+                }
+            };
+            Fact::new(
+                label,
+                Line::of(
+                    temperature_level(t.millicelsius, t.max_millicelsius, t.crit_millicelsius),
+                    celsius(t.millicelsius),
+                ),
+            )
+        })
+        .collect()
+}
+
+/// What a hwmon device is, in a word: the CPU, the board, the WiFi card. A
+/// sensor this does not know keeps the kernel's name.
+pub fn sensor_name(temperature: &Temperature) -> String {
+    let sensor = temperature.sensor.as_str();
+    match sensor {
+        "coretemp" | "k10temp" | "cpu_thermal" => "cpu",
+        "x86_pkg_temp" => "cpu package",
+        "acpitz" => "board",
+        "amdgpu" | "radeon" | "nouveau" => "gpu",
+        "drivetemp" => "disk",
+        _ if sensor.starts_with("iwlwifi") => "wifi",
+        _ => sensor,
+    }
+    .to_string()
+}
+
+/// Millidegrees Celsius as `52.0°C`.
+pub fn celsius(millicelsius: i32) -> String {
+    format!("{:.1}°C", f64::from(millicelsius) / 1000.0)
+}
+
 /// `on - COMMAND WHAT`: a mode that is on, and how to end it.
 fn on_until(command: &str, what: &str) -> Line {
     Line::of(Tone::Warn, "on")
@@ -132,6 +193,7 @@ pub fn status(status: &Status) -> StatusText {
             free_line(memory.available, memory.total, memory.used_percent()),
         ));
     }
+    facts.extend(temperatures(&status.temperatures));
     if let Some(data) = &status.data {
         facts.push(Fact::new("data", usage_line(data)));
     }

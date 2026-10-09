@@ -1,8 +1,9 @@
-# Hardware identity and memory
+# Hardware identity, memory and temperatures
 
 **`tessaro-ctl device status` and the GUI's Overview say what the device
-is - vendor, model, board, firmware, CPU, serial - and how much RAM it has
-and uses, read from what the kernel already exposes.** Nothing extra runs
+is - vendor, model, board, firmware, CPU, serial - how much RAM it has
+and uses, and how warm it runs, read from what the kernel already
+exposes.** Nothing extra runs
 on the device for it: `agent/tessaro-agent/src/hardware.rs` reads a few
 files inside `status` (`Control::status` in `control/mod.rs`) and fills
 `Status.hardware` and `Status.memory` (`protocol::Hardware`,
@@ -61,6 +62,56 @@ shows no hardware rows.
   free of anything that identifies the machine itself (the top of
   `identity.rs`).
 * **The test fixtures never read this host's hardware.** `KIOSK_DMI`,
-  `KIOSK_DEVICE_TREE`, `KIOSK_CPUINFO` and `KIOSK_MEMINFO` point the paths
-  elsewhere (`paths.rs`); the control fixture in `control/mod.rs` sets them
-  to a made-up qemu VM.
+  `KIOSK_DEVICE_TREE`, `KIOSK_CPUINFO`, `KIOSK_MEMINFO` and `KIOSK_HWMON`
+  point the paths elsewhere (`paths.rs`); the control fixture in
+  `control/mod.rs` sets them to a made-up qemu VM with the e2e suite's
+  emulated NVMe drive.
+
+## Temperatures
+
+**`Status.temperatures` is every temperature sensor the kernel exposes, and
+`Status.cpu_millicelsius` the one that stands for the CPU, both read from
+`/sys/class/hwmon` on each `status` call** (`temperatures` and
+`cpu_millicelsius` in `hardware.rs`), so a passively cooled box that runs
+hot shows it in `tessaro-ctl device status`, the GUI and Webconfig (the
+Overview and the status bar), and the page bridge (`device.status()`, in
+°C, docs/bridge.md).
+
+* **hwmon is the only source.** Every kernel here has
+  `CONFIG_THERMAL_HWMON=y`, which registers each thermal zone as a hwmon
+  device named after its type (`acpitz`, `x86_pkg_temp`, the Pi's
+  `cpu_thermal`, `iwlwifi_1`), so reading `/sys/class/thermal` as well would
+  list them twice. Each reading is a `temp*_input` with its `_label`, `_max`
+  and `_crit`, kept in millidegrees as the kernel gives them (`Status`
+  derives `Eq`, which a float would break). A reading that fails or does
+  not parse, such as a disk that does not answer, is left out rather than
+  failing `status`.
+* **No lm-sensors.** `sensors` reads the same files and names them through
+  a config file; the agent reads them directly, like the rest of this file,
+  and the clients name them (`sensor_name` in
+  `agent/client/src/describe/device.rs`: `cpu`, `board`, `wifi`, `disk`,
+  else the kernel's name).
+* **coretemp's per-core readings are left out**: its package reading
+  stands for them, and a many-core PC would otherwise print a line per
+  core.
+* **The CPU's reading is the first of** coretemp's `Package id 0` (Intel),
+  k10temp's `Tctl` or `Tdie` (AMD), `cpu_thermal` (the Pi's SoC),
+  `x86_pkg_temp`, then `acpitz`, which on a PC sits near the CPU. A device
+  with none of them, such as a VM, has none; a disk's reading never stands
+  for the CPU.
+* **A reading is toned by the sensor's own limits** (`temperature_level` in
+  `agent/client/src/text.rs`): bad at `crit`, a warning at `max`, bad 10°C
+  past `max` without a `crit`, and 80°C and 90°C for a sensor with neither.
+* **The drivers come from the kernel fragments.**
+  `tessaro-sensors.cfg` (every linux-yocto machine) adds NVMe's hwmon and
+  drivetemp for SATA disks; `tessaro-x86-sensors.cfg` adds coretemp and
+  k10temp on genericx86-64, which load by the CPU's family. The Pi's kernel
+  has its SoC's sensor, NVMe's and drivetemp already. drivetemp has no
+  modalias, so `tessaro-kiosk` ships `modules-load.d/tessaro-drivetemp.conf`
+  and recommends the module, which qemu would otherwise not install.
+* **An NVMe or SATA reading is a command to the drive.** At the GUI's 2s
+  status poll that is cheap, and it is why the readings are not sampled in
+  the background like CPU use: nothing reads them when no one asks.
+* **qemu has one sensor in the e2e suite**: the control lane attaches an
+  emulated NVMe drive (`nvme: true`, docs/e2e.md), which reports a fixed
+  323 K under a 343 K warning threshold. qemu has no CPU sensor.

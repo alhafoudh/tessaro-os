@@ -1,16 +1,17 @@
-//! What the hardware is, how much RAM it has and how busy its CPU is, for
-//! `status`.
+//! What the hardware is, how much RAM it has, how busy its CPU is and how
+//! warm it runs, for `status`.
 //!
 //! Plain reads of what the kernel already exposes: DMI on x86
 //! (`/sys/class/dmi/id`), the device tree on the Pi (`/proc/device-tree`),
-//! and `/proc/cpuinfo`, `/proc/meminfo` and `/proc/stat` everywhere. DMI wins when both
-//! exist. Anything unreadable, or one of the placeholders firmware vendors
-//! leave in DMI, is `None`. See docs/hardware.md.
+//! and `/proc/cpuinfo`, `/proc/meminfo`, `/proc/stat` and `/sys/class/hwmon`
+//! everywhere. DMI wins when both exist. Anything unreadable, or one of the
+//! placeholders firmware vendors leave in DMI, is `None`. See
+//! docs/hardware.md.
 
 use std::fs;
 use std::path::Path;
 
-use protocol::{Hardware, MemUsage};
+use protocol::{Hardware, MemUsage, Temperature};
 
 use crate::paths::Paths;
 
@@ -46,6 +47,89 @@ pub fn meminfo_bytes(text: &str, name: &str) -> Option<u64> {
                 .ok()
         })
         .map(|kib| kib * 1024)
+}
+
+/// Every `temp*_input` of every hwmon device, in the kernel's order, leaving
+/// out coretemp's per-core readings (its package reading stands for them)
+/// and any reading that fails, such as a disk that does not answer.
+/// Thermal zones are here too: `CONFIG_THERMAL_HWMON` registers each as a
+/// hwmon device named after its type (`acpitz`, `cpu_thermal`).
+pub fn temperatures(hwmon: &Path) -> Vec<Temperature> {
+    let mut out = Vec::new();
+    for dir in numbered(hwmon, "hwmon", "") {
+        let text = |name: &str| {
+            fs::read_to_string(dir.join(name))
+                .ok()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+        };
+        let millis = |name: &str| text(name)?.parse::<i32>().ok();
+        let Some(sensor) = text("name") else {
+            continue;
+        };
+        for input in numbered(&dir, "temp", "_input") {
+            let file = input.file_name().unwrap_or_default().to_string_lossy();
+            let prefix = file.trim_end_matches("_input");
+            let Some(millicelsius) = millis(&file) else {
+                continue;
+            };
+            let label = text(&format!("{prefix}_label"));
+            if sensor == "coretemp" && label.as_deref().is_some_and(|l| l.starts_with("Core ")) {
+                continue;
+            }
+            out.push(Temperature {
+                sensor: sensor.clone(),
+                label,
+                millicelsius,
+                max_millicelsius: millis(&format!("{prefix}_max")),
+                crit_millicelsius: millis(&format!("{prefix}_crit")),
+            });
+        }
+    }
+    out
+}
+
+/// The entries of `dir` named `<prefix>N<suffix>`, by N.
+fn numbered(dir: &Path, prefix: &str, suffix: &str) -> Vec<std::path::PathBuf> {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut found: Vec<(u32, std::path::PathBuf)> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name();
+            let n = name
+                .to_str()?
+                .strip_prefix(prefix)?
+                .strip_suffix(suffix)?
+                .parse()
+                .ok()?;
+            Some((n, entry.path()))
+        })
+        .collect();
+    found.sort();
+    found.into_iter().map(|(_, path)| path).collect()
+}
+
+/// The reading that stands for the CPU: coretemp's package (Intel), else
+/// k10temp's control temperature (AMD), else the SoC's thermal zone (the
+/// Pi), else Intel's package thermal zone, else ACPI's, which on a PC is
+/// usually near the CPU.
+pub fn cpu_millicelsius(temperatures: &[Temperature]) -> Option<i32> {
+    let find = |sensor: &str, label: Option<&str>| {
+        temperatures
+            .iter()
+            .find(|t| t.sensor == sensor && label.is_none_or(|l| t.label.as_deref() == Some(l)))
+            .map(|t| t.millicelsius)
+    };
+    find("coretemp", Some("Package id 0"))
+        .or_else(|| find("coretemp", None))
+        .or_else(|| find("k10temp", Some("Tctl")))
+        .or_else(|| find("k10temp", Some("Tdie")))
+        .or_else(|| find("k10temp", None))
+        .or_else(|| find("cpu_thermal", None))
+        .or_else(|| find("x86_pkg_temp", None))
+        .or_else(|| find("acpitz", None))
 }
 
 /// The aggregate `cpu` line of `/proc/stat`, in clock ticks since boot.
@@ -406,6 +490,87 @@ mod tests {
         assert_eq!(cpu_percent(after, after), None);
         assert_eq!(cpu_percent(after, before), None);
         assert_eq!(cpu_times(&dir.path().join("missing")), None);
+    }
+
+    #[test]
+    fn temperatures_read_every_sensor_but_the_cores() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        // An Intel PC: ACPI's zone, coretemp with two cores, an NVMe drive.
+        write(root, "hwmon/hwmon0/name", "acpitz\n");
+        write(root, "hwmon/hwmon0/temp1_input", "27800\n");
+        write(root, "hwmon/hwmon0/temp1_crit", "119000\n");
+        write(root, "hwmon/hwmon2/name", "coretemp\n");
+        write(root, "hwmon/hwmon2/temp1_label", "Package id 0\n");
+        write(root, "hwmon/hwmon2/temp1_input", "52000\n");
+        write(root, "hwmon/hwmon2/temp1_max", "84000\n");
+        write(root, "hwmon/hwmon2/temp1_crit", "100000\n");
+        write(root, "hwmon/hwmon2/temp2_label", "Core 0\n");
+        write(root, "hwmon/hwmon2/temp2_input", "50000\n");
+        write(root, "hwmon/hwmon2/temp10_label", "Core 8\n");
+        write(root, "hwmon/hwmon2/temp10_input", "51000\n");
+        write(root, "hwmon/hwmon10/name", "nvme\n");
+        write(root, "hwmon/hwmon10/temp1_label", "Composite\n");
+        write(root, "hwmon/hwmon10/temp1_input", "41850\n");
+        write(root, "hwmon/hwmon10/temp1_max", "81850\n");
+        // A disk that does not answer, and a device with no name.
+        write(root, "hwmon/hwmon3/name", "drivetemp\n");
+        write(root, "hwmon/hwmon3/temp1_input", "");
+        write(root, "hwmon/hwmon4/temp1_input", "30000\n");
+
+        let found = temperatures(&root.join("hwmon"));
+        let short: Vec<(&str, Option<&str>, i32)> = found
+            .iter()
+            .map(|t| (t.sensor.as_str(), t.label.as_deref(), t.millicelsius))
+            .collect();
+        // hwmon10 after hwmon2: by number, not by name.
+        assert_eq!(
+            short,
+            [
+                ("acpitz", None, 27800),
+                ("coretemp", Some("Package id 0"), 52000),
+                ("nvme", Some("Composite"), 41850),
+            ]
+        );
+        assert_eq!(found[0].crit_millicelsius, Some(119_000));
+        assert_eq!(found[0].max_millicelsius, None);
+        assert_eq!(found[1].max_millicelsius, Some(84_000));
+        assert_eq!(cpu_millicelsius(&found), Some(52000));
+    }
+
+    #[test]
+    fn the_cpu_reading_falls_back_by_platform() {
+        let reading = |sensor: &str, label: Option<&str>, millicelsius| Temperature {
+            sensor: sensor.to_string(),
+            label: label.map(str::to_string),
+            millicelsius,
+            max_millicelsius: None,
+            crit_millicelsius: None,
+        };
+        // AMD: Tctl, not the CCD.
+        let amd = [
+            reading("k10temp", Some("Tccd1"), 40000),
+            reading("k10temp", Some("Tctl"), 45000),
+        ];
+        assert_eq!(cpu_millicelsius(&amd), Some(45000));
+        // The Pi: the SoC's zone.
+        let pi = [reading("cpu_thermal", None, 48000)];
+        assert_eq!(cpu_millicelsius(&pi), Some(48000));
+        // A PC without coretemp: the package zone over ACPI's.
+        let pc = [
+            reading("acpitz", None, 30000),
+            reading("x86_pkg_temp", None, 55000),
+        ];
+        assert_eq!(cpu_millicelsius(&pc), Some(55000));
+        // A disk alone says nothing about the CPU, and a VM has nothing.
+        assert_eq!(cpu_millicelsius(&[reading("nvme", None, 40000)]), None);
+        assert_eq!(cpu_millicelsius(&[]), None);
+    }
+
+    #[test]
+    fn no_hwmon_is_no_temperatures() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(temperatures(&dir.path().join("hwmon")).is_empty());
     }
 
     #[test]

@@ -5835,6 +5835,23 @@
             "description": "How busy the CPU was over the agent's last 2s sample, every core\ncounted: 100 is all of them. `None` until it has two samples.\nDefaulted the same way.",
             "default": null
           },
+          "temperatures": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Temperature"
+            },
+            "description": "Every temperature sensor the kernel exposes, coretemp's per-core\nreadings left out. Empty on a device without any, such as a VM.\nDefaulted the same way.",
+            "default": []
+          },
+          "cpu_millicelsius": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The CPU's temperature, in millidegrees Celsius: the one reading of\n`temperatures` that stands for the CPU. Defaulted the same way.",
+            "default": null
+          },
           "playlist": {
             "anyOf": [
               {
@@ -6307,6 +6324,47 @@
           "available"
         ],
         "description": "RAM, in bytes, from `/proc/meminfo`. `available` is `MemAvailable`: what\ncan be handed out without swapping, page cache included."
+      },
+      "Temperature": {
+        "type": "object",
+        "properties": {
+          "sensor": {
+            "type": "string",
+            "description": "The hwmon device's `name`: `coretemp`, `k10temp`, `nvme`,\n`cpu_thermal`, `acpitz` and so on."
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`temp*_label`, for a device with several readings."
+          },
+          "millicelsius": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "max_millicelsius": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "`temp*_max`, where the hardware starts to warn."
+          },
+          "crit_millicelsius": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "`temp*_crit`, where the hardware throttles or shuts down."
+          }
+        },
+        "required": [
+          "sensor",
+          "millicelsius"
+        ],
+        "description": "One reading of a hwmon sensor, in millidegrees Celsius, as\n`/sys/class/hwmon` gives it."
       },
       "PlaylistStatus": {
         "type": "object",

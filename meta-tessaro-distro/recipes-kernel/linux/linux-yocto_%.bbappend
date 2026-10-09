@@ -1,11 +1,13 @@
 # Kernel options for touch panels and the WebHID/WebSerial/WebBluetooth device
-# APIs, and on genericx86-64 the WiFi drivers linux-yocto leaves out. See the
+# APIs, the temperature sensors of NVMe and SATA drives (tessaro-sensors.cfg),
+# and on genericx86-64 the WiFi drivers linux-yocto leaves out. See the
 # comments in each fragment for what each option is for.
 #
 # The wireless fragment comes after tessaro-devices.cfg, so its =m for btusb
 # wins over the =y there. It is genericx86-64 only: qemux86-64 has no wireless
 # NIC and installs no module set. genericx86-64 also gets HDMI-CEC over
-# DisplayPort (tessaro-x86-cec.cfg). qemux86-64 gets USB/IP's client instead,
+# DisplayPort (tessaro-x86-cec.cfg) and the CPU's temperature sensors
+# (tessaro-x86-sensors.cfg). qemux86-64 gets USB/IP's client instead,
 # for the test camera the host serves (tessaro-qemu-usbip.cfg), and vivid's
 # emulated CEC bus for the e2e suite (tessaro-qemu-cec.cfg). genericarm64 gets
 # V4L2, the VM sound cards and USB/IP, which its BSP config leaves out
@@ -30,7 +32,7 @@
 # carries the version.
 FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
 
-SRC_URI += "file://tessaro-devices.cfg"
-SRC_URI:append:genericx86-64 = " file://tessaro-x86-wireless.cfg file://tessaro-x86-cec.cfg"
+SRC_URI += "file://tessaro-devices.cfg file://tessaro-sensors.cfg"
+SRC_URI:append:genericx86-64 = " file://tessaro-x86-wireless.cfg file://tessaro-x86-cec.cfg file://tessaro-x86-sensors.cfg"
 SRC_URI:append:qemux86-64 = " file://tessaro-qemu-usbip.cfg file://tessaro-qemu-cec.cfg"
 SRC_URI:append:genericarm64 = " file://tessaro-genericarm64.cfg"

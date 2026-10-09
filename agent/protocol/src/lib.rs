@@ -1017,6 +1017,15 @@ pub struct Status {
     /// Defaulted the same way.
     #[serde(default)]
     pub cpu_percent: Option<u8>,
+    /// Every temperature sensor the kernel exposes, coretemp's per-core
+    /// readings left out. Empty on a device without any, such as a VM.
+    /// Defaulted the same way.
+    #[serde(default)]
+    pub temperatures: Vec<Temperature>,
+    /// The CPU's temperature, in millidegrees Celsius: the one reading of
+    /// `temperatures` that stands for the CPU. Defaulted the same way.
+    #[serde(default)]
+    pub cpu_millicelsius: Option<i32>,
     /// The player: whether it is on screen, the playlist and the item.
     /// Defaulted the same way.
     #[serde(default)]
@@ -1875,6 +1884,22 @@ impl MemUsage {
             (self.used() * 100).div_ceil(self.total)
         }
     }
+}
+
+/// One reading of a hwmon sensor, in millidegrees Celsius, as
+/// `/sys/class/hwmon` gives it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Temperature {
+    /// The hwmon device's `name`: `coretemp`, `k10temp`, `nvme`,
+    /// `cpu_thermal`, `acpitz` and so on.
+    pub sensor: String,
+    /// `temp*_label`, for a device with several readings.
+    pub label: Option<String>,
+    pub millicelsius: i32,
+    /// `temp*_max`, where the hardware starts to warn.
+    pub max_millicelsius: Option<i32>,
+    /// `temp*_crit`, where the hardware throttles or shuts down.
+    pub crit_millicelsius: Option<i32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

@@ -200,6 +200,24 @@ pub fn usage_level(percent: u64) -> Tone {
     }
 }
 
+/// How hot a sensor runs, in millidegrees Celsius: against its own `max` and
+/// `crit` where it has them (a threshold of 0 or below is a sensor that has
+/// none). Without `crit` it is bad 10°C past `max`; without either, 80°C
+/// warns and 90°C is bad.
+pub fn temperature_level(millicelsius: i32, max: Option<i32>, crit: Option<i32>) -> Tone {
+    let max = max.filter(|&m| m > 0);
+    let crit = crit.filter(|&c| c > 0);
+    let bad = crit.unwrap_or_else(|| max.map_or(90_000, |m| m + 10_000));
+    let warn = max.unwrap_or(80_000).min(bad);
+    if millicelsius >= bad {
+        Tone::Bad
+    } else if millicelsius >= warn {
+        Tone::Warn
+    } else {
+        Tone::Ok
+    }
+}
+
 /// `yes` healthy, `no` worth a look.
 pub fn yes_no(yes: bool) -> Line {
     if yes {
@@ -236,5 +254,33 @@ mod tests {
         assert_eq!(usage_level(10), Tone::Ok);
         assert_eq!(usage_level(85), Tone::Warn);
         assert_eq!(usage_level(99), Tone::Bad);
+    }
+
+    #[test]
+    fn hotter_is_louder() {
+        // The sensor's own thresholds.
+        assert_eq!(
+            temperature_level(52_000, Some(84_000), Some(100_000)),
+            Tone::Ok
+        );
+        assert_eq!(
+            temperature_level(85_000, Some(84_000), Some(100_000)),
+            Tone::Warn
+        );
+        assert_eq!(
+            temperature_level(100_000, Some(84_000), Some(100_000)),
+            Tone::Bad
+        );
+        // Only a max: bad 10°C past it.
+        assert_eq!(temperature_level(95_000, Some(100_000), None), Tone::Ok);
+        assert_eq!(temperature_level(105_000, Some(100_000), None), Tone::Warn);
+        assert_eq!(temperature_level(110_000, Some(100_000), None), Tone::Bad);
+        // Only a crit below the default warning.
+        assert_eq!(temperature_level(70_000, None, Some(75_000)), Tone::Ok);
+        assert_eq!(temperature_level(75_000, None, Some(75_000)), Tone::Bad);
+        // None, or a zero the driver means as none.
+        assert_eq!(temperature_level(79_000, Some(0), None), Tone::Ok);
+        assert_eq!(temperature_level(80_000, None, None), Tone::Warn);
+        assert_eq!(temperature_level(90_000, None, None), Tone::Bad);
     }
 }

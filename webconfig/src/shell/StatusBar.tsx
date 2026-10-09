@@ -1,12 +1,12 @@
 // The GUI's status bar (device.rs status_bar): the link, the device, the
 // image, the revision, whether the browser answers, the modes that are on,
-// load, and a change on probation counting down on the right. A phone keeps
+// load and the CPU's temperature, and a change on probation counting down on the right. A phone keeps
 // it to one line: the link, the name, and what is wrong or on.
 
 import { useEffect, useState } from "react";
 
 import { memUsedPercent } from "../describe/common";
-import { reverting } from "../describe/device";
+import { celsius, reverting } from "../describe/device";
 import { useDevice } from "../device/DeviceContext";
 
 /** Seconds a probation has left now, counted down between polls. */
@@ -48,6 +48,9 @@ export function StatusBar() {
           {status.maintenance && <span className="text-warning">maintenance</span>}
           {status.debug_screen && <span className="text-warning">debug screen</span>}
           {status.cpu_percent != null && <span className="text-muted max-md:hidden">CPU {status.cpu_percent}%</span>}
+          {status.cpu_millicelsius != null && (
+            <span className="text-muted max-md:hidden">{celsius(status.cpu_millicelsius)}</span>
+          )}
           {status.memory && <span className="text-muted max-md:hidden">RAM {memUsedPercent(status.memory)}%</span>}
           {status.data && status.data.size > 0 && (
             <span className="text-muted max-md:hidden">

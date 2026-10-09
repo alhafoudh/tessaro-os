@@ -210,6 +210,17 @@ do_install:append() {
         'eval "$(tessaro-ctl completion bash 2>/dev/null)"' \
         > ${D}${datadir}/bash-completion/completions/tessaro-ctl
     chmod 0644 ${D}${datadir}/bash-completion/completions/tessaro-ctl
+
+    # drivetemp gives a SATA disk's temperature to hwmon, which `status`
+    # reads (docs/hardware.md). It has no modalias, so nothing loads it on
+    # its own. Written here rather than added to SRC_URI, for the same reason
+    # as the completion above.
+    install -d ${D}${nonarch_libdir}/modules-load.d
+    printf '%s\n' \
+        '# SATA disk temperatures for tessaro-agent (docs/hardware.md).' \
+        'drivetemp' \
+        > ${D}${nonarch_libdir}/modules-load.d/tessaro-drivetemp.conf
+    chmod 0644 ${D}${nonarch_libdir}/modules-load.d/tessaro-drivetemp.conf
 }
 
 SYSTEMD_SERVICE:${PN} = "tessaro-config.service tessaro-kiosk.service tessaro-agent.service"
@@ -222,6 +233,7 @@ FILES:${PN} += " \
     ${nonarch_libdir}/tessaro-kiosk \
     ${nonarch_libdir}/tmpfiles.d/tessaro-kiosk.conf \
     ${nonarch_libdir}/udev/rules.d/70-tessaro-devices.rules \
+    ${nonarch_libdir}/modules-load.d/tessaro-drivetemp.conf \
     ${datadir}/tessaro-kiosk \
     ${datadir}/tessaro-vision \
 "
@@ -257,3 +269,8 @@ RDEPENDS:${PN} = " \
     e2fsprogs-resize2fs \
     systemd-analyze \
 "
+
+# The module modules-load.d/tessaro-drivetemp.conf loads. A recommendation,
+# not a dependency: genericx86-64 brings every module already, and qemu,
+# which installs none on its own, still needs this one.
+RRECOMMENDS:${PN} += "kernel-module-drivetemp"

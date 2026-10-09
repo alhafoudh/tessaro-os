@@ -2,9 +2,9 @@
 // the settings and Browser. Kept equal to the Rust by the golden fixtures.
 
 import type { Schemas } from "../api/client";
-import { fact, Line, unitState, usageLevel, yesNo, type Fact } from "../text/line";
+import { fact, Line, temperatureLevel, unitState, usageLevel, yesNo, type Fact } from "../text/line";
 import * as audio from "./audio";
-import { freeLine, memUsedPercent, previousOrDefault, usageLine } from "./common";
+import { fixed, freeLine, memUsedPercent, previousOrDefault, usageLine } from "./common";
 import * as playlist from "./playlist";
 import * as screen from "./screen";
 import * as tags from "./tags";
@@ -38,6 +38,58 @@ export function tagsLine(list: string[]): Line {
     line = line.add(tags.isReserved(tag) ? "warn" : "plain", tag);
   });
   return line;
+}
+
+/** One fact per temperature reading, `cpu temp 52.0°C`, toned by the sensor's own limits. */
+export function temperatures(readings: Schemas["Temperature"][]): Fact[] {
+  const names = readings.map(sensorName);
+  return readings.map((t) => {
+    const name = sensorName(t);
+    // A name shared by several readings takes their labels when those tell
+    // them apart (k10temp's Tctl and Tccd1), else a number (two NVMe drives).
+    const same = readings.filter((_, j) => names[j] === name);
+    const labelsDiffer = same.every((r) => r.label != null && same.filter((o) => o.label === r.label).length === 1);
+    const label =
+      same.length === 1
+        ? `${name} temp`
+        : t.label != null && labelsDiffer
+          ? `${name} ${t.label} temp`
+          : `${name} ${same.indexOf(t) + 1} temp`;
+    return fact(
+      label,
+      Line.of(
+        temperatureLevel(t.millicelsius, t.max_millicelsius ?? null, t.crit_millicelsius ?? null),
+        celsius(t.millicelsius),
+      ),
+    );
+  });
+}
+
+/** What a hwmon device is, in a word; a sensor this does not know keeps the kernel's name. */
+export function sensorName(t: Schemas["Temperature"]): string {
+  switch (t.sensor) {
+    case "coretemp":
+    case "k10temp":
+    case "cpu_thermal":
+      return "cpu";
+    case "x86_pkg_temp":
+      return "cpu package";
+    case "acpitz":
+      return "board";
+    case "amdgpu":
+    case "radeon":
+    case "nouveau":
+      return "gpu";
+    case "drivetemp":
+      return "disk";
+    default:
+      return t.sensor.startsWith("iwlwifi") ? "wifi" : t.sensor;
+  }
+}
+
+/** Millidegrees Celsius as `52.0°C`. */
+export function celsius(millicelsius: number): string {
+  return `${fixed(millicelsius / 1000, 1)}°C`;
 }
 
 function machine(hardware: Schemas["Hardware"]): string | null {
@@ -101,6 +153,7 @@ export function status(status: Schemas["Status"]): StatusText {
   if (status.memory) {
     facts.push(fact("memory", freeLine(status.memory.available, status.memory.total, memUsedPercent(status.memory))));
   }
+  facts.push(...temperatures(status.temperatures ?? []));
   if (status.data) facts.push(fact("data", usageLine(status.data)));
   if (status.maintenance) {
     facts.push(fact("maintenance", onUntil("tessaro-ctl browser maintenance off", "returns to browser.url")));

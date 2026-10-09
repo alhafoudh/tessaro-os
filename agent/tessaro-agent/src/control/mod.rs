@@ -1196,14 +1196,16 @@ impl Control {
         .await
         .unwrap_or_default();
         let paths = self.paths.clone();
-        let (hardware, memory) = blocking("reading the hardware", move || {
+        let (hardware, memory, temperatures) = blocking("reading the hardware", move || {
             Ok((
                 Some(crate::hardware::hardware(&paths)),
                 crate::hardware::memory(&paths.meminfo),
+                crate::hardware::temperatures(&paths.hwmon),
             ))
         })
         .await
         .unwrap_or_default();
+        let cpu_millicelsius = crate::hardware::cpu_millicelsius(&temperatures);
         let data = self
             .storage()
             .await
@@ -1247,6 +1249,8 @@ impl Control {
             hardware,
             memory,
             cpu_percent: *lock(&self.cpu),
+            temperatures,
+            cpu_millicelsius,
         })
     }
 
@@ -1725,6 +1729,7 @@ mod tests {
             ("KIOSK_DEVICE_TREE", at("device-tree")),
             ("KIOSK_CPUINFO", at("cpuinfo")),
             ("KIOSK_MEMINFO", at("meminfo")),
+            ("KIOSK_HWMON", at("hwmon")),
             // Never made: no captive flag is written.
             ("KIOSK_PORTAL_DIR", at("portal")),
         ]
@@ -1754,6 +1759,13 @@ mod tests {
             "MemTotal:        4000000 kB\nMemAvailable:    3000000 kB\n",
         )
         .unwrap();
+        // The emulated NVMe drive the e2e suite attaches: no CPU sensor.
+        let nvme = dir.path().join("hwmon/hwmon0");
+        fs::create_dir_all(&nvme).unwrap();
+        fs::write(nvme.join("name"), "nvme\n").unwrap();
+        fs::write(nvme.join("temp1_label"), "Composite\n").unwrap();
+        fs::write(nvme.join("temp1_input"), "49850\n").unwrap();
+        fs::write(nvme.join("temp1_max"), "69850\n").unwrap();
 
         let paths = Paths::load(&env);
         let (stop, shutdown) = watch::channel(false);
