@@ -4,6 +4,16 @@ What changed in each Tessaro OS release. The images, clients and Try
 Tessaro of every version are on
 [GitHub Releases](https://github.com/alhafoudh/tessaro-os/releases).
 
+## 0.1.4
+
+### Features
+
+- Device status shows the reading of every temperature sensor on the device, in `tessaro-ctl device status`, `tessaro-gui`, Webconfig, the page bridge and the demo app. The kernel includes the coretemp, k10temp, NVMe and drivetemp drivers so these sensors can be read.
+
+### Under the hood
+
+- The genericx86-64 image runs oe-core's 6.6.142 kernel with USB audio, and QEMU boots that same image.
+
 ## 0.1.3
 
 ### Features
