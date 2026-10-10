@@ -116,13 +116,17 @@ images and clients stay workflow artifacts.
 * `release` runs only when asked and only when every job passed, e2e
   included, while an unticked `try` is skipped. A skipped e2e would let
   `image` pass, so `pick` refuses a release without e2e ticked.
-  It tags the built commit `v<version>-<sha>` and attaches every image,
-  bmap, SBOM bundle, license list, client archive and Try Tessaro package.
+  It tags the built commit `v<version>-<sha>`, attaches every image,
+  bmap, SBOM bundle, license list, client archive and Try Tessaro package,
+  and takes its notes from the version's section of `CHANGELOG.md`
+  (`changelog:notes`, **Release notes** below).
   `pick` fails up front when release is ticked without e2e or without
-  genericx86-64, or when a release of the same version (the part before the
-  sha) already exists, so no run builds for hours toward a release it
-  cannot make. Every release therefore needs a new `DISTRO_VERSION` in
-  `meta-tessaro-distro/conf/distro/tessaro.conf`.
+  genericx86-64, when a release of the same version (the part before the
+  sha) already exists, or when `CHANGELOG.md` has no section for that
+  version (`changelog:check`), so no run builds for hours toward a release
+  it cannot make. Every release therefore needs a new `DISTRO_VERSION` in
+  `meta-tessaro-distro/conf/distro/tessaro.conf` and its section in
+  `CHANGELOG.md`, committed together.
 
 **The self-hosted runner builds images and nothing else.** The clients
 take minutes on GitHub's runners and need none of the build host's cache,
@@ -177,6 +181,43 @@ on a run with several machines e2e starts after the last one.
 **A release comes only from a clean tree.** `build` fails up front when
 `release` is set and `image:name` ends in `-dirty`, since that name would
 not match any commit.
+
+## Release notes
+
+**A release publishes only text a person has read, edited and committed**:
+its version's section of `CHANGELOG.md`. Claude drafts the section; it
+never writes a release's notes itself. Approving the text is committing
+it, so it is reviewed as a diff and kept in history, and it is in the
+commit the release builds, before the hours of building start. The tool is
+`changelog/changelog.rb` (`changelog/lib/changelog.rb`, unit tests in
+`changelog/test/`, run by `ci.yml`'s `changelog` job).
+
+* **`changelog:draft [VERSION]` writes a section for review**, by default
+  for `DISTRO_VERSION`. It sends the subjects of the version's commits
+  (`git log --first-parent`, so a merge is one line) and the newest
+  sections, for their style, to `claude -p` with no tools, and puts the
+  answer into `CHANGELOG.md` in version order. `CHANGELOG_MODEL` picks the
+  model. It refuses a version that has a section, since that text may be
+  edited already; `--force` redrafts it. The commit subjects are its only
+  source, which is why they say what changed for the user.
+* **A version's commits run from the release before it to its tag**, or to
+  `HEAD` while it is unreleased. The releases come from `gh release list`,
+  not from git tags: a tag of a run that never became a release (the
+  repo has some of 0.1.0) would cut the range wrong.
+* **`changelog:backfill` drafts every published release that has no
+  section**, for the releases made before `CHANGELOG.md`.
+* **`changelog:check [VERSION]` fails without a section**, and `pick` runs
+  it for the version of a run with release ticked. A dev build does not
+  need one.
+* **`changelog:notes VERSION` is the release's body**: the section and the
+  **Full Changelog** compare link to the release before it, the link
+  `--generate-notes` gave. `release` passes `--tag`, since its tag does not
+  exist yet.
+* **`changelog:sync [VERSION...]` writes the sections into published
+  releases** whose body differs from `changelog:notes`, every release with
+  a section when none is named, so a fix to an older section, or a
+  backfill, reaches GitHub. `--dry-run` only says which would change. It
+  edits public releases, so it runs only when someone asks for it.
 
 ## The self-hosted runner
 

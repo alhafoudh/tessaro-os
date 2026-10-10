@@ -49,7 +49,7 @@ same change as the behaviour it describes.
 | [docs/networking.md](docs/networking.md) | NetworkManager, the managed profiles and their transactions, hotspot, ping, speed test, the proxy (local tinyproxy, what goes through it), extra certificate authorities |
 | [docs/updates.md](docs/updates.md) | in-place updates, `--repartition`, growing `/data` |
 | [docs/e2e.md](docs/e2e.md) | the qemu RSpec suite: running it, lanes, ports, harness quirks |
-| [docs/ci.md](docs/ci.md) | GitHub Actions: the per-push checks, the image jobs shared by the manual e2e run and the manual image build with release, the Try Tessaro DMG built around the run's genericarm64 image, the self-hosted runner and its cache used in place |
+| [docs/ci.md](docs/ci.md) | GitHub Actions: the per-push checks, the image jobs shared by the manual e2e run and the manual image build with release, the Try Tessaro DMG built around the run's genericarm64 image, release notes from `CHANGELOG.md` and the `changelog:*` tasks, the self-hosted runner and its cache used in place |
 | [docs/sbom.md](docs/sbom.md) | the SBOM: what each component is read from (bitbake's SPDX, cargo, npm, vendored files), the bundle and license list a release carries, the license policy and its exceptions, what is not covered |
 | [docs/clients.md](docs/clients.md) | what `tessaro-ctl` and `tessaro-gui` share in `agent/client` and what each keeps, reporting without printing, tones, lines and facts, adding a command, running one on several devices (`--tag`, `-n a,b`), the differences on purpose |
 | [docs/gui.md](docs/gui.md) | `tessaro-gui`: inner windows, keyboard, the node list and marking rows, device pages per command group, workers and jobs, the bulk window, the VNC viewer |
@@ -104,6 +104,27 @@ issue going stale next to a finished change.
   that links the commits (`gh issue close <n> --comment 'Fixed in <sha>'`).
   Closing it, and commenting on it, waits for the user's yes, like any
   outward-facing action.
+
+## Releases and the changelog
+
+**A release publishes only `CHANGELOG.md` text the user has read and
+approved**, so no AI-written word reaches a release unreviewed (**Release
+notes** in [docs/ci.md](docs/ci.md)).
+
+* **Preparing a release is one commit**: the new `DISTRO_VERSION` in
+  `tessaro.conf` and its `CHANGELOG.md` section. `release.yml` refuses a
+  release whose version has no section.
+* **Draft with `mise run changelog:draft`, never by writing the section
+  freehand**, then show the user the diff and wait while they edit it. A
+  drafted or edited section is not approved until the user says so; never
+  commit it on its own.
+* **Never edit a section the user has approved without being asked**, and
+  never redraft one with `--force` or `backfill` over it.
+* **`changelog:sync` edits public releases**, so it is an outward-facing
+  action: run `--dry-run` first and run the real one only on the user's
+  yes.
+* **Commit subjects are the draft's only source**: write them as what
+  changed for someone running the device, not how.
 
 ## Planning a feature
 
@@ -193,6 +214,12 @@ Use the mise tasks rather than calling `kas-container` directly:
 | `mise run sbom:check` | Every crate, npm package and vendored file against the license policy in `sbom/licenses.yml` |
 | `mise run sbom:test` | The SBOM tool's unit tests |
 | `mise run sources:collect` | The `$TESSARO_MACHINE` image's GPL, LGPL and AGPL sources into the store on the build host (`$TESSARO_SOURCES_DIR`), listed in `build/sbom/` |
+| `mise run changelog:draft -- [VERSION]` | Claude's draft of a version's `CHANGELOG.md` section from its commits (default `DISTRO_VERSION`), for review; `--force` redrafts |
+| `mise run changelog:backfill` | A draft section for every published release that has none |
+| `mise run changelog:check -- [VERSION]` | Fail when `CHANGELOG.md` has no section for the version, as `release.yml` does |
+| `mise run changelog:notes -- VERSION` | The version's release notes: its section and the compare link |
+| `mise run changelog:sync -- [VERSION...]` | Write the sections into the published releases whose notes differ; `--dry-run` only says which |
+| `mise run changelog:test` | The changelog tool's unit tests |
 | `mise run docs:screenshots` | The README's screenshots: the kiosk's pages and Webconfig (Playwright in docker) and `tessaro-gui` (headless), from the agent's own fixtures with fixed data; rerun after changing any page they show, `qr.rs` or the default debug template |
 | `mise run dev:tunnel` | Workstation: autossh VNC/SSH forwards to the build host |
 

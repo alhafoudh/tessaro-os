@@ -86,6 +86,7 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          MISE_AUTO_INSTALL: "false"
         run: |
           machines=$(jq -c '[to_entries[]
             | select(.key == "genericx86-64" or .key == "genericarm64" or .key == "raspberrypi3-64" or .key == "raspberrypi4-64" or .key == "raspberrypi5")
@@ -104,6 +105,10 @@ jobs:
               echo "::error::a release of $semver already exists; bump DISTRO_VERSION in meta-tessaro-distro/conf/distro/tessaro.conf"
               exit 1
             fi
+            # The notes are the reviewed section of CHANGELOG.md, committed
+            # with the version bump; nothing unreviewed is published.
+            mise run --quiet changelog:check -- "$semver" \
+              || { echo "::error::CHANGELOG.md has no section for $semver; run mise run changelog:draft, review it and commit it"; exit 1; }
           fi
           # Try Tessaro is built around this run's genericarm64 image, so
           # fail now rather than after hours of builds without it.
@@ -309,6 +314,11 @@ jobs:
     permissions:
       contents: write
     steps:
+      # For CHANGELOG.md and the changelog tool; the runner's own ruby runs it.
+      - uses: actions/checkout@v5
+      - uses: jdx/mise-action@v5
+        with:
+          install: false
       - uses: actions/download-artifact@v8
         with:
           pattern: tessaro-os-*
@@ -329,9 +339,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           VERSION: ${{ needs.pick.outputs.version }}
+          MISE_AUTO_INSTALL: "false"
         run: |
           ls -l dist
+          mise run --quiet changelog:notes -- "${VERSION%%-*}" --tag "v$VERSION" > "$RUNNER_TEMP/notes.md"
+          cat "$RUNNER_TEMP/notes.md"
           gh release create "v$VERSION" dist/* \
             --target "$GITHUB_SHA" \
             --title "Tessaro OS $VERSION" \
-            --generate-notes
+            --notes-file "$RUNNER_TEMP/notes.md"

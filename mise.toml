@@ -782,6 +782,39 @@ description = "Run the SBOM tool's unit tests"
 dir = "{{config_root}}/sbom"
 run = "ruby -Ilib -e 'Dir[\"test/*_test.rb\"].sort.each { require File.expand_path(_1) }'"
 
+# CHANGELOG.md is the only text a release publishes: Claude drafts a
+# version's section, a person edits and commits it (docs/ci.md, "Release
+# notes"). The ones that read the releases need gh logged in.
+[tasks."changelog:draft"]
+description = "Draft a version's CHANGELOG.md section with Claude from its commits (default DISTRO_VERSION), for review"
+dir = "{{config_root}}"
+run = 'ruby changelog/changelog.rb draft "$@"'
+
+[tasks."changelog:backfill"]
+description = "Draft the CHANGELOG.md section of every published release that has none, for review"
+dir = "{{config_root}}"
+run = "ruby changelog/changelog.rb backfill"
+
+[tasks."changelog:check"]
+description = "Fail when CHANGELOG.md has no section for a version (default DISTRO_VERSION)"
+dir = "{{config_root}}"
+run = 'ruby changelog/changelog.rb check "$@"'
+
+[tasks."changelog:notes"]
+description = "Print a version's release notes from CHANGELOG.md, with the compare link (--tag for a release not made yet)"
+dir = "{{config_root}}"
+run = 'ruby changelog/changelog.rb notes "$@"'
+
+[tasks."changelog:sync"]
+description = "Write CHANGELOG.md's sections into the published releases whose notes differ (--dry-run to only say which)"
+dir = "{{config_root}}"
+run = 'ruby changelog/changelog.rb sync "$@"'
+
+[tasks."changelog:test"]
+description = "Run the changelog tool's unit tests"
+dir = "{{config_root}}/changelog"
+run = "ruby -Ilib -e 'Dir[\"test/*_test.rb\"].sort.each { require File.expand_path(_1) }'"
+
 [tasks."qemu:unpack"]
 description = "Decompress the built .wic (or, on a Mac, the pulled one) so QEMU can boot it"
 dir = "{{config_root}}"

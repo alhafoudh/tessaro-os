@@ -132,3 +132,14 @@ jobs:
           install_args: rust node
       - run: mise run sbom:test
       - run: mise run sbom:check
+
+  # The changelog tool's unit tests (docs/ci.md, "Release notes"); the
+  # runner's own ruby runs them, so no toolchain gets installed.
+  changelog:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: jdx/mise-action@v5
+        with:
+          install: false
+      - run: mise run changelog:test
