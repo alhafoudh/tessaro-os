@@ -128,6 +128,12 @@ notes** in [docs/ci.md](docs/ci.md)).
   yes.
 * **Commit subjects are the draft's only source**: write them as what
   changed for someone running the device, not how.
+* **Every push to GitHub checks `CHANGELOG.md` first.** When `VERSION`
+  already has a section and the commits being pushed are not in it, say so
+  and offer to redraft it (`changelog:draft -- <VERSION> --force`), so a
+  release never ships notes that miss its last commits. `--force` replaces
+  the whole section, so show the diff against the approved text; the
+  redraft waits for the user's approval like any other.
 
 ## Planning a feature
 
