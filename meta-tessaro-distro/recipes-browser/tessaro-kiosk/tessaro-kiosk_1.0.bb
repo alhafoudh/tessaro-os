@@ -105,6 +105,12 @@ TESSARO_KERNEL_FILE ?= "${KERNEL_IMAGETYPE}-initramfs-${MACHINE}.bin"
 # this is set. Set per machine in the kas config.
 TESSARO_BOOT_CONFIG_DIR ?= ""
 
+# The default of KIOSK_ENABLE_FEATURES, browser.enable_features: hardware
+# video decode. The Raspberry Pi machines empty it in the kas config, because
+# Chromium's V4L2 decoder never produces a frame from bcm2835-codec there
+# (docs/kiosk-browser.md, "Hardware video decode").
+TESSARO_ENABLE_FEATURES ?= "AcceleratedVideoDecoder,AcceleratedVideoDecodeLinuxGL,AcceleratedVideoDecodeLinuxZeroCopyGL"
+
 # tessaro-flash applies an image update from the initramfs, which must not
 # pull in the agent, Chromium and everything else ${PN} depends on. cargo
 # installs every binary in the workspace into ${bindir}; this takes that one
@@ -138,6 +144,7 @@ do_install:append() {
         -e "s|@machine@|${MACHINE}|g" \
         -e "s|@kernel-file@|${TESSARO_KERNEL_FILE}|g" \
         -e "s|@boot-config-dir@|${TESSARO_BOOT_CONFIG_DIR}|g" \
+        -e "s|@enable-features@|${TESSARO_ENABLE_FEATURES}|g" \
         ${WORKDIR}/tessaro-kiosk.env.in > ${WORKDIR}/tessaro-kiosk.env
     install -Dm0644 ${WORKDIR}/tessaro-kiosk.env \
         ${D}${nonarch_libdir}/tessaro-kiosk/tessaro-kiosk.env

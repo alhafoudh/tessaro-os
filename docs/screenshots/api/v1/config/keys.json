@@ -213,7 +213,7 @@
       "browser"
     ],
     "guarded": false,
-    "doc": "Chromium features to enable, comma separated, e.g. WebBluetooth,WebBluetoothNewPermissionsBackend. Replaces the default: keep the AcceleratedVideoDecode* features (hardware video decode).",
+    "doc": "Chromium features to enable, comma separated, e.g. WebBluetooth,WebBluetoothNewPermissionsBackend. Replaces the default: keep the AcceleratedVideoDecode* features on x86 (hardware video decode).",
     "values": "Chromium feature names, comma separated, no spaces",
     "default": "AcceleratedVideoDecoder,AcceleratedVideoDecodeLinuxGL,AcceleratedVideoDecodeLinuxZeroCopyGL",
     "value": null,

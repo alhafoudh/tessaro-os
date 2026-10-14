@@ -363,10 +363,10 @@ kiosk.
 | `genericx86-64` | shipping x86_64 hardware (UEFI), Intel or AMD GPU; the same image boots under QEMU for development (`mise run qemu:vnc`) and the e2e suite | tested on a Dell OptiPlex 7050, other PCs untested; the e2e suite runs on it |
 | `genericarm64` | Arm64 under UEFI: trying Tessaro in a VM on an Apple silicon Mac, `mise run qemu:run:arm64` | boots and shows the kiosk in QEMU on the x86 build host (TCG, U-Boot) and on a Mac (HVF, edk2, vmnet); Arm boards with UEFI firmware untested, and would need their storage and GPU drivers |
 | `raspberrypi3-64` | Raspberry Pi 3B / 3B+, SD or USB | tested on a Pi 3 Model B+ |
-| `raspberrypi4-64` | Raspberry Pi 4B / 400 / CM4, SD or USB | not yet tested on hardware |
+| `raspberrypi4-64` | Raspberry Pi 4B / 400 / CM4, SD or USB | tested on a Pi 4 Model B |
 | `raspberrypi5` | Raspberry Pi 5, SD / USB / NVMe | tested on a Pi 5 |
 
-Hardware reports for the Pi 4 and for x86 PCs other than
+Hardware reports for x86 PCs other than
 the OptiPlex are welcome; the README keeps the matrix users see.
 
 Images are written from a workstation, not from the build host: `mise run

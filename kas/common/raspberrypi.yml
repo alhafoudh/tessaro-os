@@ -33,5 +33,10 @@ local_conf_header:
     # tessaro.txt holds the agent-managed firmware settings (device.gpu_mem)
     # and must be included last. [all] first, so a conditional section above
     # it cannot confine the kernel line or the include to one board.
-    RPI_EXTRA_CONFIG = "[all]\narm_64bit=1\nkernel=${KERNEL_IMAGETYPE}\ninclude tessaro.txt"
+    # display_auto_detect loads the overlay for an official DSI screen
+    # (docs/display.md, "Raspberry Pi DSI screens").
+    RPI_EXTRA_CONFIG = "[all]\ndisplay_auto_detect=1\narm_64bit=1\nkernel=${KERNEL_IMAGETYPE}\ninclude tessaro.txt"
     TESSARO_BOOT_CONFIG_DIR = "/boot"
+    # No hardware video decode: Chromium's V4L2 decoder stalls on
+    # bcm2835-codec (docs/kiosk-browser.md, "Hardware video decode").
+    TESSARO_ENABLE_FEATURES = ""

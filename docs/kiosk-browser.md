@@ -358,8 +358,8 @@ Weston scale 1 and 150% the page sees `devicePixelRatio` 1.5 and a viewport
 
 ## Hardware video decode
 
-**Chromium decodes video on the GPU's decoder where the hardware has one: V4L2
-on the Raspberry Pi, VA-API on x86.** It only does so with the
+**Chromium decodes video on the GPU's decoder on x86, through VA-API, and on
+the CPU on the Raspberry Pi.** It only uses a hardware decoder with the
 `AcceleratedVideoDecoder`, `AcceleratedVideoDecodeLinuxGL` and
 `AcceleratedVideoDecodeLinuxZeroCopyGL` features, which are the default of
 `KIOSK_ENABLE_FEATURES`. Without them every frame is decoded by ffmpeg on the
@@ -371,13 +371,17 @@ CPU.
   variable to keep `--incognito` out, which drops them too, so the features
   live in the env file and `--use-angle` in `tessaro-kiosk.service`. Setting
   `browser.enable_features` replaces the whole list: keep them in it.
-* **On the Pi the decoder is `bcm2835-codec`**, a V4L2 memory-to-memory device
-  (`/dev/video10` and up, group `video`, which the unit is in). Chromium's V4L2
-  support is compiled in by meta-chromium's default `use-v4l2`. The decoder
-  runs on the VideoCore firmware and takes its memory from `gpu_mem`, not from
-  the CMA pool the rest of the GPU uses, so `device.gpu_mem` (Pi only, applied
-  at the next reboot, see [settings.md](settings.md)) is the knob when decoding
-  fails for memory. Every megabyte of it is taken from the browser.
+* **The Raspberry Pi decodes on the CPU: its default `KIOSK_ENABLE_FEATURES`
+  is empty** (`TESSARO_ENABLE_FEATURES` in `kas/common/raspberrypi.yml`, the
+  recipe's default everywhere else). Chromium's V4L2 decoder takes the Pi 4's
+  `bcm2835-codec` (`/dev/video10`, compiled in by meta-chromium's default
+  `use-v4l2`) and never produces a frame: the video buffers, `readyState` is
+  4, and `currentTime` and `getVideoPlaybackQuality().totalVideoFrames` stay
+  at 0 on a black element, with nothing in the journal or `dmesg`. Turning
+  off only `AcceleratedVideoDecodeLinuxZeroCopyGL` does not help, and neither
+  does `device.gpu_mem=128`. With ffmpeg the Pi 4 plays Big Buck Bunny at
+  1080p. Putting the features back in `browser.enable_features` is the way
+  to try the hardware path again on a newer Chromium.
 * **On x86 it is VA-API**, which needs Chromium built with `use-vaapi` and
   without `use-v4l2` (`tessaro.conf`, x86-64 only, so the Pi's Chromium keeps
   its hash; Chromium's `media/gpu/BUILD.gn` refuses both at once), libva, and

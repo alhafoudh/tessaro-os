@@ -172,6 +172,24 @@ operator-stopped Weston are logged only with `agent.debug=1`.
   hotplug uevents. `config.txt`'s `hdmi_*`
   options are ignored there; `video=` on the kernel command line replaces them.
 
+## Raspberry Pi DSI screens
+
+**An official Raspberry Pi touch screen on the ribbon (DSI) connector works
+with nothing to set, because `config.txt` carries `display_auto_detect=1`**
+(`RPI_EXTRA_CONFIG` in `kas/common/raspberrypi.yml`). Under full KMS the
+kernel drives DSI only when a `vc4-kms-dsi-*` overlay describes the panel;
+without one there is no `DSI-1` connector and no touch input device at all,
+although the panel and touch drivers ship in the image. `display_auto_detect`
+makes the firmware probe the connector at power-on and load the matching
+overlay (`vc4-kms-dsi-7inch` for the original 7" screen with its `edt-ft5x06`
+touch, `vc4-kms-dsi-ili9881-*` for Touch Display 2), as Raspberry Pi OS does.
+
+* **DSI is not hotplugged.** The firmware probes it once at power-on, so a
+  screen attached to a running device needs a reboot.
+* **A third-party DSI panel the firmware does not recognise** needs its own
+  `dtoverlay=` line in `config.txt`; tested on a Pi 4 with the original 7"
+  screen.
+
 ## On-screen keyboard
 
 **It is weston-keyboard, and Chromium has to ask for it.**

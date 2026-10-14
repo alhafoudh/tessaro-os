@@ -114,6 +114,11 @@ pub(crate) fn image_defaults() -> HashMap<String, String> {
         "KIOSK_MAINTENANCE_URL".into(),
         "http://127.0.0.1/maintenance.html".into(),
     );
+    defaults.insert(
+        "KIOSK_ENABLE_FEATURES".into(),
+        "AcceleratedVideoDecoder,AcceleratedVideoDecodeLinuxGL,AcceleratedVideoDecodeLinuxZeroCopyGL"
+            .into(),
+    );
     defaults
 }
 

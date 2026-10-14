@@ -392,7 +392,7 @@ pub static KEYS: &[Key] = &[
     key("browser.touch", "KIOSK_TOUCH", Kind::Choice(&["auto", "enabled", "disabled"]), BROWSER,
         "Touch event feature detection."),
     key("browser.enable_features", "KIOSK_ENABLE_FEATURES", Kind::Features, BROWSER,
-        "Chromium features to enable, comma separated, e.g. WebBluetooth,WebBluetoothNewPermissionsBackend. Replaces the default: keep the AcceleratedVideoDecode* features (hardware video decode)."),
+        "Chromium features to enable, comma separated, e.g. WebBluetooth,WebBluetoothNewPermissionsBackend. Replaces the default: keep the AcceleratedVideoDecode* features on x86 (hardware video decode)."),
     key("browser.disable_features", "KIOSK_DISABLE_FEATURES", Kind::Features, BROWSER,
         "Chromium features to disable. Replaces the default: keep FallbackToSWIfGLES3NotSupported (Pi 3 GPU) and PersistentHistograms (no metrics files on /data)."),
     key("browser.fps_counter", "KIOSK_FPS_COUNTER", Kind::Flag, BROWSER,
