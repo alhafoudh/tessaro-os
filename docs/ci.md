@@ -192,10 +192,14 @@ which every release rewrites**, so `brew upgrade` follows the releases and
 nobody edits the tap by hand:
 
 ```sh
-brew tap alhafoudh/tessaro
-brew install tessaro-ctl            # macOS on Apple silicon, Linux x86_64 and aarch64
-brew install --cask tessaro-gui     # Tessaro.app, macOS on Apple silicon
+brew install alhafoudh/tessaro/tessaro-ctl            # macOS on Apple silicon, Linux x86_64 and aarch64
+brew install --cask alhafoudh/tessaro/tessaro-gui     # Tessaro.app, macOS on Apple silicon
 ```
+
+**Docs write the full name, never `brew tap` and the short one**: Homebrew
+refuses a formula or cask from a tap it does not trust, and the full name
+trusts what it installs. The short name works only after `brew trust
+alhafoudh/tessaro`.
 
 * **The tap is a repo of its own**, because `brew tap alhafoudh/tessaro`
   resolves to `github.com/alhafoudh/homebrew-tessaro` and nothing else; a
