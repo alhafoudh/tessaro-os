@@ -9,10 +9,18 @@ Tessaro of every version are on
 ### Features
 
 - Device status shows the reading of every temperature sensor on the device, in `tessaro-ctl device status`, `tessaro-gui`, Webconfig, the page bridge and the demo app. The kernel includes the coretemp, k10temp, NVMe and drivetemp drivers so these sensors can be read.
+- `tessaro-ctl` and `tessaro-gui` install with Homebrew from the alhafoudh/tessaro tap, which every release updates, and `tessaro-ctl --version` reports the release.
+- The Raspberry Pi 4 is marked tested, and official DSI touch screens light up on every Pi.
+
+### Fixes
+
+- Video plays on the Pi again: it is decoded on the CPU, since Chromium's V4L2 decoder shows a black frame.
+- The sound setup is read even when a PipeWire object goes away while it is being read.
 
 ### Under the hood
 
-- The genericx86-64 image runs oe-core's 6.6.142 kernel with USB audio, and QEMU boots that same image.
+- The genericx86-64 image runs oe-core's 6.6.142 kernel with USB audio, and QEMU boots that same image, with an emulated NVMe temperature sensor.
+- The agent, the clients and the image all take their version from one place, so they report the same release.
 
 ## 0.1.3
 
