@@ -437,10 +437,16 @@ fn node_available(props: &Value, card: Option<&Card>, direction: Direction) -> O
     }
 }
 
-/// The graph from `pw-dump`'s output.
+/// The graph from `pw-dump`'s output. That is one array, unless an object
+/// went away while it was collecting: pw-dump prints each removal as an array
+/// of its own, `[{"id": N, "info": null}]`, before the dump
+/// (`registry_event_global_remove` in pw-dump.c). Those have no `type`, so
+/// reading every array and keeping the typed objects skips them.
 pub fn parse(dump: &str, screen: bool) -> Result<Graph, String> {
-    let objects: Vec<Value> =
-        serde_json::from_str(dump).map_err(|err| format!("pw-dump: {err}"))?;
+    let mut objects: Vec<Value> = Vec::new();
+    for batch in serde_json::Deserializer::from_str(dump).into_iter::<Vec<Value>>() {
+        objects.extend(batch.map_err(|err| format!("pw-dump: {err}"))?);
+    }
 
     let mut cards: BTreeMap<u64, Card> = BTreeMap::new();
     for object in &objects {
@@ -1294,6 +1300,16 @@ mod tests {
         // 0.512 linear is 0.8 on the cubic scale wpctl uses.
         assert!((graph.outputs[0].volume.unwrap() - 0.8).abs() < 1e-9);
         assert_eq!(graph.outputs[0].muted, Some(false));
+    }
+
+    #[test]
+    fn an_object_removed_during_the_dump_is_its_own_array_before_it() {
+        let removed = "[\n  {\n    \"id\": 71,\n    \"info\": null\n  }\n]\n";
+        let graph = parse(&format!("{removed}{}", pi()), true).unwrap();
+        assert_eq!(
+            graph.outputs.len(),
+            parse(&pi(), true).unwrap().outputs.len()
+        );
     }
 
     #[test]
