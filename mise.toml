@@ -572,7 +572,7 @@ run = '''
 # directory. The build runs git inside kas-container, which has no global git
 # config, so the user's global excludes file is left out here too - a file it
 # hides on the host is untracked there and makes the build -dirty.
-version=$(sed -n 's/^DISTRO_VERSION = "\(.*\)"$/\1/p' meta-tessaro-distro/conf/distro/tessaro.conf)
+version=$(tr -d '[:space:]' < VERSION)
 cd meta-tessaro-distro
 rev=$(git rev-parse --short=7 HEAD 2>/dev/null) || rev=unknown
 [ -z "$(git -c core.excludesFile=/dev/null status --porcelain 2>/dev/null)" ] || rev=$rev-dirty
@@ -786,7 +786,7 @@ run = "ruby -Ilib -e 'Dir[\"test/*_test.rb\"].sort.each { require File.expand_pa
 # version's section, a person edits and commits it (docs/ci.md, "Release
 # notes"). The ones that read the releases need gh logged in.
 [tasks."changelog:draft"]
-description = "Draft a version's CHANGELOG.md section with Claude from its commits (default DISTRO_VERSION), for review"
+description = "Draft a version's CHANGELOG.md section with Claude from its commits (default VERSION), for review"
 dir = "{{config_root}}"
 run = 'ruby changelog/changelog.rb draft "$@"'
 
@@ -796,7 +796,7 @@ dir = "{{config_root}}"
 run = "ruby changelog/changelog.rb backfill"
 
 [tasks."changelog:check"]
-description = "Fail when CHANGELOG.md has no section for a version (default DISTRO_VERSION)"
+description = "Fail when CHANGELOG.md has no section for a version (default VERSION)"
 dir = "{{config_root}}"
 run = 'ruby changelog/changelog.rb check "$@"'
 

@@ -359,10 +359,12 @@ it on their own. The runner's setup is in [docs/ci.md](docs/ci.md).
 
 A release takes its notes from `CHANGELOG.md`, and `release.yml` refuses
 to start one whose version has no section there. Before releasing, bump
-`DISTRO_VERSION`, draft the section, edit it, and commit both:
+`VERSION` at the root of the repo, regenerate the API document
+(`UPDATE_OPENAPI=1 cargo test -p tessaro-agent openapi`, it carries the
+version), draft the section, edit it, and commit them together:
 
 ```sh
-mise run changelog:draft      # Claude's draft of DISTRO_VERSION's section, for review
+mise run changelog:draft      # Claude's draft of VERSION's section, for review
 mise run changelog:backfill   # a draft for every published release without a section
 mise run changelog:sync       # the edited sections into the published releases (--dry-run first)
 ```

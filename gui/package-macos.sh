@@ -7,8 +7,8 @@ binary=${1:?usage: package-macos.sh /path/to/tessaro-gui}
 gui_dir=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 output_dir=$(CDPATH= cd -- "$(dirname "$binary")" && pwd)
 app="$output_dir/Tessaro.app"
-version=$(sed -n 's/^version = "\([^"]*\)"$/\1/p' "$gui_dir/Cargo.toml")
-[ -n "$version" ] || { echo "Missing GUI workspace version" >&2; exit 1; }
+version=$(tr -d '[:space:]' < "$gui_dir/../VERSION")
+[ -n "$version" ] || { echo "Missing VERSION" >&2; exit 1; }
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$binary" "$app/Contents/MacOS/tessaro-gui"
 cp "$gui_dir/tessaro-gui/icons/Tessaro.icns" "$app/Contents/Resources/Tessaro.icns"

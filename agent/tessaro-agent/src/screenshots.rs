@@ -172,11 +172,13 @@ async fn answers() -> BTreeMap<&'static str, serde_json::Value> {
     status.node = NodeInfo {
         id: ID.into(),
         name: NAME.into(),
+        // Fixed like the OS below, so a release does not make every
+        // screenshot stale.
+        version: "0.1.0".into(),
         machine: "raspberrypi5".into(),
         fingerprint: FINGERPRINT.into(),
         claimed: false,
         tags: vec!["floor-2".into(), "lobby".into()],
-        ..status.node
     };
     status.current_url = Some(URL.into());
     status.browser_answering = true;

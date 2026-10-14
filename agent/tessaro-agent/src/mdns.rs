@@ -56,7 +56,7 @@ impl Mdns {
             txt: vec![
                 ("id".to_string(), node.id),
                 ("fp".to_string(), node.fingerprint),
-                ("ver".to_string(), env!("CARGO_PKG_VERSION").to_string()),
+                ("ver".to_string(), protocol::VERSION.to_string()),
                 ("machine".to_string(), node.machine),
             ],
             live: Mutex::new(Live {

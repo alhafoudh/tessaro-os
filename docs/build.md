@@ -247,7 +247,7 @@ is how Chromium's `PACKAGECONFIG` and `CHROMIUM_EXTRA_ARGS` are set.
   is `IMAGE_BASENAME` in `moonforge-image-base.bbappend` (it defaults to `${PN}`,
   which would name the product after the upstream recipe), and the version is
   `IMAGE_VERSION` in `tessaro.conf`: `DISTRO_VERSION` (the semver marketing
-  version, bumped by hand) plus the short sha of this repo's `HEAD`, computed
+  version, read from `VERSION`, below) plus the short sha of this repo's `HEAD`, computed
   at parse, with `-dirty` appended when `git status` reports any change. It overrides the `IMAGE_VERSION: "0"` that Moonforge's
   `meta-moonforge-distro.yml` kas fragment sets under `env:`, and it is also
   `IMAGE_VERSION` in os-release and the version on the console login banner
@@ -256,6 +256,20 @@ is how Chromium's `PACKAGECONFIG` and `CHROMIUM_EXTRA_ARGS` are set.
   `tessaro-os-<machine>.rootfs.*`, and the mise tasks depend on that `.rootfs`
   spelling. The bitbake target is still `moonforge-image-base` - only the
   output is renamed.
+* **`VERSION` at the root of the repo is the only place a version is
+  written**, so the image, the agent and the clients never disagree about
+  which release they are. `tessaro.conf` reads it into `DISTRO_VERSION`;
+  `agent/protocol/build.rs` makes it `protocol::VERSION`, which
+  `tessaro-agent --version`, the device's `version` in `device status`, the
+  mDNS `ver` record, the OpenAPI document's `info.version` and the name
+  every client gives itself to the device (`tessaro-ctl 0.1.4`) all report;
+  `package-macos.sh` puts it in the apps' `Info.plist`; `changelog:*` and
+  `image:name` read it too. The recipe's tree holds only `agent/`, so
+  `tessaro-kiosk` passes `DISTRO_VERSION` to cargo as `TESSARO_VERSION`,
+  which `build.rs` takes over the file. The workspaces' `version = "0.0.0"`
+  in `Cargo.toml` is not the release and nothing reads it. Bumping
+  `VERSION` changes `agent/protocol/openapi.json`: regenerate it in the same
+  commit.
 * **Moonforge's `STRUCTURE.md` is stale in places.** Trust the layer sources
   over upstream docs.
 

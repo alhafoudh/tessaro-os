@@ -3306,7 +3306,7 @@ dependencies = [
 
 [[package]]
 name = "protocol"
-version = "1.0.0"
+version = "0.0.0"
 dependencies = [
  "data-encoding",
  "schemars",
@@ -4339,7 +4339,7 @@ dependencies = [
 
 [[package]]
 name = "tessaro-client"
-version = "1.0.0"
+version = "0.0.0"
 dependencies = [
  "data-encoding",
  "httparse",
@@ -4355,7 +4355,7 @@ dependencies = [
 
 [[package]]
 name = "tessaro-db"
-version = "1.0.0"
+version = "0.0.0"
 dependencies = [
  "refinery",
  "rusqlite",
@@ -4363,7 +4363,7 @@ dependencies = [
 
 [[package]]
 name = "tessaro-gui"
-version = "1.0.0"
+version = "0.0.0"
 dependencies = [
  "iced",
  "iced_table",
@@ -4380,7 +4380,7 @@ dependencies = [
 
 [[package]]
 name = "tessaro-style"
-version = "1.0.0"
+version = "0.0.0"
 dependencies = [
  "iced",
  "tessaro-client",
@@ -4588,7 +4588,7 @@ dependencies = [
 
 [[package]]
 name = "try-tessaro"
-version = "1.0.0"
+version = "0.0.0"
 dependencies = [
  "iced",
  "protocol",

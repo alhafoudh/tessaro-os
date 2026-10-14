@@ -102,7 +102,7 @@ jobs:
             semver=${VERSION%%-*}
             pattern="^v${semver//./\\.}(-.*)?$"
             if gh release list --limit 1000 --json tagName -q '.[].tagName' | grep -qE "$pattern"; then
-              echo "::error::a release of $semver already exists; bump DISTRO_VERSION in meta-tessaro-distro/conf/distro/tessaro.conf"
+              echo "::error::a release of $semver already exists; bump VERSION at the root of the repo"
               exit 1
             fi
             # The notes are the reviewed section of CHANGELOG.md, committed

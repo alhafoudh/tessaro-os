@@ -44,6 +44,12 @@ require tessaro-kiosk-crates.inc
 
 S = "${WORKDIR}/agent"
 
+# The version the binaries report. Only agent/ is in SRC_URI, so the root
+# VERSION file that host builds read is not in the tree here
+# (agent/protocol/build.rs). DISTRO_VERSION, not IMAGE_VERSION: the sha in
+# that one would rebuild the workspace on every commit.
+export TESSARO_VERSION = "${DISTRO_VERSION}"
+
 # TLS for the agent's probe. native-tls means the platform's openssl, which is
 # the point: the trust store is the image's /etc/ssl/certs (ca-certificates
 # below), not a copy of the Mozilla roots baked into the binary.

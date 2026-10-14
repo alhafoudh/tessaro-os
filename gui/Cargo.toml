@@ -8,7 +8,9 @@ resolver = "2"
 members = ["tessaro-gui", "tessaro-style", "try-tessaro"]
 
 [workspace.package]
-version = "1.0.0"
+# Not the release: the apps report protocol::VERSION and package-macos.sh
+# reads VERSION at the root of the repo. Nothing reads this one.
+version = "0.0.0"
 edition = "2021"
 # The same toolchain as agent/ (mise.toml pins it for the whole repo).
 rust-version = "1.95"

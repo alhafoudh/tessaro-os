@@ -25,7 +25,9 @@ resolver = "2"
 members = ["protocol", "client", "db", "tessaro-agent", "tessaro-ctl", "update", "camera", "vision"]
 
 [workspace.package]
-version = "1.0.0"
+# Not the release: what the binaries report is protocol::VERSION, from VERSION
+# at the root of the repo (protocol/build.rs). Nothing reads this one.
+version = "0.0.0"
 edition = "2021"
 # Kept at or below the rustc bitbake will use. That version is dictated by the
 # Chromium pin (meta-lts-mixins-rust in kas/repo/meta-chromium.yml), not chosen

@@ -588,7 +588,7 @@ impl Control {
         NodeInfo {
             id: self.identity.id.clone(),
             name: self.identity.name.clone(),
-            version: env!("CARGO_PKG_VERSION").to_string(),
+            version: protocol::VERSION.to_string(),
             machine: self.identity.machine.clone(),
             fingerprint: self.identity.fingerprint.clone(),
             claimed: self.claimed(),

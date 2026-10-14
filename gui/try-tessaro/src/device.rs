@@ -7,7 +7,7 @@ use tessaro_client::connect::{self, Session, Trust};
 use tessaro_client::nodes::Nodes;
 
 /// How this client names itself in the hello, for the device's log.
-pub const CLIENT: &str = concat!("try-tessaro ", env!("CARGO_PKG_VERSION"));
+pub const CLIENT: &str = "try-tessaro";
 
 pub fn address(api: u16) -> String {
     format!("127.0.0.1:{api}")

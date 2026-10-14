@@ -310,7 +310,8 @@ impl Download {
 }
 
 /// Open a session with `target`. `client` is how this program names itself
-/// to the device (`tessaro-ctl 1.0.0`), for its journal.
+/// to the device (`tessaro-ctl`), for its journal; the session adds the
+/// release (`tessaro-ctl 0.1.4`).
 pub fn open(
     target: &Target,
     nodes: &Nodes,
@@ -688,7 +689,7 @@ impl Session {
         Self {
             conn: Some(conn),
             dial,
-            agent: client.to_string(),
+            agent: format!("{client} {}", protocol::VERSION),
             token: None,
             read_timeout: Some(IO),
             node: NodeInfo {

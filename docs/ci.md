@@ -124,9 +124,9 @@ images and clients stay workflow artifacts.
   genericx86-64, when a release of the same version (the part before the
   sha) already exists, or when `CHANGELOG.md` has no section for that
   version (`changelog:check`), so no run builds for hours toward a release
-  it cannot make. Every release therefore needs a new `DISTRO_VERSION` in
-  `meta-tessaro-distro/conf/distro/tessaro.conf` and its section in
-  `CHANGELOG.md`, committed together.
+  it cannot make. Every release therefore needs a new version in `VERSION`
+  at the root of the repo and its section in `CHANGELOG.md`, committed
+  together (**`VERSION`** in [docs/build.md](docs/build.md)).
 
 **The self-hosted runner builds images and nothing else.** The clients
 take minutes on GitHub's runners and need none of the build host's cache,
@@ -193,7 +193,7 @@ commit the release builds, before the hours of building start. The tool is
 `changelog/test/`, run by `ci.yml`'s `changelog` job).
 
 * **`changelog:draft [VERSION]` writes a section for review**, by default
-  for `DISTRO_VERSION`. It sends the subjects of the version's commits
+  for the version in `VERSION`. It sends the subjects of the version's commits
   (`git log --first-parent`, so a merge is one line) and the newest
   sections, for their style, to `claude -p` with no tools, and puts the
   answer into `CHANGELOG.md` in version order. `CHANGELOG_MODEL` picks the

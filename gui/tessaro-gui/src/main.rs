@@ -42,7 +42,7 @@ use device::Device;
 use nodes_view::NodesView;
 
 /// How this client names itself in the hello, for the device's log.
-pub const CLIENT: &str = concat!("tessaro-gui ", env!("CARGO_PKG_VERSION"));
+pub const CLIENT: &str = "tessaro-gui";
 
 /// The window the app opens with.
 const WINDOW: Size = Size::new(1400.0, 860.0);

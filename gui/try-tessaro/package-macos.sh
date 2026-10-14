@@ -20,8 +20,8 @@ case "$image" in *.wic.zst) ;; *) echo "The image must be a .wic.zst: $image" >&
 here=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 gui_dir=$(dirname "$here")
 output_dir=$(CDPATH= cd -- "$(dirname "$binary")" && pwd)
-version=$(sed -n 's/^version = "\([^"]*\)"$/\1/p' "$gui_dir/Cargo.toml")
-[ -n "$version" ] || { echo "Missing GUI workspace version" >&2; exit 1; }
+version=$(tr -d '[:space:]' < "$gui_dir/../VERSION")
+[ -n "$version" ] || { echo "Missing VERSION" >&2; exit 1; }
 
 # QEMU is built once into build/qemu-gpu (build-qemu-gpu.sh does nothing
 # while its pins hold), and the runtime made from it only when that build

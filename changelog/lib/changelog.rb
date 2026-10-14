@@ -102,9 +102,9 @@ module Changelog
     out
   end
 
-  def distro_version(root)
-    conf = File.read(File.join(root, "meta-tessaro-distro/conf/distro/tessaro.conf"))
-    conf[/^DISTRO_VERSION = "(.*)"$/, 1] or abort "no DISTRO_VERSION in tessaro.conf"
+  def current_version(root)
+    version = File.read(File.join(root, "VERSION")).strip
+    version.empty? ? abort("VERSION is empty") : version
   end
 
   # The subjects of the commits in range, merges included as one line each

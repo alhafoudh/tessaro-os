@@ -120,7 +120,7 @@ pub struct Server {
 
 impl Server {
     pub fn new(control: Arc<Control>, paths: &Paths, log: Arc<Log>) -> Arc<Self> {
-        let document = protocol::openapi::document(env!("CARGO_PKG_VERSION"));
+        let document = protocol::openapi::document(protocol::VERSION);
         Arc::new(Self {
             sessions: control.sessions(),
             control,
@@ -1280,7 +1280,7 @@ mod tests {
     /// generators. `UPDATE_OPENAPI=1 cargo test` writes it.
     #[test]
     fn the_checked_in_openapi_document_is_current() {
-        let document = protocol::openapi::document(env!("CARGO_PKG_VERSION"));
+        let document = protocol::openapi::document(protocol::VERSION);
         let text = format!("{}\n", serde_json::to_string_pretty(&document).unwrap());
         let file = concat!(env!("CARGO_MANIFEST_DIR"), "/../protocol/openapi.json");
         if std::env::var_os("UPDATE_OPENAPI").is_some() {

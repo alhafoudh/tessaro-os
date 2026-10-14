@@ -111,9 +111,12 @@ issue going stale next to a finished change.
 approved**, so no AI-written word reaches a release unreviewed (**Release
 notes** in [docs/ci.md](docs/ci.md)).
 
-* **Preparing a release is one commit**: the new `DISTRO_VERSION` in
-  `tessaro.conf` and its `CHANGELOG.md` section. `release.yml` refuses a
-  release whose version has no section.
+* **Preparing a release is one commit**: the new version in `VERSION`, the
+  regenerated `agent/protocol/openapi.json` and its `CHANGELOG.md` section.
+  `release.yml` refuses a release whose version has no section.
+* **`VERSION` is the only place a version is written.** Never put a release
+  number in a `Cargo.toml`, a recipe or a script; read `VERSION` or
+  `protocol::VERSION` (**`VERSION`** in [docs/build.md](docs/build.md)).
 * **Draft with `mise run changelog:draft`, never by writing the section
   freehand**, then show the user the diff and wait while they edit it. A
   drafted or edited section is not approved until the user says so; never
@@ -214,7 +217,7 @@ Use the mise tasks rather than calling `kas-container` directly:
 | `mise run sbom:check` | Every crate, npm package and vendored file against the license policy in `sbom/licenses.yml` |
 | `mise run sbom:test` | The SBOM tool's unit tests |
 | `mise run sources:collect` | The `$TESSARO_MACHINE` image's GPL, LGPL and AGPL sources into the store on the build host (`$TESSARO_SOURCES_DIR`), listed in `build/sbom/` |
-| `mise run changelog:draft -- [VERSION]` | Claude's draft of a version's `CHANGELOG.md` section from its commits (default `DISTRO_VERSION`), for review; `--force` redrafts |
+| `mise run changelog:draft -- [VERSION]` | Claude's draft of a version's `CHANGELOG.md` section from its commits (default `VERSION`), for review; `--force` redrafts |
 | `mise run changelog:backfill` | A draft section for every published release that has none |
 | `mise run changelog:check -- [VERSION]` | Fail when `CHANGELOG.md` has no section for the version, as `release.yml` does |
 | `mise run changelog:notes -- VERSION` | The version's release notes: its section and the compare link |

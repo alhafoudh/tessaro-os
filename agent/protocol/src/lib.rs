@@ -25,6 +25,11 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// The Tessaro release these binaries belong to, from VERSION at the root of
+/// the repo (`build.rs`): the version the agent, both clients and the API
+/// document report, and the image's DISTRO_VERSION.
+pub const VERSION: &str = env!("TESSARO_VERSION");
+
 pub const DEFAULT_PORT: u16 = 7400;
 pub const DEFAULT_SOCKET: &str = "/run/tessaro-agent.sock";
 

@@ -132,7 +132,7 @@ fn main() -> ExitCode {
             return ExitCode::SUCCESS;
         }
         Some("--version") => {
-            println!("tessaro-agent {}", env!("CARGO_PKG_VERSION"));
+            println!("tessaro-agent {}", protocol::VERSION);
             return ExitCode::SUCCESS;
         }
         Some(other) => {

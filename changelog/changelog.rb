@@ -10,7 +10,7 @@
 #   ruby changelog/changelog.rb notes VERSION [--tag TAG]
 #   ruby changelog/changelog.rb sync [VERSION...] [--dry-run]
 #
-# VERSION defaults to DISTRO_VERSION in tessaro.conf. `draft` has Claude
+# VERSION defaults to the one in the VERSION file at the root of the repo. `draft` has Claude
 # write a version's section from its commits into CHANGELOG.md, for a person
 # to edit and commit; --force replaces a section that is there. `backfill`
 # drafts every released version that has none. `check` exits 1 when the
@@ -49,7 +49,7 @@ end
 
 case command
 when "draft"
-  version = versions.first || Changelog.distro_version(root)
+  version = versions.first || Changelog.current_version(root)
   if document[version] && !options[:force]
     abort "CHANGELOG.md already has #{version}; edit it, or redraft it with --force"
   end
@@ -62,7 +62,7 @@ when "backfill"
   missing.each { draft.call(_1, releases) }
   warn "wrote #{missing.join(', ')} into CHANGELOG.md; review them, then changelog:sync" if missing.any?
 when "check"
-  version = versions.first || Changelog.distro_version(root)
+  version = versions.first || Changelog.current_version(root)
   unless document[version]
     abort "CHANGELOG.md has no section for #{version}; run mise run changelog:draft, review it and commit it"
   end
