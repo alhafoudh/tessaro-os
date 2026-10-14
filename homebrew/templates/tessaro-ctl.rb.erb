@@ -1,0 +1,38 @@
+# Written by homebrew/render.rb in alhafoudh/tessaro-os on every release; an
+# edit here is overwritten by the next one.
+class TessaroCtl < Formula
+  desc "Manage Tessaro kiosk devices from the command-line"
+  homepage "https://github.com/alhafoudh/tessaro-os"
+  version "<%= version %>"
+  license "Apache-2.0"
+
+  on_macos do
+    depends_on arch: :arm64
+
+    on_arm do
+      url "<%= url["tessaro-ctl", "macos-arm64", "tar.gz"] %>"
+      sha256 "<%= sha256["tessaro-ctl", "macos-arm64", "tar.gz"] %>"
+    end
+  end
+
+  # Built on Ubuntu 22.04: glibc 2.35 and the system's libssl3.
+  on_linux do
+    on_intel do
+      url "<%= url["tessaro-ctl", "linux-x86_64", "tar.gz"] %>"
+      sha256 "<%= sha256["tessaro-ctl", "linux-x86_64", "tar.gz"] %>"
+    end
+    on_arm do
+      url "<%= url["tessaro-ctl", "linux-aarch64", "tar.gz"] %>"
+      sha256 "<%= sha256["tessaro-ctl", "linux-aarch64", "tar.gz"] %>"
+    end
+  end
+
+  def install
+    bin.install "tessaro-ctl"
+    generate_completions_from_executable(bin/"tessaro-ctl", "completion", shells: [:bash, :zsh])
+  end
+
+  test do
+    assert_match(/^tessaro-ctl \d+\.\d+\.\d+$/, shell_output("#{bin}/tessaro-ctl --version"))
+  end
+end

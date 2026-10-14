@@ -1,6 +1,7 @@
 # Build images by hand, run e2e on the genericx86-64 one, build tessaro-ctl and
 # tessaro-gui for every platform, Try Tessaro around the genericarm64 image
-# when try is ticked, and publish them all as a release when that is ticked.
+# when try is ticked, and publish them all as a release, with the Homebrew tap
+# pointed at it, when that is ticked.
 # The images and e2e are image.yml's jobs, on the self-hosted runner on the
 # build host; everything else runs on GitHub's runners. Only
 # workflow_dispatch triggers this, so only people with write access run code
@@ -348,3 +349,43 @@ jobs:
             --target "$GITHUB_SHA" \
             --title "Tessaro OS $VERSION" \
             --notes-file "$RUNNER_TEMP/notes.md"
+
+  # The Homebrew tap, alhafoudh/homebrew-tessaro: tessaro-ctl's formula and
+  # tessaro-gui's cask pointed at the release just published
+  # (homebrew/render.rb). A job of its own, so a failed push is re-run
+  # without publishing again. always(), or the skipped try would skip it.
+  homebrew:
+    needs: [pick, release]
+    if: always() && needs.release.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      # For homebrew/; the runner's own ruby runs it.
+      - uses: actions/checkout@v5
+      # The archives the release attached, for their sha256.
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: clients-*
+          merge-multiple: true
+          path: dist
+      # The tap's deploy key, with write access to that repo alone.
+      - name: Push the tap
+        env:
+          TAP_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+          VERSION: ${{ needs.pick.outputs.version }}
+        run: |
+          set -e
+          key=$RUNNER_TEMP/tap-key
+          printf '%s\n' "$TAP_KEY" > "$key"
+          chmod 600 "$key"
+          export GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes"
+          git clone git@github.com:alhafoudh/homebrew-tessaro.git "$RUNNER_TEMP/tap"
+          ruby homebrew/render.rb "$VERSION" dist "$RUNNER_TEMP/tap"
+          cd "$RUNNER_TEMP/tap"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula Casks
+          # A re-run of a job that already pushed has nothing to commit.
+          git diff --cached --quiet && exit 0
+          git diff --cached --stat
+          git commit -m "tessaro-ctl and tessaro-gui $VERSION"
+          git push origin HEAD:main

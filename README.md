@@ -243,8 +243,8 @@ so a claim and settings last until you close it.
 2. **Get the client** and find the device:
 
    ```sh
-   mise run ctl:build            # or the tessaro-ctl from a release
-   tessaro-ctl nodes list        # devices answering on this network
+   brew install alhafoudh/tessaro/tessaro-ctl   # or the release's archive, or mise run ctl:build
+   tessaro-ctl nodes list                       # devices answering on this network
    ```
 
 3. **Claim it.** You get a token and its root password, shown once:
@@ -411,7 +411,10 @@ from. It shares the
 CLI's devices and tokens, so a device claimed in one is open in the other.
 Cmd-click or Shift-click several devices in the list (Cmd-A for every one a
 tag filter shows) and **Run on marked** reloads, restarts, reboots, sets a
-setting, runs a script, uploads files or updates them all at once.
+setting, runs a script, uploads files or updates them all at once. On a Mac
+with Apple silicon it installs with
+`brew install --cask alhafoudh/tessaro/tessaro-gui`; for Linux and Windows
+it is in [Releases](https://github.com/alhafoudh/tessaro-os/releases).
 
 <p align="center">
   <img src="docs/images/gui-overview.jpg" width="49%" alt="tessaro-gui with a device window open on its Overview">

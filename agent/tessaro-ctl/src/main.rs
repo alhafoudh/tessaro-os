@@ -69,7 +69,7 @@ const HELP_STYLES: Styles = Styles::styled()
 #[derive(Parser)]
 #[command(
     name = "tessaro-ctl",
-    version,
+    version = protocol::VERSION,
     styles = HELP_STYLES,
     about = "Manage Tessaro kiosks",
     long_about = "Manage Tessaro kiosks: settings, the browser, the display, tokens and the root password.\n\n\

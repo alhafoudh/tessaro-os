@@ -127,6 +127,8 @@ images and clients stay workflow artifacts.
   it cannot make. Every release therefore needs a new version in `VERSION`
   at the root of the repo and its section in `CHANGELOG.md`, committed
   together (**`VERSION`** in [docs/build.md](docs/build.md)).
+* `homebrew` runs once `release` has published, and points the Homebrew
+  tap at the new release (**Homebrew** below).
 
 **The self-hosted runner builds images and nothing else.** The clients
 take minutes on GitHub's runners and need none of the build host's cache,
@@ -181,6 +183,65 @@ on a run with several machines e2e starts after the last one.
 **A release comes only from a clean tree.** `build` fails up front when
 `release` is set and `image:name` ends in `-dirty`, since that name would
 not match any commit.
+
+## Homebrew
+
+**`tessaro-ctl` and `tessaro-gui` install with Homebrew from the tap
+[alhafoudh/homebrew-tessaro](https://github.com/alhafoudh/homebrew-tessaro),
+which every release rewrites**, so `brew upgrade` follows the releases and
+nobody edits the tap by hand:
+
+```sh
+brew tap alhafoudh/tessaro
+brew install tessaro-ctl            # macOS on Apple silicon, Linux x86_64 and aarch64
+brew install --cask tessaro-gui     # Tessaro.app, macOS on Apple silicon
+```
+
+* **The tap is a repo of its own**, because `brew tap alhafoudh/tessaro`
+  resolves to `github.com/alhafoudh/homebrew-tessaro` and nothing else; a
+  tap inside this repo would need its URL typed on every machine and would
+  clone the whole layer tree.
+* **The templates live here, in `homebrew/templates/`**, next to the
+  archive names `clients` gives them. `homebrew/render.rb VERSION DIST TAP`
+  fills in the version and each archive's sha256 and writes
+  `Formula/tessaro-ctl.rb` and `Casks/tessaro-gui.rb` into a checkout of
+  the tap. An edit made in the tap is overwritten by the next release.
+* **`release.yml`'s `homebrew` job** runs it on the `clients-*` artifacts,
+  the files the release attached, and pushes the result to the tap's
+  `main`. It pushes with the tap's deploy key, whose private half is this
+  repo's `HOMEBREW_TAP_DEPLOY_KEY` secret: `github.token` reaches this repo
+  only, and a deploy key writes to the tap alone and never expires. The job
+  is separate from `release`, so a failed push is re-run alone.
+* **The formula installs the prebuilt binary**, not a source build: the
+  release has already built and tested it, and a source build would need
+  the pinned Rust toolchain on every user's machine. It writes the bash and
+  zsh completions with `tessaro-ctl completion`, and its test checks the
+  binary runs and prints a version.
+* **The tap tests every push on its own** (`.github/workflows/tests.yml`
+  there): `brew style` and `brew audit`, then the formula installed and
+  tested on macOS and on both Linux architectures, and the cask installed
+  on macOS with the quarantine flag checked gone. A push with the deploy
+  key starts that run, which one with `github.token` would not.
+* **The cask strips the quarantine flag** from `Tessaro.app` after
+  installing it (`postflight_steps`), since the app is signed ad hoc only
+  (the macOS paragraph above). Notarizing the app makes that step
+  unnecessary. The cask has no `zap`: `~/.config/tessaro` holds the devices
+  and tokens `tessaro-ctl` uses too.
+* **Only the platforms `clients` builds are covered**: no Intel Mac, and the
+  GUI only on macOS. A Linux user takes `tessaro-gui` from the release.
+
+To check a change to a template, render it into a local tap and let brew
+judge it:
+
+```sh
+brew tap-new --no-git local/tessaro-test
+gh release download v<version>-<sha> -D /tmp/dist -p 'tessaro-ctl-*.tar.gz' -p 'tessaro-gui-*-macos-arm64.zip'
+ruby homebrew/render.rb <version>-<sha> /tmp/dist "$(brew --repository local/tessaro-test)"
+brew style "$(brew --repository local/tessaro-test)"
+brew audit --strict local/tessaro-test/tessaro-ctl
+brew audit --strict --cask local/tessaro-test/tessaro-gui
+brew untap local/tessaro-test && brew developer off
+```
 
 ## Release notes
 
