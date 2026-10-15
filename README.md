@@ -189,16 +189,22 @@ No spare screen at hand? An Apple silicon Mac runs a whole Tessaro device in
 a virtual machine, with nothing to install or set up. The VM has no GPU, so
 pages render in software and run slower than on a real device:
 
-1. **Download** `try-tessaro-<version>-macos-arm64.dmg` from
-   [Releases](https://github.com/alhafoudh/tessaro-os/releases).
-2. **Drag** Try Tessaro to Applications. It is signed ad hoc, not
-   notarized, so clear its quarantine flag once:
+1. **Install** it with Homebrew:
+
+   ```sh
+   brew install --cask alhafoudh/tessaro/try-tessaro
+   ```
+
+   Or download `try-tessaro-<version>-macos-arm64.dmg` from
+   [Releases](https://github.com/alhafoudh/tessaro-os/releases) and drag
+   Try Tessaro to Applications. It is signed ad hoc, not notarized, so
+   clear its quarantine flag once (the cask does this for you):
 
    ```sh
    xattr -dr com.apple.quarantine "/Applications/Try Tessaro.app"
    ```
 
-3. **Open it and press Start.**
+2. **Open it and press Start.**
 
 The kiosk opens in a window of its own. Try Tessaro's window opens
 `tessaro-gui`, a terminal with `tessaro-ctl` ready and Webconfig, and its

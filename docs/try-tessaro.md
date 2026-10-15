@@ -29,7 +29,8 @@ no Homebrew, no mise and no checkout:
 
 `gui/try-tessaro/package-macos.sh` assembles it and signs it ad hoc, like
 `Tessaro.app`. It is not notarized: a downloaded copy needs its quarantine
-flag cleared once (README, **Try it on a Mac**).
+flag cleared once (README, **Try it on a Mac**), which the Homebrew cask
+`try-tessaro` does on install ([ci.md](ci.md), **Homebrew**).
 
 **The DMG opens on the welcome page's look**: the app on the left, a link
 to Applications on the right, big icons and an arrow between them over

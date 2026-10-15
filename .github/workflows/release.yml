@@ -351,7 +351,7 @@ jobs:
             --notes-file "$RUNNER_TEMP/notes.md"
 
   # The Homebrew tap, alhafoudh/homebrew-tessaro: tessaro-ctl's formula and
-  # tessaro-gui's cask pointed at the release just published
+  # the tessaro-gui and try-tessaro casks pointed at the release just published
   # (homebrew/render.rb). A job of its own, so a failed push is re-run
   # without publishing again. always(), or the skipped try would skip it.
   homebrew:
@@ -361,10 +361,16 @@ jobs:
     steps:
       # For homebrew/; the runner's own ruby runs it.
       - uses: actions/checkout@v5
-      # The archives the release attached, for their sha256.
+      # The archives the release attached, for their sha256, and Try
+      # Tessaro's DMG when try built one (none matches otherwise).
       - uses: actions/download-artifact@v8
         with:
           pattern: clients-*
+          merge-multiple: true
+          path: dist
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: try-tessaro-*-macos-arm64.dmg
           merge-multiple: true
           path: dist
       # The tap's deploy key, with write access to that repo alone.

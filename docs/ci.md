@@ -186,7 +186,8 @@ not match any commit.
 
 ## Homebrew
 
-**`tessaro-ctl` and `tessaro-gui` install with Homebrew from the tap
+**`tessaro-ctl`, `tessaro-gui` and Try Tessaro install with Homebrew from
+the tap
 [alhafoudh/homebrew-tessaro](https://github.com/alhafoudh/homebrew-tessaro),
 which every release rewrites**, so `brew upgrade` follows the releases and
 nobody edits the tap by hand:
@@ -194,6 +195,7 @@ nobody edits the tap by hand:
 ```sh
 brew install alhafoudh/tessaro/tessaro-ctl            # macOS on Apple silicon, Linux x86_64 and aarch64
 brew install --cask alhafoudh/tessaro/tessaro-gui     # Tessaro.app, macOS on Apple silicon
+brew install --cask alhafoudh/tessaro/try-tessaro     # Try Tessaro.app, macOS 13 on Apple silicon
 ```
 
 **Docs write the full name, never `brew tap` and the short one**: Homebrew
@@ -207,11 +209,17 @@ alhafoudh/tessaro`.
   clone the whole layer tree.
 * **The templates live here, in `homebrew/templates/`**, next to the
   archive names `clients` gives them. `homebrew/render.rb VERSION DIST TAP`
-  fills in the version and each archive's sha256 and writes
-  `Formula/tessaro-ctl.rb` and `Casks/tessaro-gui.rb` into a checkout of
-  the tap. An edit made in the tap is overwritten by the next release.
-* **`release.yml`'s `homebrew` job** runs it on the `clients-*` artifacts,
-  the files the release attached, and pushes the result to the tap's
+  fills in the version and each file's sha256 and writes
+  `Formula/tessaro-ctl.rb`, `Casks/tessaro-gui.rb` and
+  `Casks/try-tessaro.rb` into a checkout of the tap. An edit made in the
+  tap is overwritten by the next release.
+* **Try Tessaro's cask moves only with a release that builds it.** A run
+  with try unticked has no DMG, so `render.rb` leaves `try-tessaro.rb` on
+  the last release that had one instead of pointing it at a file that does
+  not exist.
+* **`release.yml`'s `homebrew` job** runs it on the `clients-*` artifacts
+  and the Try Tessaro DMG, the files the release attached, and pushes the
+  result to the tap's
   `main`. It pushes with the tap's deploy key, whose private half is this
   repo's `HOMEBREW_TAP_DEPLOY_KEY` secret: `github.token` reaches this repo
   only, and a deploy key writes to the tap alone and never expires. The job
@@ -223,14 +231,15 @@ alhafoudh/tessaro`.
   binary runs and prints a version.
 * **The tap tests every push on its own** (`.github/workflows/tests.yml`
   there): `brew style` and `brew audit`, then the formula installed and
-  tested on macOS and on both Linux architectures, and the cask installed
+  tested on macOS and on both Linux architectures, and each cask installed
   on macOS with the quarantine flag checked gone. A push with the deploy
   key starts that run, which one with `github.token` would not.
-* **The cask strips the quarantine flag** from `Tessaro.app` after
-  installing it (`postflight_steps`), since the app is signed ad hoc only
-  (the macOS paragraph above). Notarizing the app makes that step
-  unnecessary. The cask has no `zap`: `~/.config/tessaro` holds the devices
-  and tokens `tessaro-ctl` uses too.
+* **The casks strip the quarantine flag** from the app after installing it
+  (`postflight_steps`), since the apps are signed ad hoc only (the macOS
+  paragraph above). Notarizing them makes that step unnecessary.
+  `tessaro-gui` has no `zap`, and Try Tessaro's removes only its own
+  folder ([try-tessaro.md](try-tessaro.md), **Where it keeps things**):
+  `~/.config/tessaro` holds the devices and tokens `tessaro-ctl` uses too.
 * **Only the platforms `clients` builds are covered**: no Intel Mac, and the
   GUI only on macOS. A Linux user takes `tessaro-gui` from the release.
 
@@ -239,11 +248,12 @@ judge it:
 
 ```sh
 brew tap-new --no-git local/tessaro-test
-gh release download v<version>-<sha> -D /tmp/dist -p 'tessaro-ctl-*.tar.gz' -p 'tessaro-gui-*-macos-arm64.zip'
+gh release download v<version>-<sha> -D /tmp/dist -p 'tessaro-ctl-*.tar.gz' -p 'tessaro-gui-*-macos-arm64.zip' -p 'try-tessaro-*-macos-arm64.dmg'
 ruby homebrew/render.rb <version>-<sha> /tmp/dist "$(brew --repository local/tessaro-test)"
 brew style "$(brew --repository local/tessaro-test)"
 brew audit --strict local/tessaro-test/tessaro-ctl
 brew audit --strict --cask local/tessaro-test/tessaro-gui
+brew audit --strict --cask local/tessaro-test/try-tessaro
 brew untap local/tessaro-test && brew developer off
 ```
 
