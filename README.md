@@ -61,6 +61,7 @@ or from [Webconfig](#webconfig) in any browser:
 - 🔑 **Secure from the first boot**: claim it and it is yours, with TLS, pinned certificates, tokens and a random root password.
 - 🖥️ **Manage it your way**: a scriptable CLI, a desktop app, or Webconfig in any browser, with Quick Setup from a phone.
 - 🏷️ **Tags to find devices by**: `lobby`, `floor-2`, shown as coloured badges in the desktop app; every fresh device carries `unclaimed` until it is claimed. One command runs on every device with a tag, from the CLI or the desktop app.
+- 📡 **Manage it over MQTT**: point a device at your broker and it publishes its status, every event and live screenshots, and takes every setting and command there, one device or a whole tag at once. The CLI and the desktop app reach devices through the broker too, so a screen behind NAT or on cellular is one `--mqtt @venue` away. Off until you set `mqtt.url`; TLS, WebSockets and your proxy supported ([docs/mqtt.md](docs/mqtt.md)).
 - 🏢 **Enterprise networks welcome**: HTTP and SOCKS proxies, your own certificate authorities, your own NTP servers.
 - ⏰ **Scripts and schedules**: screens off at night, a different page at the weekend, anything a shell can do.
 - 🧰 **Maintenance and debug screens** at the flip of a switch, with your own message.
@@ -86,7 +87,7 @@ or from [Webconfig](#webconfig) in any browser:
 
 - 🔓 **Locked down, never locked in**: full root access stays yours. Tessaro's services orchestrate standard systemd units and plain config files, so you can extend the system with your own services the usual Linux way.
 - 🌉 **A bridge into the device**: an injected script and `window.tessaro` let your page read status, print and run scripts. Device actions are on by default, for the built-in demo; turn them down to read-only or off for a site you do not fully control.
-- 📜 **A real HTTP API**, with an OpenAPI document and Swagger UI on the device.
+- 📜 **A real HTTP API**, with an OpenAPI document and Swagger UI on the device, and the same endpoints over MQTT, described by an AsyncAPI document.
 - 🐞 **Remote DevTools** and `browser eval`, for debugging the page as the screen runs it.
 - ⚙️ **Chromium your way**: extra flags, features and enterprise policies per device, no rebuild.
 - 📖 **Self-documenting settings**: every key says what it accepts, its default and what a change restarts.

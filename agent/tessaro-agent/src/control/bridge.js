@@ -77,6 +77,10 @@
       scanner(detail) {
         window.dispatchEvent(new CustomEvent("tessaro:scanner", { detail: Object.freeze(detail) }));
       },
+      // A message below the device's page/in/ at its MQTT broker (mqtt.page).
+      mqtt(detail) {
+        window.dispatchEvent(new CustomEvent("tessaro:mqtt", { detail: Object.freeze(detail) }));
+      },
       // A new DevTools session to the same page: its binding replaces the
       // one that went with the old session.
       rebind() {
@@ -124,6 +128,7 @@
     scanner: { list: () => call("scanner.list") },
     playlist: { status: () => call("playlist.status") },
     screen: { show: () => call("screen.show") },
+    mqtt: { status: () => call("mqtt.status") },
     presence: {
       status: () => call("presence.status"),
       // The faces come as tessaro:faces while the agent's lease is fresh:
@@ -211,6 +216,11 @@
       unset: (name) => call("data.unset", name),
     };
     Object.assign(api.scripts, { run: (name) => call("scripts.run", name) });
+    // Below the device's page/out/ only: a string as it is, anything else as
+    // JSON.
+    Object.assign(api.mqtt, {
+      publish: (topic, payload, options) => call("mqtt.publish", topic, payload, options || {}),
+    });
   }
 
   for (const group of Object.values(api)) {

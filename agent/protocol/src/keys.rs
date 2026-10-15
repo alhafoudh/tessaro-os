@@ -174,6 +174,17 @@ pub enum Kind {
     /// What goes around the proxy, comma separated: host names, `.domain`
     /// suffixes, IP addresses and networks (`10.0.0.0/8`).
     Bypass,
+    /// An MQTT broker, `mqtt://`, `mqtts://`, `ws://` or `wss://`, without
+    /// a user or password, or empty for none. See `mqtt::parse_url`.
+    MqttUrl,
+    /// Free text with `{key}` placeholders like browser.url, filled in raw.
+    Text,
+    /// Topic levels with `{key}` placeholders like browser.url, each value
+    /// kept on its level (`mqtt::topic::escape`). Empty is the default.
+    TopicPrefix,
+    /// A certificate's SHA-256, 64 hex digits with or without colons, or
+    /// empty. Stored lower-case without colons.
+    Fingerprint,
     /// Not a setting: something the device reports - its address, its id.
     /// Listed with `config keys`, readable with `config get`, usable in
     /// browser.url, and refused by `config set`.
@@ -277,6 +288,18 @@ impl Kind {
             Kind::Bypass => {
                 "host names, .domain suffixes, IP addresses or networks (10.0.0.0/8), comma separated"
                     .to_string()
+            }
+            Kind::MqttUrl => {
+                "mqtt://, mqtts://, ws:// or wss://host[:port][/path], no user or password, or empty"
+                    .to_string()
+            }
+            Kind::Text => "text; {key} placeholders as in browser.url".to_string(),
+            Kind::TopicPrefix => {
+                "topic levels separated by /, no + or #; {key} placeholders as in browser.url"
+                    .to_string()
+            }
+            Kind::Fingerprint => {
+                "a certificate's SHA-256, 64 hex digits (colons allowed), or empty".to_string()
             }
             Kind::ReadOnly => "read-only: reported by the device, cannot be set".to_string(),
         }
@@ -623,6 +646,36 @@ pub static KEYS: &[Key] = &[
         "The proxy everything reaches the internet through: http://host:port or socks5://host:port, optionally with user:password@; empty for none. `tessaro-ctl network proxy set`."),
     key(PROXY_BYPASS, "KIOSK_PROXY_BYPASS", Kind::Bypass, PROXY,
         "What goes around the proxy, comma separated: host names, .domain suffixes, IP addresses, networks like 192.168.0.0/16. Loopback always does."),
+    // The link to an MQTT broker, on the running agent: a change reconnects
+    // it and nothing else. The password and a client certificate are
+    // secrets (`tessaro-ctl mqtt password set`, `mqtt cert set`), never
+    // settings. See `tessaro-ctl mqtt status` and docs/mqtt.md.
+    key(MQTT_URL, "KIOSK_MQTT_URL", Kind::MqttUrl, AGENT,
+        "The MQTT broker the device keeps a connection to: mqtt://, mqtts:// (TLS), ws:// or wss:// (WebSocket) host[:port][/path]; empty for none, the default. Every setting, command and event is then reachable through it. `tessaro-ctl mqtt status`."),
+    key(MQTT_USERNAME, "KIOSK_MQTT_USERNAME", Kind::Text, AGENT,
+        "The user name the device gives the broker; {key} placeholders as in browser.url, e.g. kiosk-{device.name}. Empty for none. The password is `tessaro-ctl mqtt password set`."),
+    key(MQTT_PREFIX, "KIOSK_MQTT_PREFIX", Kind::TopicPrefix, AGENT,
+        "The topic levels the device's topics hang under, as <prefix>/<device.id>/...; {key} placeholders as in browser.url, each value kept on its level (default: tessaro)."),
+    key(MQTT_COMMANDS, "KIOSK_MQTT_COMMANDS", Kind::Choice(crate::mqtt::COMMANDS), AGENT,
+        "What the broker may ask of the device: full (every command, the default), read (only what reads), or off (nothing; it still publishes). Whoever may publish to the device's topics has this much of it."),
+    key(MQTT_FINGERPRINT, "KIOSK_MQTT_FINGERPRINT", Kind::Fingerprint, AGENT,
+        "The broker certificate's SHA-256 to accept instead of checking its chain, from `tessaro-ctl mqtt test`; empty checks the chain against the system's and `tessaro-ctl network certs`' authorities."),
+    seconds(MQTT_KEEPALIVE, "KIOSK_MQTT_KEEPALIVE", 10, 3600,
+        "Seconds between pings while the link is quiet; one unanswered for as long drops and redials it."),
+    seconds(MQTT_STATE_INTERVAL, "KIOSK_MQTT_STATE_INTERVAL", 10, 86400,
+        "Seconds between fresh copies of the device's state on the broker; a change is published at once either way."),
+    key(MQTT_PAGE, "KIOSK_MQTT_PAGE", Kind::Flag, AGENT,
+        "Let the page publish below <prefix>/<device.id>/page/out/ and hear what arrives below page/in/, as tessaro:mqtt events. Needs browser.bridge.mode actions to publish, config to listen."),
+    key(MQTT_SCRIPTS, "KIOSK_MQTT_SCRIPTS", Kind::Flag, AGENT,
+        "Run the scripts that run on MQTT messages (`tessaro-ctl script set --mqtt`). 0 runs none of them."),
+    key(MQTT_LOGS, "KIOSK_MQTT_LOGS", Kind::Choice(crate::mqtt::LOG_LEVELS), AGENT,
+        "Publish the journal to <prefix>/<device.id>/logs from this priority up: err, warning, notice, info or debug; off, the default, publishes none."),
+    seconds(MQTT_SCREENSHOT_INTERVAL, "KIOSK_MQTT_SCREENSHOT_INTERVAL", 0, 86400,
+        "Seconds between screenshots published to <prefix>/<device.id>/screen/frame, sent only when the picture changed; 0, the default, sends none."),
+    key(MQTT_SCREENSHOT_WIDTH, "KIOSK_MQTT_SCREENSHOT_WIDTH", Kind::Int { min: 0, max: 7680 }, AGENT,
+        "Width in pixels the published screenshots are scaled down to; 0 keeps the screen's own."),
+    key(MQTT_SCREENSHOT_QUALITY, "KIOSK_MQTT_SCREENSHOT_QUALITY", Kind::Int { min: 10, max: 100 }, AGENT,
+        "JPEG quality of the published screenshots, 10 to 100."),
     // Read-only: what the device reports right now. `tessaro-ctl network
     // show` shows the same in full, per interface.
     live(ID, "The node id: systemd's app-specific machine id, never the machine id itself."),
@@ -686,6 +739,19 @@ pub const WIFI_CAPTIVE: &str = "network.wifi.captive";
 pub const SESSION_TIMEOUT: &str = "access.session_timeout";
 pub const PROXY_URL: &str = "network.proxy.url";
 pub const PROXY_BYPASS: &str = "network.proxy.bypass";
+pub const MQTT_URL: &str = "mqtt.url";
+pub const MQTT_USERNAME: &str = "mqtt.username";
+pub const MQTT_PREFIX: &str = "mqtt.prefix";
+pub const MQTT_COMMANDS: &str = "mqtt.commands";
+pub const MQTT_FINGERPRINT: &str = "mqtt.tls.fingerprint";
+pub const MQTT_KEEPALIVE: &str = "mqtt.keepalive";
+pub const MQTT_STATE_INTERVAL: &str = "mqtt.state.interval";
+pub const MQTT_PAGE: &str = "mqtt.page";
+pub const MQTT_SCRIPTS: &str = "mqtt.scripts";
+pub const MQTT_LOGS: &str = "mqtt.logs";
+pub const MQTT_SCREENSHOT_INTERVAL: &str = "mqtt.screenshot.interval";
+pub const MQTT_SCREENSHOT_WIDTH: &str = "mqtt.screenshot.width";
+pub const MQTT_SCREENSHOT_QUALITY: &str = "mqtt.screenshot.quality";
 pub const AUDIO_OUTPUT: &str = "audio.output";
 pub const AUDIO_VOLUME: &str = "audio.volume";
 pub const AUDIO_MUTE: &str = "audio.mute";
@@ -840,15 +906,19 @@ pub enum Expansion {
     Url,
     /// Raw, into text the debug screen escapes for HTML.
     Text,
+    /// Kept on its topic level: `mqtt::topic::escape`.
+    Topic,
 }
 
 /// The keys whose values are templates, expanded before anyone sees them.
 /// No template may name another one as a placeholder.
-pub const TEMPLATES: [(&str, Expansion); 4] = [
+pub const TEMPLATES: [(&str, Expansion); 6] = [
     (URL, Expansion::Url),
     (MAINTENANCE_URL, Expansion::Url),
     (DEBUG_TEMPLATE, Expansion::Text),
     (CEC_NAME, Expansion::Text),
+    (MQTT_USERNAME, Expansion::Text),
+    (MQTT_PREFIX, Expansion::Topic),
 ];
 
 /// Is `name` one of the `TEMPLATES`?
@@ -1297,7 +1367,46 @@ pub fn validate(key: &Key, value: &str) -> Result<String, String> {
         Kind::Bypass => parse_bypass(value)
             .map(|entries| entries.join(","))
             .or_else(|why| fail(&why)),
+        Kind::MqttUrl => {
+            if value.is_empty() {
+                return Ok(String::new());
+            }
+            crate::mqtt::parse_url(value)
+                .map(|_| value.to_string())
+                .or_else(|why| fail(&why))
+        }
+        Kind::Text => Ok(value.to_string()),
+        Kind::TopicPrefix => {
+            if value.is_empty() {
+                return Ok(String::new());
+            }
+            // Checked with every placeholder filled, as browser.url is: what
+            // is typed around them has to be topic levels already.
+            let (sample, _) =
+                expand_with(value, |_| Some("x".to_string()), crate::mqtt::topic::escape);
+            crate::mqtt::topic::check_prefix(&sample)
+                .map(|()| value.to_string())
+                .or_else(|why| fail(&why))
+        }
+        Kind::Fingerprint => {
+            if value.is_empty() {
+                return Ok(String::new());
+            }
+            parse_fingerprint(value).ok_or(()).or_else(|()| {
+                fail("must be a SHA-256, 64 hex digits with or without colons, as `tessaro-ctl mqtt test` prints it")
+            })
+        }
     }
+}
+
+/// A SHA-256 as 64 lower-case hex digits, from hex with or without colons.
+pub fn parse_fingerprint(value: &str) -> Option<String> {
+    let hex: String = value
+        .chars()
+        .filter(|ch| *ch != ':')
+        .collect::<String>()
+        .to_ascii_lowercase();
+    (hex.len() == 64 && hex.chars().all(|ch| ch.is_ascii_hexdigit())).then_some(hex)
 }
 
 /// What a proxy speaks.

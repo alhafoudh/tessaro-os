@@ -199,6 +199,7 @@ impl Control {
             detail["face"] = page_face(face);
         }
         self.log.info(journal_line(event, faces.len()));
+        self.emit("presence", event.name, detail.clone());
         if settings.page {
             self.bridge_presence(detail).await;
         }

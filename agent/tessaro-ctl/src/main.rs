@@ -11,11 +11,13 @@
 //! new root password - once.
 
 mod audio;
+mod brokers;
 mod camera;
 mod cec;
 mod connect;
 mod devtools;
 mod files;
+mod mqtt;
 mod net;
 mod out;
 mod playlist;
@@ -46,6 +48,7 @@ use protocol::keys;
 use protocol::{Applied, Done, EvalResult, KeyInfo, NodeInfo, RestartTarget, Source, Status};
 use serde_json::Value;
 use tessaro_client::access;
+use tessaro_client::brokers::Brokers;
 use tessaro_client::describe::bulk as bulk_words;
 use tessaro_client::describe::device as describe;
 use tessaro_client::nodes::Nodes;
@@ -149,9 +152,13 @@ const HELP_STYLES: Styles = Styles::styled()
         \x20 tessaro-ctl ssh keys revoke user@laptop        by comment or fingerprint\n\
         \x20 tessaro-ctl network certs add corp-root-ca.pem trust an intranet or TLS-inspecting CA\n\
         \x20 tessaro-ctl --tag lobby browser reload         on every device tagged lobby; -n a,b for named ones\n\
+        \x20 tessaro-ctl nodes brokers add venue1 mqtts://broker.example --password\n\
+        \x20 tessaro-ctl --mqtt @venue1 -n lobby device status   through the device's MQTT broker\n\
         \x20 source <(tessaro-ctl completion bash)          tab completion; also zsh, powershell\n\n\
         ENVIRONMENT:\n\
         \x20 TESSARO_NODE        default for --node\n\
+        \x20 TESSARO_MQTT        default for --mqtt\n\
+        \x20 TESSARO_MQTT_PREFIX the devices' mqtt.prefix for --mqtt URL (default tessaro)\n\
         \x20 TESSARO_TOKEN       use this token instead of the stored one\n\
         \x20 TESSARO_CONFIG_DIR  where tessaro.db lives (default ~/.config/tessaro)\n\
         \x20 TESSARO_SOCKET      the local socket (default /run/tessaro-agent.sock)"
@@ -163,6 +170,14 @@ struct Cli {
     /// run the command on each of them.
     #[arg(long, short = 'n', global = true, env = "TESSARO_NODE")]
     node: Option<String>,
+
+    /// Reach the devices through this MQTT broker instead of over the
+    /// network: @NAME for one `nodes brokers add` kept, or its URL
+    /// (mqtt://, mqtts://, ws://, wss://, user:password@ allowed). --node
+    /// then names a device there by name or id, or the start of either;
+    /// what needs the device itself (ssh, tunnels, Webconfig) is refused.
+    #[arg(long, global = true, env = "TESSARO_MQTT", value_name = "URL|@NAME")]
+    mqtt: Option<String>,
 
     /// Every device with this tag, known or found on the network; repeat it for
     /// devices with every one of them. `unclaimed` picks the devices nobody has
@@ -237,6 +252,10 @@ enum Cmd {
     /// The device's network: addresses, profiles, WiFi, ping, speed test.
     #[command(subcommand)]
     Network(net::NetworkCmd),
+    /// The device's link to an MQTT broker: its state, a test, the password
+    /// and client certificate it connects with.
+    #[command(subcommand)]
+    Mqtt(mqtt::MqttCmd),
     /// Shell scripts the device keeps: create, change, run now, their
     /// output, the ones the kiosk page may run.
     #[command(subcommand)]
@@ -442,6 +461,13 @@ enum ScreenCmd {
     Screenshot {
         #[arg(long, short)]
         output: Option<String>,
+        /// Scale it down to this many pixels across, when the screen is
+        /// wider: smaller, through a slow link or a broker.
+        #[arg(long, value_parser = clap::value_parser!(u32).range(16..=7680))]
+        width: Option<u32>,
+        /// JPEG quality, 10 to 100 (default 85).
+        #[arg(long, value_parser = clap::value_parser!(u8).range(10..=100))]
+        quality: Option<u8>,
     },
     /// The resolutions the connected displays offer (for screen.resolution).
     Modes,
@@ -592,8 +618,9 @@ enum BrowserCmd {
 
 #[derive(Subcommand)]
 enum NodesCmd {
-    /// Devices answering on the local network; with --tag, only those with
-    /// every tag given.
+    /// Devices answering on the local network, or with --mqtt every device
+    /// the broker keeps a status for; with --tag, only those with every tag
+    /// given.
     List {
         /// Seconds to listen.
         #[arg(long, default_value_t = 3)]
@@ -601,6 +628,10 @@ enum NodesCmd {
     },
     /// Forget a device: its pin and token on this machine.
     Forget { node: String },
+    /// The MQTT brokers this machine reaches devices through, by a name
+    /// `--mqtt @NAME` takes.
+    #[command(subcommand)]
+    Brokers(brokers::BrokersCmd),
 }
 
 /// The shells `completion` writes for. clap_complete's own enum offers fish
@@ -669,6 +700,12 @@ enum UpdateCmd {
     ///
     ///   tessaro-ctl -n brave-otter-3fa2 update send tessaro-os-genericx86-64.rootfs.wic.zst
     Send(update::Send),
+    /// Have the device download an image from a URL itself and prepare it,
+    /// through network.proxy.url, resuming where it stopped; with --commit
+    /// apply it at the next boot. Nothing but the URL vouches for the image.
+    ///
+    ///   tessaro-ctl update fetch https://example.test/tessaro-os-raspberrypi5.rootfs.wic.zst --commit --reboot
+    Fetch(update::Fetch),
     /// What is under way, and what the last update did.
     Status,
     /// Drop the upload, or the staged update before it is applied.
@@ -757,14 +794,25 @@ fn run(cli: Cli, matches: &ArgMatches) -> Result<(), String> {
         return Ok(());
     }
 
+    let cli = match cli.command {
+        Cmd::Nodes(NodesCmd::Brokers(command)) => return brokers::run(command, cli.json),
+        command => Cli { command, ..cli },
+    };
     let mut nodes = Nodes::load()?;
     let names = cli.node.as_deref().map(bulk::names).unwrap_or_default();
     let several = !cli.tags.is_empty() || names.len() > 1;
+    let broker = match &cli.mqtt {
+        Some(spec) => Some(tessaro_client::brokers::resolve(spec, &Brokers::load()?)?),
+        None => None,
+    };
 
     // The commands that do not need a device conversation at all.
     match &cli.command {
         Cmd::Nodes(NodesCmd::List { wait }) => {
-            return list_nodes(&mut nodes, *wait, &cli.tags, cli.json)
+            return match &broker {
+                Some(broker) => list_broker(broker, *wait, &cli.tags, cli.json),
+                None => list_nodes(&mut nodes, *wait, &cli.tags, cli.json),
+            }
         }
         Cmd::Nodes(NodesCmd::Forget { .. }) if several => {
             return Err("tessaro-ctl nodes forget takes one device".to_string())
@@ -777,10 +825,108 @@ fn run(cli: Cli, matches: &ArgMatches) -> Result<(), String> {
     }
 
     if several {
-        return run_several(cli, matches, &names, nodes);
+        return run_several(cli, matches, &names, nodes, broker.as_ref());
     }
-    let target = connect::resolve(cli.node.as_deref(), &nodes)?;
+    let target = match broker {
+        Some(broker) => Target::Mqtt {
+            device: cli.node.clone().ok_or_else(|| {
+                format!(
+                    "--mqtt needs --node, the device's name or id there; `tessaro-ctl --mqtt {} nodes list` lists them",
+                    broker.label()
+                )
+            })?,
+            broker,
+        },
+        None => connect::resolve(cli.node.as_deref(), &nodes)?,
+    };
     run_on(cli, target, nodes)
+}
+
+/// What only works with the device itself, over its network: refused
+/// through a broker, with what it is in words.
+fn needs_ip(command: &Cmd) -> Option<&'static str> {
+    match command {
+        Cmd::Ssh(SshCmd::Connect(_)) => Some("tessaro-ctl ssh connect"),
+        Cmd::Browser(BrowserCmd::Devtools(_)) => Some("tessaro-ctl browser devtools"),
+        Cmd::Screen(ScreenCmd::Vnc(_)) => Some("tessaro-ctl screen vnc"),
+        Cmd::Access(AccessCmd::Webconfig { .. }) => Some("tessaro-ctl access webconfig"),
+        Cmd::Access(AccessCmd::Claim { .. }) => Some("tessaro-ctl access claim"),
+        Cmd::Access(AccessCmd::Login { .. }) => Some("tessaro-ctl access login"),
+        Cmd::Device(DeviceCmd::Ping { .. }) => {
+            Some("tessaro-ctl device ping, which times the connection to it,")
+        }
+        _ => None,
+    }
+}
+
+/// `nodes list --mqtt`: every device the broker keeps a status for.
+fn list_broker(
+    broker: &tessaro_client::brokers::Broker,
+    wait: u64,
+    wanted: &[String],
+    json: bool,
+) -> Result<(), String> {
+    let mut link = tessaro_client::mqtt::Link::connect(broker, connect::CLIENT)?;
+    let mut seen = link.scan(std::time::Duration::from_secs(wait.max(1)))?;
+    link.close();
+    let answered = seen.len();
+    seen.retain(|device| {
+        tags::matches(
+            &tags::effective(&device.presence.tags, device.presence.claimed),
+            wanted,
+        )
+    });
+    if json {
+        return print_json(
+            &seen
+                .iter()
+                .map(|device| &device.presence)
+                .collect::<Vec<_>>(),
+        );
+    }
+    if answered == 0 {
+        println!(
+            "{}",
+            paint(
+                style::MUTED,
+                format!(
+                    "no Tessaro device keeps a status at {} under {}/",
+                    broker.label(),
+                    broker.prefix
+                )
+            )
+        );
+    } else if seen.is_empty() {
+        println!(
+            "{}",
+            paint(
+                style::MUTED,
+                format!("{answered} there, none tagged {}", wanted.join(" and "))
+            )
+        );
+    }
+    for device in &seen {
+        let presence = &device.presence;
+        let online = match presence.online {
+            true => pad(style::OK, "online", 10),
+            false => pad(style::MUTED, "offline", 10),
+        };
+        let claimed = match presence.claimed {
+            Some(true) => pad(style::OK, "claimed", 10),
+            Some(false) => pad(style::WARN, "UNCLAIMED", 10),
+            None => pad(style::MUTED, "", 10),
+        };
+        let tags = match presence.tags.is_empty() {
+            true => String::new(),
+            false => style::line(&describe::tags(&presence.tags)),
+        };
+        println!(
+            "{} {} {online} {claimed} {tags}",
+            pad(style::HEADING, presence.name.as_deref().unwrap_or("?"), 28),
+            pad(style::MUTED, &device.id, 34),
+        );
+    }
+    Ok(())
 }
 
 /// Why a command cannot run on several devices at once, if it cannot: it
@@ -836,6 +982,7 @@ fn run_several(
     matches: &ArgMatches,
     names: &[String],
     mut nodes: Nodes,
+    broker: Option<&tessaro_client::brokers::Broker>,
 ) -> Result<(), String> {
     let (path, leaf) = leaf(matches);
     if let Some(why) = bulk_refused(&path, leaf) {
@@ -843,9 +990,18 @@ fn run_several(
             "tessaro-ctl {path} {why}; it does not run on several devices"
         ));
     }
-    let selection = bulk::select(names, &cli.tags, &nodes, || {
-        connect::browse(tessaro_client::connect::BROWSE)
-    })?;
+    let selection = match broker {
+        // The devices the broker keeps a status for, asked once.
+        Some(broker) => {
+            let mut link = tessaro_client::mqtt::Link::connect(broker, connect::CLIENT)?;
+            let seen = link.scan(tessaro_client::mqtt::SCAN)?;
+            link.close();
+            bulk::select_mqtt(names, &cli.tags, broker, &seen)?
+        }
+        None => bulk::select(names, &cli.tags, &nodes, || {
+            connect::browse(tessaro_client::connect::BROWSE)
+        })?,
+    };
     for found in &selection.found {
         nodes.note_found(found)?;
     }
@@ -954,6 +1110,9 @@ fn run_on(cli: Cli, target: Target, mut nodes: Nodes) -> Result<(), String> {
         _ => Trust::KnownOnly,
     };
     let mut session = connect::open(&target, &nodes, trust)?;
+    if let Some(what) = needs_ip(&cli.command) {
+        session.needs_ip(what)?;
+    }
     refresh_address(&mut nodes, &session)?;
     let json = cli.json;
 
@@ -1002,6 +1161,7 @@ fn run_on(cli: Cli, target: Target, mut nodes: Nodes) -> Result<(), String> {
             })
         }
         Cmd::Network(what) => net::run(&mut session, what, json),
+        Cmd::Mqtt(what) => mqtt::run(&mut session, what, json),
         Cmd::Browser(BrowserCmd::Policies(what)) => policies::run(&mut session, what, json),
         Cmd::Storage(what) => storage::run(&mut session, what, json),
         Cmd::Device(DeviceCmd::Ping { count, interval }) => {
@@ -1262,9 +1422,13 @@ fn run_on(cli: Cli, target: Target, mut nodes: Nodes) -> Result<(), String> {
         Cmd::Device(DeviceCmd::Reboot) => {
             done::<api::device::Reboot>(&mut session, Empty {}, (), json)
         }
-        Cmd::Screen(ScreenCmd::Screenshot { output }) => {
+        Cmd::Screen(ScreenCmd::Screenshot {
+            output,
+            width,
+            quality,
+        }) => {
             let bytes = session
-                .download::<api::screen::Screenshot>(Empty {})
+                .download::<api::screen::Screenshot>(api::ScreenshotQuery { width, quality })
                 .into_result()?
                 .body;
             let path = output.unwrap_or_else(|| format!("{}.jpg", session.node.name));
@@ -1452,6 +1616,7 @@ fn run_on(cli: Cli, target: Target, mut nodes: Nodes) -> Result<(), String> {
                     update::Sent::Wiped => forget_session(&mut nodes, &session),
                 }
             }
+            UpdateCmd::Fetch(options) => update::fetch(&mut session, options, json),
             UpdateCmd::Status => update::status(&mut session, json),
             UpdateCmd::Cancel => update::cancel(&mut session, json),
         },

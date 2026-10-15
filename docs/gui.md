@@ -210,6 +210,35 @@ new browse. A device mDNS cannot see (another subnet, a VM) is added by
 address. Both are actions on the node list's own toolbar, since they act on
 that list; the app header only has the app's name.
 
+**The devices at every broker this machine keeps are listed beside what mDNS
+sees, with `via @NAME` for their address** (`broker_scan.rs`,
+`nodes_view::overlay`). Every 15s each kept broker (`tessaro-ctl nodes
+brokers`) is asked for its retained statuses, as `tessaro-ctl nodes list
+--mqtt` does. A device mDNS shows keeps its address; one it does not, known
+or not, takes the broker's row, with the name, claim and tags the status
+carries. A broker that cannot be asked is named in the status bar with
+why, and its devices leave the list until it answers again. Rescan and a
+change to the brokers start the scan over.
+
+* **A `via @NAME` row opens through that broker** (`worker::broker_of`,
+  `worker::connect`): `Target::Mqtt` with the node's id, no token, since
+  the broker's own login is the authority. Device windows, jobs, the logs
+  and the bulk window go through the same `worker::connect`, so they work
+  on it unchanged.
+* **Login and claim refuse such a row, and a device window greys out what
+  needs the device itself** (`over_ip` in `device/pages.rs`): `device
+  ping`, which times the connection, DevTools, the VNC tunnel and viewer,
+  SSH, Webconfig and the claim. Each also asks `Session::needs_ip` before
+  it starts, so what gets past the buttons is refused with its reason in
+  Messages. A screenshot through a broker is asked for smaller
+  (`ScreenshotQuery`), so its message stays small.
+* **Brokers on the node list's toolbar lists, adds, edits and removes the
+  kept brokers**: name, URL, user, password, topic prefix, and the CA,
+  client certificate and key as PEM files read when it is saved
+  (`brokers::Brokers`, the same store as `tessaro-ctl nodes brokers`).
+  Editing one, an empty password or file field keeps what is stored, and
+  Forget drops the stored password and files first.
+
 **A device added by address is written to the known nodes at once, claimed or
 not** (`NodesView::keep`), so it is listed after a restart although mDNS never
 announces it. A new one is pinned to the certificate the add just saw, with no
@@ -356,18 +385,19 @@ applies and stays, Default unsets.**
 | Network | `network show` and interfaces, `network last`, `network ping`, `network speedtest` (with "Bypass the proxy"), `network proxy set`, `off` and `test`, `network profiles list` and `show` |
 | WiFi | `network wifi status`, `scan`, `join`, `hotspot-password` |
 | Certificates | `network certs list`, `add` (a file picker) and `revoke` |
+| MQTT | `mqtt status` as facts, `mqtt test` (an optional URL instead of `mqtt.url`; how far it got in Messages), `mqtt password set` and `clear`, `mqtt cert set` (certificate and key paths on this machine) and `clear`; Configure opens the `mqtt.*` keys |
 | Storage | `storage show`, partitions and filesystems, `storage grow` (check first) |
 | Audio | `audio show`, outputs and inputs, choosing one, volume, mute, `audio test` for the tone and the recording |
 | Camera | `camera list` as the saved format, size and mirrors, a row per camera (its node, the nodes of its mirrors, what it captures, a fallback or error), and the modes of the one selected, double-click to show it in the camera panel, `camera format` (a choice), `camera size` (opening a mode fills it in), `camera mirrors` (a choice); presence detection as `camera presence` says it, Presence (`camera presence on|off` with the camera, the near distance and estimating age and gender) and Calibrate (`camera calibrate`) |
 | Time | `time show` and its servers, `time timezone` (a choice of `time zones`), `time ntp on|off` with servers, `time sync`, `time set` (this computer's clock or a typed time) |
-| Scripts | `script list`, `create` and `set` in one dialog (a multi-line body, "Run on CEC events" for `--cec`, and "Run on scans of" for `--scanner`), `run` (a job; its output in a window as it comes), `remove`, `logs` (the Log page, filtered to the script's runs) |
+| Scripts | `script list`, `create` and `set` in one dialog (a multi-line body, "Run on CEC events" for `--cec`, "Run on scans of" for `--scanner`, and "Run on MQTT messages to" for `--mqtt`), `run` (a job; its output in a window as it comes), `remove`, `logs` (the Log page, filtered to the script's runs) |
 | Schedules | `schedule list`, `create` and `set` in one dialog (a multi-line calendar, checked with `schedule check` as you type, and the script it runs), `enable`/`disable`, `remove`, `logs` (the Log page, filtered to the runs it started) |
 | Printer | `printer list` with printer.enable above it, `printer discover` (a job; each printer found is a row to Add from), `create` (a dialog that stays open until the device takes it: a driverless printer must answer), `show`, `test`, `default`, `print` (a file picker), `remove`, `jobs` and `cancel` |
 | Scanner | `scanner list` with scanner.enable above it, `scanner discover` and `identify` (jobs; each device found is a row to Add from, and the one identified is chosen), `create` and `set` in one dialog (the device, layout, terminator, gap, baud, prefix and suffix), `show`, `enable`/`disable`, `test` (a job; its scans go to the log as they come), `remove`, and the `scanner logs` table |
 | Access | `access claim` (while unclaimed), `access token create`, `list`, `revoke`, `access password set`, `access unclaim` (while claimed), `access webconfig` (Open Webconfig) |
 | SSH | `ssh keys list` and `revoke`, `ssh connect` (authorize the key, open a terminal) |
 | Files | `files list` as a browser, `upload` (files or a folder), `download`, `mkdir`, `move`, `rm` |
-| Update | `update status`, `update send` with progress, `update cancel` |
+| Update | `update status`, `update send` with progress, `update fetch` ("Fetch from URL": the URL, an optional block map URL, applying at the next boot, rebooting, erasing `/data`, rewriting the disk; a job with the download as progress), `update cancel` |
 | Log | `device logs --follow`, filtered by unit on the device and by text here |
 
 The window's title bar, after the device's name and address, has Refresh,
@@ -400,7 +430,8 @@ pauses.
 **Long work runs as a job on a second connection, so the worker keeps
 polling** (`jobs.rs`). The jobs are the device's own jobs (`network ping`,
 the speed test, `storage grow`, polled with `Session::job`), `device ping`,
-files going up or down, an image update, the DevTools tunnel
+files going up or down, an image update sent from here or fetched by the
+device (`update::fetch`, a device job), the DevTools tunnel
 (localhost:9222, or a free port when 9222 is taken here) and the VNC tunnel
 (localhost:5900 the same way). Each is the
 client's flow (`update::send`, `files::upload`, `ping::device`, ...), with

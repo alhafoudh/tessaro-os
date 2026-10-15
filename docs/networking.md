@@ -135,6 +135,12 @@ times the client's own path to the agent - TCP connect, TLS handshake, round
 trips - and, like `device id`, needs no token. The logic is `agent/tessaro-agent/src/nm/` (`profiles.rs`
 renders, `txn.rs` switches) and `ping.rs`.
 
+**A change that arrives over MQTT is held to the broker too**: reaching the
+network is not enough when the only way back to the device is its broker,
+so a `network.*` change made over the link is put back by itself unless
+the link is up again 60 seconds after it (**A change that cuts the link**
+in [mqtt.md](mqtt.md)).
+
 * **The profiles are generated, never saved.** The agent renders them as
   keyfiles into `/run/NetworkManager/system-connections` (0600, the in-memory
   directory NetworkManager reads with the highest precedence) from
@@ -359,6 +365,13 @@ restarts `tessaro-proxy.service`, or stops it when the URL is emptied.
   is switched on or off against how the process started (`restarts_agent`
   in `control/settings.rs`); a new upstream, password or bypass is
   tinyproxy's alone and restarts nothing else.
+* **The MQTT link tunnels the same way**: with a proxy set, every connection
+  to the broker is a `CONNECT` through the local proxy (`tunnel` in
+  `mqtt/link.rs`, over `http::proxy_connect`), with TLS and the WebSocket
+  inside it. It takes the local proxy the agent started with, like the
+  probe: switching the proxy on or off restarts the agent and the link
+  with it, and a new upstream is tinyproxy's alone. A proxy that allows only 443
+  needs a `wss://` broker there ([mqtt.md](mqtt.md)).
 * **Bypass is tinyproxy's, not Chromium's**: `network.proxy.bypass` becomes
   `Upstream none` lines - a host name matched exactly, a `.domain` as a
   suffix, an address or network under its mask (`hostspec.c`) - next to the

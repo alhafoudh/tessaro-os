@@ -125,5 +125,22 @@
       "pending": 0,
       "failed": 0
     }
+  },
+  "mqtt": {
+    "state": "off",
+    "broker": null,
+    "client_id": "00000000000000000000000000000000",
+    "username": null,
+    "password": false,
+    "client_cert": false,
+    "topic": "tessaro/00000000000000000000000000000000",
+    "commands": "full",
+    "seconds": null,
+    "last_error": null,
+    "subscriptions": [],
+    "queued": 0,
+    "published": 0,
+    "received": 0,
+    "warnings": []
   }
 }

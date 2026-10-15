@@ -14,6 +14,7 @@ import { Camera } from "./Camera";
 import { Certificates } from "./Certificates";
 import { Files } from "./Files";
 import { Log } from "./Log";
+import { Mqtt } from "./Mqtt";
 import { Network } from "./Network";
 import { Overview } from "./Overview";
 import { Playlists } from "./Playlists";
@@ -72,6 +73,7 @@ export const PAGES: PageInfo[] = [
   },
   { path: "wifi", title: "WiFi", section: NETWORK, scope: { prefix: "network.wifi" }, component: Wifi },
   { path: "certificates", title: "Certificates", section: NETWORK, component: Certificates },
+  { path: "mqtt", title: "MQTT", section: NETWORK, scope: { prefix: "mqtt" }, component: Mqtt },
   { path: "scripts", title: "Scripts", section: AUTOMATION, component: Scripts },
   { path: "schedules", title: "Schedules", section: AUTOMATION, component: Schedules },
   { path: "access", title: "Access", section: SECURITY, scope: { prefix: "access" }, component: Access },

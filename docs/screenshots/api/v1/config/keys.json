@@ -1653,6 +1653,224 @@
     }
   },
   {
+    "name": "mqtt.url",
+    "env": "KIOSK_MQTT_URL",
+    "applies": [
+      "agent"
+    ],
+    "guarded": false,
+    "doc": "The MQTT broker the device keeps a connection to: mqtt://, mqtts:// (TLS), ws:// or wss:// (WebSocket) host[:port][/path]; empty for none, the default. Every setting, command and event is then reachable through it. `tessaro-ctl mqtt status`.",
+    "values": "mqtt://, mqtts://, ws:// or wss://host[:port][/path], no user or password, or empty",
+    "default": "",
+    "value": null,
+    "input": {
+      "kind": "text"
+    }
+  },
+  {
+    "name": "mqtt.username",
+    "env": "KIOSK_MQTT_USERNAME",
+    "applies": [
+      "agent"
+    ],
+    "guarded": false,
+    "doc": "The user name the device gives the broker; {key} placeholders as in browser.url, e.g. kiosk-{device.name}. Empty for none. The password is `tessaro-ctl mqtt password set`.",
+    "values": "text; {key} placeholders as in browser.url",
+    "default": "",
+    "value": null,
+    "input": {
+      "kind": "text"
+    }
+  },
+  {
+    "name": "mqtt.prefix",
+    "env": "KIOSK_MQTT_PREFIX",
+    "applies": [
+      "agent"
+    ],
+    "guarded": false,
+    "doc": "The topic levels the device's topics hang under, as <prefix>/<device.id>/...; {key} placeholders as in browser.url, each value kept on its level (default: tessaro).",
+    "values": "topic levels separated by /, no + or #; {key} placeholders as in browser.url",
+    "default": "",
+    "value": null,
+    "input": {
+      "kind": "text"
+    }
+  },
+  {
+    "name": "mqtt.commands",
+    "env": "KIOSK_MQTT_COMMANDS",
+    "applies": [
+      "agent"
+    ],
+    "guarded": false,
+    "doc": "What the broker may ask of the device: full (every command, the default), read (only what reads), or off (nothing; it still publishes). Whoever may publish to the device's topics has this much of it.",
+    "values": "one of: off, read, full",
+    "default": "full",
+    "value": null,
+    "input": {
+      "kind": "choice",
+      "choices": [
+        "off",
+        "read",
+        "full"
+      ]
+    }
+  },
+  {
+    "name": "mqtt.tls.fingerprint",
+    "env": "KIOSK_MQTT_FINGERPRINT",
+    "applies": [
+      "agent"
+    ],
+    "guarded": false,
+    "doc": "The broker certificate's SHA-256 to accept instead of checking its chain, from `tessaro-ctl mqtt test`; empty checks the chain against the system's and `tessaro-ctl network certs`' authorities.",
+    "values": "a certificate's SHA-256, 64 hex digits (colons allowed), or empty",
+    "default": "",
+    "value": null,
+    "input": {
+      "kind": "text"
+    }
+  },
+  {
+    "name": "mqtt.keepalive",
+    "env": "KIOSK_MQTT_KEEPALIVE",
+    "applies": [
+      "agent"
+    ],
+    "guarded": false,
+    "doc": "Seconds between pings while the link is quiet; one unanswered for as long drops and redials it.",
+    "values": "a whole number, 10 to 3600",
+    "default": "60",
+    "value": null,
+    "input": {
+      "kind": "int",
+      "min": 10,
+      "max": 3600
+    }
+  },
+  {
+    "name": "mqtt.state.interval",
+    "env": "KIOSK_MQTT_STATE_INTERVAL",
+    "applies": [
+      "agent"
+    ],
+    "guarded": false,
+    "doc": "Seconds between fresh copies of the device's state on the broker; a change is published at once either way.",
+    "values": "a whole number, 10 to 86400",
+    "default": "60",
+    "value": null,
+    "input": {
+      "kind": "int",
+      "min": 10,
+      "max": 86400
+    }
+  },
+  {
+    "name": "mqtt.page",
+    "env": "KIOSK_MQTT_PAGE",
+    "applies": [
+      "agent"
+    ],
+    "guarded": false,
+    "doc": "Let the page publish below <prefix>/<device.id>/page/out/ and hear what arrives below page/in/, as tessaro:mqtt events. Needs browser.bridge.mode actions to publish, config to listen.",
+    "values": "1 or 0 (on/off, true/false, yes/no)",
+    "default": "1",
+    "value": null,
+    "input": {
+      "kind": "flag"
+    }
+  },
+  {
+    "name": "mqtt.scripts",
+    "env": "KIOSK_MQTT_SCRIPTS",
+    "applies": [
+      "agent"
+    ],
+    "guarded": false,
+    "doc": "Run the scripts that run on MQTT messages (`tessaro-ctl script set --mqtt`). 0 runs none of them.",
+    "values": "1 or 0 (on/off, true/false, yes/no)",
+    "default": "1",
+    "value": null,
+    "input": {
+      "kind": "flag"
+    }
+  },
+  {
+    "name": "mqtt.logs",
+    "env": "KIOSK_MQTT_LOGS",
+    "applies": [
+      "agent"
+    ],
+    "guarded": false,
+    "doc": "Publish the journal to <prefix>/<device.id>/logs from this priority up: err, warning, notice, info or debug; off, the default, publishes none.",
+    "values": "one of: off, err, warning, notice, info, debug",
+    "default": "off",
+    "value": null,
+    "input": {
+      "kind": "choice",
+      "choices": [
+        "off",
+        "err",
+        "warning",
+        "notice",
+        "info",
+        "debug"
+      ]
+    }
+  },
+  {
+    "name": "mqtt.screenshot.interval",
+    "env": "KIOSK_MQTT_SCREENSHOT_INTERVAL",
+    "applies": [
+      "agent"
+    ],
+    "guarded": false,
+    "doc": "Seconds between screenshots published to <prefix>/<device.id>/screen/frame, sent only when the picture changed; 0, the default, sends none.",
+    "values": "a whole number, 0 to 86400",
+    "default": "0",
+    "value": null,
+    "input": {
+      "kind": "int",
+      "min": 0,
+      "max": 86400
+    }
+  },
+  {
+    "name": "mqtt.screenshot.width",
+    "env": "KIOSK_MQTT_SCREENSHOT_WIDTH",
+    "applies": [
+      "agent"
+    ],
+    "guarded": false,
+    "doc": "Width in pixels the published screenshots are scaled down to; 0 keeps the screen's own.",
+    "values": "a whole number, 0 to 7680",
+    "default": "640",
+    "value": null,
+    "input": {
+      "kind": "int",
+      "min": 0,
+      "max": 7680
+    }
+  },
+  {
+    "name": "mqtt.screenshot.quality",
+    "env": "KIOSK_MQTT_SCREENSHOT_QUALITY",
+    "applies": [
+      "agent"
+    ],
+    "guarded": false,
+    "doc": "JPEG quality of the published screenshots, 10 to 100.",
+    "values": "a whole number, 10 to 100",
+    "default": "60",
+    "value": null,
+    "input": {
+      "kind": "int",
+      "min": 10,
+      "max": 100
+    }
+  },
+  {
     "name": "device.id",
     "env": "",
     "applies": [],

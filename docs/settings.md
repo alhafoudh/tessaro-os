@@ -70,7 +70,12 @@ key, which the agent renders into `/run/tessaro-camera/camera.env` for them
   contain a template (the debug template alone takes `{browser.url}`).
   `browser.maintenance.url`, `browser.debug.template` and `screen.cec.name` (the name the TV
   shows, raw like the debug template's, cut to 14 characters, see [cec.md](cec.md)) are templates by the same rules, and
-  `config set` checks every template whichever one is on screen. Because any setting can move the URL, whether
+  `config set` checks every template whichever one is on screen.
+  `mqtt.username` and `mqtt.prefix` are templates too, for a broker whose
+  users and topics follow the device: the username raw, the prefix with
+  each value kept on its topic level (`Expansion::Topic`, `/`, `+` and `#`
+  made `_`, see **Topics** in [mqtt.md](mqtt.md)), so a device's name
+  cannot move its topics or reach another's. Because any setting can move the URL, whether
   the page moves is decided by comparing the expanded URL with the one the
   running agent drives, not by which key changed. `config set` refuses a
   template with an unset `data.*` or a name that is no setting, and a `config unset`
@@ -168,8 +173,14 @@ and how a client authenticates are in [api.md](api.md).
   **`device factory-reset`** also wipes the settings, the extra certificate
   authorities (see **Certificates** in [networking.md](networking.md)), the
   browser policies (see **Policies** in [kiosk-browser.md](kiosk-browser.md))
-  and the schedules ([scheduler.md](scheduler.md)), which an unclaim keeps. After either, the first client
-  to claim wins again. The TLS key survives both, so pins stay valid.
+  and the schedules ([scheduler.md](scheduler.md)), which an unclaim keeps,
+  and with the settings the MQTT broker and its password and client
+  certificate, after emptying the device's retained topics there (**Leaving
+  the broker** in [mqtt.md](mqtt.md)). An unclaim leaves the broker as it
+  is: it is configuration, not an owner. After either, the first client
+  to claim wins again. The TLS key survives both, so pins stay valid, and
+  so does the node id, so a reset device comes back under the same topics
+  once pointed at a broker again.
 * `access password set` (prompted, a `PASSWORD` argument, `--password-stdin`,
   or `--random`) changes the root password on a
   claimed device; an unclaimed one keeps it empty.

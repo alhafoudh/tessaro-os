@@ -620,6 +620,84 @@
       "source": "default"
     },
     {
+      "key": "mqtt.url",
+      "env": "KIOSK_MQTT_URL",
+      "value": "",
+      "source": "default"
+    },
+    {
+      "key": "mqtt.username",
+      "env": "KIOSK_MQTT_USERNAME",
+      "value": "",
+      "source": "default"
+    },
+    {
+      "key": "mqtt.prefix",
+      "env": "KIOSK_MQTT_PREFIX",
+      "value": "",
+      "source": "default"
+    },
+    {
+      "key": "mqtt.commands",
+      "env": "KIOSK_MQTT_COMMANDS",
+      "value": "full",
+      "source": "default"
+    },
+    {
+      "key": "mqtt.tls.fingerprint",
+      "env": "KIOSK_MQTT_FINGERPRINT",
+      "value": "",
+      "source": "default"
+    },
+    {
+      "key": "mqtt.keepalive",
+      "env": "KIOSK_MQTT_KEEPALIVE",
+      "value": "60",
+      "source": "default"
+    },
+    {
+      "key": "mqtt.state.interval",
+      "env": "KIOSK_MQTT_STATE_INTERVAL",
+      "value": "60",
+      "source": "default"
+    },
+    {
+      "key": "mqtt.page",
+      "env": "KIOSK_MQTT_PAGE",
+      "value": "1",
+      "source": "default"
+    },
+    {
+      "key": "mqtt.scripts",
+      "env": "KIOSK_MQTT_SCRIPTS",
+      "value": "1",
+      "source": "default"
+    },
+    {
+      "key": "mqtt.logs",
+      "env": "KIOSK_MQTT_LOGS",
+      "value": "off",
+      "source": "default"
+    },
+    {
+      "key": "mqtt.screenshot.interval",
+      "env": "KIOSK_MQTT_SCREENSHOT_INTERVAL",
+      "value": "0",
+      "source": "default"
+    },
+    {
+      "key": "mqtt.screenshot.width",
+      "env": "KIOSK_MQTT_SCREENSHOT_WIDTH",
+      "value": "640",
+      "source": "default"
+    },
+    {
+      "key": "mqtt.screenshot.quality",
+      "env": "KIOSK_MQTT_SCREENSHOT_QUALITY",
+      "value": "60",
+      "source": "default"
+    },
+    {
       "key": "device.id",
       "env": "",
       "value": "d77857317a77452baadbbde45de78ba7",

@@ -89,10 +89,22 @@ serde_urlencoded = "0.7"
 native-tls = "0.2"
 tokio-native-tls = "0.3"
 
-# CDP itself, over one persistent session. Handshake only; no TLS, because the
-# DevTools endpoint is plaintext on the loopback and stays there. 0.30 pins
-# tungstenite 0.30, which is re-exported as tokio_tungstenite::tungstenite.
+# CDP itself, over one persistent session, and MQTT over WebSocket
+# (`mqtt/link.rs`). Handshake only, no TLS of its own: the DevTools endpoint
+# is plaintext on the loopback, and a wss:// broker gets the handshake over
+# the native-tls stream the link opened itself. 0.30 pins tungstenite 0.30,
+# which is re-exported as tokio_tungstenite::tungstenite.
 tokio-tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
+
+# A screenshot scaled down (jpeg.rs): Chromium scales a capture only from
+# its surface, which can hang here. Pure Rust, the versions and features
+# vision/ and camera/ already use.
+jpeg-decoder = { version = "0.3", default-features = false }
+jpeg-encoder = { version = "0.7", default-features = false }
+
+# The MQTT session, which takes bytes and gives bytes; the link here owns
+# the socket, the proxy tunnel and the TLS (docs/mqtt.md).
+tessaro-mqtt = { path = "../mqtt" }
 
 # org.freedesktop.systemd1 on the system bus, on tokio's reactor. Default
 # features off is what drops async-io, async-executor, async-process, blocking

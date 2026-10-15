@@ -19,6 +19,7 @@ use iced::Subscription;
 use protocol::api::{self, Empty, Endpoint, RestartBody, SetConfig, UnsetConfig};
 use protocol::{Applied, Done, KeyInfo, NodeInfo, RestartTarget, Settings, Status, Verify};
 use serde_json::Value;
+use tessaro_client::brokers::Brokers;
 use tessaro_client::connect::{self, Answer, Session, Target, Trust};
 use tessaro_client::nodes::{Node, Nodes};
 
@@ -30,6 +31,9 @@ const POLL: Duration = Duration::from_secs(2);
 const POLL_PENDING: Duration = Duration::from_secs(1);
 const RETRY_FIRST: Duration = Duration::from_secs(1);
 const RETRY_MOST: Duration = Duration::from_secs(15);
+/// The size and quality of a screenshot through a broker.
+const MQTT_SHOT_WIDTH: u32 = 1280;
+const MQTT_SHOT_QUALITY: u8 = 70;
 
 pub enum Request {
     /// Fetch the settings again, whatever the revision says.
@@ -151,6 +155,16 @@ pub enum Event {
     Pinned(String),
 }
 
+/// What a node reached through a broker has as its address, before the
+/// broker's `@NAME`: `via @venue1`. The list and the window title show it as
+/// it is.
+pub const VIA: &str = "via ";
+
+/// The broker a node is reached through, `@NAME`, if it is.
+pub fn broker_of(node: &Node) -> Option<&str> {
+    node.address.strip_prefix(VIA)
+}
+
 /// A session with a known node, by name: its last address first, then
 /// mDNS, and held to its pin either way. The known nodes are read again each time,
 /// so a login from the main window counts at the next try, and a device
@@ -159,7 +173,20 @@ pub enum Event {
 /// A node nobody pinned - an unclaimed device opened from the list - is
 /// reached at the address it was seen at, and only while it stays unclaimed;
 /// once it answers it is written to the known nodes and known from then on.
+///
+/// A node opened through a broker (`via`) is reached there by its id: the
+/// broker is trusted, so nothing is pinned and nothing is remembered.
 pub fn connect(node: &Node) -> Result<(Session, Vec<String>), String> {
+    if let Some(label) = broker_of(node) {
+        let broker = tessaro_client::brokers::resolve(label, &Brokers::load()?)?;
+        let target = Target::Mqtt {
+            broker,
+            device: node.id.clone(),
+        };
+        let session = connect::open(&target, &Nodes::default(), &mut Trust::KnownOnly, CLIENT)?;
+        let notes = session.notes.clone();
+        return Ok((session, notes));
+    }
     let mut nodes = Nodes::load()?;
     let target = match nodes.by_id(&node.id).cloned() {
         Some(known) => Target::Named {
@@ -376,7 +403,16 @@ impl Worker {
     }
 
     fn screenshot(&self, session: &mut Session) -> Result<(), Stop> {
-        let shot = match session.download::<api::screen::Screenshot>(Empty {}) {
+        // Through a broker every frame of the live view crosses it twice:
+        // smaller, and the page still reads.
+        let query = match session.over_mqtt() {
+            Some(_) => api::ScreenshotQuery {
+                width: Some(MQTT_SHOT_WIDTH),
+                quality: Some(MQTT_SHOT_QUALITY),
+            },
+            None => api::ScreenshotQuery::default(),
+        };
+        let shot = match session.download::<api::screen::Screenshot>(query) {
             Answer::Ok(shot) => Ok(shot.body),
             Answer::Refused(error) => Err(error),
             Answer::Lost(why) => {
@@ -472,6 +508,9 @@ impl Worker {
     /// As the node list's claim does (`nodes_view::commit`), on the session
     /// already open: the device answers only a claim without a token.
     fn claim(&self, session: &mut Session, name: String) -> Result<(), Stop> {
+        if let Err(error) = session.needs_ip("A claim") {
+            return self.send(Event::Answer("claim", Err(error)));
+        }
         let claimed = match tessaro_client::access::claim(session, &name) {
             Answer::Ok(claimed) => claimed,
             Answer::Refused(error) => return self.send(Event::Answer("claim", Err(error))),

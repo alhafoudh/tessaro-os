@@ -31,6 +31,8 @@ mod access;
 mod bridge;
 mod cec;
 mod certs;
+mod fetch;
+mod mqtt;
 mod network;
 mod page;
 mod playlists;
@@ -46,6 +48,7 @@ mod vnc;
 mod watchers;
 
 pub use bridge::BridgeSetup;
+pub use mqtt::Plan;
 
 use std::collections::{BTreeMap, HashMap};
 use std::net::SocketAddr;
@@ -112,6 +115,11 @@ pub enum Caller {
     /// The kiosk page itself, through the page bridge: only the commands
     /// `bridge.rs` maps its calls onto.
     Page,
+    /// A message on the device's command topics at its MQTT broker, which
+    /// is trusted like the local socket (`mqtt.commands` says how far):
+    /// whoever may publish there has the device. `client` is who said so,
+    /// from where the answer goes, for the journal.
+    Mqtt { client: String },
 }
 
 impl Caller {
@@ -121,6 +129,7 @@ impl Caller {
             Caller::Token { id, peer } => format!("{peer} (token {id})"),
             Caller::Anonymous { peer } => peer.ip().to_string(),
             Caller::Page => "the page".to_string(),
+            Caller::Mqtt { client } => format!("MQTT ({client})"),
         }
     }
 }
@@ -304,6 +313,15 @@ pub struct Control {
     /// The player's frames that asked for `tessaro:scanner`: their session
     /// and context (`bridge_scanner`).
     scanner_frames: Mutex<Vec<(Option<String>, i64)>>,
+    /// Everything the device did or saw, for whoever wants it all: the MQTT
+    /// link (`crate::events`).
+    events: Arc<crate::events::Events>,
+    /// How the link to the MQTT broker stands, and how to reach it
+    /// (`crate::mqtt`).
+    mqtt: crate::mqtt::Shared,
+    /// An update's phases are being followed for the events
+    /// (`follow_update`).
+    update_followed: std::sync::atomic::AtomicBool,
 }
 
 impl Control {
@@ -379,6 +397,9 @@ impl Control {
             scanner_wake: tokio::sync::Notify::new(),
             scanner_queue: std::sync::OnceLock::new(),
             scanner_frames: Mutex::new(Vec::new()),
+            events: Arc::new(crate::events::Events::new()),
+            mqtt: crate::mqtt::Shared::default(),
+            update_followed: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -390,8 +411,13 @@ impl Control {
     /// A command run in steps (`Command::is_job`), validated and started:
     /// the API keeps what it produces as a job, the page bridge hands it to
     /// the page.
-    pub async fn stream(&self, caller: &Caller, command: Command) -> Result<Stream, String> {
+    pub async fn stream(
+        self: &Arc<Self>,
+        caller: &Caller,
+        command: Command,
+    ) -> Result<Stream, String> {
         match command {
+            Command::UpdateFetch(spec) => self.update_fetch(caller, spec),
             Command::ScriptRun { script } => {
                 let trigger = match caller {
                     Caller::Page => scripts::Trigger::Bridge,
@@ -656,7 +682,7 @@ impl Control {
                     .info(format!("reboot requested by {}", caller.describe()));
                 Reply::ok(Done::new("rebooting")).then(Some(After::Reboot))
             }
-            Command::Screenshot => self.screenshot().await.into(),
+            Command::Screenshot { width, quality } => self.screenshot(width, quality).await.into(),
             Command::Reload => self.reload().await.into(),
             Command::ClearCache => self.clear_cache().await.into(),
             Command::Eval {
@@ -691,7 +717,8 @@ impl Control {
             | Command::ScriptRun { .. }
             | Command::ScannerDiscover
             | Command::ScannerIdentify
-            | Command::ScannerTest { .. } => Reply::err("that command runs as a job"),
+            | Command::ScannerTest { .. }
+            | Command::UpdateFetch(_) => Reply::err("that command runs as a job"),
             // The hotspot's security follows the claim, re-applied once the
             // answer is out: whoever claims through the hotspot gets its new
             // password before the hotspot drops them.
@@ -715,9 +742,21 @@ impl Control {
             Command::SshKeyList => self.ssh_key_list().await.into(),
             Command::SshKeyRevoke { key } => self.ssh_key_revoke(caller, &key).await.into(),
             Command::UpdateBegin(upload) => {
-                self.updates.begin(&caller.describe(), upload).await.into()
+                let begun = self.updates.begin(&caller.describe(), upload).await;
+                if begun.is_ok() {
+                    self.follow_update();
+                }
+                begun.into()
             }
-            Command::UpdateChunk { offset, data } => self.updates.chunk(offset, data).await.into(),
+            Command::UpdateChunk { offset, data } => {
+                let received = self.updates.chunk(offset, data).await;
+                // The last piece starts the checks: follow them, also after
+                // an agent restart in the middle of the upload.
+                if received.as_ref().is_ok_and(|got| got.received == got.size) {
+                    self.follow_update();
+                }
+                received.into()
+            }
             Command::UpdateStatus => self.updates.status().await.into(),
             Command::UpdateCommit { .. } if self.network.busy() => {
                 Reply::err("a network change is in progress; commit the update once it is done")
@@ -725,9 +764,29 @@ impl Control {
             Command::UpdateCommit { wipe_data, reboot } => {
                 let who = caller.describe();
                 let reply: Reply = self.updates.commit(&who, wipe_data).await.into();
+                if reply.result.is_ok() {
+                    self.emit(
+                        "update",
+                        "pending",
+                        json!({ "wipe_data": wipe_data, "reboot": reboot }),
+                    );
+                }
                 reply.then(reboot.then_some(After::Reboot))
             }
-            Command::UpdateCancel => self.updates.cancel(&caller.describe()).await.into(),
+            Command::UpdateCancel => {
+                let reply: Reply = self.updates.cancel(&caller.describe()).await.into();
+                if reply.result.is_ok() {
+                    self.emit("update", "cancelled", json!({ "by": caller.describe() }));
+                }
+                reply
+            }
+            Command::MqttStatus => Reply::ok(self.mqtt_status().await),
+            Command::MqttTest { url } => self.mqtt_test(url).await.into(),
+            Command::MqttPassword { password } => self.mqtt_password(caller, password).await.into(),
+            Command::MqttCertSet { cert, key } => {
+                self.mqtt_cert_set(caller, cert, key).await.into()
+            }
+            Command::MqttCertClear => self.mqtt_cert_clear(caller).await.into(),
             Command::Ping => Reply::ok(Done::new("pong")),
             Command::Storage => self.storage().await.into(),
             Command::CameraList => self.camera_list().await.into(),
@@ -812,7 +871,11 @@ impl Control {
             Command::BrowserPolicyRemove { name } => self.policy_remove(caller, name).await,
             Command::BrowserPolicyEffective => self.policy_effective().await.into(),
             Command::ScriptList => self.script_list().await.into(),
-            Command::ScriptCreate { spec } => self.script_create(caller, spec).await.into(),
+            Command::ScriptCreate { spec } => {
+                let reply: Reply = self.script_create(caller, spec).await.into();
+                self.mqtt.resubscribe();
+                reply
+            }
             Command::ScriptSet {
                 script,
                 name,
@@ -825,6 +888,7 @@ impl Control {
                 cec,
                 presence,
                 scanner,
+                mqtt,
             } => {
                 let change = scripts::Change {
                     name,
@@ -837,10 +901,17 @@ impl Control {
                     cec,
                     presence,
                     scanner,
+                    mqtt,
                 };
-                self.script_set(caller, script, change).await.into()
+                let reply: Reply = self.script_set(caller, script, change).await.into();
+                self.mqtt.resubscribe();
+                reply
             }
-            Command::ScriptRemove { script } => self.script_remove(caller, script).await.into(),
+            Command::ScriptRemove { script } => {
+                let reply: Reply = self.script_remove(caller, script).await.into();
+                self.mqtt.resubscribe();
+                reply
+            }
             Command::ScheduleList => self.schedule_list().await.into(),
             Command::ScheduleCreate { spec } => self.schedule_create(caller, spec).await.into(),
             Command::ScheduleSet {
@@ -1223,9 +1294,11 @@ impl Control {
             .await // naked: power::send bounds itself with within()
             .ok();
         let playlist = self.playlist_status().await.ok();
+        let mqtt = Some(self.mqtt_status().await);
 
         Ok(Status {
             playlist,
+            mqtt,
             screen_on,
             tv: self.tv_status(),
             presence: self.presence_summary(),
@@ -1447,7 +1520,13 @@ impl Control {
         }
     }
 
-    async fn screenshot(&self) -> Result<Screenshot, String> {
+    /// What is on screen as a JPEG, scaled down to `width` pixels across when
+    /// the page is wider, at `quality`.
+    pub(crate) async fn screenshot(
+        &self,
+        width: Option<u32>,
+        quality: Option<u8>,
+    ) -> Result<Screenshot, String> {
         // A powered-off output paints nothing, and the capture waits for a
         // frame that never comes.
         if self.screen_kept_off().await {
@@ -1455,13 +1534,20 @@ impl Control {
                 "the screen is switched off; `tessaro-ctl screen power on` first".to_string(),
             );
         }
-        // fromSurface:false - the surface path can hang on this stack.
+        let quality = quality
+            .unwrap_or(protocol::SCREENSHOT_QUALITY)
+            .clamp(10, 100);
+        let width = width.filter(|width| *width > 0);
+        // fromSurface:false - the surface path can hang on this stack. It
+        // also ignores a clip's scale, so a smaller one is scaled here,
+        // from a capture good enough to be encoded again.
+        let captured = if width.is_some() { 90 } else { quality };
         let result = self
             .session
             .call(
                 &Heartbeat::detached(),
                 "Page.captureScreenshot",
-                json!({ "format": "jpeg", "quality": 85, "fromSurface": false }),
+                json!({ "format": "jpeg", "quality": captured, "fromSurface": false }),
                 SCREENSHOT_LIMIT,
             )
             .await?; // naked: SessionHandle::call bounds itself with within()
@@ -1469,9 +1555,21 @@ impl Control {
         let data = result["data"]
             .as_str()
             .ok_or_else(|| "the browser returned no image".to_string())?;
+        let data = match width {
+            Some(width) => {
+                let jpeg = openssl::base64::decode_block(data)
+                    .map_err(|_| "the browser's image is not base64".to_string())?;
+                let scaled = blocking("scaling the screenshot", move || {
+                    crate::jpeg::scale(&jpeg, width, quality)
+                })
+                .await?;
+                openssl::base64::encode_block(&scaled)
+            }
+            None => data.to_string(),
+        };
         Ok(Screenshot {
             format: "jpeg".to_string(),
-            data: data.to_string(),
+            data,
         })
     }
 
@@ -1551,6 +1649,8 @@ pub enum Stream {
         what: &'static str,
         total: Duration,
     },
+    /// `update fetch`: the download and the checks after it.
+    Fetch(tokio::sync::mpsc::Receiver<Result<protocol::FetchEvent, String>>),
 }
 
 /// The most entries one page of the journal carries. A page after a cursor
@@ -2242,6 +2342,7 @@ mod tests {
             cec: Vec::new(),
             presence: Vec::new(),
             scanner: Vec::new(),
+            mqtt: Vec::new(),
         }
     }
 
@@ -2294,6 +2395,7 @@ mod tests {
                 cec: Some(vec!["TV-standby".into(), "key:red".into()]),
                 presence: Some(vec!["Arrived".into()]),
                 scanner: Some(vec!["Front".into(), "*".into()]),
+                mqtt: Some(vec!["kiosk/+/open".into(), " kiosk/+/open".into()]),
             },
         )
         .await;
@@ -2302,6 +2404,7 @@ mod tests {
         assert!(changed.spec.bridge);
         assert_eq!(changed.spec.cec, vec!["tv-standby", "key:red"]);
         assert_eq!(changed.spec.presence, vec!["arrived"]);
+        assert_eq!(changed.spec.mqtt, vec!["kiosk/+/open"], "trimmed, once");
         // A new run template and body replace the old ones; nothing runs to
         // keep them.
         let rendered = units();
@@ -2381,6 +2484,7 @@ mod tests {
                 cec: None,
                 presence: None,
                 scanner: None,
+                mqtt: None,
             },
         )
         .await;

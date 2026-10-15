@@ -1,0 +1,27 @@
+{
+  "function": "script::behaviour",
+  "input": [
+    {
+      "body": "true\n",
+      "mqtt": [
+        "kiosk/+/open",
+        "alarm/#"
+      ],
+      "name": "open"
+    },
+    {
+      "body": "true\n",
+      "mqtt": [
+        "tessaro/lobby/door"
+      ],
+      "name": "both",
+      "scanner": [
+        "*"
+      ]
+    }
+  ],
+  "output": [
+    "stop on error, overlap, runs on MQTT kiosk/+/open alarm/#",
+    "stop on error, overlap, runs on every scanner, runs on MQTT tessaro/lobby/door"
+  ]
+}

@@ -13,6 +13,7 @@
 
 pub mod access;
 pub mod actions;
+pub mod brokers;
 pub mod bulk;
 pub mod camera;
 pub mod cec;
@@ -25,6 +26,7 @@ pub mod devtools;
 pub mod files;
 mod http;
 pub mod journal;
+pub mod mqtt;
 pub mod network;
 pub mod nodes;
 pub mod ping;

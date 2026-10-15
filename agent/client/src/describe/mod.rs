@@ -8,6 +8,7 @@ pub mod bulk;
 pub mod camera;
 pub mod cec;
 pub mod device;
+pub mod mqtt;
 pub mod net;
 pub mod playlist;
 pub mod printer;

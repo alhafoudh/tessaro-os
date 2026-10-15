@@ -106,6 +106,18 @@ start.
   `TESSARO_SCAN_TEXT`, that a designated keyboard types nothing, the udev
   rule and the on-screen keyboard's verdict, and that `remove` gives the
   device back. See **Testing in qemu** in [scanners.md](scanners.md).
+* **The MQTT lane runs the development broker on the host, in docker.**
+  `mqtt_spec.rb` starts `test/mqtt/broker.rb` (the broker of `mise run
+  mqtt:run`) in a container of the worker's, `tessaro-e2e-mqtt-<worker>`,
+  with its plain listener on the worker's `mqtt` port (18830 plus the
+  offset) and the TLS, WebSocket and TLS WebSocket ones on the ports right
+  after it (`support/mqtt.rb`); the guest reaches it as `10.0.2.2`, so no
+  forward is needed. A case reads and publishes with mosquitto's own
+  clients in that container, so the host needs docker and nothing else.
+  The broker's log is `build/e2e/mqtt.mqtt.log`. The lane also has
+  `update fetch`, failing against the host's web server, and the guest's
+  own `tessaro-ctl --mqtt` reaching the device through the broker. See
+  [mqtt.md](mqtt.md).
 * **The playlist lane serves a site from the host.** A page that forbids
   framing and an image for the media cache have to come from somewhere that
   is not the device, so `playlist_spec.rb` runs a small server

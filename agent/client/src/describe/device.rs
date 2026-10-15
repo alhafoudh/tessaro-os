@@ -254,6 +254,14 @@ pub fn status(status: &Status) -> StatusText {
     if let Some(summary) = &status.time {
         more.push(Fact::new("time", time::summary(summary)));
     }
+    // Only a link that is set: a device without a broker says nothing.
+    if let Some(link) = status
+        .mqtt
+        .as_ref()
+        .filter(|link| link.state != protocol::mqtt::MqttState::Off)
+    {
+        more.push(Fact::new("mqtt", super::mqtt::summary(link)));
+    }
     if status.screen_on == Some(false) {
         more.push(Fact::new(
             "screen",

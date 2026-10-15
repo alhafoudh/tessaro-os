@@ -78,6 +78,7 @@ pub(super) struct Change {
     pub cec: Option<Vec<String>>,
     pub presence: Option<Vec<String>>,
     pub scanner: Option<Vec<String>>,
+    pub mqtt: Option<Vec<String>>,
 }
 
 /// Who asked for a run, the first word of its instance.
@@ -201,6 +202,9 @@ impl Control {
                 if let Some(scanner) = change.scanner {
                     spec.scanner = scanner;
                 }
+                if let Some(mqtt) = change.mqtt {
+                    spec.mqtt = mqtt;
+                }
                 let id = all.scripts[at].id.clone();
                 let others: Vec<&Script> =
                     all.scripts.iter().filter(|other| other.id != id).collect();
@@ -311,6 +315,17 @@ impl Control {
             script.id,
             caller.describe()
         ));
+        self.emit(
+            "script",
+            "started",
+            serde_json::json!({
+                "script": name,
+                "id": script.id,
+                "run": instance,
+                "trigger": trigger.word(),
+                "by": caller.describe(),
+            }),
+        );
 
         let total = script.spec.timeout_s.map_or(FOLLOW_MAX, |seconds| {
             Duration::from_secs(seconds) + FOLLOW_MARGIN
@@ -339,7 +354,7 @@ impl Control {
             None => event.to_string(),
         };
         let wanted = |script: &Script| protocol::cec::runs_on(&script.spec.cec, event, key);
-        self.event_scripts("cec", "CEC", &word, wanted, None).await;
+        self.event_scripts("cec", "CEC", &word, wanted, &[]).await;
     }
 
     /// The same for a presence event (`protocol::presence::EVENTS`). With
@@ -347,7 +362,11 @@ impl Control {
     /// faces' age and gender, left like a scan (`scripts::run_shell`).
     pub(super) async fn presence_scripts(&self, event: &str, env: Option<&[u8]>) {
         let wanted = |script: &Script| protocol::presence::runs_on(&script.spec.presence, event);
-        self.event_scripts("presence", "presence", event, wanted, env)
+        let files: &[(&str, &[u8])] = match env {
+            Some(env) => &[("", env)],
+            None => &[],
+        };
+        self.event_scripts("presence", "presence", event, wanted, files)
             .await;
     }
 
@@ -355,22 +374,46 @@ impl Control {
     /// file of its own (`scripts::run_shell`).
     pub(super) async fn scanner_scripts(&self, scanner: &str, scanned: &[u8]) {
         let wanted = |script: &Script| protocol::scanner::runs_on(&script.spec.scanner, scanner);
-        self.event_scripts("scanner", "scanner", scanner, wanted, Some(scanned))
+        self.event_scripts("scanner", "scanner", scanner, wanted, &[("", scanned)])
             .await;
+    }
+
+    /// The same for a message on the broker that one of a script's topic
+    /// filters matches. The topic and the payload go to each run in files
+    /// of their own (`scripts::run_shell`).
+    pub async fn mqtt_scripts(&self, topic: &str, payload: &[u8]) {
+        let wanted = |script: &Script| protocol::mqtt::runs_on(&script.spec.mqtt, topic);
+        let files: &[(&str, &[u8])] = &[("", payload), (".topic", topic.as_bytes())];
+        self.event_scripts("mqtt", "MQTT", "message", wanted, files)
+            .await;
+    }
+
+    /// Every topic filter some script runs on, for the link to subscribe.
+    pub async fn mqtt_script_filters(&self) -> Vec<String> {
+        let mut filters: Vec<String> = Vec::new();
+        for script in self.read_scripts().await.unwrap_or_default() {
+            for filter in script.spec.mqtt {
+                if !filters.contains(&filter) {
+                    filters.push(filter);
+                }
+            }
+        }
+        filters
     }
 
     /// Start a run of every script `wanted` picks, as `<trigger>-<word>-...`,
     /// with each script's runs on `trigger` events held to `EVENT_BURST` in
-    /// `EVENT_WINDOW`. `what` names the events in the journal. `payload` is
-    /// left in `scans/<run>` for the run to read, root's alone: what a scan
-    /// said, or a presence event's variables.
+    /// `EVENT_WINDOW`. `what` names the events in the journal. Each of
+    /// `files` is left in `scans/<run><suffix>` for the run to read, root's
+    /// alone: what a scan said, a presence event's variables, an MQTT
+    /// message's topic and payload.
     async fn event_scripts(
         &self,
         trigger: &str,
         what: &str,
         word: &str,
         wanted: impl Fn(&Script) -> bool,
-        payload: Option<&[u8]>,
+        files: &[(&str, &[u8])],
     ) {
         if !self.paths.manage_schedules {
             return;
@@ -412,12 +455,20 @@ impl Control {
                 continue;
             };
             let instance = format!("{trigger}-{word}-{started}-{}", protocol::hex(&random));
-            if let Some(payload) = payload {
-                let file = self.paths.scans_dir().join(&instance);
-                let bytes = payload.to_vec();
+            let kept: Vec<(std::path::PathBuf, Vec<u8>)> = files
+                .iter()
+                .map(|(suffix, bytes)| {
+                    (
+                        self.paths.scans_dir().join(format!("{instance}{suffix}")),
+                        bytes.to_vec(),
+                    )
+                })
+                .collect();
+            if !kept.is_empty() {
                 if let Err(err) =
                     blocking("keeping the event's payload for its script", move || {
-                        keep_scan(&file, &bytes)
+                        kept.iter()
+                            .try_for_each(|(file, bytes)| keep_scan(file, bytes))
                     })
                     .await
                 {
@@ -428,10 +479,17 @@ impl Control {
                 }
             }
             match self.bus.start(&scripts::run_unit(script, &instance)).await {
-                Ok(_) => self.log.info(format!(
-                    "script {name} ({}) run {instance} started by the {what} event {word}",
-                    script.id
-                )),
+                Ok(_) => {
+                    self.log.info(format!(
+                        "script {name} ({}) run {instance} started by the {what} event {word}",
+                        script.id
+                    ));
+                    self.emit(
+                        "script",
+                        "started",
+                        serde_json::json!({ "script": name, "id": script.id, "run": instance, "trigger": trigger }),
+                    );
+                }
                 Err(err) => self
                     .log
                     .info(format!("script {name}: starting a run for {word}: {err}")),

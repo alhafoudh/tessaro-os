@@ -21,7 +21,9 @@ there is one copy, and both clients call it.
     the known nodes in the client's `tessaro.db` (`nodes.rs`, `store.rs`),
     claim and login (`access.rs`), a device's tags with the reserved
     `unclaimed`, the tag filter and a tag's badge colour (`tags.rs`),
-    the devices a run on several stands for and running it (`bulk.rs`);
+    the devices a run on several stands for and running it (`bulk.rs`),
+    the MQTT brokers the client keeps (`brokers.rs`) and a session through
+    one (`mqtt.rs`);
   * flows that take several requests: an image update (`update.rs`), whole
     trees to and from the file store and `files sync` (`files.rs`), device
     ping (`ping.rs`), growing `/data` (`storage.rs`), the DevTools forward
@@ -55,6 +57,33 @@ the start of its name too. The start of several is an error that lists
 them, and an exact name always wins (`lobby` beside `lobby-2`). Such a
 name always costs a scan; an exact known name goes to its last address
 first. `NAME.local` is always a name to look for on the network.
+
+## Through an MQTT broker
+
+**A session can go through the device's MQTT broker instead of its
+address, and everything above it stays the same**: `Session::exchange`
+hands each request to `mqtt::Link`, which sends it to the device's command
+topic and waits for the answer on the client's own reply topic, so every
+`call`, job, log page, upload and download works unchanged (how a request
+travels is **Commands** in [mqtt.md](mqtt.md)).
+
+* **`--mqtt URL|@NAME`** (or `TESSARO_MQTT`) picks the broker:
+  `brokers::resolve` reads `@NAME` from the `brokers` table of the client's
+  `tessaro.db`, kept with `tessaro-ctl nodes brokers list|add|set|remove`,
+  or takes a URL as it is, `user:password@` included.
+* **The device is named as above, against what the broker knows instead of
+  mDNS**: a `Link::scan` reads the statuses the broker keeps under
+  `<prefix>/+/status`, and `mqtt::pick` matches a name, an id or the
+  start of either against them, an exact one first. The target is `Target::Mqtt`, the dial
+  `Dial::Mqtt`; `--tag` and `-n a,b` pick among the same statuses
+  (`bulk::select_mqtt`), and `nodes list --mqtt` lists them.
+* **Nothing is pinned and no token is sent**: the broker is trusted, and the
+  device is whoever answers on its id's topics.
+* **What needs the device itself is refused before it starts**
+  (`Session::needs_ip`, which the ctl's `needs_ip` in `main.rs` calls):
+  the commands that open a connection of their own to the device or time
+  one - `ssh connect`, `browser devtools`, `screen vnc`, `access webconfig`,
+  `access claim` and `login`, `device ping`.
 
 ## Nothing in the client prints or asks
 

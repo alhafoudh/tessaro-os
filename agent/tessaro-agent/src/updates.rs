@@ -89,6 +89,10 @@ const HEAD_CHECK: u64 = 4 << 20;
 /// partition table anyway, only later.
 const HEAD_CHECK_LIMIT: u64 = 64 << 20;
 
+/// The longest `update fetch` may take, the download and the checks after
+/// it: a slow link and a large image, but not forever.
+pub const FETCH_TOTAL: std::time::Duration = std::time::Duration::from_secs(12 * 3600);
+
 /// Copies the kernel named `name` out of the staged boot partition image.
 type Extract = fn(&Path, &Path, &str) -> Result<(), String>;
 
@@ -317,6 +321,35 @@ impl Updates {
     }
 
     pub async fn chunk(self: &Arc<Self>, offset: u64, data: String) -> Result<Received, String> {
+        let bytes = protocol::decode_chunk(&data)?;
+        self.append(offset, bytes).await
+    }
+
+    /// The upload's SHA-256, once it is known: a fetched image's is worked
+    /// out as it arrives, and set before its last bytes go in, so the
+    /// manifest the initramfs checks the file against has it.
+    pub async fn set_sha256(self: &Arc<Self>, sha256: String) -> Result<(), String> {
+        let upload = {
+            let mut job = lock(&self.job);
+            match (job.phase, job.upload.as_mut()) {
+                (UpdatePhase::Receiving, Some(upload)) => {
+                    upload.sha256 = sha256;
+                    upload.clone()
+                }
+                _ => return Err("no upload is under way".to_string()),
+            }
+        };
+        let path = self.paths.update_dir().join(update::UPLOAD_META);
+        blocking("writing the upload's description", move || {
+            fsutil::write_json(&path, &upload)
+                .map_err(|err| format!("writing the upload's description: {err}"))
+        })
+        .await
+    }
+
+    /// The next bytes of the upload, from `offset`: a client's chunk, or
+    /// what a fetch downloaded.
+    pub async fn append(self: &Arc<Self>, offset: u64, bytes: Vec<u8>) -> Result<Received, String> {
         self.load().await;
         let (upload, received, head_checked) = {
             let job = lock(&self.job);
@@ -342,7 +375,6 @@ impl Updates {
                 upload.name
             ));
         }
-        let bytes = protocol::decode_chunk(&data)?;
         if received + bytes.len() as u64 > upload.size {
             return Err("the chunk runs past the end of the file".to_string());
         }

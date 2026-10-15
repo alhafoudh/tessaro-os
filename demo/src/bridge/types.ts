@@ -75,6 +75,28 @@ export interface DeviceStatus {
   temperatures?: Temperature[];
   playlist: PlaylistStatus | null;
   presence: PresenceSummary | null;
+  /** The link to the MQTT broker; missing from an agent older than it. */
+  mqtt?: MqttStatus | null;
+}
+
+/** The device's link to its MQTT broker as the page gets it (mqtt.status()). */
+export interface MqttStatus {
+  state: "off" | "connecting" | "connected" | "failed";
+  connected: boolean;
+  /** Where the page's messages arrive and go: `<prefix>/<id>/page/in/`, `.../page/out/`. */
+  pageIn: string;
+  pageOut: string;
+}
+
+/** A message below the device's page/in/ (tessaro:mqtt). */
+export interface MqttDetail {
+  /** Below page/in/. */
+  topic: string;
+  /** The payload as text, when it is UTF-8. */
+  payload: string | null;
+  /** The payload as base64, when it is not. */
+  base64: string | null;
+  contentType: string | null;
 }
 
 /** One reading of a hwmon sensor, in °C. */
@@ -515,6 +537,12 @@ export interface TessaroReads {
     watch(): Promise<unknown>;
     unwatch(): Promise<unknown>;
   };
+  /** Missing from an agent older than it. */
+  mqtt?: {
+    status(): Promise<MqttStatus>;
+    /** Below page/out/; a string as it is, anything else as JSON. Actions mode. */
+    publish?(topic: string, payload: unknown, options?: { retain?: boolean }): Promise<unknown>;
+  };
   browser?: {
     reload(): Promise<unknown>;
     restart(): Promise<unknown>;
@@ -535,6 +563,7 @@ export interface TessaroEvents {
   "tessaro:presence": CustomEvent<PresenceDetail>;
   "tessaro:faces": CustomEvent<FacesDetail>;
   "tessaro:scanner": CustomEvent<ScannerDetail>;
+  "tessaro:mqtt": CustomEvent<MqttDetail>;
 }
 
 declare global {

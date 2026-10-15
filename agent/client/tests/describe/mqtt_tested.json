@@ -1,0 +1,102 @@
+{
+  "function": "mqtt::tested",
+  "input": [
+    {
+      "broker": "mqtts://broker.example:8883",
+      "fingerprint": "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+      "millis": 184,
+      "ok": true
+    },
+    {
+      "broker": "mqtts://broker.example:8883",
+      "error": "the broker's certificate is not trusted",
+      "fingerprint": null,
+      "millis": 95,
+      "ok": false,
+      "stage": "tls"
+    },
+    {
+      "broker": "mqtt://10.0.2.2:1883",
+      "error": "the broker refused the connection: not authorized",
+      "millis": 12,
+      "ok": false,
+      "stage": "mqtt"
+    }
+  ],
+  "output": [
+    [
+      [
+        [
+          "ok",
+          "the broker took the connection",
+          0
+        ],
+        [
+          "plain",
+          " at ",
+          0
+        ],
+        [
+          "heading",
+          "mqtts://broker.example:8883",
+          0
+        ],
+        [
+          "muted",
+          " (184 ms)",
+          0
+        ]
+      ],
+      [
+        [
+          "muted",
+          "its certificate's SHA-256, for mqtt.tls.fingerprint: ",
+          0
+        ],
+        [
+          "plain",
+          "8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
+          0
+        ]
+      ]
+    ],
+    [
+      [
+        [
+          "bad",
+          "stopped at tls:",
+          0
+        ],
+        [
+          "plain",
+          " the broker's certificate is not trusted",
+          0
+        ],
+        [
+          "muted",
+          " (mqtts://broker.example:8883)",
+          0
+        ]
+      ]
+    ],
+    [
+      [
+        [
+          "bad",
+          "stopped at mqtt:",
+          0
+        ],
+        [
+          "plain",
+          " the broker refused the connection: not authorized",
+          0
+        ],
+        [
+          "muted",
+          " (mqtt://10.0.2.2:1883)",
+          0
+        ]
+      ]
+    ]
+  ]
+}

@@ -63,6 +63,15 @@
       "available": 1000000000,
       "total": 4000000000
     },
+    "mqtt": {
+      "broker": "mqtts://broker.example:8883",
+      "client_cert": false,
+      "client_id": "0123456789abcdef0123456789abcdef",
+      "commands": "full",
+      "password": true,
+      "state": "connected",
+      "topic": "tessaro/0123456789abcdef0123456789abcdef"
+    },
     "node": {
       "claimed": true,
       "fingerprint": "AB:CD:EF",
@@ -611,6 +620,26 @@
           [
             "warn",
             "not in sync",
+            0
+          ]
+        ]
+      },
+      {
+        "label": "mqtt",
+        "value": [
+          [
+            "ok",
+            "connected",
+            0
+          ],
+          [
+            "plain",
+            " to ",
+            0
+          ],
+          [
+            "heading",
+            "mqtts://broker.example:8883",
             0
           ]
         ]

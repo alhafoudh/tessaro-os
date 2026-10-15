@@ -6,7 +6,7 @@
 
 import { createCecBus } from "./mock-cec";
 import { createScanner } from "./mock-scanner";
-import type { DeviceStatus, Face, Mode, PresenceStatus, ScannerDetail, Tessaro } from "./types";
+import type { DeviceStatus, Face, Mode, MqttDetail, MqttStatus, PresenceStatus, ScannerDetail, Tessaro } from "./types";
 
 export interface MockOptions {
   mode?: Mode;
@@ -17,6 +17,8 @@ export interface MockOptions {
   presence?: boolean;
   /** A barcode scanner set up; true by default. */
   scanner?: boolean;
+  /** The link to the MQTT broker (mqtt.url set); connected by default. */
+  mqtt?: MqttStatus["state"];
   /** Fire events (faces, CEC keys) on timers, as a live device would. */
   live?: boolean;
 }
@@ -117,6 +119,20 @@ export function createMock(options: MockOptions = {}): Tessaro {
     enabled: () => flagOf(config["scanner.enable"]),
     pageEvents: () => flagOf(config["scanner.page"]),
   });
+  const mqttState = options.mqtt ?? "connected";
+  const mqttTopic = `tessaro/${config["device.id"] ?? "3f9c2a1e"}`;
+  const mqtt = (): MqttStatus => ({
+    state: mqttState,
+    connected: mqttState === "connected",
+    pageIn: `${mqttTopic}/page/in/`,
+    pageOut: `${mqttTopic}/page/out/`,
+  });
+  // A message the pretend broker hands the page, as bridge.js does.
+  const mqttMessage = (topic: string, payload: string) => {
+    if (mqttState !== "connected") return;
+    const detail: MqttDetail = { topic, payload, base64: null, contentType: null };
+    window.dispatchEvent(new CustomEvent("tessaro:mqtt", { detail }));
+  };
 
   const disrupt = () => {
     const waited = (Date.now() - lastDisrupt) / 1000;
@@ -193,6 +209,7 @@ export function createMock(options: MockOptions = {}): Tessaro {
     ...temperatures(),
     playlist: null,
     presence: { present: true, near: false, count: 1, genders: { male: 0, female: 1, unknown: 0 } },
+    mqtt: mqtt(),
   });
 
   const presence = (): PresenceStatus => {
@@ -431,6 +448,20 @@ export function createMock(options: MockOptions = {}): Tessaro {
         return null;
       }),
     },
+    mqtt: {
+      status: async () => mqtt(),
+      publish: async (topic: string, payload: unknown, options?: { retain?: boolean }) => {
+        if (mode !== "actions") throw new Error("mqtt.publish needs browser.bridge.mode actions");
+        if (mqttState === "off") throw new Error("refused: mqtt.url is not set");
+        const text = typeof payload === "string" ? payload : JSON.stringify(payload ?? "");
+        console.info(
+          `[tessaro mock] mqtt ${mqttTopic}/page/out/${topic}${options?.retain ? " (retained)" : ""}: ${text}`,
+        );
+        // Someone at the other end answers.
+        setTimeout(() => mqttMessage(`reply/${topic}`, `got ${text}`), 600);
+        return { message: "published" };
+      },
+    },
     presence: {
       status: async () => presence(),
       watch: async () => {
@@ -534,6 +565,9 @@ export function createMock(options: MockOptions = {}): Tessaro {
     setInterval(() => bus.receive(0, [0x8f]), 9000);
     // Someone at the counter scans now and then.
     if (scannerOn) setInterval(() => void scanner.scan(), 15000);
+    // The till sends the queue number now and then.
+    let ticket = 40;
+    setInterval(() => mqttMessage("queue/now", JSON.stringify({ number: ++ticket, desk: 3 })), 11000);
   }
 
   MOCKS.add(api);

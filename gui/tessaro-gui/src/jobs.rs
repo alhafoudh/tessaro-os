@@ -2,7 +2,7 @@
 //! worker keeps polling: the device's own jobs (`network ping`, the speed
 //! test, growing `/data`, looking for printers and scanners, a scanner's
 //! test), files going up or down, an
-//! image update, the DevTools and VNC tunnels, and a script's run followed
+//! image update sent or fetched by the device, the DevTools and VNC tunnels, and a script's run followed
 //! to its end.
 //!
 //! A job is a subscription keyed by its id. Cancelling it drops the
@@ -28,7 +28,7 @@ use protocol::api::{
     self, Empty, Endpoint, GrowBody, PingBody, RestartBody, SetConfig, SpeedtestBody,
 };
 use protocol::files::{self as store, FileEntry};
-use protocol::{JobStarted, PingEvent, RestartTarget, ScriptEvent, Verify};
+use protocol::{FetchSpec, JobStarted, PingEvent, RestartTarget, ScriptEvent, Verify};
 use serde_json::Value;
 use tessaro_client::connect::{Answer, Session};
 use tessaro_client::nodes::Node;
@@ -52,6 +52,9 @@ pub enum Kind {
     Download { entry: FileEntry, into: PathBuf },
     /// An image, staged, checked and committed.
     Update(Plan),
+    /// `tessaro-ctl update fetch`: the device downloads an image itself and
+    /// stages it, the download as progress.
+    Fetch(FetchSpec),
     /// `tessaro-ctl device ping`: round trips over the control connection.
     ControlPing { count: u32 },
     /// `tessaro-ctl browser devtools`: the device's DevTools port forwarded
@@ -164,6 +167,12 @@ impl report::Report for Report<'_> {
 
 fn run(spec: &Spec, out: &ui::UnboundedSender<Event>) -> Result<String, String> {
     let (mut session, _) = worker::connect(&spec.node)?;
+    match spec.kind {
+        Kind::ControlPing { .. } => session.needs_ip("Ping, which times the connection to it,")?,
+        Kind::DevTools => session.needs_ip("DevTools")?,
+        Kind::Vnc => session.needs_ip("The VNC tunnel")?,
+        _ => {}
+    }
     let done = Arc::new(AtomicBool::new(false));
     // A device job stops by itself, and cancels on the device on the way:
     // shutting its connection down would only lose that cancel. The VNC
@@ -171,6 +180,7 @@ fn run(spec: &Spec, out: &ui::UnboundedSender<Event>) -> Result<String, String> 
     let watched = !matches!(
         spec.kind,
         Kind::Stream(_)
+            | Kind::Fetch(_)
             | Kind::Discover
             | Kind::ScannerDiscover
             | Kind::ScannerIdentify
@@ -202,6 +212,13 @@ fn run(spec: &Spec, out: &ui::UnboundedSender<Event>) -> Result<String, String> 
                 .map(|summary| summary.line("received").to_string())
         }
         Kind::Update(update) => update_send(&mut session, &spec.node, update, &mut report),
+        Kind::Fetch(fetch) => update::fetch(
+            &mut session,
+            fetch.clone(),
+            &|| out.is_closed(),
+            &mut report,
+        )
+        .map(|()| "fetched".to_string()),
         Kind::ControlPing { count } => control_ping(&mut session, *count, &mut report),
         Kind::DevTools => open_devtools(&mut session, &mut report),
         Kind::Vnc => open_vnc(&mut session, &mut report),

@@ -55,7 +55,7 @@ section is one of:
 | --- | --- | --- |
 | `ready` | Ready | the feature works here |
 | `limited` | Partly | some of it works: the browser's part without the bridge's, software WebGL, no touchscreen |
-| `off` | Off | the operator has it switched off (`camera.presence.enable`, `screen.cec.enable`, `printer.enable`, `scanner.enable`, no script marked `--bridge`) |
+| `off` | Off | the operator has it switched off (`camera.presence.enable`, `screen.cec.enable`, `printer.enable`, `scanner.enable`, no `mqtt.url`, no script marked `--bridge`) |
 | `needs-bridge` | Bridge off / Read-only | the bridge mode is below what the section needs |
 | `no-hardware` | Nothing plugged in | no camera, no printer or scanner set up, no HDMI-CEC adapter, no scanner plugged in |
 | `offline` | Offline | the section streams from the internet and the device cannot reach it |
@@ -139,6 +139,24 @@ page's, so the section says how instead of offering it.
   `connected` or `disconnected` event comes, with each scanner's state,
   device node and scan count.
 
+## MQTT
+
+**The MQTT section shows the page's own corner of the device's broker**:
+every `tessaro:mqtt` event as it comes, and a form that publishes with
+`tessaro.mqtt.publish(topic, payload)` ([bridge.md](bridge.md)). `mqtt.*`
+is not in `tessaro.config`, so its `detect()` asks `mqtt.status()`, which
+says only the state and the page's `page/in/` and `page/out/` topics,
+never the broker or its account.
+
+* **It is off until `mqtt.url` is set**, and Partly while the link is not
+  up (`tessaro-ctl mqtt status` and `mqtt test` say why) or the bridge is
+  in `config` mode, where messages arrive but the page cannot publish.
+* **A payload that parses as JSON is published as JSON**, anything else as
+  the text typed (`payloadOf()` in `src/sections/Mqtt.tsx`); a message
+  that is not UTF-8 shows as its size, from its base64.
+* **Nothing arrives while `mqtt.page` is off.** The page cannot read that
+  key, so the section says so under the list instead of detecting it.
+
 ## Maintenance for a few seconds
 
 **Maintenance puts another page on screen, so the demo makes that page its
@@ -193,7 +211,10 @@ a route in the path would be a 404.
   Its barcode scanner (`src/bridge/mock-scanner.ts`) is a keyboard scanner
   that scans an EAN-13, a GS1 DataMatrix and a long QR code in turn, on the
   section's "Pretend scan" button (shown only with the mock) and now and
-  then on its own, firing `begin` and `end` as the agent does.
+  then on its own, firing `begin` and `end` as the agent does. Its broker
+  is connected (`mqtt` in `MockOptions` for the other states), answers
+  each publish with a message on `reply/<topic>` and sends a queue number
+  on `queue/now` now and then.
 * **`bitbake-lock.json` follows `package-lock.json`**, made by
   `scripts/bitbake-lock.mjs`, Webconfig's script under the demo's name, and
   checked by `demo:test`.

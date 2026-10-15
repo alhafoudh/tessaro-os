@@ -428,10 +428,20 @@ impl Control {
                 let problem = control.apply_printers().await.err();
                 if problem != reported {
                     match &problem {
-                        Some(err) => control.log.info(format!("printers: {err}")),
-                        None if reported.is_some() => control
-                            .log
-                            .info("printers: every printer is set up".to_string()),
+                        Some(err) => {
+                            control.log.info(format!("printers: {err}"));
+                            control.emit(
+                                "printer",
+                                "problem",
+                                serde_json::json!({ "problem": err }),
+                            );
+                        }
+                        None if reported.is_some() => {
+                            control
+                                .log
+                                .info("printers: every printer is set up".to_string());
+                            control.emit("printer", "ok", serde_json::json!({}));
+                        }
                         None => {}
                     }
                     reported = problem;

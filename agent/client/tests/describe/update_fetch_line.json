@@ -1,0 +1,151 @@
+{
+  "function": "update::fetch_line",
+  "input": [
+    {
+      "message": "fetching https://ex.test/a.wic.bmap",
+      "phase": "bmap",
+      "received": 0
+    },
+    {
+      "message": "a.wic.zst, 256.0 MB",
+      "phase": "download",
+      "received": 0,
+      "size": 268435456
+    },
+    {
+      "phase": "download",
+      "received": 134217728,
+      "size": 268435456
+    },
+    {
+      "phase": "download",
+      "received": 5242880
+    },
+    {
+      "phase": "verifying",
+      "received": 268435456,
+      "size": 268435456
+    },
+    {
+      "phase": "preparing",
+      "received": 268435456,
+      "size": 268435456
+    },
+    {
+      "message": "a.wic.zst is ready",
+      "phase": "ready",
+      "received": 268435456,
+      "size": 268435456
+    },
+    {
+      "message": "a.wic.zst is applied at the next boot",
+      "phase": "committed",
+      "received": 268435456,
+      "size": 268435456
+    },
+    {
+      "phase": "done",
+      "received": 0
+    }
+  ],
+  "output": [
+    [
+      [
+        "muted",
+        "fetching the bmap",
+        0
+      ],
+      [
+        "muted",
+        ": fetching https://ex.test/a.wic.bmap",
+        0
+      ]
+    ],
+    [
+      [
+        "warn",
+        "downloading",
+        0
+      ],
+      [
+        "plain",
+        " 0.0 MB of 268.4 MB (0%)",
+        0
+      ],
+      [
+        "muted",
+        ": a.wic.zst, 256.0 MB",
+        0
+      ]
+    ],
+    [
+      [
+        "warn",
+        "downloading",
+        0
+      ],
+      [
+        "plain",
+        " 134.2 MB of 268.4 MB (50%)",
+        0
+      ]
+    ],
+    [
+      [
+        "warn",
+        "downloading",
+        0
+      ],
+      [
+        "plain",
+        " 5.2 MB",
+        0
+      ]
+    ],
+    [
+      [
+        "warn",
+        "verifying",
+        0
+      ]
+    ],
+    [
+      [
+        "warn",
+        "preparing",
+        0
+      ]
+    ],
+    [
+      [
+        "ok",
+        "ready",
+        0
+      ],
+      [
+        "muted",
+        ": a.wic.zst is ready",
+        0
+      ]
+    ],
+    [
+      [
+        "ok",
+        "committed",
+        0
+      ],
+      [
+        "muted",
+        ": a.wic.zst is applied at the next boot",
+        0
+      ]
+    ],
+    [
+      [
+        "ok",
+        "done",
+        0
+      ]
+    ]
+  ]
+}

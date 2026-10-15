@@ -5,6 +5,7 @@ import type { Schemas } from "../api/client";
 import { fact, Line, temperatureLevel, unitState, usageLevel, yesNo, type Fact } from "../text/line";
 import * as audio from "./audio";
 import { fixed, freeLine, memUsedPercent, previousOrDefault, usageLine } from "./common";
+import * as mqtt from "./mqtt";
 import * as playlist from "./playlist";
 import * as screen from "./screen";
 import * as tags from "./tags";
@@ -181,6 +182,8 @@ export function status(status: Schemas["Status"]): StatusText {
   if (status.playlist?.player) more.push(fact("playlist", playlist.summary(status.playlist)));
   if (status.audio) more.push(fact("audio", audio.summary(status.audio)));
   if (status.time) more.push(fact("time", time.summary(status.time)));
+  // Only a link that is set: a device without a broker says nothing.
+  if (status.mqtt && status.mqtt.state !== "off") more.push(fact("mqtt", mqtt.summary(status.mqtt)));
   if (status.screen_on === false) {
     more.push(
       fact(

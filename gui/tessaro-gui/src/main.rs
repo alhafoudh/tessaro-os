@@ -6,6 +6,7 @@
 //! is in docs/gui.md.
 
 mod blocking;
+mod broker_scan;
 mod bulk_view;
 mod cec_log;
 mod copy_menu;
@@ -259,6 +260,8 @@ enum Key {
 enum Message {
     Nodes(nodes_view::Message),
     Discovery(discovery::Event),
+    /// What the kept MQTT brokers have devices for.
+    BrokerScan(broker_scan::Event),
     Device(mdi::Id, device::Message),
     /// From a settings window, for its device.
     Settings(mdi::Id, device::Message),
@@ -350,6 +353,10 @@ impl App {
             }
             Message::Discovery(event) => {
                 self.nodes.discovered(event);
+                Task::none()
+            }
+            Message::BrokerScan(event) => {
+                self.nodes.brokered(event);
                 Task::none()
             }
             Message::Device(id, message) => {
@@ -920,6 +927,7 @@ impl App {
             .collect();
         let mut all = vec![
             discovery::subscription(self.nodes.generation).map(Message::Discovery),
+            broker_scan::subscription(self.nodes.broker_generation).map(Message::BrokerScan),
             event::listen_with(keys),
         ];
         if self.desk.dragging() {

@@ -35,6 +35,14 @@ httparse = "1"
 
 data-encoding = "2"
 
+# Reaching a device through its MQTT broker (mqtt.rs): the session, with no
+# I/O of its own, run here on the same blocking sockets; the WebSocket for a
+# ws:// or wss:// broker over them, handshake only, the version tokio's
+# copy in the agent is; and the query a request carries, as the API's.
+tessaro-mqtt = { path = "../mqtt" }
+tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
+serde_urlencoded = "0.7"
+
 # NAME.local discovery. Blocking API, its own thread.
 mdns-sd = { version = "0.21", default-features = false }
 

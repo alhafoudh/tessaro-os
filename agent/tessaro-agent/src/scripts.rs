@@ -63,7 +63,7 @@ impl Stored for Scripts {
     fn load(db: &Connection) -> rusqlite::Result<Self> {
         let mut rows = db.prepare(
             "SELECT id, name, description, body, on_error, timeout_s, concurrency, bridge, cec, \
-             presence, scanner FROM scripts ORDER BY position",
+             presence, scanner, mqtt FROM scripts ORDER BY position",
         )?;
         let scripts = rows
             .query_map([], |row| {
@@ -77,6 +77,7 @@ impl Stored for Scripts {
                 let cec = list(8)?;
                 let presence = list(9)?;
                 let scanner = list(10)?;
+                let mqtt = list(11)?;
                 Ok(Script {
                     id: row.get(0)?,
                     spec: ScriptSpec {
@@ -90,6 +91,7 @@ impl Stored for Scripts {
                         cec,
                         presence,
                         scanner,
+                        mqtt,
                     },
                 })
             })?
@@ -102,8 +104,8 @@ impl Stored for Scripts {
         let mut insert = db.prepare(
             "INSERT INTO scripts \
              (id, position, name, description, body, on_error, timeout_s, concurrency, bridge, \
-              cec, presence, scanner) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+              cec, presence, scanner, mqtt) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
         )?;
         for (position, script) in self.scripts.iter().enumerate() {
             let spec = &script.spec;
@@ -120,6 +122,7 @@ impl Stored for Scripts {
                 serde_json::to_string(&spec.cec).unwrap_or_else(|_| "[]".to_string()),
                 serde_json::to_string(&spec.presence).unwrap_or_else(|_| "[]".to_string()),
                 serde_json::to_string(&spec.scanner).unwrap_or_else(|_| "[]".to_string()),
+                serde_json::to_string(&spec.mqtt).unwrap_or_else(|_| "[]".to_string()),
             ])?;
         }
         Ok(())
@@ -174,6 +177,7 @@ pub fn validate(mut spec: ScriptSpec, others: &[&Script]) -> Result<ScriptSpec, 
     spec.cec = protocol::cec::triggers(&spec.cec.join(","))?;
     spec.presence = protocol::presence::triggers(&spec.presence.join(","))?;
     spec.scanner = protocol::scanner::triggers(&spec.scanner.join(","))?;
+    spec.mqtt = protocol::mqtt::triggers(&spec.mqtt)?;
     Ok(spec)
 }
 
@@ -364,7 +368,12 @@ pub fn render(
 /// run takes it from there, its trailing newlines kept, and removes it. A
 /// presence run with camera.presence.demographics on finds its variables
 /// there the same way, as `NAME=value` lines of numbers and fixed words the
-/// agent wrote (`control/presence.rs`, `script_env`), which it sources.
+/// agent wrote (`control/presence.rs`, `script_env`), which it sources. An
+/// MQTT run, `mqtt-message-<unix>-<hex>`, finds the message's topic in
+/// `scans/<run>.topic`, taken into `TESSARO_MQTT_TOPIC`, and its payload in
+/// `scans/<run>`, which may be anything, binary included: it is moved to
+/// `<run>.payload` and named by `TESSARO_MQTT_PAYLOAD`, for the body to
+/// read, and `prune_scans` removes it once it is old.
 fn run_shell(strict: &str, scans: &Path) -> String {
     format!(
         "export TESSARO_TRIGGER=\"${{TESSARO_RUN%%-*}}\"; \
@@ -380,6 +389,11 @@ fn run_shell(strict: &str, scans: &Path) -> String {
          f=\"{scans}/$TESSARO_RUN\"; if [ -f \"$f\" ]; then \
          TESSARO_SCAN_TEXT=\"$(cat \"$f\"; printf x)\"; export TESSARO_SCAN_TEXT=\"${{TESSARO_SCAN_TEXT%x}}\"; \
          rm -f \"$f\"; fi; fi; \
+         if [ \"$TESSARO_TRIGGER\" = mqtt ]; then f=\"{scans}/$TESSARO_RUN\"; \
+         if [ -f \"$f.topic\" ]; then \
+         TESSARO_MQTT_TOPIC=\"$(cat \"$f.topic\"; printf x)\"; export TESSARO_MQTT_TOPIC=\"${{TESSARO_MQTT_TOPIC%x}}\"; \
+         rm -f \"$f.topic\"; fi; \
+         if [ -f \"$f\" ]; then mv -f \"$f\" \"$f.payload\"; export TESSARO_MQTT_PAYLOAD=\"$f.payload\"; fi; fi; \
          exec /bin/sh{strict} \"$0\"",
         scans = scans.display()
     )
@@ -549,6 +563,7 @@ mod tests {
             cec: Vec::new(),
             presence: Vec::new(),
             scanner: Vec::new(),
+            mqtt: Vec::new(),
         }
     }
 
@@ -829,6 +844,46 @@ mod tests {
         assert!(!dir.path().join(instance).exists(), "the scan is removed");
         let ended = parse_ended(instance, "1700000001 success 0").unwrap();
         assert_eq!(ended.event.as_deref(), Some("back_door"));
+    }
+
+    #[test]
+    fn an_mqtt_run_gets_the_topic_and_a_file_with_the_payload() {
+        let dir = tempfile::tempdir().unwrap();
+        let body = dir.path().join("body");
+        fs::write(
+            &body,
+            "printf '%s|%s|' \"$TESSARO_TRIGGER\" \"$TESSARO_MQTT_TOPIC\"; od -An -c \"$TESSARO_MQTT_PAYLOAD\" | tr -s ' '\n",
+        )
+        .unwrap();
+        let instance = "mqtt-message-1700000000-4f2a";
+        fs::write(dir.path().join(instance), b"\x00on\n").unwrap();
+        fs::write(
+            dir.path().join(format!("{instance}.topic")),
+            "kiosk/lobby/open",
+        )
+        .unwrap();
+        let out = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg(run_shell("", dir.path()))
+            .arg(&body)
+            .env("TESSARO_RUN", instance)
+            .env_remove("TESSARO_MQTT_TOPIC")
+            .env_remove("TESSARO_MQTT_PAYLOAD")
+            .output()
+            .unwrap();
+        let out = String::from_utf8(out.stdout).unwrap();
+        assert!(
+            out.starts_with("mqtt|kiosk/lobby/open| \\0 o n \\n"),
+            "{out}"
+        );
+        assert!(
+            !dir.path().join(format!("{instance}.topic")).exists(),
+            "the topic is taken"
+        );
+        assert!(
+            dir.path().join(format!("{instance}.payload")).exists(),
+            "the payload stays for the body"
+        );
     }
 
     #[test]

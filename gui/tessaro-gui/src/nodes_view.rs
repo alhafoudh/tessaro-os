@@ -14,14 +14,16 @@ use iced::keyboard::Modifiers;
 use iced::widget::{column, container, row, text, text_input};
 use iced::{Element, Length, Task};
 use protocol::{Claimed, NodeInfo};
+use tessaro_client::brokers::{self as kept, Broker, Brokers};
 use tessaro_client::connect::{self, Found, PinAsk, Target, Trust};
+use tessaro_client::mqtt::Seen;
 use tessaro_client::nodes::{Node, Nodes};
 use tessaro_client::tags;
 
 use crate::dialog::{self, field};
 use crate::grid::{cell, col, grid_marked, widget, Cell, Col};
 use crate::section::{self, action};
-use crate::{blocking, discovery, theme, CLIENT};
+use crate::{blocking, broker_scan, discovery, theme, worker, CLIENT};
 
 /// Whether this machine's pin and what the device presents agree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,6 +52,9 @@ pub struct Row {
     pub online: bool,
     /// device.tags: as announced, else as the store last kept them.
     pub tags: Vec<String>,
+    /// The kept broker it is reached through, `@NAME`, when the network
+    /// does not show it but a broker does (`overlay`).
+    pub via: Option<String>,
 }
 
 impl Row {
@@ -76,6 +81,7 @@ pub fn merge<'a>(known: &Nodes, found: impl IntoIterator<Item = &'a Found>) -> V
             token: node.token.is_some(),
             online: false,
             tags: node.tags.clone(),
+            via: None,
         })
         .collect();
 
@@ -100,6 +106,7 @@ pub fn merge<'a>(known: &Nodes, found: impl IntoIterator<Item = &'a Found>) -> V
                     token: false,
                     online: false,
                     tags: Vec::new(),
+                    via: None,
                 });
                 rows.len() - 1
             }
@@ -115,6 +122,53 @@ pub fn merge<'a>(known: &Nodes, found: impl IntoIterator<Item = &'a Found>) -> V
             if &node.fingerprint != fingerprint {
                 row.pin = Pin::Mismatch;
             }
+        }
+    }
+    rows.sort_by(|a, b| a.name.cmp(&b.name).then(a.key.cmp(&b.key)));
+    rows
+}
+
+/// `rows`, with the devices the kept brokers have (`@NAME` and what each
+/// keeps a status for) laid over them. A device the network shows stays
+/// reached over it; one it does not is reached through the first broker
+/// that has it online, and one nobody knows gets a row of its own.
+pub fn overlay(mut rows: Vec<Row>, brokers: &BTreeMap<String, Vec<Seen>>) -> Vec<Row> {
+    for (label, seen) in brokers {
+        for device in seen {
+            let presence = &device.presence;
+            let at = match rows
+                .iter()
+                .position(|row| row.id.as_deref() == Some(device.id.as_str()))
+            {
+                Some(at) => at,
+                None => {
+                    rows.push(Row {
+                        key: device.id.clone(),
+                        id: Some(device.id.clone()),
+                        name: presence.name.clone().unwrap_or_else(|| device.id.clone()),
+                        address: String::new(),
+                        claimed: presence.claimed,
+                        pin: Pin::New,
+                        token: false,
+                        online: false,
+                        tags: presence.tags.clone(),
+                        via: None,
+                    });
+                    rows.len() - 1
+                }
+            };
+            let row = &mut rows[at];
+            if row.online || row.via.is_some() || !presence.online {
+                continue;
+            }
+            row.online = true;
+            row.via = Some(label.clone());
+            row.address = format!("{}{label}", worker::VIA);
+            if let Some(name) = &presence.name {
+                row.name.clone_from(name);
+            }
+            row.claimed = presence.claimed.or(row.claimed);
+            row.tags.clone_from(&presence.tags);
         }
     }
     rows.sort_by(|a, b| a.name.cmp(&b.name).then(a.key.cmp(&b.key)));
@@ -190,6 +244,18 @@ enum Dialog {
         name: String,
         claimed: Box<Claimed>,
     },
+    /// The MQTT brokers kept on this machine, as `nodes brokers list`.
+    Brokers {
+        error: Option<String>,
+    },
+    /// One broker added, or `was` changed: `BROKER_FIELDS` as typed.
+    Broker {
+        was: Option<String>,
+        inputs: [String; 8],
+        /// Forget its password, CA and client certificate.
+        forget: bool,
+        error: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -230,6 +296,14 @@ pub enum Message {
     /// Run something on every marked device, in a bulk window.
     Bulk,
     Enter,
+    /// The kept MQTT brokers: the dialog, a new one, one to change.
+    Brokers,
+    BrokerAdd,
+    BrokerEdit(String),
+    BrokerInput(usize, String),
+    BrokerForget(bool),
+    BrokerSave,
+    BrokerRemove(String),
 }
 
 /// Several rows marked for a bulk run: Cmd-click adds or takes out one,
@@ -263,7 +337,25 @@ pub struct NodesView {
     message: Option<Result<String, String>>,
     /// Bumped by Rescan: a new browse.
     pub generation: u64,
+    /// What each kept broker, by `@NAME`, keeps a status for.
+    brokers: BTreeMap<String, Vec<Seen>>,
+    /// The kept brokers that could not be asked, and why.
+    broker_errors: BTreeMap<String, String>,
+    /// Bumped by Rescan and by a change to the brokers: a new look at them.
+    pub broker_generation: u64,
 }
+
+/// The broker dialog's fields, in their order: the dialog's field ids.
+const BROKER_FIELDS: [&str; 8] = [
+    "Name",
+    "URL",
+    "User",
+    "Password",
+    "Prefix",
+    "CA file",
+    "Client cert file",
+    "Client key file",
+];
 
 impl NodesView {
     pub fn new() -> Self {
@@ -285,6 +377,27 @@ impl NodesView {
             discovery: None,
             message,
             generation: 0,
+            brokers: BTreeMap::new(),
+            broker_errors: BTreeMap::new(),
+            broker_generation: 0,
+        }
+    }
+
+    /// What the brokers have, as `broker_scan` hears it.
+    pub fn brokered(&mut self, event: broker_scan::Event) {
+        match event {
+            broker_scan::Event::Scanned(label, seen) => {
+                self.broker_errors.remove(&label);
+                self.brokers.insert(label, seen);
+            }
+            broker_scan::Event::Failed(label, why) => {
+                self.brokers.remove(&label);
+                self.broker_errors.insert(label, why);
+            }
+            broker_scan::Event::Kept(labels) => {
+                self.brokers.retain(|label, _| labels.contains(label));
+                self.broker_errors.retain(|label, _| labels.contains(label));
+            }
         }
     }
 
@@ -359,12 +472,19 @@ impl NodesView {
 
     /// Tab in a dialog: each has its one field, which takes the cursor back.
     pub fn tab<T: Send + 'static>(&self, back: bool) -> Task<T> {
-        let count = if self.has_dialog() { 1 } else { 0 };
+        let count = match &self.dialog {
+            Some(Dialog::Broker { .. }) => BROKER_FIELDS.len(),
+            Some(Dialog::Brokers { .. }) | None => 0,
+            Some(_) => 1,
+        };
         self.fields.step(count, back)
     }
 
     pub fn rows(&self) -> Vec<Row> {
-        merge(&self.known, self.seen.values().chain(&self.added))
+        overlay(
+            merge(&self.known, self.seen.values().chain(&self.added)),
+            &self.brokers,
+        )
     }
 
     fn selected_row(&self) -> Option<Row> {
@@ -374,7 +494,19 @@ impl NodesView {
 
     /// The node behind a row, if it can be opened: pinned, the pin holding,
     /// and a token to send - or unclaimed, which needs neither.
+    ///
+    /// One reached through a broker needs neither: the broker is trusted.
     fn openable(&self, row: &Row) -> Option<Node> {
+        if let (Some(_), Some(id)) = (&row.via, &row.id) {
+            return Some(Node {
+                id: id.clone(),
+                name: row.name.clone(),
+                address: row.address.clone(),
+                fingerprint: String::new(),
+                token: None,
+                tags: row.tags.clone(),
+            });
+        }
         if row.pin == Pin::Mismatch {
             return None;
         }
@@ -573,7 +705,88 @@ impl NodesView {
                 self.seen.clear();
                 self.discovery = None;
                 self.generation += 1;
+                self.broker_generation += 1;
                 self.reload();
+                none
+            }
+            Message::Brokers => {
+                self.dialog = Some(Dialog::Brokers { error: None });
+                none
+            }
+            Message::BrokerAdd => {
+                let mut inputs: [String; 8] = Default::default();
+                inputs[4] = protocol::mqtt::topic::DEFAULT_PREFIX.to_string();
+                self.dialog = Some(Dialog::Broker {
+                    was: None,
+                    inputs,
+                    forget: false,
+                    error: None,
+                });
+                (self.fields.focus(0), None)
+            }
+            Message::BrokerEdit(name) => {
+                let Some(broker) = Brokers::load()
+                    .ok()
+                    .and_then(|all| all.by_name(&name).cloned())
+                else {
+                    return none;
+                };
+                let mut inputs: [String; 8] = Default::default();
+                inputs[0] = broker.name.clone();
+                inputs[1] = broker.url.clone();
+                inputs[2] = broker.username.clone().unwrap_or_default();
+                inputs[4] = broker.prefix.clone();
+                self.dialog = Some(Dialog::Broker {
+                    was: Some(broker.name),
+                    inputs,
+                    forget: false,
+                    error: None,
+                });
+                (self.fields.focus(1), None)
+            }
+            Message::BrokerInput(at, value) => {
+                if let Some(Dialog::Broker { inputs, error, .. }) = &mut self.dialog {
+                    inputs[at] = value;
+                    *error = None;
+                }
+                none
+            }
+            Message::BrokerForget(on) => {
+                if let Some(Dialog::Broker { forget, .. }) = &mut self.dialog {
+                    *forget = on;
+                }
+                none
+            }
+            Message::BrokerSave => {
+                let Some(Dialog::Broker {
+                    was,
+                    inputs,
+                    forget,
+                    error,
+                }) = &mut self.dialog
+                else {
+                    return none;
+                };
+                match save_broker(was.as_deref(), inputs, *forget) {
+                    Ok(label) => {
+                        self.message = Some(Ok(format!("kept {label}")));
+                        self.broker_generation += 1;
+                        self.dialog = Some(Dialog::Brokers { error: None });
+                    }
+                    Err(why) => *error = Some(why),
+                }
+                none
+            }
+            Message::BrokerRemove(name) => {
+                let removed = Brokers::load().and_then(|mut all| all.remove(&name));
+                match removed {
+                    Ok(_) => {
+                        self.message = Some(Ok(format!("forgot @{name}")));
+                        self.broker_generation += 1;
+                        self.dialog = Some(Dialog::Brokers { error: None });
+                    }
+                    Err(why) => self.dialog = Some(Dialog::Brokers { error: Some(why) }),
+                }
                 none
             }
             Message::Peeked(result) => {
@@ -702,8 +915,13 @@ impl NodesView {
             Message::Enter => self.enter(),
             Message::Cancel => {
                 // A claim's secrets are never shown again: only Done closes them.
-                if !matches!(self.dialog, Some(Dialog::Secrets { .. })) {
-                    self.dialog = None;
+                match self.dialog {
+                    Some(Dialog::Secrets { .. }) => {}
+                    // A broker's form goes back to the list of them.
+                    Some(Dialog::Broker { .. }) => {
+                        self.dialog = Some(Dialog::Brokers { error: None })
+                    }
+                    _ => self.dialog = None,
                 }
                 none
             }
@@ -760,6 +978,13 @@ impl NodesView {
         };
         if row.pin == Pin::Mismatch {
             self.message = Some(Err(mismatch(&row)));
+            return (Task::none(), None);
+        }
+        if let Some(label) = &row.via {
+            self.message = Some(Err(format!(
+                "{}: logging in and claiming need the device itself, over its network; {label} reaches it without either",
+                row.name
+            )));
             return (Task::none(), None);
         }
         let Ok(address) = row.address.parse::<SocketAddr>() else {
@@ -839,6 +1064,8 @@ impl NodesView {
             Some(Dialog::Access { .. }) => Message::Commit,
             Some(Dialog::Forget { .. }) => Message::ForgetConfirmed,
             Some(Dialog::Secrets { .. }) => Message::SecretsDone,
+            Some(Dialog::Brokers { .. }) => Message::Cancel,
+            Some(Dialog::Broker { .. }) => Message::BrokerSave,
             None => match self.selected.clone() {
                 Some(key) => Message::Activate(key),
                 None => return (Task::none(), None),
@@ -928,6 +1155,7 @@ impl NodesView {
         let list = section::view(
             vec![
                 action("Add address", Some(Message::AddAddress)),
+                action("Brokers", Some(Message::Brokers)),
                 action("Rescan", Some(Message::Rescan)),
             ],
             vec![
@@ -956,13 +1184,24 @@ impl NodesView {
             table,
         );
 
-        let status = match (&self.message, &self.discovery) {
-            (Some(Err(error)), _) => text(error).style(text::danger),
-            (Some(Ok(message)), _) => text(message),
-            (None, Some(why)) => {
+        let broker_error = self.broker_errors.iter().next();
+        let status = match (&self.message, &self.discovery, broker_error) {
+            (Some(Err(error)), _, _) => text(error).style(text::danger),
+            (Some(Ok(message)), _, _) => text(message),
+            (None, Some(why), _) => {
                 text(format!("not browsing the network: {why}")).style(text::warning)
             }
-            (None, None) => text("browsing the network for devices (mDNS)").style(theme::muted),
+            (None, None, Some((label, why))) => {
+                text(format!("not reaching {label}: {why}")).style(text::warning)
+            }
+            (None, None, None) if !self.brokers.is_empty() => text(format!(
+                "browsing the network for devices (mDNS), and asking {}",
+                self.brokers.keys().cloned().collect::<Vec<_>>().join(", ")
+            ))
+            .style(theme::muted),
+            (None, None, None) => {
+                text("browsing the network for devices (mDNS)").style(theme::muted)
+            }
         };
         let page = column![
             container(list).padding(6).height(Length::Fill),
@@ -1115,8 +1354,167 @@ impl NodesView {
                     vec![theme::default_button("Done", Some(Message::SecretsDone))],
                 )
             }
+            Dialog::Brokers { error } => {
+                let kept = Brokers::load().unwrap_or_default();
+                let mut body = column![text(
+                    "Devices connected to a kept broker show in the list, reached through it when the network does not show them."
+                )
+                .size(theme::SMALL)
+                .style(theme::muted)]
+                .spacing(6);
+                if kept.brokers.is_empty() {
+                    body = body.push(text("no brokers kept").size(theme::SMALL).style(theme::muted));
+                }
+                for broker in &kept.brokers {
+                    let mut notes = vec![format!("prefix {}", broker.prefix)];
+                    if let Some(user) = &broker.username {
+                        notes.push(format!("user {user}"));
+                    }
+                    if broker.password.is_some() {
+                        notes.push("password".to_string());
+                    }
+                    if broker.ca.is_some() {
+                        notes.push("ca".to_string());
+                    }
+                    if broker.client_cert.is_some() {
+                        notes.push("client cert".to_string());
+                    }
+                    body = body.push(
+                        row![
+                            text(format!("@{}", broker.name)).size(theme::SMALL).width(Length::Fixed(110.0)),
+                            text(broker.url.clone()).size(theme::SMALL).width(Length::Fill),
+                            text(notes.join(", ")).size(theme::SMALL).style(theme::muted),
+                            theme::tool("Edit", Some(Message::BrokerEdit(broker.name.clone()))),
+                            theme::tool("Remove", Some(Message::BrokerRemove(broker.name.clone()))),
+                        ]
+                        .spacing(6)
+                        .align_y(iced::alignment::Vertical::Center),
+                    );
+                }
+                body = body.push(dialog::error(error.clone()));
+                dialog::frame(
+                    "MQTT brokers".to_string(),
+                    body.into(),
+                    vec![
+                        theme::dialog_button("Add", Some(Message::BrokerAdd)),
+                        theme::default_button("Close", Some(Message::Cancel)),
+                    ],
+                )
+            }
+            Dialog::Broker {
+                was,
+                inputs,
+                forget,
+                error,
+            } => {
+                const HINTS: [&str; 8] = [
+                    "venue1, as --mqtt @venue1",
+                    "mqtts://broker.example:8883",
+                    "none",
+                    "empty keeps the one kept",
+                    "the devices' mqtt.prefix",
+                    "a PEM file; empty keeps the one kept",
+                    "a PEM file, with its key",
+                    "a PEM file",
+                ];
+                let mut body = column![].spacing(8);
+                for (at, label) in BROKER_FIELDS.iter().enumerate() {
+                    let input = text_input(HINTS[at], &inputs[at])
+                        .id(self.fields.id(at))
+                        .on_input(move |value| Message::BrokerInput(at, value))
+                        .on_submit(Message::BrokerSave)
+                        .secure(at == 3)
+                        .size(theme::SMALL);
+                    body = body.push(field(label, input));
+                }
+                if was.is_some() {
+                    body = body.push(
+                        iced::widget::checkbox(*forget)
+                            .label("Forget its password, CA and client certificate")
+                            .on_toggle(Message::BrokerForget)
+                            .size(14),
+                    );
+                }
+                body = body.push(dialog::error(error.clone()));
+                let title = match was {
+                    Some(name) => format!("Broker @{name}"),
+                    None => "Keep a broker".to_string(),
+                };
+                dialog::frame(
+                    title,
+                    body.into(),
+                    vec![
+                        theme::default_button("Save", Some(Message::BrokerSave)),
+                        theme::dialog_button("Cancel", Some(Message::Cancel)),
+                    ],
+                )
+            }
         }
     }
+}
+
+/// Keep the broker the form has, as `nodes brokers add` or `set` would: a
+/// new one, or `was` changed. Its `@NAME`.
+fn save_broker(was: Option<&str>, inputs: &[String; 8], forget: bool) -> Result<String, String> {
+    let [name, url, user, password, prefix, ca, cert, key] =
+        inputs.clone().map(|value| value.trim().to_string());
+    let mut all = Brokers::load()?;
+    kept::check_name(&name)?;
+    if was != Some(name.as_str()) && all.by_name(&name).is_some() {
+        return Err(format!("a broker named {name} is kept already"));
+    }
+    let mut broker = match was.and_then(|was| all.by_name(was)) {
+        Some(known) => known.clone(),
+        None => Broker {
+            name: String::new(),
+            url: String::new(),
+            username: None,
+            password: None,
+            prefix: protocol::mqtt::topic::DEFAULT_PREFIX.to_string(),
+            ca: None,
+            client_cert: None,
+            client_key: None,
+        },
+    };
+    let (url, url_user, url_password) = kept::split_credentials(&url)?;
+    broker.name = name;
+    broker.url = url;
+    broker.username = url_user.or(Some(user).filter(|user| !user.is_empty()));
+    if forget {
+        broker.password = None;
+        broker.ca = None;
+        broker.client_cert = None;
+        broker.client_key = None;
+    }
+    if let Some(password) = url_password.or(Some(password).filter(|password| !password.is_empty()))
+    {
+        broker.password = Some(password);
+    }
+    if !prefix.is_empty() {
+        broker.prefix = prefix;
+    }
+    let read = |path: &str| std::fs::read_to_string(path).map_err(|err| format!("{path}: {err}"));
+    if !ca.is_empty() {
+        broker.ca = Some(read(&ca)?);
+    }
+    match (cert.is_empty(), key.is_empty()) {
+        (true, true) => {}
+        (false, false) => {
+            broker.client_cert = Some(read(&cert)?);
+            broker.client_key = Some(read(&key)?);
+        }
+        _ => {
+            return Err(
+                "a client certificate goes with its key: both files, or neither".to_string(),
+            )
+        }
+    }
+    let label = broker.label();
+    if let Some(was) = was.filter(|was| *was != broker.name) {
+        all.remove(was)?;
+    }
+    all.put(broker)?;
+    Ok(label)
 }
 
 /// A secret with its copy button.
@@ -1246,6 +1644,61 @@ mod tests {
         list.iter().map(|tag| tag.to_string()).collect()
     }
 
+    fn at_broker(id: &str, name: &str, online: bool) -> Seen {
+        Seen {
+            id: id.to_string(),
+            presence: protocol::mqtt::Presence {
+                online,
+                id: Some(id.to_string()),
+                name: Some(name.to_string()),
+                tags: tagged(&["venue"]),
+                version: None,
+                machine: None,
+                fingerprint: None,
+                claimed: Some(true),
+                commands: None,
+            },
+        }
+    }
+
+    #[test]
+    fn a_broker_reaches_what_the_network_does_not_show() {
+        let known = Nodes {
+            nodes: vec![node("n1", "kiosk-1", true), node("n2", "kiosk-2", false)],
+        };
+        let rows = merge(&known, &[found("n1", "kiosk-1", &"a".repeat(64))]);
+        let brokers = BTreeMap::from([(
+            "@venue1".to_string(),
+            vec![
+                at_broker("n1", "kiosk-1", true),
+                at_broker("n2", "kiosk-2", true),
+                at_broker("n3", "kiosk-3", true),
+                at_broker("n4", "kiosk-4", false),
+            ],
+        )]);
+        let rows = overlay(rows, &brokers);
+        let by = |id: &str| {
+            rows.iter()
+                .find(|row| row.id.as_deref() == Some(id))
+                .unwrap()
+        };
+        // On the network: reached over it, as before.
+        assert_eq!(by("n1").via, None);
+        assert_eq!(by("n1").address, "10.0.0.9:7400");
+        // Known but silent, and new: through the broker.
+        assert_eq!(by("n2").via.as_deref(), Some("@venue1"));
+        assert_eq!(by("n2").address, "via @venue1");
+        assert!(by("n3").online && by("n3").via.is_some());
+        // Offline at the broker: listed, not reached.
+        assert!(!by("n4").online && by("n4").via.is_none());
+
+        let view = NodesView::new();
+        let node = view
+            .openable(by("n3"))
+            .expect("a broker's device opens without a token");
+        assert_eq!(worker::broker_of(&node), Some("@venue1"));
+    }
+
     #[test]
     fn a_silent_node_keeps_its_stored_tags_and_an_announcement_wins() {
         let known = Nodes {
@@ -1304,6 +1757,9 @@ mod tests {
             discovery: None,
             message: None,
             generation: 0,
+            brokers: BTreeMap::new(),
+            broker_errors: BTreeMap::new(),
+            broker_generation: 0,
         };
         let names = |view: &NodesView| {
             view.visible_rows()
@@ -1360,6 +1816,9 @@ mod tests {
             discovery: None,
             message: None,
             generation: 0,
+            brokers: BTreeMap::new(),
+            broker_errors: BTreeMap::new(),
+            broker_generation: 0,
         };
         let key = |view: &NodesView, name: &str| {
             view.rows()
@@ -1477,6 +1936,9 @@ mod tests {
             discovery: None,
             message: None,
             generation: 0,
+            brokers: BTreeMap::new(),
+            broker_errors: BTreeMap::new(),
+            broker_generation: 0,
         };
         let openable = |name: &str| {
             let row = view

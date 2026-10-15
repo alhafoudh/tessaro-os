@@ -59,6 +59,7 @@ same change as the behaviour it describes.
 | [docs/printing.md](docs/printing.md) | the device's CUPS and why it is set up that way, the `printers` table and the reconcile, driverless and raw printers, `printer.enable` and `window.print()`, the default printer, discovery, supplies, sizes, which printers work |
 | [docs/playlists.md](docs/playlists.md) | playlists and the player page: when the player is on screen instead of browser.url, the timetable and what plays, preloading and transitions, interactive items and input from frames, the frame-unlock extension, first-party frames and their grants, the media cache |
 | [docs/quick-setup.md](docs/quick-setup.md) | the welcome page's QR code, captive portal detection, nginx's redirect to Quick Setup on the API's port, what the page uses, the online indicator |
+| [docs/mqtt.md](docs/mqtt.md) | the MQTT link: the trust model and `mqtt.commands`, the transports, TLS, pin and proxy, the topics, commands and their answers, the rollback of a change that cuts the link, leaving a broker, the events, frames and the journal, the page's subtree, the script trigger, clients through a broker, the development broker, what does not work |
 | [docs/demo.md](docs/demo.md) | the demo: where it runs and why that origin, what each section detects and the statuses, what it changes on the device, maintenance for a few seconds, navigation by touch, keys and remote, the hash routes and the mock bridge, its media, adding a section |
 
 **Writing docs** (in `docs/` and in this file):
@@ -193,6 +194,10 @@ Use the mise tasks rather than calling `kas-container` directly:
 | `mise run usbcam:test` | The fake webcam's unit tests |
 | `mise run usbscanner:run -- --mode M --attach` | A fake USB barcode scanner (keyboard, hidpos or serial) over USB/IP, attached to that VM; a line on its control port is a scan |
 | `mise run usbscanner:test` | The fake scanner's unit tests |
+| `mise run mqtt:run` | A development MQTT broker (mosquitto in docker): plain, TLS, WebSocket and TLS WebSocket listeners on a dev CA in `build/mqtt/` |
+| `mise run mqtt:connect` | Point a device (default the qemu VM) at that broker, and keep it as `@dev` for `tessaro-ctl --mqtt @dev`; `--tls`, `--ws` |
+| `mise run mqtt:watch -- [FILTER]` | Print every message on that broker (default `tessaro/#`) |
+| `mise run mqtt:stop` | Stop that broker, keeping its certificates |
 | `mise run vision:models` | Presence detection's ONNX face detectors from MediaPipe's `.tflite` (tf2onnx in docker), into `agent/vision/models/` |
 | `mise run agent:test` | `cargo test` for the whole agent workspace |
 | `mise run agent:lint` | `cargo fmt --check` plus clippy for the workspace |
@@ -463,6 +468,13 @@ recipe.
   (`UPDATE_OPENAPI=1 cargo test -p tessaro-agent openapi`). Nothing streams:
   a long command is a job, polled ([docs/api.md](docs/api.md)). Port 7400
   serves the API, Webconfig and Swagger UI, and nothing else.
+* **MQTT is a second way into the same endpoints, never a second API**: the
+  link and HTTP both run a request through `api::Dispatch`, so a new
+  endpoint is a command topic with nothing to add, and the link never
+  builds a `Command` of its own. A change to the topics or the envelope
+  regenerates `agent/protocol/asyncapi.json`
+  (`UPDATE_ASYNCAPI=1 cargo test -p tessaro-agent asyncapi`), and so does a new
+  endpoint ([docs/mqtt.md](docs/mqtt.md)).
 * **A browser session is a token's, never a credential of its own**
   (`api/sessions.rs`): it must end with its token, and must never decide
   whether the device is claimed. A browser write from another origin stays
@@ -498,6 +510,8 @@ same thing. Keep to these rules when adding a command or a setting:
   * `network`: the device's network link. Addresses, interfaces, profiles,
     WiFi, the proxy, extra certificate authorities, `ping` from the device,
     speed test.
+  * `mqtt`: the device's link to its MQTT broker. Its status, a test, the
+    password and the client certificate (`mqtt password|cert set|clear`).
   * `storage`: the disk the device runs from. Partitions, free space,
     growing `/data`.
   * `screen`: the physical display. What is plugged in and the TV over
@@ -527,7 +541,8 @@ same thing. Keep to these rules when adding a command or a setting:
   * `update`: putting an image on the device.
   * `files`: the file store in `/data/files`. Upload, download, sync, list,
     move, rm.
-  * `nodes`: this client's own view (discovery, known devices). Needs no device.
+  * `nodes`: this client's own view (discovery, known devices, the MQTT
+    brokers it keeps, `nodes brokers list|add|set|remove`). Needs no device.
 * **Commands are verbs or short nouns**, and the same verb means the same thing
   in every group: `list`, `create`, `revoke`, `set`, `show`, `status`, `cancel`,
   `remove` (delete a thing the user made), `enable`/`disable`, `run` (start
@@ -552,7 +567,7 @@ same thing. Keep to these rules when adding a command or a setting:
   belongs to (`device factory-reset` wipes the device, `access unclaim` only
   removes its owners).
 * **Setting keys are prefixed by the command group that acts on the same
-  thing**: `browser.*`, `screen.*`, `audio.*`, `time.*`, `network.*`, `device.*`, `access.*`, `printer.*`, `scanner.*`, `camera.*`, `playlist.*`. A key
+  thing**: `browser.*`, `screen.*`, `audio.*`, `time.*`, `network.*`, `device.*`, `access.*`, `printer.*`, `scanner.*`, `camera.*`, `playlist.*`, `mqtt.*`. A key
   that no command group matches is named after the component it tunes
   (`agent.*`), and `data.*` is the user's namespace. A sub-feature with its own
   on/off gets a third level that mirrors its command (`browser maintenance on

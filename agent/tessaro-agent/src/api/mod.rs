@@ -25,7 +25,7 @@
 //! connection's whole life - so a client that connects and says nothing
 //! costs one task until its deadline, never a stuck server.
 
-mod jobs;
+pub mod jobs;
 pub mod sessions;
 mod statics;
 
@@ -105,11 +105,113 @@ enum Origin {
     Remote(SocketAddr),
 }
 
+/// What a request does once it is let in and decoded, whichever way it came:
+/// over HTTP here, or over MQTT (`crate::mqtt`). The transport says who is
+/// asking and turns the answer into its own; this runs it.
+#[derive(Clone)]
+pub struct Dispatch {
+    control: Arc<Control>,
+    jobs: Arc<Jobs>,
+}
+
+/// An answer, or the refusal's code and words, and what has to wait until
+/// the answer is out.
+pub struct Dispatched {
+    pub result: Result<Answer, (ErrorCode, String)>,
+    pub after: Option<After>,
+}
+
+impl Dispatched {
+    fn refused(code: ErrorCode, why: impl Into<String>) -> Dispatched {
+        Dispatched {
+            result: Err((code, why.into())),
+            after: None,
+        }
+    }
+}
+
+impl Dispatch {
+    pub fn new(control: Arc<Control>) -> Dispatch {
+        Dispatch {
+            control,
+            jobs: Arc::new(Jobs::default()),
+        }
+    }
+
+    pub fn jobs(&self) -> &Arc<Jobs> {
+        &self.jobs
+    }
+
+    /// What `action`, decoded from a request to `route`, answers. Never a browser session's: that is the
+    /// transport's.
+    pub async fn act(&self, caller: &Caller, route: &Route, action: Action) -> Dispatched {
+        match action {
+            Action::Run(command) => {
+                let reply = self.control.handle(caller, command).await; // naked: Control bounds every call it makes
+                Dispatched {
+                    result: reply
+                        .result
+                        .and_then(route.respond)
+                        .map_err(|err| (ErrorCode::Refused, err)),
+                    after: reply.after,
+                }
+            }
+            // naked: stream waits only through Control, whose reads are blocking() and the bus
+            Action::Start(command) => match self
+                .control
+                .stream(caller, command)
+                .await
+                .and_then(|stream| self.jobs.start(stream))
+            {
+                Ok(job) => Dispatched {
+                    result: Ok(Answer::Json(serde_json::json!(JobStarted { job }))),
+                    after: None,
+                },
+                Err(err) => Dispatched::refused(ErrorCode::Refused, err),
+            },
+            Action::Poll { job, after } => match self.jobs.page(&job, after) {
+                Some(page) => Dispatched {
+                    result: Ok(Answer::Json(serde_json::json!(page))),
+                    after: None,
+                },
+                None => Dispatched::refused(ErrorCode::NotFound, format!("no job {job}")),
+            },
+            Action::Cancel { job } => match self.jobs.cancel(&job) {
+                true => Dispatched {
+                    result: Ok(Answer::Json(serde_json::json!(protocol::Done::new(
+                        "cancelled"
+                    )))),
+                    after: None,
+                },
+                false => Dispatched::refused(ErrorCode::NotFound, format!("no job {job}")),
+            },
+            Action::Web(_) => Dispatched::refused(
+                ErrorCode::BadRequest,
+                "a browser session is only for a browser, over HTTPS",
+            ),
+        }
+    }
+
+    /// Work that must wait for the answer to be out: restarting the agent or
+    /// the compositor takes this process down, a network change the client's
+    /// connection. It runs once the transport has the whole answer out
+    /// (`out`) - hyper has taken it, or the broker has it - or the
+    /// connection is gone, or `AFTER_LIMIT` on; the spawn puts it behind the
+    /// write made in the same poll.
+    pub fn after(&self, after: After, out: tokio::sync::oneshot::Receiver<()>) {
+        let control = Arc::clone(&self.control);
+        tokio::spawn(async move {
+            let _ = within("an answer going out", AFTER_LIMIT, out).await;
+            control.run_after(after).await; // naked: run_after is under within() inside Bus
+        });
+    }
+}
+
 pub struct Server {
     control: Arc<Control>,
     log: Arc<Log>,
     routes: Vec<Route>,
-    jobs: Arc<Jobs>,
+    dispatch: Dispatch,
     limiter: Limiter,
     sessions: Arc<Sessions>,
     /// The OpenAPI document, built once.
@@ -123,15 +225,20 @@ impl Server {
         let document = protocol::openapi::document(protocol::VERSION);
         Arc::new(Self {
             sessions: control.sessions(),
+            dispatch: Dispatch::new(Arc::clone(&control)),
             control,
             log,
             routes: api::all(),
-            jobs: Arc::new(Jobs::default()),
             limiter: Limiter::default(),
             openapi: Bytes::from(serde_json::to_vec_pretty(&document).unwrap_or_default()),
             webconfig_root: paths.webconfig_root.clone(),
             api_docs: paths.api_docs.clone(),
         })
+    }
+
+    /// The requests' dispatch, jobs included, for the other transport.
+    pub fn dispatch(&self) -> Dispatch {
+        self.dispatch.clone()
     }
 }
 
@@ -427,16 +534,21 @@ impl Server {
 
         let claim = route.path == <api::access::Claim as api::Endpoint>::PATH;
         let mut response = match action {
-            Action::Run(command) => {
-                let reply = self.control.handle(&caller, command).await; // naked: Control bounds every call it makes
-                                                                         // A browser that claims gets its session in the same answer:
-                                                                         // on the hotspot the phone is dropped right after it, and a
-                                                                         // second request to sign in would never arrive.
-                let session = match (&reply.result, claim && from_browser) {
-                    (Ok(claimed), true) => self.claim_session(claimed),
+            Action::Web(web) => {
+                // naked: web waits only through Control, whose reads are blocking() under within()
+                self.web(web, &caller, via, cookie.as_deref()).await
+            }
+            action => {
+                // naked: Control bounds every call it makes
+                let done = self.dispatch.act(&caller, &route, action).await;
+                // A browser that claims gets its session in the same answer:
+                // on the hotspot the phone is dropped right after it, and a
+                // second request to sign in would never arrive.
+                let session = match (&done.result, claim && from_browser) {
+                    (Ok(Answer::Json(claimed)), true) => self.claim_session(claimed),
                     _ => None,
                 };
-                let mut response = match reply.result.and_then(route.respond) {
+                let mut response = match done.result {
                     Ok(Answer::Json(value)) => json(StatusCode::OK, &value),
                     Ok(Answer::Raw(raw)) => {
                         let mut response =
@@ -448,51 +560,23 @@ impl Server {
                         }
                         response
                     }
-                    Err(err) => error(StatusCode::UNPROCESSABLE_ENTITY, ErrorCode::Refused, &err),
+                    Err((code, err)) => error(
+                        StatusCode::from_u16(code.status())
+                            .unwrap_or(StatusCode::UNPROCESSABLE_ENTITY),
+                        code,
+                        &err,
+                    ),
                 };
                 if let Some(set) = session {
                     set_cookie(&mut response, &set);
                 }
-                if let Some(after) = reply.after {
+                if let Some(after) = done.after {
                     let (sent, out) = tokio::sync::oneshot::channel();
                     response.body_mut().sent = Some(sent);
-                    self.after(after, out);
+                    self.dispatch.after(after, out);
                 }
                 response
             }
-            Action::Web(web) => {
-                // naked: web waits only through Control, whose reads are blocking() under within()
-                self.web(web, &caller, via, cookie.as_deref()).await
-            }
-            // naked: stream waits only through Control, whose reads are blocking() and the bus
-            Action::Start(command) => match self
-                .control
-                .stream(&caller, command)
-                .await
-                .and_then(|stream| self.jobs.start(stream))
-            {
-                Ok(job) => json(StatusCode::OK, &serde_json::json!(JobStarted { job })),
-                Err(err) => error(StatusCode::UNPROCESSABLE_ENTITY, ErrorCode::Refused, &err),
-            },
-            Action::Poll { job, after } => match self.jobs.page(&job, after) {
-                Some(page) => json(StatusCode::OK, &serde_json::json!(page)),
-                None => error(
-                    StatusCode::NOT_FOUND,
-                    ErrorCode::NotFound,
-                    &format!("no job {job}"),
-                ),
-            },
-            Action::Cancel { job } => match self.jobs.cancel(&job) {
-                true => json(
-                    StatusCode::OK,
-                    &serde_json::json!(protocol::Done::new("cancelled")),
-                ),
-                false => error(
-                    StatusCode::NOT_FOUND,
-                    ErrorCode::NotFound,
-                    &format!("no job {job}"),
-                ),
-            },
         };
 
         let has_cookie = response.headers().contains_key(SET_COOKIE);
@@ -550,7 +634,7 @@ impl Server {
     ) -> Response<Body> {
         let peer = match caller {
             Caller::Token { peer, .. } | Caller::Anonymous { peer } => Some(*peer),
-            Caller::Local | Caller::Page => None,
+            Caller::Local | Caller::Page | Caller::Mqtt { .. } => None,
         };
         let timeout = self.control.session_timeout();
         match web {
@@ -698,19 +782,6 @@ impl Server {
             token,
             timeout: self.control.session_timeout().as_secs(),
         }
-    }
-
-    /// Work that must wait for the answer to be out: restarting the agent or
-    /// the compositor takes this process down, a network change the client's
-    /// connection. It runs once hyper has taken the whole answer (`out`), or
-    /// the connection is gone; the spawn puts it behind the write hyper
-    /// makes in the same poll.
-    fn after(&self, after: After, out: tokio::sync::oneshot::Receiver<()>) {
-        let control = Arc::clone(&self.control);
-        tokio::spawn(async move {
-            let _ = within("an answer going out", AFTER_LIMIT, out).await;
-            control.run_after(after).await; // naked: run_after is under within() inside Bus
-        });
     }
 
     /// Who is asking and how they got in, and whether they brought the
@@ -1292,6 +1363,26 @@ mod tests {
             checked_in == text,
             "agent/protocol/openapi.json is out of date; run \
              `UPDATE_OPENAPI=1 cargo test -p tessaro-agent openapi` and commit it"
+        );
+    }
+
+    /// The MQTT link's AsyncAPI document, checked here for the same reason
+    /// as the OpenAPI one: key order follows serde_json's features, which
+    /// the agent's dependencies decide. `UPDATE_ASYNCAPI=1 cargo test` writes it.
+    #[test]
+    fn the_checked_in_asyncapi_document_is_current() {
+        let document = protocol::asyncapi::document(protocol::VERSION);
+        let text = format!("{}\n", serde_json::to_string_pretty(&document).unwrap());
+        let file = concat!(env!("CARGO_MANIFEST_DIR"), "/../protocol/asyncapi.json");
+        if std::env::var_os("UPDATE_ASYNCAPI").is_some() {
+            std::fs::write(file, &text).unwrap();
+            return;
+        }
+        let checked_in = std::fs::read_to_string(file).unwrap_or_default();
+        assert!(
+            checked_in == text,
+            "agent/protocol/asyncapi.json is out of date; run \
+             `UPDATE_ASYNCAPI=1 cargo test -p tessaro-agent asyncapi` and commit it"
         );
     }
 }

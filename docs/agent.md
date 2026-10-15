@@ -87,7 +87,17 @@ it differs.
   switches the log's verbosity (`Log::set_debug`), the watchdog reads
   `agent.watchdog` on every tick, and the page bridge recomputes its offer on
   every refresh (**Reconnects, crashes and restarts** in
-  [bridge.md](bridge.md)).
+  [bridge.md](bridge.md)). The MQTT link (`mqtt/run.rs`) reconnects when
+  what its connection or its will carries changes (`link_changed`), and
+  takes the rest - the intervals, the page, the scripts, the journal - on
+  the open connection ([mqtt.md](mqtt.md)).
+* **What the agent does is told once, on its event bus** (`events.rs`): the
+  producers - CEC, presence, the scanners, settings changes, script runs,
+  the browser's loop, the displays, the printers, the player, updates -
+  emit there next to what each already does, and the MQTT link publishes
+  every event. A bus with no listener costs nothing, and a slow listener
+  loses the oldest events rather than holding up a producer (**Events** in
+  [mqtt.md](mqtt.md)).
 * **What the agent sets up once per process restarts it**
   (`Consumer::AgentRestart`): the listener and mDNS (`access.listen`,
   `access.mdns`, `device.name`), and the HTTP and DevTools clients with their

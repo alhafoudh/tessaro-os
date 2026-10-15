@@ -15,6 +15,9 @@
 #                   v4l2loopback device, one process per camera.
 #   vision/         tessaro-vision, which finds faces on a camera's hidden
 #                   mirror for presence detection.
+#   mqtt/           an MQTT v5 client session with no I/O of its own, shared
+#                   by the agent and client/. The topics and the envelope
+#                   are protocol/'s.
 #
 # The recipe builds the whole workspace from this directory (S is agent/), and
 # cargo.bbclass installs every binary it finds, so all of them land in /usr/bin.
@@ -22,7 +25,7 @@
 # own, and reaches protocol/ and client/ by path.
 [workspace]
 resolver = "2"
-members = ["protocol", "client", "db", "tessaro-agent", "tessaro-ctl", "update", "camera", "vision"]
+members = ["protocol", "client", "db", "tessaro-agent", "tessaro-ctl", "update", "camera", "vision", "mqtt"]
 
 [workspace.package]
 # Not the release: what the binaries report is protocol::VERSION, from VERSION

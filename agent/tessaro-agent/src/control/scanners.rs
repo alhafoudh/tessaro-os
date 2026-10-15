@@ -456,6 +456,11 @@ impl Control {
     /// One scan or change to the page, and a scan to its scripts.
     async fn scanner_dispatch(&self, dispatch: Dispatch) {
         let settings = self.current.borrow().config.scanner;
+        let name = dispatch.detail["event"]
+            .as_str()
+            .unwrap_or("scan")
+            .to_string();
+        self.emit("scanner", &name, dispatch.detail.clone());
         if settings.page {
             // naked: bridge_scanner's every wait is SessionHandle's within()
             self.bridge_scanner(dispatch.detail).await;

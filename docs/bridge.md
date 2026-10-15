@@ -76,7 +76,9 @@ await tessaro.device.status();
   `browser.disable_features`), `browser.device_origins`,
   `browser.enforce_origin` and `screen.vnc` say how the page is locked down
   and how the device can be reached, and every script on the kiosk origin
-  reads `tessaro.config`.
+  reads `tessaro.config`. `mqtt.*` too: the broker, its user and the prefix
+  say who manages the device and how to reach every other device on that
+  broker; the page gets its own subtree from `mqtt.status()` instead.
 * **It follows the device without a reload.** The snapshot is built again
   after every settings change (`converge` pokes the bridge) and every 15s for
   what moves on its own, an address from DHCP or free space. When it changed,
@@ -121,6 +123,12 @@ await tessaro.device.status();
   bridge: the preamble in a frame calls `scanner.listen` when it loads, and
   the agent fires the event in that frame's context until the context is
   gone (**The events** in [scanners.md](scanners.md)).
+* **A message below the device's `page/in/` at its MQTT broker is a
+  `tessaro:mqtt` event**, with `mqtt.page` on: `detail.topic` the levels
+  below `page/in/`, `payload` the text when it is UTF-8, otherwise `base64`,
+  and `contentType` when the publisher set one (`mqtt_page_in` in
+  `control/mqtt.rs`). Fired the same way (**The page** in
+  [mqtt.md](mqtt.md)).
 
 **Calls return Promises.** A refusal rejects with an `Error` whose message is
 the control plane's own. `config` mode answers the reads; `actions` mode
@@ -140,6 +148,7 @@ answers everything:
 | `presence.status()` | config | `camera presence`, without the camera's name, the model and how fast it runs: `enabled`, `running`, `present`, `near`, `nearMeters`, `demographics`, `count`, `genders` with demographics on, the `last` event and the newest frame's `faces`; also `device.status().presence` (`present`, `near`, `count`, `genders`) |
 | `presence.watch()`, `presence.unwatch()` | config | nothing the ctl has: start and stop `tessaro:faces` |
 | `scanner.list()` | config | `scanner list`: whether scanner.enable is on, and each scanner, its device, how it is read, its `state`, `node`, `scans` and `last_scan` |
+| `mqtt.status()` | config | `mqtt status`, without the broker, the user, the subscriptions or any topic but the page's own: `state`, `connected`, and `pageIn` and `pageOut`, the page's subtree; also `device.status().mqtt` |
 | `network.publicIp()` | actions | `config get network.public_ip`: asked now |
 | `network.online()` | actions | the same lookup, resolved as `true` or `false` |
 | `browser.reload()` | actions | `browser reload` |
@@ -161,6 +170,7 @@ answers everything:
 | `printer.print({ data, path, printer, copies, media, title })` | actions | `printer print`: `data` a string, `Blob`, `ArrayBuffer` or bytes; `path` a file in the store; no `printer` is the default one |
 | `printer.cancel(job)` | actions | `printer cancel`, of a job `printer.jobs()` names |
 | `data.set(name, value)`, `data.unset(name)` | actions | `config set data.NAME=...` / `unset` |
+| `mqtt.publish(topic, payload, { retain })` | actions | nothing the ctl has: publish below the device's `page/out/`, `topic` the levels under it; a string payload goes as it is, anything else as JSON |
 | `scripts.run(name)` | actions | `script run`, of a script with `--bridge` only: resolves when the run ends with `{run, trigger, started, finished, result, status, succeeded, output, truncated}` (times in seconds since the epoch), whether it succeeded or not |
 
 Nothing under `access`, `ssh`, `update` or `device factory-reset`, and no
@@ -227,6 +237,10 @@ The other commands no call mirrors are the operator's too:
 * **`device logs`, `ping` and `restart`** of anything but the browser: the
   journal carries every caller's actions, and the agent's restart is the
   operator's.
+* **The rest of `mqtt`** (`test`, `password`, `cert`) and any topic outside
+  the page's subtree: the broker is the fleet's, and a page that could
+  reach the command topics, or another device's, would manage devices; a
+  compromised page would have the whole broker.
 * **A run on several devices** (`--tag`, `-n a,b`): it is a client's, on
   devices the client knows; every call here acts on the device the page is
   on, and a page is no manager of other devices.
@@ -276,6 +290,11 @@ The other commands no call mirrors are the operator's too:
   the page gets the output either way. The output is the run's stdout and
   stderr in one list, at most `SCRIPT_OUTPUT_MAX` lines, `truncated` past
   that.
+* **`mqtt.publish()` needs `mqtt.page` and publishes at most `MQTT_BURST`
+  messages per `MQTT_WINDOW`** (`control/bridge.rs`), each at most
+  `PAGE_MESSAGE_MAX` (`control/mqtt.rs`): enough for a page reporting what
+  visitors do, too few to flood a broker the whole fleet shares. It
+  resolves once the link has taken the message, not when the broker has.
 * **`network.publicIp()` is shared and cached for 30s.** Calls at the same time
   wait for one request. A failure rejects with `lastKnown`, the last address
   found this boot, if any. A success also updates what

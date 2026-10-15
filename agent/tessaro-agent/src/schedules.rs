@@ -313,6 +313,7 @@ mod tests {
                 cec: Vec::new(),
                 presence: Vec::new(),
                 scanner: Vec::new(),
+                mqtt: Vec::new(),
             },
         }]
     }

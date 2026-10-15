@@ -165,6 +165,16 @@ impl Control {
                 .join(", "),
             caller.describe()
         ));
+        // The keys, never their values: a value can be anything someone set.
+        self.emit(
+            "config",
+            "changed",
+            serde_json::json!({
+                "revision": after.revision,
+                "keys": changed.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>(),
+                "by": caller.describe(),
+            }),
+        );
 
         if !after.pending.is_empty() && !guarded.is_empty() {
             self.arm_probation();

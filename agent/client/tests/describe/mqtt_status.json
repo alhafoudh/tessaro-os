@@ -1,0 +1,441 @@
+{
+  "function": "mqtt::status",
+  "input": [
+    {
+      "client_cert": false,
+      "client_id": "0123456789abcdef0123456789abcdef",
+      "commands": "full",
+      "password": false,
+      "state": "off",
+      "topic": "tessaro/0123456789abcdef0123456789abcdef"
+    },
+    {
+      "broker": "mqtts://broker.example:8883",
+      "client_cert": true,
+      "client_id": "0123456789abcdef0123456789abcdef",
+      "commands": "read",
+      "password": true,
+      "published": 42,
+      "queued": 0,
+      "received": 7,
+      "seconds": 3725,
+      "state": "connected",
+      "subscriptions": [
+        "acme/site-1/0123456789abcdef0123456789abcdef/cmd/#",
+        "acme/site-1/0123456789abcdef0123456789abcdef/page/in/#"
+      ],
+      "topic": "acme/site-1/0123456789abcdef0123456789abcdef",
+      "username": "kiosk-lobby"
+    },
+    {
+      "broker": "mqtt://10.0.2.2:1883",
+      "client_cert": false,
+      "client_id": "0123456789abcdef0123456789abcdef",
+      "commands": "full",
+      "last_error": "connect: 10.0.2.2:1883: Connection refused (os error 111)",
+      "password": false,
+      "queued": 3,
+      "seconds": 12,
+      "state": "failed",
+      "topic": "tessaro/0123456789abcdef0123456789abcdef",
+      "warnings": [
+        "mqtt.url is not TLS and mqtt.commands is full: anyone who can publish to the broker, or see the link, has the device"
+      ]
+    }
+  ],
+  "output": [
+    {
+      "facts": [
+        {
+          "label": "state",
+          "value": [
+            [
+              "muted",
+              "off",
+              0
+            ]
+          ]
+        },
+        {
+          "label": "",
+          "value": [
+            [
+              "muted",
+              "set mqtt.url to connect: ",
+              0
+            ],
+            [
+              "cmd",
+              "tessaro-ctl config set mqtt.url=mqtts://...",
+              0
+            ]
+          ]
+        },
+        {
+          "label": "client id",
+          "value": [
+            [
+              "plain",
+              "0123456789abcdef0123456789abcdef",
+              0
+            ]
+          ]
+        },
+        {
+          "label": "user",
+          "value": [
+            [
+              "muted",
+              "none",
+              0
+            ]
+          ]
+        },
+        {
+          "label": "password",
+          "value": [
+            [
+              "muted",
+              "none",
+              0
+            ]
+          ]
+        },
+        {
+          "label": "client cert",
+          "value": [
+            [
+              "muted",
+              "none",
+              0
+            ]
+          ]
+        },
+        {
+          "label": "topics",
+          "value": [
+            [
+              "plain",
+              "tessaro/0123456789abcdef0123456789abcdef/...",
+              0
+            ]
+          ]
+        },
+        {
+          "label": "commands",
+          "value": [
+            [
+              "plain",
+              "full",
+              0
+            ],
+            [
+              "muted",
+              ", every command",
+              0
+            ]
+          ]
+        }
+      ],
+      "summary": [
+        [
+          "muted",
+          "off",
+          0
+        ],
+        [
+          "muted",
+          ", mqtt.url is not set",
+          0
+        ]
+      ]
+    },
+    {
+      "facts": [
+        {
+          "label": "state",
+          "value": [
+            [
+              "ok",
+              "connected",
+              0
+            ],
+            [
+              "muted",
+              " for 1h 2min",
+              0
+            ]
+          ]
+        },
+        {
+          "label": "broker",
+          "value": [
+            [
+              "heading",
+              "mqtts://broker.example:8883",
+              0
+            ]
+          ]
+        },
+        {
+          "label": "client id",
+          "value": [
+            [
+              "plain",
+              "0123456789abcdef0123456789abcdef",
+              0
+            ]
+          ]
+        },
+        {
+          "label": "user",
+          "value": [
+            [
+              "plain",
+              "kiosk-lobby",
+              0
+            ]
+          ]
+        },
+        {
+          "label": "password",
+          "value": [
+            [
+              "secret",
+              "kept",
+              0
+            ]
+          ]
+        },
+        {
+          "label": "client cert",
+          "value": [
+            [
+              "plain",
+              "kept",
+              0
+            ]
+          ]
+        },
+        {
+          "label": "topics",
+          "value": [
+            [
+              "plain",
+              "acme/site-1/0123456789abcdef0123456789abcdef/...",
+              0
+            ]
+          ]
+        },
+        {
+          "label": "commands",
+          "value": [
+            [
+              "plain",
+              "read",
+              0
+            ],
+            [
+              "muted",
+              ", only what reads",
+              0
+            ]
+          ]
+        },
+        {
+          "label": "messages",
+          "value": [
+            [
+              "plain",
+              "42 published, 7 received",
+              0
+            ],
+            [
+              "muted",
+              ", 0 waiting",
+              0
+            ]
+          ]
+        },
+        {
+          "label": "subscribed",
+          "value": [
+            [
+              "plain",
+              "acme/site-1/0123456789abcdef0123456789abcdef/cmd/# acme/site-1/0123456789abcdef0123456789abcdef/page/in/#",
+              0
+            ]
+          ]
+        }
+      ],
+      "summary": [
+        [
+          "ok",
+          "connected",
+          0
+        ],
+        [
+          "plain",
+          " to ",
+          0
+        ],
+        [
+          "heading",
+          "mqtts://broker.example:8883",
+          0
+        ]
+      ]
+    },
+    {
+      "facts": [
+        {
+          "label": "state",
+          "value": [
+            [
+              "bad",
+              "not connected",
+              0
+            ],
+            [
+              "muted",
+              " for 12s",
+              0
+            ]
+          ]
+        },
+        {
+          "label": "broker",
+          "value": [
+            [
+              "heading",
+              "mqtt://10.0.2.2:1883",
+              0
+            ]
+          ]
+        },
+        {
+          "label": "last error",
+          "value": [
+            [
+              "bad",
+              "connect: 10.0.2.2:1883: Connection refused (os error 111)",
+              0
+            ]
+          ]
+        },
+        {
+          "label": "client id",
+          "value": [
+            [
+              "plain",
+              "0123456789abcdef0123456789abcdef",
+              0
+            ]
+          ]
+        },
+        {
+          "label": "user",
+          "value": [
+            [
+              "muted",
+              "none",
+              0
+            ]
+          ]
+        },
+        {
+          "label": "password",
+          "value": [
+            [
+              "muted",
+              "none",
+              0
+            ]
+          ]
+        },
+        {
+          "label": "client cert",
+          "value": [
+            [
+              "muted",
+              "none",
+              0
+            ]
+          ]
+        },
+        {
+          "label": "topics",
+          "value": [
+            [
+              "plain",
+              "tessaro/0123456789abcdef0123456789abcdef/...",
+              0
+            ]
+          ]
+        },
+        {
+          "label": "commands",
+          "value": [
+            [
+              "plain",
+              "full",
+              0
+            ],
+            [
+              "muted",
+              ", every command",
+              0
+            ]
+          ]
+        },
+        {
+          "label": "",
+          "value": [
+            [
+              "warn",
+              "mqtt.url is not TLS and mqtt.commands is full: anyone who can publish to the broker, or see the link, has the device",
+              0
+            ]
+          ]
+        },
+        {
+          "label": "messages",
+          "value": [
+            [
+              "plain",
+              "0 published, 0 received",
+              0
+            ],
+            [
+              "warn",
+              ", 3 waiting",
+              0
+            ]
+          ]
+        }
+      ],
+      "summary": [
+        [
+          "bad",
+          "not connected",
+          0
+        ],
+        [
+          "plain",
+          " to ",
+          0
+        ],
+        [
+          "heading",
+          "mqtt://10.0.2.2:1883",
+          0
+        ],
+        [
+          "plain",
+          ": connect: 10.0.2.2:1883: Connection refused (os error 111)",
+          0
+        ]
+      ]
+    }
+  ]
+}

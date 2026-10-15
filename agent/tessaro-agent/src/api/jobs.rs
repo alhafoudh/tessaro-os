@@ -6,7 +6,8 @@
 //! `GET /api/v1/jobs/{job}?after=N` for what came since. A job that has
 //! ended is kept for `KEEP`, so a client that polls late still reads how it
 //! ended; cancelling one drops its steps, which stops whatever produces
-//! them.
+//! them. Each step and each end is also told as it happens (`news`), which
+//! the MQTT link publishes: there a client need not poll.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -15,6 +16,7 @@ use std::time::Duration;
 use protocol::JobPage;
 use serde::Serialize;
 use serde_json::Value;
+use tokio::sync::broadcast;
 use tokio::sync::mpsc::Receiver;
 use tokio::time::Instant;
 
@@ -29,8 +31,28 @@ const KEEP: Duration = Duration::from_secs(5 * 60);
 /// test and the grow allow one run each, so only pings could pile up.
 const MAX: usize = 32;
 
-#[derive(Default)]
-pub struct Jobs(Mutex<HashMap<String, Job>>);
+pub struct Jobs(Mutex<HashMap<String, Job>>, broadcast::Sender<News>);
+
+impl Default for Jobs {
+    fn default() -> Self {
+        Jobs(Mutex::default(), broadcast::channel(NEWS_BACKLOG).0)
+    }
+}
+
+/// Steps a listener may fall behind by before it loses some; the job
+/// itself keeps every one.
+const NEWS_BACKLOG: usize = 256;
+
+/// A job's step, or its end, as it happens.
+#[derive(Debug, Clone, PartialEq)]
+pub struct News {
+    pub job: String,
+    /// The step's number, as `page` counts them; `None` at the end.
+    pub index: Option<u64>,
+    pub step: Option<Value>,
+    pub done: bool,
+    pub error: Option<String>,
+}
 
 #[derive(Default)]
 struct Job {
@@ -82,6 +104,17 @@ impl Jobs {
                     // naked: drain bounds the whole run with the job's own total
                     drain(&jobs, &job, steps, what, total).await
                 }
+                Stream::Fetch(steps) => {
+                    // naked: drain bounds the whole fetch with updates::FETCH_TOTAL
+                    drain(
+                        &jobs,
+                        &job,
+                        steps,
+                        "fetching the update",
+                        crate::updates::FETCH_TOTAL,
+                    )
+                    .await
+                }
             };
             jobs.end(&job, outcome.err());
         });
@@ -118,19 +151,42 @@ impl Jobs {
         }
     }
 
+    /// Every step and end of every job from now on.
+    pub fn news(&self) -> broadcast::Receiver<News> {
+        self.1.subscribe()
+    }
+
     fn push(&self, id: &str, event: Value) {
-        if let Some(job) = lock(&self.0).get_mut(id) {
-            job.events.push(event);
-        }
+        let index = match lock(&self.0).get_mut(id) {
+            Some(job) => {
+                job.events.push(event.clone());
+                job.events.len() as u64 - 1
+            }
+            None => return,
+        };
+        let _ = self.1.send(News {
+            job: id.to_string(),
+            index: Some(index),
+            step: Some(event),
+            done: false,
+            error: None,
+        });
     }
 
     fn end(&self, id: &str, error: Option<String>) {
         if let Some(job) = lock(&self.0).get_mut(id) {
             job.done = true;
-            job.error = error;
+            job.error = error.clone();
             job.ended = Some(Instant::now());
             job.task = None;
         }
+        let _ = self.1.send(News {
+            job: id.to_string(),
+            index: None,
+            step: None,
+            done: true,
+            error,
+        });
     }
 }
 

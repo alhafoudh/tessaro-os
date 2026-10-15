@@ -34,13 +34,14 @@ use crate::policy::{
 };
 use crate::{
     Applied, AudioStatus, AudioTested, CalendarCheck, CameraList, CecActed, CecAction, CertInfo,
-    CertsAdded, Claimed, Command, Concurrency, Connector, Done, EvalResult, HotspotCredentials,
-    ImageUpload, JobPage, JobStarted, KeyInfo, LogPage, Net, NetChange, NetProfile,
-    NetProfileDetail, NodeInfo, OnError, PrintJob, PrintQueued, PrinterInfo, PrinterList,
-    PrinterSpec, ProxyStatus, ProxyTested, Received, RestartTarget, ScheduleInfo, ScheduleSpec,
-    ScreenPower, ScreenShow, ScriptInfo, ScriptSpec, Secret, Settings, SshAccess, SshKeyInfo,
-    SshKeyRevoked, Storage, Ticket, TimeStatus, TokenCreated, TokenInfo, UpdateBegun, UpdateStatus,
-    Verify, VncSession, WebSession, WelcomeInfo, WifiNetwork, WifiSecurity, WifiStatus,
+    CertsAdded, Claimed, Command, Concurrency, Connector, Done, EvalResult, FetchSpec,
+    HotspotCredentials, ImageUpload, JobPage, JobStarted, KeyInfo, LogPage, Net, NetChange,
+    NetProfile, NetProfileDetail, NodeInfo, OnError, PrintJob, PrintQueued, PrinterInfo,
+    PrinterList, PrinterSpec, ProxyStatus, ProxyTested, Received, RestartTarget, ScheduleInfo,
+    ScheduleSpec, ScreenPower, ScreenShow, ScriptInfo, ScriptSpec, Secret, Settings, SshAccess,
+    SshKeyInfo, SshKeyRevoked, Storage, Ticket, TimeStatus, TokenCreated, TokenInfo, UpdateBegun,
+    UpdateStatus, Verify, VncSession, WebSession, WelcomeInfo, WifiNetwork, WifiSecurity,
+    WifiStatus,
 };
 
 /// The API's version, in every path. A change a client of this version
@@ -609,6 +610,16 @@ pub struct SshKeyQuery {
     pub key: String,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ScreenshotQuery {
+    /// Scale it down to this many pixels across, when the screen is wider.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<u32>,
+    /// JPEG quality, 10 to 100.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quality: Option<u8>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct OffsetQuery {
     /// Where this piece starts: what the device said it has.
@@ -749,6 +760,9 @@ pub struct ScriptChange {
     /// Replaces the scanners whose scans it runs on; empty for none.
     #[serde(default)]
     pub scanner: Option<Vec<String>>,
+    /// Replaces the MQTT topic filters it runs on; empty for none.
+    #[serde(default)]
+    pub mqtt: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -1199,15 +1213,19 @@ pub mod screen {
         Modes: Get "/api/v1/screen/modes" (Empty, ()) -> Vec<Connector>
             = |_, _| Action::Run(Command::Modes);
 
-        /// What is on screen, as a JPEG.
-        Screenshot: Get "/api/v1/screen/screenshot" (Empty, ()) -> super::Blob
+        /// What is on screen, as a JPEG, scaled down to `width` when it is
+        /// wider.
+        Screenshot: Get "/api/v1/screen/screenshot" (ScreenshotQuery, ()) -> super::Blob
             {
                 const RAW_RESPONSE: Option<&'static str> = Some("image/jpeg");
                 fn respond(result: Value) -> Result<Answer, String> {
                     raw_data(&result, "image/jpeg").map(Answer::Raw)
                 }
             }
-            = |_, _| Action::Run(Command::Screenshot);
+            = |query, _| Action::Run(Command::Screenshot {
+                width: query.width,
+                quality: query.quality,
+            });
 
         /// Keep the guarded changes (a resolution, a rotation) that are on
         /// probation.
@@ -1570,6 +1588,7 @@ pub mod script {
                 cec: change.cec,
                 presence: change.presence,
                 scanner: change.scanner,
+                mqtt: change.mqtt,
             });
 
         /// Remove a script no schedule runs, and its units.
@@ -1863,6 +1882,42 @@ pub mod update {
         /// Drop the upload or the prepared update.
         Cancel: Post "/api/v1/update/cancel" (Empty, ()) -> Done
             = |_, _| Action::Run(Command::UpdateCancel);
+
+        /// Download an image from a URL and prepare it, as a job of
+        /// `FetchEvent`s; with `commit`, apply it at the next boot once it
+        /// is ready. `update/cancel` or cancelling the job stops it.
+        Fetch: Post "/api/v1/update/fetch" (Empty, FetchSpec) -> JobStarted
+            = |_, spec| Action::Start(Command::UpdateFetch(spec));
+    }
+}
+
+pub mod mqtt {
+    use super::*;
+    use crate::mqtt::{MqttCertBody, MqttPasswordBody, MqttStatus, MqttTestBody, MqttTested};
+
+    endpoints! {
+        /// The link to the MQTT broker: its state, where the device
+        /// publishes, what it is subscribed to.
+        Status: Get "/api/v1/mqtt" (Empty, ()) -> MqttStatus
+            = |_, _| Action::Run(Command::MqttStatus);
+
+        /// Connect to the broker with the saved settings, or another URL
+        /// with them, and say how far it got. Nothing is saved.
+        Test: Post "/api/v1/mqtt/test" (Empty, MqttTestBody) -> MqttTested
+            = |_, body| Action::Run(Command::MqttTest { url: body.url });
+
+        /// Keep the broker password, or forget it with none; the link
+        /// reconnects with it.
+        Password: Put "/api/v1/mqtt/password" (Empty, MqttPasswordBody) -> Done
+            = |_, body| Action::Run(Command::MqttPassword { password: body.password });
+
+        /// Keep a client certificate and its key for the broker, both PEM.
+        CertSet: Put "/api/v1/mqtt/cert" (Empty, MqttCertBody) -> Done
+            = |_, body| Action::Run(Command::MqttCertSet { cert: body.cert, key: body.key });
+
+        /// Forget the client certificate.
+        CertClear: Delete "/api/v1/mqtt/cert" (Empty, ()) -> Done
+            = |_, _| Action::Run(Command::MqttCertClear);
     }
 }
 
@@ -1978,9 +2033,18 @@ pub fn all() -> Vec<Route> {
         scanner::routes(),
         update::routes(),
         files::routes(),
+        mqtt::routes(),
         jobs::routes(),
     ]
     .concat()
+}
+
+/// The route a command topic names: `<group>/<Name>`, the group being the
+/// path's (`Route::tag`) and the name the endpoint's type.
+pub fn by_name<'a>(routes: &'a [Route], group: &str, name: &str) -> Option<&'a Route> {
+    routes
+        .iter()
+        .find(|route| route.tag() == group && route.name == name)
 }
 
 /// The route for a request, a literal path before one with a `{name}`.
@@ -2025,6 +2089,25 @@ mod tests {
             );
             assert!(!route.doc.trim().is_empty(), "{} has no doc", route.path);
         }
+    }
+
+    // A command topic names an endpoint by its group and type name, so the
+    // pair must name one endpoint only.
+    #[test]
+    fn every_endpoint_has_its_own_topic_name() {
+        let routes = all();
+        let mut seen = std::collections::HashSet::new();
+        for route in &routes {
+            assert!(
+                seen.insert((route.tag(), route.name)),
+                "{}/{} twice",
+                route.tag(),
+                route.name
+            );
+            let found = by_name(&routes, route.tag(), route.name).unwrap();
+            assert_eq!((found.method, found.path), (route.method, route.path));
+        }
+        assert!(by_name(&routes, "device", "Nope").is_none());
     }
 
     #[test]

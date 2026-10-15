@@ -210,7 +210,24 @@ pub fn expand(
     match expansion {
         protocol::keys::Expansion::Url => expand_url(template, settings, defaults, live),
         protocol::keys::Expansion::Text => expand_text(template, settings, defaults, live),
+        protocol::keys::Expansion::Topic => expand_topic(template, settings, defaults, live),
     }
+}
+
+/// mqtt.prefix filled in: the same placeholders as browser.url, each value
+/// kept on its topic level (`mqtt::topic::escape`), so a name with a `/`
+/// cannot move the device's topics.
+pub fn expand_topic(
+    template: &str,
+    settings: &BTreeMap<String, String>,
+    defaults: &dyn Env,
+    live: &Live,
+) -> (String, Vec<String>) {
+    protocol::keys::expand_with(
+        template,
+        |name| resolve(name, settings, defaults, live),
+        protocol::mqtt::topic::escape,
+    )
 }
 
 /// What one placeholder stands for, as `expand_url` describes. `None` for a
@@ -437,6 +454,19 @@ impl Env for Effective<'_> {
                     &expand_text(&template, &self.settings, self.base, &self.live).0,
                 )
             }),
+            // The broker's user name and the topic prefix, filled in; an
+            // empty prefix is the default one.
+            "KIOSK_MQTT_USERNAME" => self
+                .raw(key)
+                .map(|template| expand_text(&template, &self.settings, self.base, &self.live).0),
+            "KIOSK_MQTT_PREFIX" => {
+                let template = self.raw(key).unwrap_or_default();
+                let prefix = expand_topic(&template, &self.settings, self.base, &self.live).0;
+                Some(match prefix.is_empty() {
+                    true => protocol::mqtt::topic::DEFAULT_PREFIX.to_string(),
+                    false => prefix,
+                })
+            }
             // The player is the device's own page, always there: the probe
             // checks it, and a source that is down is the player's to skip.
             "KIOSK_PROBE_URL" if self.maintenance() || self.player() => Some(String::new()),

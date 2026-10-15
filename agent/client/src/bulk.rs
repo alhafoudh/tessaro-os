@@ -194,7 +194,68 @@ fn named(typed: &str, target: Target, nodes: &Nodes, found: &[Found]) -> Result<
                 )),
             }
         }
+        // Through a broker, `select_mqtt` picks; a name here stands as typed.
+        Target::Mqtt { ref device, .. } => Ok(Member {
+            name: device.clone(),
+            id: None,
+            address: None,
+            target,
+        }),
     }
+}
+
+/// The devices `names` and `wanted` tags stand for at a broker, from the
+/// statuses it keeps (`seen`, `mqtt::Link::scan`): every named device, and
+/// every device there that has all of the tags. Each is reached through the
+/// broker, by its id.
+pub fn select_mqtt(
+    names: &[String],
+    wanted: &[String],
+    broker: &crate::brokers::Broker,
+    seen: &[crate::mqtt::Seen],
+) -> Result<Selection, String> {
+    let label = broker.label();
+    let member = |device: &crate::mqtt::Seen| Member {
+        name: device
+            .presence
+            .name
+            .clone()
+            .unwrap_or_else(|| device.id.clone()),
+        id: Some(device.id.clone()),
+        address: None,
+        target: Target::Mqtt {
+            broker: broker.clone(),
+            device: device.id.clone(),
+        },
+    };
+    let mut members: Vec<Member> = Vec::new();
+    for name in names {
+        members.push(member(crate::mqtt::pick(name, seen, &label)?));
+    }
+    if !wanted.is_empty() {
+        for device in seen {
+            let has = tags::effective(&device.presence.tags, device.presence.claimed);
+            if tags::matches(&has, wanted) {
+                members.push(member(device));
+            }
+        }
+    }
+    let mut picked: Vec<Member> = Vec::new();
+    for member in members {
+        if !picked.iter().any(|known| known.key() == member.key()) {
+            picked.push(member);
+        }
+    }
+    if picked.is_empty() {
+        return Err(format!(
+            "no device at {label} has the tags {}",
+            wanted.join(", ")
+        ));
+    }
+    Ok(Selection {
+        members: picked,
+        found: Vec::new(),
+    })
 }
 
 /// A known device as the scan found it, if it did.

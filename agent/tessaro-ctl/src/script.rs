@@ -1,8 +1,8 @@
 //! `tessaro-ctl script ...`: shell scripts the device keeps and runs as
 //! root, now (`run`), for a schedule (`tessaro-ctl schedule`), for the
 //! kiosk page (`--bridge`), on the TV's HDMI-CEC events (`--cec`), on
-//! presence events (`--presence`) or on a barcode scanner's scans
-//! (`--scanner`).
+//! presence events (`--presence`), on a barcode scanner's scans
+//! (`--scanner`) or on messages at the device's MQTT broker (`--mqtt`).
 //!
 //! A body runs with `/bin/sh` from `/`, so a `tessaro-ctl` command in it is
 //! written out in full. `run` follows the run to its end and prints what it
@@ -39,6 +39,7 @@ pub enum ScriptCmd {
     ///   tessaro-ctl script create back-off --body 'tessaro-ctl screen power off' --cec key:red
     ///   tessaro-ctl script create greet --body 'tessaro-ctl screen power on' --presence arrived
     ///   tessaro-ctl script create ticket --body 'logger "$TESSARO_SCAN_TEXT"' --scanner front
+    ///   tessaro-ctl script create open --body 'logger "$TESSARO_MQTT_TOPIC"' --mqtt 'acme/doors/+/open'
     Create {
         /// Lower-case letters, digits and -.
         name: String,
@@ -135,6 +136,23 @@ pub struct Fields {
     /// Needs scanner.enable.
     #[arg(long, value_name = "SCANNERS", value_parser = scanner_names)]
     scanner: Option<String>,
+    /// Run it on every message to these MQTT topic filters, comma
+    /// separated, + and # allowed; empty for none. The topic is in
+    /// $TESSARO_MQTT_TOPIC, the payload in the file $TESSARO_MQTT_PAYLOAD
+    /// names. Needs mqtt.url.
+    #[arg(long, value_name = "FILTERS", value_parser = mqtt_filters)]
+    mqtt: Option<String>,
+}
+
+/// `--mqtt` checked, the same way.
+fn mqtt_filters(typed: &str) -> Result<String, String> {
+    let filters: Vec<String> = typed
+        .split(',')
+        .map(str::trim)
+        .filter(|filter| !filter.is_empty())
+        .map(str::to_string)
+        .collect();
+    protocol::mqtt::triggers(&filters).map(|filters| filters.join(","))
 }
 
 /// `--scanner` checked, the same way.
@@ -207,6 +225,7 @@ pub fn run(session: &mut Session, command: ScriptCmd, json: bool) -> Result<(), 
                 cec: fields.cec.map(cec_list).unwrap_or_default(),
                 presence: fields.presence.map(cec_list).unwrap_or_default(),
                 scanner: fields.scanner.map(cec_list).unwrap_or_default(),
+                mqtt: fields.mqtt.map(cec_list).unwrap_or_default(),
             };
             let info = session.send::<api::script::Create>(spec)?;
             print(json, &info, || {
@@ -241,6 +260,7 @@ pub fn run(session: &mut Session, command: ScriptCmd, json: bool) -> Result<(), 
                 cec: fields.cec.map(cec_list),
                 presence: fields.presence.map(cec_list),
                 scanner: fields.scanner.map(cec_list),
+                mqtt: fields.mqtt.map(cec_list),
             };
             let info = session.call::<api::script::Change>(ScriptRef { script }, change)?;
             print(json, &info, || {

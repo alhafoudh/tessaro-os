@@ -113,6 +113,11 @@ pub fn env_file(
             // unit reads.
             continue;
         }
+        if key.name.starts_with("mqtt.") {
+            // Only the agent talks to the broker; where it is and who the
+            // device is to it are none of the browser unit's business.
+            continue;
+        }
         if let Some((env, value)) = overrides.iter().find(|(env, _)| *env == key.env) {
             out.push_str(&format!("{env}={value}\n"));
         }

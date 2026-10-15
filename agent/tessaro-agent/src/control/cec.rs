@@ -724,18 +724,19 @@ impl Control {
             )),
         }
 
+        let mut detail = json!({
+            "event": event.name,
+            "connector": worker.connector,
+            "tv": bus.tv.map(|power| power.name()),
+            "showing": bus.active,
+        });
+        if let Some(key) = key {
+            detail["key"] = json!(key);
+            detail["pressed"] = json!(event.pressed);
+            detail["repeat"] = json!(event.repeat);
+        }
+        self.emit("cec", event.name, detail.clone());
         if settings.page {
-            let mut detail = json!({
-                "event": event.name,
-                "connector": worker.connector,
-                "tv": bus.tv.map(|power| power.name()),
-                "showing": bus.active,
-            });
-            if let Some(key) = key {
-                detail["key"] = json!(key);
-                detail["pressed"] = json!(event.pressed);
-                detail["repeat"] = json!(event.repeat);
-            }
             self.bridge_cec(detail).await;
         }
 

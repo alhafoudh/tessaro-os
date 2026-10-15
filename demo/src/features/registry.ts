@@ -12,6 +12,7 @@ import { DeviceSection } from "../sections/Device";
 import { FilesSection } from "../sections/Files";
 import { GraphicsSection } from "../sections/Graphics";
 import { KeyboardSection } from "../sections/Keyboard";
+import { MqttSection } from "../sections/Mqtt";
 import { NetworkSection } from "../sections/Network";
 import { PeripheralsSection } from "../sections/Peripherals";
 import { PlaylistSection } from "../sections/Playlist";
@@ -120,6 +121,14 @@ export const SECTIONS: Section[] = [
     blurb: "Every scan as an event, never keystrokes",
     detect: detect.scanner,
     component: ScannerSection,
+  },
+  {
+    id: "mqtt",
+    title: "MQTT",
+    icon: "mqtt",
+    blurb: "Messages to and from the page through the broker",
+    detect: detect.mqtt,
+    component: MqttSection,
   },
   {
     id: "scripts",

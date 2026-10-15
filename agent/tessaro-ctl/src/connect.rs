@@ -15,8 +15,9 @@ use tessaro_client::nodes::Nodes;
 
 use crate::style::{self, paint};
 
-/// How this client names itself to the device (its User-Agent).
-const CLIENT: &str = "tessaro-ctl";
+/// How this client names itself to the device (its User-Agent), and to a
+/// broker (its client id).
+pub const CLIENT: &str = "tessaro-ctl";
 
 /// What the command wants to happen if the node has no pin yet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

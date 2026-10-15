@@ -30,6 +30,7 @@ use protocol::api::{
 };
 use protocol::files::{self as store, FileEntry, FileKind, FilesListing};
 use protocol::keys;
+use protocol::mqtt::{MqttCertBody, MqttPasswordBody, MqttStatus, MqttTestBody, MqttTested};
 use protocol::playlist::{
     format_days, ItemKind, PlaylistInfo, PlaylistItem, TimetableInfo, Transition,
 };
@@ -44,9 +45,9 @@ use protocol::{
     CecActed, CertInfo, CertsAdded, Claimed, Concurrency, Connector, Done, HotspotCredentials, Net,
     NetChange, NetProfile, NetProfileDetail, OnError, Password, PingEvent, PrintJob, PrintQueued,
     PrinterFound, PrinterInfo, PrinterKind, PrinterList, PrinterSpec, ProxyTested, ScheduleInfo,
-    ScheduleSpec, ScreenShow, ScriptInfo, SpeedtestEvent, SshKeyInfo, SshKeyRevoked, Storage,
-    StorageGrowEvent, TimeStatus, TokenCreated, TokenInfo, UpdatePhase, UpdateStatus, Verify,
-    WifiNetwork, WifiSecurity, WifiStatus,
+    ScheduleSpec, ScreenShow, ScriptInfo, Secret, SpeedtestEvent, SshKeyInfo, SshKeyRevoked,
+    Storage, StorageGrowEvent, TimeStatus, TokenCreated, TokenInfo, UpdatePhase, UpdateStatus,
+    Verify, WifiNetwork, WifiSecurity, WifiStatus,
 };
 use serde_json::Value;
 use tessaro_client::connect::Answer;
@@ -72,6 +73,8 @@ pub struct State {
     profiles: Vec<NetProfile>,
     /// The extra certificate authorities the device trusts.
     certs: Vec<CertInfo>,
+    /// The link to the MQTT broker.
+    mqtt: Option<MqttStatus>,
     /// The stored browser policies.
     policies: Vec<PolicyInfo>,
     wifi: Option<WifiStatus>,
@@ -186,6 +189,11 @@ enum Action {
     Speedtest,
     Proxy,
     CertRevoke(String),
+    MqttTest,
+    MqttPassword,
+    MqttPasswordClear,
+    MqttCert,
+    MqttCertClear,
     /// A new browser policy (`name` None) or a change to one, saved only
     /// while the device's copy is still at `revision` (`""`: none yet).
     PolicySave {
@@ -237,6 +245,7 @@ enum Action {
     Move(String),
     Delete(Vec<String>),
     UpdateSend(PathBuf),
+    UpdateFetch,
     UpdateCancel,
     Timezone,
     Ntp,
@@ -305,6 +314,12 @@ pub enum Msg {
     CertPick,
     CertPicked(Option<PathBuf>),
     CertRevoke,
+    // mqtt
+    MqttTest,
+    MqttPassword,
+    MqttPasswordClear,
+    MqttCert,
+    MqttCertClear,
     // wifi
     WifiScan,
     WifiJoin,
@@ -410,6 +425,7 @@ pub enum Msg {
     // update
     UpdatePick,
     UpdatePicked(Option<PathBuf>),
+    UpdateFetch,
     UpdateCancel,
     // jobs and forms
     CancelJob(u64),
@@ -617,6 +633,8 @@ const CEC_EVENTS: &str = "Run on CEC events";
 const PRESENCE_EVENTS: &str = "Run on presence events";
 /// Its scanners, the same way as `--scanner` takes them.
 const SCANNER_TRIGGERS: &str = "Run on scans of";
+/// Its MQTT topic filters, the same way as `--mqtt` takes them.
+const MQTT_TRIGGERS: &str = "Run on MQTT messages to";
 /// The presence dialog's camera.presence.demographics check.
 const ESTIMATE_DEMOGRAPHICS: &str = "Estimate age and gender";
 
@@ -692,6 +710,11 @@ fn script_form(existing: Option<&ScriptInfo>) -> Form {
         SCANNER_TRIGGERS,
         typed.scanner,
         "scanner names, or * for every one; the scan is in $TESSARO_SCAN_TEXT",
+    ))
+    .field(Field::text(
+        MQTT_TRIGGERS,
+        typed.mqtt,
+        "topic filters, + and # allowed; the topic is in $TESSARO_MQTT_TOPIC",
     ))
     .field(Field::check(PAGE_MAY_RUN, typed.bridge))
 }
@@ -1162,6 +1185,7 @@ fn page_of(tag: &str) -> &'static str {
         "net" => "net",
         "wifi" => "wifi",
         "certs" | "cert" => "certs",
+        "mqtt" => "mqtt",
         "policies" | "policy" => "policies",
         "storage" => "storage",
         "audio" => "audio",
@@ -1382,6 +1406,7 @@ impl Device {
                 self.call("net.profiles", fetch::<api::network::Profiles>());
             }
             Page::Certs => self.call("certs", fetch::<api::network::Certs>()),
+            Page::Mqtt => self.call("mqtt", fetch::<api::mqtt::Status>()),
             Page::Policies => self.call("policies", fetch::<api::browser::Policies>()),
             Page::Wifi => {
                 self.call("wifi", fetch::<api::network::Wifi>());
@@ -1724,6 +1749,13 @@ impl Device {
                 self.pages.selected.remove("certs");
                 self.call("certs", fetch::<api::network::Certs>());
             }
+            "mqtt" => self.pages.mqtt = Some(parse(value)?),
+            "mqtt.test" => {
+                let tested: MqttTested = parse(value)?;
+                for line in describe::mqtt::tested(&tested) {
+                    self.log_line(line);
+                }
+            }
             "policies" => self.pages.policies = parse(value)?,
             "policy.open" => {
                 let doc: PolicyDoc = parse(value)?;
@@ -1909,6 +1941,7 @@ impl Device {
                     "access" => Page::Access,
                     "update" => Page::Update,
                     "net" => Page::Network,
+                    "mqtt" => Page::Mqtt,
                     "time" => Page::Time,
                     "browser" => Page::Browser,
                     "printer" => Page::Printer,
@@ -2275,6 +2308,30 @@ impl Device {
                 Err(error) => self.log(Tone::Bad, error),
             },
             Msg::CertPicked(None) => {}
+            Msg::MqttTest => self.form(
+                Form::new("Test the broker", "Test", Action::MqttTest)
+                    .intro("Connect to the broker with the saved settings, or with this URL instead of mqtt.url, and say how far it got: the DNS, the connect, the proxy, TLS, the WebSocket, MQTT. Nothing is saved.")
+                    .field(Field::text("URL", "", "empty for mqtt.url, or mqtts://broker.example:8883")),
+            ),
+            Msg::MqttPassword => self.form(
+                Form::new("Broker password", "Set", Action::MqttPassword)
+                    .intro("The password the device gives the broker, kept as a secret and never shown; {key} placeholders are filled in, as in mqtt.username.")
+                    .field(Field::secret("Password")),
+            ),
+            Msg::MqttPasswordClear => self.form(
+                Form::new("Forget the broker password", "Forget", Action::MqttPasswordClear)
+                    .intro("The device connects to the broker without one."),
+            ),
+            Msg::MqttCert => self.form(
+                Form::new("Client certificate", "Keep it", Action::MqttCert)
+                    .intro("A certificate and its private key the device shows the broker, for a broker that wants one (mutual TLS): PEM files on this machine.")
+                    .field(Field::text("Certificate", "", "device.pem"))
+                    .field(Field::text("Key", "", "device.key")),
+            ),
+            Msg::MqttCertClear => self.form(
+                Form::new("Forget the client certificate", "Forget", Action::MqttCertClear)
+                    .intro("The device connects to the broker without one."),
+            ),
             Msg::PolicyNew => self.policy_form(None, policy::TEMPLATE, String::new()),
             Msg::PolicyPick => {
                 return Task::perform(
@@ -2932,6 +2989,9 @@ impl Device {
             Msg::Webconfig => self.call(
                 "webconfig",
                 Box::new(|session| {
+                    if let Err(error) = session.needs_ip("Webconfig") {
+                        return Answer::Refused(error);
+                    }
                     let opened = webconfig::address(session)
                         .and_then(|address| webconfig::open(&address.url).map(|()| address.shown));
                     match opened {
@@ -2982,6 +3042,7 @@ impl Device {
                 return Task::perform(
                     blocking::run(move || {
                         let (mut session, _) = crate::worker::connect(&node)?;
+                        session.needs_ip("SSH")?;
                         let authorized = tessaro_client::ssh::authorize(&mut session, None)?;
                         let command = tessaro_client::ssh::shell_words(
                             &authorized.argv(tessaro_client::ssh::PORT, &[]),
@@ -3101,6 +3162,16 @@ impl Device {
                 );
             }
             Msg::UpdatePicked(None) => {}
+            Msg::UpdateFetch => self.form(
+                Form::new("Fetch an image", "Fetch", Action::UpdateFetch)
+                    .intro("The device downloads the image itself, over http or https, checks it against its block map and stages it. The kiosk keeps running until the reboot writes it.")
+                    .field(Field::text("URL", "", "https://example.com/tessaro.wic.zst"))
+                    .field(Field::text("Block map", "", "only if it is not beside the image"))
+                    .field(Field::check("Apply at the next boot", true))
+                    .field(Field::check("Reboot to apply", false))
+                    .field(Field::check("Erase /data", false))
+                    .field(Field::check("Rewrite the whole disk", false)),
+            ),
             Msg::UpdateCancel => self.form(
                 Form::new("Cancel the update", "Cancel update", Action::UpdateCancel)
                     .intro("Drop the staged or pending image; the device keeps running what it runs."),
@@ -3833,6 +3904,7 @@ impl Device {
                     cec: form.value(CEC_EVENTS).to_string(),
                     presence: form.value(PRESENCE_EVENTS).to_string(),
                     scanner: form.value(SCANNER_TRIGGERS).to_string(),
+                    mqtt: form.value(MQTT_TRIGGERS).to_string(),
                 };
                 let save = match id {
                     None => send::<api::script::Create>(typed.spec()?),
@@ -4193,33 +4265,110 @@ impl Device {
                 };
                 let warning = plan.warning(&plan.name()?);
                 if let (Some(warning), false) = (warning, form.typed) {
-                    // Destructive after all: ask again, with the name.
-                    let mut again = Form::new(form.title.clone(), form.ok, form.action.clone())
-                        .intro(format!("This will {warning}."));
-                    again.fields = form
-                        .fields
-                        .iter()
-                        .map(|field| Field {
-                            label: field.label,
-                            value: field.value.clone(),
-                            kind: field.kind,
-                            editor: field
-                                .editor
-                                .as_ref()
-                                .map(|_| text_editor::Content::with_text(&field.value)),
-                            mono: field.mono,
-                            tall: field.tall,
-                        })
-                        .collect();
-                    self.form(again.typed());
+                    self.ask_again(form, &warning);
                     return Ok(());
                 }
                 let label = format!("update {}", plan.name()?);
                 self.start_job("update", label, jobs::Kind::Update(plan));
             }
+            Action::UpdateFetch => {
+                // As `tessaro-ctl update fetch`.
+                let url = form.value("URL").trim().to_string();
+                if url.is_empty() {
+                    return Err("the image's URL, please".to_string());
+                }
+                let commit = form.checked("Apply at the next boot");
+                let reboot = form.checked("Reboot to apply");
+                let wipe_data = form.checked("Erase /data");
+                if !commit && (reboot || wipe_data) {
+                    return Err(
+                        "rebooting and erasing /data come with applying it at the next boot"
+                            .to_string(),
+                    );
+                }
+                let bmap = Some(form.value("Block map").trim().to_string())
+                    .filter(|bmap| !bmap.is_empty());
+                let spec = protocol::FetchSpec {
+                    url,
+                    bmap,
+                    repartition: form.checked("Rewrite the whole disk"),
+                    commit,
+                    wipe_data,
+                    reboot,
+                };
+                let name = spec.url.rsplit('/').next().unwrap_or(&spec.url).to_string();
+                let plan = tessaro_client::update::Plan {
+                    image: PathBuf::from(&spec.url),
+                    bmap: PathBuf::new(),
+                    wipe_data,
+                    repartition: spec.repartition,
+                    verify: false,
+                    reboot,
+                };
+                if let (Some(warning), true, false) = (plan.warning(&name), commit, form.typed) {
+                    self.ask_again(form, &warning);
+                    return Ok(());
+                }
+                self.start_job("update", format!("fetch {name}"), jobs::Kind::Fetch(spec));
+            }
+            Action::MqttTest => {
+                let url = Some(form.value("URL").trim().to_string()).filter(|url| !url.is_empty());
+                self.log(Tone::Plain, "testing the broker ...");
+                self.call_long("mqtt.test", send::<api::mqtt::Test>(MqttTestBody { url }));
+            }
+            Action::MqttPassword => {
+                let password = form.value("Password");
+                if password.is_empty() {
+                    return Err("the password, please; Forget password forgets it".to_string());
+                }
+                let body = MqttPasswordBody {
+                    password: Some(Secret(password.to_string())),
+                };
+                self.call("mqtt.done", send::<api::mqtt::Password>(body));
+            }
+            Action::MqttPasswordClear => self.call(
+                "mqtt.done",
+                send::<api::mqtt::Password>(MqttPasswordBody { password: None }),
+            ),
+            Action::MqttCert => {
+                let read = |label| {
+                    let path = PathBuf::from(form.value(label).trim());
+                    std::fs::read_to_string(&path)
+                        .map_err(|err| format!("{}: {err}", path.display()))
+                };
+                let body = MqttCertBody {
+                    cert: read("Certificate")?,
+                    key: Secret(read("Key")?),
+                };
+                self.call("mqtt.done", send::<api::mqtt::CertSet>(body));
+            }
+            Action::MqttCertClear => self.call("mqtt.done", send::<api::mqtt::CertClear>(())),
             Action::UpdateCancel => self.call("update.done", send::<api::update::Cancel>(())),
         }
         Ok(())
+    }
+
+    /// Destructive after all: the same form again, with what it does and
+    /// the device's name to type.
+    fn ask_again(&mut self, form: &Form, warning: &str) {
+        let mut again = Form::new(form.title.clone(), form.ok, form.action.clone())
+            .intro(format!("This will {warning}."));
+        again.fields = form
+            .fields
+            .iter()
+            .map(|field| Field {
+                label: field.label,
+                value: field.value.clone(),
+                kind: field.kind,
+                editor: field
+                    .editor
+                    .as_ref()
+                    .map(|_| text_editor::Content::with_text(&field.value)),
+                mono: field.mono,
+                tall: field.tall,
+            })
+            .collect();
+        self.form(again.typed());
     }
 
     /// The form's view.
@@ -4303,6 +4452,7 @@ impl Device {
             Page::Network => self.network_view(),
             Page::Wifi => self.wifi_view(),
             Page::Certs => self.certs_view(),
+            Page::Mqtt => self.mqtt_view(),
             Page::Policies => self.policies_view(),
             Page::Storage => self.storage_view(),
             Page::Audio => self.audio_view(),
@@ -4427,6 +4577,14 @@ impl Device {
         self.online().then_some(Message::P(message))
     }
 
+    /// As `when`, for what needs the device itself over its network (a
+    /// tunnel, timing the connection, a claim): off through a broker, where
+    /// the session would refuse it (`Session::needs_ip`).
+    fn over_ip(&self, message: Msg) -> Option<Message> {
+        self.when(message)
+            .filter(|_| crate::worker::broker_of(&self.node).is_none())
+    }
+
     /// From the last status poll, so a claim or unclaim made elsewhere
     /// shows; the handshake's answer until the first poll.
     fn claimed(&self) -> bool {
@@ -4532,7 +4690,7 @@ impl Device {
         self.page(
             "overview",
             vec![
-                action("Ping", self.when(Msg::ControlPing)),
+                action("Ping", self.over_ip(Msg::ControlPing)),
                 action("Tags", self.when(Msg::Tags)),
                 action("Factory reset", self.when(Msg::FactoryReset)),
             ],
@@ -4610,7 +4768,8 @@ impl Device {
                 action("Zoom", self.when(Msg::Zoom)),
                 action(
                     "DevTools",
-                    self.when(Msg::DevTools).filter(|_| !self.devtools_open()),
+                    self.over_ip(Msg::DevTools)
+                        .filter(|_| !self.devtools_open()),
                 ),
                 action("Reload", self.when(Msg::Reload)),
                 action("Clear cache", self.when(Msg::ClearCache)),
@@ -4701,7 +4860,7 @@ impl Device {
             theme::tool("Hide keyboard", self.when(Msg::Keyboard(false))),
             theme::tool(
                 "VNC tunnel",
-                self.when(Msg::VncTunnel).filter(|_| !self.vnc_open())
+                self.over_ip(Msg::VncTunnel).filter(|_| !self.vnc_open())
             ),
         ]
         .spacing(4)
@@ -4955,6 +5114,23 @@ impl Device {
             )],
             vec![self.table("certs", CERTS, certs, Length::Fill)],
         )
+    }
+
+    /// What `tessaro-ctl mqtt status` says; where the device connects is
+    /// the mqtt.* settings, under Configure.
+    fn mqtt_view(&self) -> Element<'_, Message> {
+        let actions = vec![
+            action("Test ...", self.when(Msg::MqttTest)),
+            action("Password ...", self.when(Msg::MqttPassword)),
+            action("Forget password ...", self.when(Msg::MqttPasswordClear)),
+            action("Client certificate ...", self.when(Msg::MqttCert)),
+            action("Forget certificate ...", self.when(Msg::MqttCertClear)),
+        ];
+        let body = match &self.pages.mqtt {
+            Some(status) => vec![self.shared_facts("mqttfacts", describe::mqtt::facts(status))],
+            None => Vec::new(),
+        };
+        self.page("mqtt", actions, Vec::new(), body)
     }
 
     fn policies_view(&self) -> Element<'_, Message> {
@@ -6135,7 +6311,7 @@ impl Device {
             vec![
                 action(
                     "Claim ...",
-                    self.when(Msg::Claim).filter(|_| !self.claimed()),
+                    self.over_ip(Msg::Claim).filter(|_| !self.claimed()),
                 ),
                 action("New token ...", self.when(Msg::TokenNew)),
                 action("Root password ...", self.when(Msg::Password)),
@@ -6145,7 +6321,7 @@ impl Device {
                     "Unclaim ...",
                     self.when(Msg::Unclaim).filter(|_| self.claimed()),
                 ),
-                action("Open Webconfig", self.when(Msg::Webconfig)),
+                action("Open Webconfig", self.over_ip(Msg::Webconfig)),
             ],
             vec![action(
                 "Revoke",
@@ -6180,8 +6356,8 @@ impl Device {
         self.page(
             "ssh",
             vec![
-                action("Open terminal", self.when(Msg::Authorize(true))),
-                action("Authorize my key", self.when(Msg::Authorize(false))),
+                action("Open terminal", self.over_ip(Msg::Authorize(true))),
+                action("Authorize my key", self.over_ip(Msg::Authorize(false))),
             ],
             vec![action(
                 "Revoke",
@@ -6297,6 +6473,12 @@ impl Device {
                         .and_then(|()| self.when(Msg::UpdatePick)),
                 ),
                 action(
+                    "Fetch from URL ...",
+                    (!sending)
+                        .then_some(())
+                        .and_then(|()| self.when(Msg::UpdateFetch)),
+                ),
+                action(
                     "Cancel update ...",
                     cancellable
                         .then_some(())
@@ -6317,6 +6499,7 @@ pub(super) fn page_key(page: Page) -> &'static str {
         Page::Network => "net",
         Page::Wifi => "wifi",
         Page::Certs => "certs",
+        Page::Mqtt => "mqtt",
         Page::Policies => "policies",
         Page::Storage => "storage",
         Page::Audio => "audio",

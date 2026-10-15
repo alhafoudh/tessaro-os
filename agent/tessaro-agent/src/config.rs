@@ -169,6 +169,68 @@ pub struct Config {
     /// `scanner.*`, which the scanners' supervisor follows
     /// (`control/scanners.rs`).
     pub scanner: Scanner,
+    /// `mqtt.*`, which the link to the broker follows (`crate::mqtt`).
+    pub mqtt: Mqtt,
+}
+
+/// The link to the MQTT broker as the settings have it, placeholders filled
+/// in (`state::Effective`). The password and a client certificate are
+/// secrets, read when the link connects (`crate::mqtt`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Mqtt {
+    /// `mqtt.url`; empty for no broker.
+    pub url: String,
+    /// `mqtt.username`; empty for none.
+    pub username: String,
+    /// `mqtt.prefix`, never empty.
+    pub prefix: String,
+    pub commands: MqttCommands,
+    /// `mqtt.tls.fingerprint`, 64 lower-case hex digits; `None` checks the
+    /// chain.
+    pub fingerprint: Option<String>,
+    /// Seconds.
+    pub keepalive: i64,
+    pub state_interval: i64,
+    /// `mqtt.page`: the page's subtree.
+    pub page: bool,
+    /// `mqtt.scripts`: the scripts that run on messages.
+    pub scripts: bool,
+    /// `mqtt.logs`: `off`, or the lowest journal priority published.
+    pub logs: String,
+    /// Seconds between screenshots; 0 for none.
+    pub screenshot_interval: i64,
+    /// Pixels across; 0 for the screen's own.
+    pub screenshot_width: i64,
+    pub screenshot_quality: i64,
+}
+
+/// `mqtt.commands`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MqttCommands {
+    Off,
+    /// Only the endpoints that read (`GET`).
+    Read,
+    Full,
+}
+
+impl MqttCommands {
+    /// Anything unknown is `Off`: the broker never gets more than was asked
+    /// for.
+    pub fn parse(value: &str) -> Self {
+        match value.trim() {
+            "full" => MqttCommands::Full,
+            "read" => MqttCommands::Read,
+            _ => MqttCommands::Off,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            MqttCommands::Off => "off",
+            MqttCommands::Read => "read",
+            MqttCommands::Full => "full",
+        }
+    }
 }
 
 /// The barcode scanners as the settings have them; which they are is the
@@ -338,6 +400,29 @@ impl Config {
                 enable: flag(env, "KIOSK_SCANNER", false),
                 page: flag(env, "KIOSK_SCANNER_PAGE", true),
                 scripts: flag(env, "KIOSK_SCANNER_SCRIPTS", true),
+            },
+            mqtt: Mqtt {
+                url: string(env, "KIOSK_MQTT_URL", "").trim().to_string(),
+                username: string(env, "KIOSK_MQTT_USERNAME", ""),
+                prefix: Some(string(env, "KIOSK_MQTT_PREFIX", ""))
+                    .filter(|prefix| protocol::mqtt::topic::check_prefix(prefix).is_ok())
+                    .unwrap_or_else(|| protocol::mqtt::topic::DEFAULT_PREFIX.to_string()),
+                commands: MqttCommands::parse(&string(env, "KIOSK_MQTT_COMMANDS", "full")),
+                fingerprint: protocol::keys::parse_fingerprint(&string(
+                    env,
+                    "KIOSK_MQTT_FINGERPRINT",
+                    "",
+                )),
+                keepalive: int(env, "KIOSK_MQTT_KEEPALIVE", 60).clamp(10, 3600),
+                state_interval: int(env, "KIOSK_MQTT_STATE_INTERVAL", 60).clamp(10, 86400),
+                page: flag(env, "KIOSK_MQTT_PAGE", true),
+                scripts: flag(env, "KIOSK_MQTT_SCRIPTS", true),
+                logs: Some(string(env, "KIOSK_MQTT_LOGS", "off"))
+                    .filter(|level| protocol::mqtt::LOG_LEVELS.contains(&level.as_str()))
+                    .unwrap_or_else(|| "off".to_string()),
+                screenshot_interval: int(env, "KIOSK_MQTT_SCREENSHOT_INTERVAL", 0).clamp(0, 86400),
+                screenshot_width: int(env, "KIOSK_MQTT_SCREENSHOT_WIDTH", 640).clamp(0, 7680),
+                screenshot_quality: int(env, "KIOSK_MQTT_SCREENSHOT_QUALITY", 60).clamp(10, 100),
             },
         }
     }

@@ -48,6 +48,7 @@ require_relative "support/usbcam"
 require_relative "support/usbscanner"
 require_relative "support/vnc"
 require_relative "support/host_web"
+require_relative "support/mqtt"
 
 RSpec.configure do |config|
   # A lane's cases leave state behind for the next one, in file order.

@@ -645,6 +645,18 @@ impl Control {
         }
         let position = report["position"].as_u64().map(|position| position as u32);
         let src = report["src"].as_str().unwrap_or("").to_string();
+        if matches!(event, "started" | "skipped" | "nothing-playable") {
+            self.emit(
+                "player",
+                event,
+                json!({
+                    "position": position,
+                    "src": src,
+                    "kind": report["kind"],
+                    "reason": report["reason"],
+                }),
+            );
+        }
         let mut state = lock(&self.player);
         state.heartbeat = Some(Instant::now());
         match event {

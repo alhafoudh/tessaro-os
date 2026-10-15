@@ -4,8 +4,8 @@
 of `/data/tessaro/tessaro.db` and runs as root through systemd: now, for a
 schedule ([scheduler.md](scheduler.md)), for the kiosk page, on an
 HDMI-CEC event ([cec.md](cec.md)), on a presence event
-([presence.md](presence.md)) or on a barcode scan
-([scanners.md](scanners.md)).** Every
+([presence.md](presence.md)), on a barcode scan
+([scanners.md](scanners.md)) or on an MQTT message ([mqtt.md](mqtt.md)).** Every
 trigger starts the same run unit, so the timeout, the concurrency rule, the
 journal and the run history belong to the script, whoever started it.
 `tessaro-ctl script create|set|remove` change the table, `list` and `show`
@@ -23,12 +23,13 @@ records), `control/scripts.rs` (the commands and following a run) and
   which anyone who may manage the device can already do (`ssh`,
   `browser eval`), so it needs no rule of its own. A run gets
   `TESSARO_SCRIPT` (its name), `TESSARO_RUN` (its instance) and
-  `TESSARO_TRIGGER` (`manual`, `bridge`, `schedule`, `cec`, `presence` or
-  `scanner`); a CEC run also gets `TESSARO_CEC_EVENT`, and `TESSARO_CEC_KEY`
+  `TESSARO_TRIGGER` (`manual`, `bridge`, `schedule`, `cec`, `presence`,
+  `scanner` or `mqtt`); a CEC run also gets `TESSARO_CEC_EVENT`, and `TESSARO_CEC_KEY`
   for a remote key, a presence run `TESSARO_PRESENCE_EVENT` (and the age and
   gender variables of [presence.md](presence.md)'s **Events** with
   camera.presence.demographics on), a scan's run `TESSARO_SCANNER` and
-  `TESSARO_SCAN_TEXT`.
+  `TESSARO_SCAN_TEXT`, an MQTT run `TESSARO_MQTT_TOPIC` and
+  `TESSARO_MQTT_PAYLOAD`.
 * **The body is a file, never escaped into a unit.** It is written to
   `/run/tessaro-kiosk/scripts/<id>-<hash>.sh`, `0600`, and the run unit
   execs `/bin/sh` on it. Only the fixed wrapper line goes through `exec_arg`
@@ -49,7 +50,8 @@ records), `control/scripts.rs` (the commands and following a run) and
 * **A run's instance names its trigger first:** `manual-<unix>-<random>`,
   `bridge-...`, `schedule-<schedule id>-<unix>-<pid>`,
   `cec-<event>-<unix>-<random>` (`cec-tv-standby-...`, `cec-key:red-...`),
-  `presence-<event>-<unix>-<random>`, `scanner-<scanner>-<unix>-<random>`.
+  `presence-<event>-<unix>-<random>`, `scanner-<scanner>-<unix>-<random>`,
+  `mqtt-message-<unix>-<random>`.
   `TESSARO_TRIGGER` is that first word, and a CEC or presence run's event or
   a scan's scanner what lies between it and the time, both cut out by the
   wrapper line (`run_shell`) because systemd has no specifier for them.
@@ -84,6 +86,19 @@ records), `control/scripts.rs` (the commands and following a run) and
   newlines kept, and removes it; a file no run took is gone after 10
   minutes. `scanner.scripts=0` starts none; the scans are
   [scanners.md](scanners.md)'s.
+* **A script runs on the MQTT messages its `mqtt` topic filters match**
+  (`script create|set --mqtt`): any topic on the device's broker, `+` and
+  `#` allowed, at most 16 filters (`protocol::mqtt::triggers`). The link
+  subscribes to every script's filters with no-local, so what the device
+  publishes itself never starts a run, and a filter as wide as `#` cannot
+  feed on the device's own events. Started the same way, with a burst
+  window of its own, as `mqtt-message-<unix>-<random>`. A topic and a
+  payload cannot go into a unit's name or an environment variable as they
+  are - a payload may be binary - so the agent leaves the topic in
+  `scans/<run>.topic`, read into `TESSARO_MQTT_TOPIC`, and the payload in
+  `scans/<run>`, which the wrapper line moves to `<run>.payload` and names
+  in `TESSARO_MQTT_PAYLOAD` for the body to read. `mqtt.scripts=0` starts
+  none; the link is [mqtt.md](mqtt.md)'s.
 * **The content hash is in the run template's and the body's names.** Any
   change to the name, body, `on_error`, timeout or concurrency is a new
   template and body, so an edit never changes a run already going; the old

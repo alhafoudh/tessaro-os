@@ -251,6 +251,44 @@ export const scanner: Detect = async (probe) => {
   }
 };
 
+/** MQTT: mqtt.* is not in tessaro.config, so the link comes from mqtt.status(). */
+export const mqtt: Detect = async (probe) => {
+  const short = lacking(probe, "config");
+  if (short) return short;
+  const bridge = probe.bridge!;
+  if (!bridge.mqtt) return { kind: "limited", note: "This device's agent has no MQTT client; update it." };
+  try {
+    const status = await bridge.mqtt.status();
+    if (status.state === "off") {
+      return {
+        kind: "off",
+        note: "The device has no MQTT broker.",
+        enable: {
+          commands: ["tessaro-ctl config set mqtt.url=mqtts://BROKER:8883"],
+          webconfig: "Webconfig, MQTT page",
+        },
+      };
+    }
+    if (!status.connected) {
+      return {
+        kind: "limited",
+        note: `The device is not connected to its broker (${status.state}).`,
+        enable: { commands: ["tessaro-ctl mqtt status", "tessaro-ctl mqtt test"], webconfig: "Webconfig, MQTT page" },
+      };
+    }
+    if (bridge.mode !== "actions") {
+      return {
+        kind: "limited",
+        note: "Messages arrive; publishing from the page needs the bridge's actions.",
+        enable: bridgeEnable("actions"),
+      };
+    }
+    return { kind: "ready" };
+  } catch (error) {
+    return { kind: "limited", note: message(error) };
+  }
+};
+
 export const scripts: Detect = async (probe) => {
   const short = lacking(probe, "config");
   if (short) return short;

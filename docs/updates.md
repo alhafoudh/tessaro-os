@@ -13,7 +13,8 @@ disk** below.
 1. **Upload.** 4 MiB raw chunks over the API (`update/begin`, then
    `PUT update/image`, see [api.md](api.md)), each fsynced to
    `/data/tessaro/update/upload.part` before it is acknowledged. The same command run again resumes from the last byte
-   the device has. The partition table is checked against the device's own
+   the device has. Or the device downloads it itself (**Fetching from a URL**
+  below). The partition table is checked against the device's own
    as soon as the start of the image decompresses, so a wrong image fails in
    seconds, not after the whole upload. That is after the first chunk for
    bz2, and a few chunks in for zstd: ruzstd hands out nothing until it has
@@ -140,6 +141,34 @@ Things to know:
 * **A device not on the pinned layout cannot take updates** (random
   PARTUUIDs, a root partition sized to its build). One `image:flash` gets it
   onto the layout.
+
+## Fetching from a URL
+
+**`tessaro-ctl update fetch URL` has the device download the image itself,
+for a device reached through a broker or over a slow link, where sending
+gigabytes through the client is the wrong way round.** The image goes into
+the same `upload.part` through the same appends a client's chunks go
+through (`control/fetch.rs`), so everything after the upload - the layout
+check, the dry run, the commit and the apply - is the one above.
+
+* **The bmap comes first**, from beside the image (`.wic.zst` swapped for
+  `.wic.bmap`) unless `--bmap URL` names it. Redirects are followed, and
+  everything goes through `network.proxy.url` like every fetch the device
+  makes.
+* **A dropped link or a restarted agent resumes**: the same command again
+  asks for the rest with a `Range` request, after hashing what is already
+  on `/data`.
+* **Nothing vouches for the image but the URL**: there is no signature and
+  no checksum to compare it with. The device works out the SHA-256 as the
+  bytes arrive and puts it into the manifest before the last ones, so the
+  initramfs still checks that the file it writes is the one that was
+  prepared, and the full verify step is skipped as `--no-verify` would.
+* **It is a job** ([api.md](api.md), **No streams: jobs and pages**): the
+  client follows its steps, or leaves with `--no-wait`; `update status`
+  says how far it got and `update cancel` stops it, as for a sent image.
+* **`--commit`** applies it at the next boot once it is ready, with
+  `--wipe-data` and `--reboot` as for `update send`; `--repartition` is
+  **Rewriting the whole disk** below.
 
 ## Rewriting the whole disk
 

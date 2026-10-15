@@ -38,6 +38,8 @@ export function statusLines(status: Schemas["UpdateStatus"]): Line[] {
         .join(name())
         .text(`: ${mb(status.received)} of ${mb(status.size)} (${percent(status.received, status.size)}%) - run `)
         .add("cmd", "`update send`")
+        .text(" or ")
+        .add("cmd", "`update fetch`")
         .text(" again to resume");
       break;
     case "verifying":
@@ -80,6 +82,40 @@ export function statusLines(status: Schemas["UpdateStatus"]): Line[] {
     lines.push(line.text(")"));
   }
   return lines;
+}
+
+/** update::fetch_line: one step of a fetch, where the download or the checks after it are. */
+export function fetchLine(event: Schemas["FetchEvent"]): Line {
+  const size = event.size ?? 0;
+  const progress = () =>
+    size > 0 ? `${mb(event.received)} of ${mb(size)} (${percent(event.received, size)}%)` : mb(event.received ?? 0);
+  let line: Line;
+  switch (event.phase) {
+    case "bmap":
+      line = Line.of("muted", "fetching the bmap");
+      break;
+    case "download":
+      line = Line.of("warn", "downloading").text(` ${progress()}`);
+      break;
+    case "verifying":
+      line = Line.of("warn", "verifying");
+      break;
+    case "preparing":
+      line = Line.of("warn", "preparing");
+      break;
+    case "ready":
+      line = Line.of("ok", "ready");
+      break;
+    case "committed":
+      line = Line.of("ok", "committed");
+      break;
+    case "done":
+      line = Line.of("ok", "done");
+      break;
+    default:
+      line = Line.plain(event.phase);
+  }
+  return event.message != null ? line.add("muted", `: ${event.message}`) : line;
 }
 
 /** transfer::bmap_for: the block map's name beside the image's. */

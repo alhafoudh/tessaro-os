@@ -8,8 +8,10 @@ Messages and status bar - so a user of one finds their way in the other.
 What only a native client can do stays there: the VNC viewer and the VNC
 tunnel (`screen vnc`), the SSH terminal, DevTools over SSH, finding devices on the network, and running
 one command on several of them (Webconfig manages the one device that
-serves it). The SSH keys and every setting behind those remain on
-Webconfig's pages.
+serves it), and reaching a device through its MQTT broker (`--mqtt`, the
+brokers a client keeps): Webconfig is served by the device it manages, so
+it always talks to it directly. The SSH keys and every setting behind
+those remain on Webconfig's pages.
 
 ## Sessions
 
@@ -164,7 +166,23 @@ are on WiFi, not Network), and only where the scope has settings.
   `describe/cec.ts`, a port of `protocol::cec::triggers` that the
   `cec_triggers` fixture keeps equal, its event and key names included.
   "Run on scans of" is checked the same way, with `describe/scanner.ts`'s
-  port of `protocol::scanner::triggers` (the `scanner_triggers` fixture).
+  port of `protocol::scanner::triggers` (the `scanner_triggers` fixture),
+  and "Run on MQTT messages to" with `describe/mqtt.ts`'s port of
+  `protocol::mqtt::triggers`, the topic filter rules included.
+* **The MQTT page is `tessaro-ctl mqtt`**, under Network: the link's facts
+  from `GET /api/v1/mqtt`, asked again every 3 s, in the words of the
+  ported `describe/mqtt.ts` (the `mqtt_status` fixture). Test connects
+  with the saved settings or a URL typed instead and shows how far it got
+  and the broker certificate's SHA-256 (`mqtt_tested`); Password and
+  Certificate set or forget the secrets, which are never shown. Configure
+  opens the `mqtt.*` settings.
+* **The Update page fetches an image from a URL as well as sending one**:
+  Fetch from URL is `tessaro-ctl update fetch`, a job on the device whose
+  steps are the ported `fetchLine` (the `update_fetch_line` fixture). The
+  device downloads through its proxy and resumes where it stopped, so
+  nothing goes through the browser. Committing an update that erases
+  `/data` or rewrites the disk asks for the device's name first, as Send
+  does.
 * **The Scanner page is `tessaro-ctl scanner`**: Discover and Identify are
   jobs whose finds fill a table of their own, Identify picking the device a
   scan came from, each added with its device id (`parseDevice`, a port of

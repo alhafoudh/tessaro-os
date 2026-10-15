@@ -172,7 +172,7 @@ pub fn run(api: u16, action: Action) -> Result<Outcome, String> {
         }
         Action::Screenshot => {
             let jpeg = session
-                .download::<api::screen::Screenshot>(api::Empty {})
+                .download::<api::screen::Screenshot>(api::ScreenshotQuery::default())
                 .into_result()?
                 .body;
             let saved = save_screenshot(&jpeg)?;

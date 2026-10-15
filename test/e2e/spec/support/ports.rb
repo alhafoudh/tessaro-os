@@ -35,6 +35,10 @@ module AgentE2E
     # The web server the playlist lane serves pages and media from
     # (support/host_web.rb), which the guest reaches as 10.0.2.2 the same way.
     def self.web = 18_080 + offset
+    # The MQTT broker's plain listener (support/mqtt.rb), and its TLS,
+    # WebSocket and TLS WebSocket ones on the ports right after it, which the
+    # guest reaches as 10.0.2.2 the same way.
+    def self.mqtt = 18_830 + offset
 
     # The guest side of each forward, and the host port it gets here.
     def self.forwards = { 22 => ssh, 23 => telnet, 7400 => api }

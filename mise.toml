@@ -89,7 +89,7 @@ dir = "{{config_root}}/agent"
 raw = true
 run = '''
 set -e
-docker compose up -d chromium
+docker compose up -d chromium mosquitto
 trap 'docker compose down' EXIT
 
 # Wait for the endpoint rather than for the container: a running container
@@ -114,7 +114,9 @@ curl -sf -X PUT "http://127.0.0.1:9222/json/new?about:blank" >/dev/null
 #   tessaro-ctl --node 127.0.0.1:17400 access claim
 # or open Webconfig and the API at https://127.0.0.1:17400/ once
 # `mise run webconfig:build` has built it. Swagger UI comes from its recipe
-# and is not here.
+# and is not here. The agent keeps its MQTT link to the compose file's
+# broker, which reaches it too:
+#   tessaro-ctl --mqtt mqtt://127.0.0.1:11883 nodes list
 sandbox="$(mktemp -d)"
 mkdir -p "$sandbox/etc"
 printf 'root::19000:0:99999:7:::\n' > "$sandbox/etc/shadow"
@@ -139,6 +141,9 @@ KIOSK_TIMESYNCD_DROPIN="$sandbox/timesyncd.conf" \
 KIOSK_MANAGE_SCHEDULES=0 \
 KIOSK_SYSTEMD_UNIT_DIR="$sandbox/units" \
 KIOSK_MANAGE_PRINTERS=0 \
+KIOSK_CAMERA_DIR="$sandbox/camera" \
+KIOSK_CAMERA_ENV="$sandbox/camera/camera.env" \
+KIOSK_MQTT_URL="${KIOSK_MQTT_URL:-mqtt://127.0.0.1:11883}" \
 KIOSK_API_LISTEN=127.0.0.1:17400 \
 KIOSK_PORTAL_DIR="$sandbox/portal" \
 KIOSK_WEBCONFIG_ROOT="{{config_root}}/build/webconfig" \
@@ -1173,6 +1178,119 @@ wait "$server"
 description = "Run the fake barcode scanner's unit tests"
 dir = "{{config_root}}/test/usbscanner"
 run = "ruby -Ilib -e 'Dir[\"test/*_test.rb\"].sort.each { require File.expand_path(_1) }'"
+
+# The development MQTT broker (docs/mqtt.md, docs/e2e.md): mosquitto in
+# docker with a plain, a TLS, a WebSocket and a TLS WebSocket listener, the
+# TLS ones on a dev CA kept in build/mqtt/. The e2e suite's mqtt lane starts
+# the same one on ports of its own.
+[tasks."mqtt:run"]
+description = "Run a development MQTT broker in docker (plain, TLS, ws, wss) with a dev CA in build/mqtt, in the foreground"
+dir = "{{config_root}}"
+raw = true
+usage = '''
+flag "--plain <port>" default="1883" help="This host's port for plain MQTT"
+flag "--tls <port>" default="8883" help="This host's port for MQTT over TLS"
+flag "--ws <port>" default="9001" help="This host's port for MQTT over WebSocket"
+flag "--wss <port>" default="9443" help="This host's port for MQTT over a TLS WebSocket"
+'''
+run = '''
+set -eu
+command -v docker >/dev/null || { echo "mqtt:run needs docker on this host" >&2; exit 1; }
+exec ruby test/mqtt/broker.rb \
+    --plain {{ usage.plain | default(value="1883") | quote }} \
+    --tls {{ usage.tls | default(value="8883") | quote }} \
+    --ws {{ usage.ws | default(value="9001") | quote }} \
+    --wss {{ usage.wss | default(value="9443") | quote }}
+'''
+
+[tasks."mqtt:watch"]
+description = "Print every message on the development broker under FILTER (default tessaro/#), binary ones as their size"
+dir = "{{config_root}}"
+raw = true
+usage = '''
+arg "[filter]" help="A topic filter, + and # allowed; default every device's topics"
+'''
+run = '''
+exec ruby test/mqtt/watch.rb {{ usage.filter | default(value="tessaro/#") | quote }}
+'''
+
+# Points a device at the broker mqtt:run runs, and keeps the broker as @dev
+# on this machine, so `tessaro-ctl --mqtt @dev -n DEVICE ...` reaches it.
+# The device is TESSARO_NODE, the qemu VM's forward without one; it reaches
+# this host at 10.0.2.2 from qemu:run, at --host from anywhere else.
+[tasks."mqtt:connect"]
+description = "Point TESSARO_NODE (default the qemu forward) at mqtt:run's broker, and keep it as @dev for tessaro-ctl --mqtt"
+dir = "{{config_root}}"
+raw = true
+usage = '''
+flag "--tls" help="Over TLS, with the user and the dev CA, which the device is told to trust"
+flag "--ws" help="Over a WebSocket (with --tls, a TLS one)"
+flag "--host <address>" help="This host as the device reaches it; 10.0.2.2 for the qemu VM, else the address on the route to the device"
+flag "--port <port>" help="The listener's port, when mqtt:run was given another one"
+'''
+run = '''
+set -eu
+node="${TESSARO_NODE:-127.0.0.1:7401}"
+tls={% if usage.tls %}true{% else %}false{% endif %}
+ws={% if usage.ws %}true{% else %}false{% endif %}
+host={{ usage.host | default(value="") | quote }}
+port={{ usage.port | default(value="") | quote }}
+[ -f build/mqtt/ca.pem ] || { echo "no dev CA in build/mqtt; start the broker first: mise run mqtt:run" >&2; exit 1; }
+
+case "$tls$ws" in
+    falsefalse) scheme=mqtt default=1883 ;;
+    truefalse) scheme=mqtts default=8883 ;;
+    falsetrue) scheme=ws default=9001 ;;
+    truetrue) scheme=wss default=9443 ;;
+esac
+port="${port:-$default}"
+# Where the device finds this host: slirp's alias for the qemu VM, else the
+# source address of the route to it.
+if [ -z "$host" ]; then
+    ip="${node%%:*}"
+    case "$ip" in
+        127.0.0.1|localhost) host=10.0.2.2 ;;
+        *[!0-9.]*) echo "name this host as $node reaches it with --host" >&2; exit 1 ;;
+        *)
+            if command -v ip >/dev/null; then
+                host=$(ip -4 route get "$ip" | sed -n 's/.* src \([0-9.]*\).*/\1/p')
+            else
+                host=$(route -n get "$ip" 2>/dev/null | awk '/interface:/ { print $2 }' | xargs ipconfig getifaddr)
+            fi
+            ;;
+    esac
+fi
+[ -n "$host" ] || { echo "could not tell this host's address towards $node; pass --host" >&2; exit 1; }
+path=""
+[ "$ws" = true ] && path=/
+
+export TESSARO_NODE="$node"
+if [ "$tls" = true ]; then
+    # Trusting the CA restarts the agent; a second add of the same one is
+    # refused, which is fine.
+    mise run ctl:run -- network certs add build/mqtt/ca.pem || true
+    mise run ctl:run -- config set "mqtt.url=$scheme://$host:$port$path" mqtt.username=tessaro
+    printf %s tessaro | mise run ctl:run -- mqtt password set --password-stdin
+else
+    mise run ctl:run -- config set "mqtt.url=$scheme://$host:$port$path"
+    mise run ctl:run -- config unset mqtt.username
+fi
+
+# This machine reaches the broker on its own ports.
+here="$scheme://localhost:$port$path"
+if mise run ctl:run -- nodes brokers list | grep -q '^@dev '; then
+    printf %s tessaro | mise run ctl:run -- nodes brokers set dev --url "$here" --username tessaro --password-stdin --ca build/mqtt/ca.pem
+else
+    printf %s tessaro | mise run ctl:run -- nodes brokers add dev "$here" --username tessaro --password-stdin --ca build/mqtt/ca.pem
+fi
+mise run ctl:run -- mqtt status
+echo "now: tessaro-ctl --mqtt @dev nodes list    (mise run ctl:run -- ...)"
+'''
+
+[tasks."mqtt:stop"]
+description = "Stop mqtt:run's broker; the dev CA in build/mqtt stays, so devices that trust it keep working"
+dir = "{{config_root}}"
+run = "docker stop tessaro-mqtt"
 
 [tasks."dev:tunnel"]
 description = "Keep an SSH tunnel to the build host up: its VNC ports here, the local device's SSH there"

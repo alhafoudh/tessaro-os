@@ -21,6 +21,12 @@
 //! A session speaks the HTTP API (docs/api.md) one request at a time, each
 //! call typed by its endpoint (`protocol::api`), over one connection it
 //! opens again when the device has closed it.
+//!
+//! Or through the device's MQTT broker (`--mqtt`, `Target::Mqtt`): the same
+//! requests as messages on the device's command topics (`mqtt.rs`), with
+//! nothing to pin and no token - the broker is trusted. What only works
+//! over IP - SSH, a tunnel, how long a ping takes - says so
+//! (`Session::over_mqtt`).
 
 use std::io::{BufReader, Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpStream, ToSocketAddrs};
@@ -34,6 +40,7 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
+use crate::brokers::Broker;
 use crate::http::{self, Broken, Reply};
 use crate::nodes::{Node, Nodes};
 
@@ -74,6 +81,12 @@ pub enum Target {
         /// A bare name no known device has: it may be the start of the name
         /// or id of a device known or found on the network (`pick`).
         start: bool,
+    },
+    /// A device through `broker`, by its name, its id, or the start of
+    /// either (`mqtt::pick`).
+    Mqtt {
+        broker: Broker,
+        device: String,
     },
 }
 
@@ -239,6 +252,11 @@ enum Dial {
         address: SocketAddr,
         fingerprint: String,
     },
+    /// The device with node id `id`, through `broker`.
+    Mqtt {
+        broker: Broker,
+        id: String,
+    },
 }
 
 /// One open connection.
@@ -253,6 +271,8 @@ struct Conn {
 
 pub struct Session {
     conn: Option<Conn>,
+    /// The link to the broker of a session over MQTT.
+    link: Option<crate::mqtt::Link>,
     dial: Dial,
     /// How this program names itself to the device, for its journal.
     agent: String,
@@ -360,12 +380,37 @@ pub fn open(
                 client,
             )
         }
+        Target::Mqtt { broker, device } => open_mqtt(broker, device, client),
     }
 }
 
 fn open_local(path: &std::path::Path, client: &str) -> Result<Session, String> {
     let conn = dial_local(path)?;
-    let mut session = Session::new(Dial::Local(path.to_path_buf()), conn, client);
+    let mut session = Session::new(Dial::Local(path.to_path_buf()), Some(conn), client);
+    session.node = session.identify()?;
+    Ok(session)
+}
+
+/// A session with `device` through `broker`: which device it is, from the
+/// statuses the broker keeps, then who it says it is, asked over MQTT.
+fn open_mqtt(broker: &Broker, device: &str, client: &str) -> Result<Session, String> {
+    let mut link = crate::mqtt::Link::connect(broker, client)?;
+    let seen = link.scan(crate::mqtt::SCAN)?;
+    let found = crate::mqtt::pick(device, &seen, link.label())?.clone();
+    if !found.presence.online {
+        return Err(format!(
+            "{} ({}) is not connected to {}",
+            found.presence.name.as_deref().unwrap_or(device),
+            found.id,
+            link.label()
+        ));
+    }
+    let dial = Dial::Mqtt {
+        broker: broker.clone(),
+        id: found.id.clone(),
+    };
+    let mut session = Session::new(dial, None, client);
+    session.link = Some(link);
     session.node = session.identify()?;
     Ok(session)
 }
@@ -456,7 +501,7 @@ fn open_remote(
         address,
         fingerprint: fingerprint.clone(),
     };
-    let mut session = Session::new(dial, conn, client);
+    let mut session = Session::new(dial, Some(conn), client);
     session.node = session
         .identify()
         .map_err(|why| Failure::Unreachable(format!("{address}: {why}")))?;
@@ -685,9 +730,10 @@ impl Conn {
 }
 
 impl Session {
-    fn new(dial: Dial, conn: Conn, client: &str) -> Self {
+    fn new(dial: Dial, conn: Option<Conn>, client: &str) -> Self {
         Self {
-            conn: Some(conn),
+            conn,
+            link: None,
             dial,
             agent: format!("{client} {}", protocol::VERSION),
             token: None,
@@ -725,11 +771,30 @@ impl Session {
     }
 
     /// The address this session reaches the device at; none over the local
-    /// socket.
+    /// socket or MQTT.
     pub fn address(&self) -> Option<SocketAddr> {
         match &self.dial {
             Dial::Remote { address, .. } => Some(*address),
-            Dial::Local(_) => None,
+            Dial::Local(_) | Dial::Mqtt { .. } => None,
+        }
+    }
+
+    /// The broker a session over MQTT goes through, as the user named it.
+    pub fn over_mqtt(&self) -> Option<String> {
+        match &self.dial {
+            Dial::Mqtt { broker, .. } => Some(broker.label()),
+            _ => None,
+        }
+    }
+
+    /// Refuse what only works over IP, for a session over MQTT: `what`, in
+    /// words, needs a connection to the device itself.
+    pub fn needs_ip(&self, what: &str) -> Result<(), String> {
+        match self.over_mqtt() {
+            Some(broker) => Err(format!(
+                "{what} needs the device itself, over its network; this session goes through {broker}"
+            )),
+            None => Ok(()),
         }
     }
 
@@ -936,6 +1001,9 @@ impl Session {
         content: Option<&str>,
         body: &[u8],
     ) -> Result<Reply, String> {
+        if matches!(self.dial, Dial::Mqtt { .. }) {
+            return self.exchange_mqtt(method, target, body);
+        }
         let authorization = self.token.as_ref().map(|token| format!("Bearer {token}"));
         let mut headers: Vec<(&str, &str)> =
             vec![("User-Agent", &self.agent), ("Accept", "application/json")];
@@ -982,10 +1050,71 @@ impl Session {
         Err("the device keeps closing the connection".to_string())
     }
 
+    /// The same request as a message to the device's command topic: the
+    /// endpoint its method and path name, its query and path as the
+    /// params, its body as it is. The link is opened again if it dropped.
+    fn exchange_mqtt(&mut self, method: &str, target: &str, body: &[u8]) -> Result<Reply, String> {
+        let Dial::Mqtt { broker, id } = &self.dial else {
+            return Err("not a session over MQTT".to_string());
+        };
+        let (path, query) = target.split_once('?').unwrap_or((target, ""));
+        let method = match method {
+            "GET" => api::Method::Get,
+            "POST" => api::Method::Post,
+            "PUT" => api::Method::Put,
+            "PATCH" => api::Method::Patch,
+            "DELETE" => api::Method::Delete,
+            other => return Err(format!("{other} is not a method the API takes")),
+        };
+        let routes = api::all();
+        let (route, mut pairs) = api::find(&routes, method, path)
+            .ok_or_else(|| format!("{path}: this client knows no such endpoint"))?;
+        pairs.extend(
+            serde_urlencoded::from_str::<Vec<(String, String)>>(query)
+                .map_err(|err| format!("the query: {err}"))?,
+        );
+        let (payload, user) = match route.raw_body {
+            true => (
+                body.to_vec(),
+                vec![(
+                    protocol::mqtt::envelope::PARAMS.to_string(),
+                    protocol::mqtt::envelope::params_property(&pairs),
+                )],
+            ),
+            false => (
+                protocol::mqtt::envelope::write_request(&pairs, body)?,
+                Vec::new(),
+            ),
+        };
+        // An answer may take as long as an HTTP one may.
+        let timeout = self.read_timeout.unwrap_or(Duration::from_secs(24 * 3600));
+        let client = self
+            .agent
+            .split(' ')
+            .next()
+            .unwrap_or("tessaro")
+            .to_string();
+        let (broker, id) = (broker.clone(), id.clone());
+        if self.link.is_none() {
+            self.link = Some(crate::mqtt::Link::connect(&broker, &client)?);
+        }
+        let link = self.link.as_mut().expect("a link was just opened");
+        match link.request(&id, route.tag(), route.name, payload, user, timeout) {
+            Ok(message) => Ok(crate::mqtt::reply(message)),
+            Err(err) => {
+                self.link = None;
+                Err(err)
+            }
+        }
+    }
+
     /// A new connection to the same device, held to the same certificate.
     fn redial(&self) -> Result<Conn, String> {
         match &self.dial {
             Dial::Local(path) => dial_local(path),
+            Dial::Mqtt { .. } => {
+                Err("a session over MQTT has no connection of its own".to_string())
+            }
             Dial::Remote {
                 address,
                 fingerprint,

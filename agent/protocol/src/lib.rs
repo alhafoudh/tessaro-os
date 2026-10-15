@@ -8,9 +8,11 @@
 //! one, and so does the page bridge. It never crosses the network.
 
 pub mod api;
+pub mod asyncapi;
 pub mod cec;
 pub mod files;
 pub mod keys;
+pub mod mqtt;
 pub mod openapi;
 pub mod playlist;
 pub mod policy;
@@ -256,7 +258,14 @@ pub enum Command {
         what: RestartTarget,
     },
     Reboot,
-    Screenshot,
+    /// What is on screen, as a JPEG: scaled down to `width` pixels across
+    /// when it is wider, at `quality` (`SCREENSHOT_QUALITY` without one).
+    Screenshot {
+        #[serde(default)]
+        width: Option<u32>,
+        #[serde(default)]
+        quality: Option<u8>,
+    },
     /// Reload the page on screen, past the cache.
     Reload,
     /// Empty the browser's HTTP cache.
@@ -388,6 +397,30 @@ pub enum Command {
     },
     /// Drop the upload or the prepared update, and the pending marker.
     UpdateCancel,
+    /// Download an image from a URL into the update, and prepare it: the
+    /// device fetches it itself, through network.proxy.url, resuming where
+    /// it stopped. A stream of `FetchEvent`s.
+    UpdateFetch(FetchSpec),
+    /// The device's link to its MQTT broker.
+    MqttStatus,
+    /// Connect to the broker with the saved settings, or with `url`, and
+    /// say how far it got. Nothing is saved.
+    MqttTest {
+        #[serde(default)]
+        url: Option<String>,
+    },
+    /// Keep the broker password, or forget it with `None`.
+    MqttPassword {
+        #[serde(default)]
+        password: Option<Secret>,
+    },
+    /// Keep a client certificate and its key for the broker, both PEM.
+    MqttCertSet {
+        cert: String,
+        key: Secret,
+    },
+    /// Forget the client certificate.
+    MqttCertClear,
     /// Measure the device's own internet connection against
     /// speed.cloudflare.com. A stream of `SpeedtestEvent`s.
     Speedtest {
@@ -603,6 +636,9 @@ pub enum Command {
         /// The scanners whose scans it runs on; empty for none.
         #[serde(default)]
         scanner: Option<Vec<String>>,
+        /// The MQTT topic filters it runs on; empty for none.
+        #[serde(default)]
+        mqtt: Option<Vec<String>>,
     },
     /// Refused while a schedule runs it.
     ScriptRemove {
@@ -843,8 +879,51 @@ impl Command {
                 | Command::ScannerDiscover
                 | Command::ScannerIdentify
                 | Command::ScannerTest { .. }
+                | Command::UpdateFetch(_)
         )
     }
+}
+
+/// The JPEG quality of a screenshot that names none.
+pub const SCREENSHOT_QUALITY: u8 = 85;
+
+/// The image `update-fetch` downloads, and what to do once it is ready.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct FetchSpec {
+    /// The `.wic.zst` (or `.wic.bz2`, `.wic.gz`), http or https.
+    pub url: String,
+    /// Its `.wic.bmap`; without one, `url` with the compression suffix
+    /// swapped for `.bmap`.
+    #[serde(default)]
+    pub bmap: Option<String>,
+    /// Write the whole disk, as `ImageUpload::repartition`.
+    #[serde(default)]
+    pub repartition: bool,
+    /// Commit it once it is ready: apply it at the next boot.
+    #[serde(default)]
+    pub commit: bool,
+    /// With `commit`: re-create `/data` too.
+    #[serde(default)]
+    pub wipe_data: bool,
+    /// With `commit`: reboot into it at once.
+    #[serde(default)]
+    pub reboot: bool,
+}
+
+/// One step of `update-fetch`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct FetchEvent {
+    /// `bmap`, `download`, `verifying`, `preparing`, `ready`, `committed`.
+    pub phase: String,
+    /// Bytes of the image the device has.
+    #[serde(default)]
+    pub received: u64,
+    /// The image's size, once the server said it.
+    #[serde(default)]
+    pub size: Option<u64>,
+    /// What happened, in words.
+    #[serde(default)]
+    pub message: Option<String>,
 }
 
 /// A page of the journal.
@@ -901,6 +980,7 @@ pub enum JobEvent {
     Script(ScriptEvent),
     ScannerCandidate(scanner::ScannerCandidate),
     Scan(scanner::Scan),
+    Fetch(FetchEvent),
 }
 
 /// A job the device started: poll it at `/api/v1/jobs/{job}`.
@@ -914,7 +994,8 @@ pub struct JobStarted {
 pub struct JobPage {
     /// Its steps from number `after` on, in order: `PingEvent`s,
     /// `SpeedtestEvent`s, `StorageGrowEvent`s, `PrinterFound`s,
-    /// `ScriptEvent`s, `ScannerCandidate`s or `Scan`s, by the job.
+    /// `ScriptEvent`s, `ScannerCandidate`s, `Scan`s or `FetchEvent`s, by
+    /// the job.
     #[schemars(with = "Vec<JobEvent>")]
     pub events: Vec<Value>,
     /// What to send as `after` next.
@@ -1035,6 +1116,9 @@ pub struct Status {
     /// Defaulted the same way.
     #[serde(default)]
     pub playlist: Option<playlist::PlaylistStatus>,
+    /// The link to the MQTT broker. Defaulted the same way.
+    #[serde(default)]
+    pub mqtt: Option<mqtt::MqttStatus>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -2495,6 +2579,10 @@ pub struct ScriptSpec {
     /// scanner (`protocol::scanner`).
     #[serde(default)]
     pub scanner: Vec<String>,
+    /// The MQTT topic filters whose messages it runs on, `+` and `#`
+    /// allowed (`protocol::mqtt::triggers`).
+    #[serde(default)]
+    pub mqtt: Vec<String>,
 }
 
 /// What a schedule is: when it fires and which script it runs.

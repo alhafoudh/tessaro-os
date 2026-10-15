@@ -213,6 +213,7 @@ function ScriptDialog({
           cec: "",
           presence: "",
           scanner: "",
+          mqtt: "",
         },
   );
   const [error, setError] = useState<string | null>(null);
@@ -257,8 +258,8 @@ function ScriptDialog({
     >
       <Intro>
         The body runs with /bin/sh as root, from /; write tessaro-ctl commands out in full. Run it now from this page,
-        on calendar times from Schedules, from the kiosk page when it may, on the TV's HDMI-CEC events, or when someone
-        arrives in front of the screen or leaves.
+        on calendar times from Schedules, from the kiosk page when it may, on the TV's HDMI-CEC events, when someone
+        arrives in front of the screen or leaves, on a scan, or on a message at the device's MQTT broker.
       </Intro>
       <Field label="Name">
         <input
@@ -351,6 +352,17 @@ function ScriptDialog({
           value={typed.scanner}
           onChange={(event) => edit({ scanner: event.target.value })}
           placeholder="none, or front, or *"
+          spellCheck={false}
+        />
+      </Field>
+      <Field
+        label="Run on MQTT messages to"
+        hint="comma separated topic filters, + and # allowed; empty for none. The topic is in $TESSARO_MQTT_TOPIC, the payload in the file $TESSARO_MQTT_PAYLOAD names. Needs mqtt.url."
+      >
+        <input
+          value={typed.mqtt}
+          onChange={(event) => edit({ mqtt: event.target.value })}
+          placeholder="none, or acme/doors/+/open"
           spellCheck={false}
         />
       </Field>

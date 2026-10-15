@@ -114,6 +114,27 @@ describe("scripts", () => {
   });
 });
 
+describe("MQTT", () => {
+  it("is off until mqtt.url is set, with the command to set it", async () => {
+    const status = await detect.mqtt(probe({ mqtt: "off" }));
+    expect(status.kind).toBe("off");
+    if (status.kind === "off") expect(status.enable.commands[0]).toContain("config set mqtt.url=");
+  });
+
+  it("says so when the broker is not connected", async () => {
+    expect((await detect.mqtt(probe({ mqtt: "failed" }))).kind).toBe("limited");
+  });
+
+  it("hears messages in config mode, publishes in actions mode", async () => {
+    expect((await detect.mqtt(probe({ mode: "config" }))).kind).toBe("limited");
+    expect((await detect.mqtt(probe())).kind).toBe("ready");
+  });
+
+  it("needs the bridge", async () => {
+    expect((await detect.mqtt(probe({ bridge: false }))).kind).toBe("needs-bridge");
+  });
+});
+
 describe("the film", () => {
   it("needs the internet", async () => {
     expect((await detect.video(probe({ online: false }))).kind).toBe("offline");

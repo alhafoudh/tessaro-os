@@ -91,6 +91,13 @@ whole, inside the transaction it is given (`State` in `state.rs`, `Auth` in
   [kiosk-browser.md](kiosk-browser.md)). A hand edit that leaves gaps or
   ties is read in `position, name` order and written back 1..N by the next
   change.
+* **`secrets` holds what must never be a setting**: a value that may hold
+  any character, or that `config get` must not show. The MQTT broker's
+  password and the link's client certificate and key are rows there
+  (`secrets.rs`), cleared by a factory reset and kept by an unclaim (see
+  **Leaving the broker** in [mqtt.md](mqtt.md)).
+* **`scripts.mqtt` is a script's MQTT topic filters**, a JSON array like its
+  `cec`, `presence` and `scanner` lists ([scripts.md](scripts.md)).
 * **The settings are sparse**: a key that was never set has no row, so it
   follows the image's default (see [settings.md](settings.md)).
 * **`net_txn` is the network transaction's record** while a change runs, and
@@ -131,6 +138,11 @@ from a stale copy would undo a token tessaro-ctl stored meanwhile.
 * **Reading never makes the store.** Only a write creates the file and its
   directory, so a command that only reads works where the config dir cannot
   be written: tessaro-ctl on the device, run with no `HOME`, has `/`.
+* **`brokers`** holds the MQTT brokers kept by name for `--mqtt @NAME`
+  (`brokers.rs`): the URL, the user and password, the devices' prefix, and
+  a CA and a client certificate and key as PEM, one row each, written
+  alone like a node's (**Through an MQTT broker** in
+  [clients.md](clients.md)).
 * **`gui_prefs`** holds the GUI's zoom, window placements and table widths and
   sorting, a JSON value per name (`Prefs` in `gui/tessaro-gui/src/main.rs`). A
   row that does not parse is ignored, as if it was never saved.

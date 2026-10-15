@@ -293,6 +293,30 @@ TESSARO_NODE=ADDRESS mise run demo:sync
 `agent.refresh_interval` back with `config unset` when done. How it works
 is in [docs/demo.md](docs/demo.md).
 
+## MQTT
+
+A development broker, mosquitto in docker, with a plain, a TLS, a
+WebSocket and a TLS WebSocket listener on a dev CA it makes once in
+`build/mqtt/`. The plain listeners take anyone, the TLS ones the user
+`tessaro` with the password `tessaro`.
+
+```sh
+mise run mqtt:run                  # the broker, in the foreground, with its log
+mise run qemu:run                  # a device, in another terminal
+mise run mqtt:connect              # point the VM at the broker, keep it as @dev
+mise run mqtt:connect -- --tls     # the same over TLS, the dev CA trusted on the device
+mise run mqtt:watch                # every message under tessaro/#
+mise run ctl:run -- --mqtt @dev nodes list
+mise run ctl:run -- --mqtt @dev -n NAME device status
+mise run mqtt:stop                 # the broker; build/mqtt stays
+```
+
+`mqtt:connect` points `TESSARO_NODE` (default the qemu forward) at this
+host, `10.0.2.2` from the VM, else the address on the route to the device;
+`--ws` goes over a WebSocket, `--host` and `--port` name the listener.
+`mqtt:run` prints the URLs a device and this host use. How the link works
+is in [docs/mqtt.md](docs/mqtt.md).
+
 ## The player page
 
 The player page plays playlists on the device: static files in

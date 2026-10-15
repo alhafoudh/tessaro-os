@@ -20,3 +20,13 @@ services:
     # control over the browser, and it has no authentication of any kind.
     ports:
       - "127.0.0.1:9222:9222"
+
+  # The broker the agent keeps its MQTT link to here (docs/mqtt.md): plain,
+  # anyone, on a port of its own so it can run beside `mise run mqtt:run`'s.
+  # `docker compose exec mosquitto mosquitto_sub -v -t 'tessaro/#'` shows
+  # what the agent publishes.
+  mosquitto:
+    image: eclipse-mosquitto:2
+    command: ["sh", "-c", "printf 'listener 1883\\nallow_anonymous true\\n' > /tmp/m.conf && exec mosquitto -c /tmp/m.conf"]
+    ports:
+      - "127.0.0.1:11883:1883"

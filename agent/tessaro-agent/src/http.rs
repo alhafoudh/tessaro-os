@@ -75,6 +75,23 @@ pub struct HttpResponse {
     pub body: String,
 }
 
+/// A GET's answer while its body is still coming (`HyperHttp::get`).
+pub struct Streaming {
+    pub status: u16,
+    pub headers: hyper::HeaderMap,
+    body: hyper::body::Incoming,
+    _driver: AbortOnDrop,
+}
+
+impl Streaming {
+    pub fn header(&self, name: hyper::header::HeaderName) -> Option<String> {
+        self.headers
+            .get(name)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string)
+    }
+}
+
 /// What `HyperHttp::download` was answered.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Downloaded {
@@ -144,14 +161,72 @@ pub fn trust(roots: Vec<native_tls::Certificate>) {
 /// verifier by construction - there is no compiled-in root store to pick by
 /// mistake. `roots` are added on top, never instead.
 fn connector(roots: &[native_tls::Certificate]) -> Result<tokio_native_tls::TlsConnector, String> {
+    tls_builder(roots)
+        .build()
+        .map(tokio_native_tls::TlsConnector::from)
+        .map_err(|err| err.to_string())
+}
+
+fn tls_builder(roots: &[native_tls::Certificate]) -> native_tls::TlsConnectorBuilder {
     let mut builder = native_tls::TlsConnector::builder();
     for root in roots {
         builder.add_root_certificate(root.clone());
     }
     builder
+}
+
+/// A TLS client for a connection other than an HTTP request - the MQTT
+/// link's: the same trust as every other client here, the extra
+/// certificate authorities included, and a client certificate when the
+/// server wants one. `pinned` turns the chain check off, for a caller that
+/// compares the server certificate's fingerprint itself.
+pub fn tls_client(
+    identity: Option<native_tls::Identity>,
+    pinned: bool,
+) -> Result<tokio_native_tls::TlsConnector, String> {
+    let mut builder = tls_builder(ROOTS.get().map(Vec::as_slice).unwrap_or_default());
+    if let Some(identity) = identity {
+        builder.identity(identity);
+    }
+    if pinned {
+        builder.danger_accept_invalid_certs(true);
+        builder.danger_accept_invalid_hostnames(true);
+    }
+    builder
         .build()
         .map(tokio_native_tls::TlsConnector::from)
         .map_err(|err| err.to_string())
+}
+
+/// Ask the proxy `stream` is connected to for a tunnel to `authority`
+/// (`host:port`): the status it answered, `None` for an answer that is not
+/// HTTP. The caller bounds it.
+pub async fn proxy_connect(
+    stream: &mut TcpStream,
+    authority: &str,
+) -> std::io::Result<Option<u16>> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let request = format!(
+        "CONNECT {authority} HTTP/1.1\r\nHost: {authority}\r\nUser-Agent: {USER_AGENT}\r\n\r\n"
+    );
+    // naked: the caller bounds the whole exchange
+    stream.write_all(request.as_bytes()).await?;
+    // Byte by byte up to the blank line, so nothing of what the target
+    // sends after the tunnel opens is taken here.
+    let mut head = Vec::new();
+    let mut byte = [0u8; 1];
+    while !head.ends_with(b"\r\n\r\n") {
+        // naked: the caller bounds the whole exchange
+        if head.len() > 8192 || stream.read(&mut byte).await? == 0 {
+            return Err(std::io::Error::new(
+                ErrorKind::InvalidData,
+                "the proxy's answer ended early",
+            ));
+        }
+        head.push(byte[0]);
+    }
+    Ok(connect_status(&head))
 }
 
 /// Whatever carries the request: a plain socket or a TLS stream over one.
@@ -237,55 +312,12 @@ impl HyperHttp {
     ) -> Result<Downloaded, HttpError> {
         use tokio::io::AsyncWriteExt;
 
-        let target = Target::parse(url).ok_or(HttpError::InvalidUrl)?;
-        let io = self.open(&target).await?;
-        let handshake = hyper::client::conn::http1::handshake(TokioIo::new(io));
-        let (mut sender, connection) = match self
-            .heartbeat
-            .within("HTTP handshake", self.connect_timeout, handshake)
-            .await
-        {
-            Err(_) => return Err(HttpError::ConnectTimeout),
-            Ok(Err(err)) => return Err(HttpError::Other(err.to_string())),
-            Ok(Ok(pair)) => pair,
-        };
-        let _driver = AbortOnDrop(tokio::spawn(connection));
-
-        let mut request = Request::get(target.path.as_str())
-            .header(HOST, target.authority.as_str())
-            .header(USER_AGENT_HEADER, USER_AGENT);
-        for (name, value) in headers {
-            request = request.header(*name, value.as_str());
-        }
-        let request = request
-            .body(Empty::<Bytes>::new())
-            .map_err(|_| HttpError::InvalidUrl)?;
-        let response = match self
-            .heartbeat
-            .within(
-                "HTTP response",
-                self.read_timeout,
-                sender.send_request(request),
-            )
-            .await
-        {
-            Err(_) => return Err(HttpError::ReadTimeout),
-            Ok(Err(err)) => return Err(classify_text(&err.to_string())),
-            Ok(Ok(response)) => response,
-        };
-
-        let header = |name: hyper::header::HeaderName| {
-            response
-                .headers()
-                .get(name)
-                .and_then(|value| value.to_str().ok())
-                .map(str::to_string)
-        };
+        let mut streaming = self.get(url, headers).await?;
         let mut answer = Downloaded {
-            status: response.status().as_u16(),
-            location: header(LOCATION),
-            etag: header(hyper::header::ETAG),
-            last_modified: header(hyper::header::LAST_MODIFIED),
+            status: streaming.status,
+            location: streaming.header(LOCATION),
+            etag: streaming.header(hyper::header::ETAG),
+            last_modified: streaming.header(hyper::header::LAST_MODIFIED),
             size: 0,
         };
         if answer.status != 200 {
@@ -312,21 +344,7 @@ impl HyperHttp {
             Ok(Err(err)) => return Err(write_failed(err)),
             Ok(Ok(file)) => file,
         };
-        let mut body = response.into_body();
-        loop {
-            let frame = match self
-                .heartbeat
-                .within("HTTP body", self.read_timeout, body.frame())
-                .await
-            {
-                Err(_) => return Err(HttpError::ReadTimeout),
-                Ok(None) => break,
-                Ok(Some(Err(err))) => return Err(HttpError::Other(err.to_string())),
-                Ok(Some(Ok(frame))) => frame,
-            };
-            let Ok(data) = frame.into_data() else {
-                continue;
-            };
+        while let Some(data) = self.frame(&mut streaming).await? {
             answer.size += data.len() as u64;
             if answer.size > max {
                 return Err(HttpError::Other(format!("larger than {max} bytes")));
@@ -357,6 +375,80 @@ impl HyperHttp {
             ))),
             Ok(Err(err)) => Err(write_failed(err)),
             Ok(Ok(())) => Ok(answer),
+        }
+    }
+
+    /// A GET whose answer is read as it comes: its status and headers now,
+    /// its body a frame at a time (`frame`). `headers` go along: a range, a
+    /// conditional request. The connection lasts as long as the `Streaming`.
+    pub async fn get(
+        &self,
+        url: &str,
+        headers: &[(&'static str, String)],
+    ) -> Result<Streaming, HttpError> {
+        let target = Target::parse(url).ok_or(HttpError::InvalidUrl)?;
+        let io = self.open(&target).await?;
+        let handshake = hyper::client::conn::http1::handshake(TokioIo::new(io));
+        let (mut sender, connection) = match self
+            .heartbeat
+            .within("HTTP handshake", self.connect_timeout, handshake)
+            .await
+        {
+            Err(_) => return Err(HttpError::ConnectTimeout),
+            Ok(Err(err)) => return Err(HttpError::Other(err.to_string())),
+            Ok(Ok(pair)) => pair,
+        };
+        let driver = AbortOnDrop(tokio::spawn(connection));
+
+        let mut request = Request::get(target.path.as_str())
+            .header(HOST, target.authority.as_str())
+            .header(USER_AGENT_HEADER, USER_AGENT);
+        for (name, value) in headers {
+            request = request.header(*name, value.as_str());
+        }
+        let request = request
+            .body(Empty::<Bytes>::new())
+            .map_err(|_| HttpError::InvalidUrl)?;
+        let response = match self
+            .heartbeat
+            .within(
+                "HTTP response",
+                self.read_timeout,
+                sender.send_request(request),
+            )
+            .await
+        {
+            Err(_) => return Err(HttpError::ReadTimeout),
+            Ok(Err(err)) => return Err(classify_text(&err.to_string())),
+            Ok(Ok(response)) => response,
+        };
+        let (head, body) = response.into_parts();
+        Ok(Streaming {
+            status: head.status.as_u16(),
+            headers: head.headers,
+            body,
+            _driver: driver,
+        })
+    }
+
+    /// The next piece of a streaming body; `None` at its end. Each piece
+    /// has `read_timeout`, so a large file on a slow link is fine and a
+    /// stalled one is not.
+    pub async fn frame(&self, streaming: &mut Streaming) -> Result<Option<Bytes>, HttpError> {
+        loop {
+            let frame = match self
+                .heartbeat
+                .within("HTTP body", self.read_timeout, streaming.body.frame())
+                .await
+            {
+                Err(_) => return Err(HttpError::ReadTimeout),
+                Ok(None) => return Ok(None),
+                Ok(Some(Err(err))) => return Err(HttpError::Other(err.to_string())),
+                Ok(Some(Ok(frame))) => frame,
+            };
+            if let Ok(data) = frame.into_data() {
+                return Ok(Some(data));
+            }
         }
     }
 
@@ -429,29 +521,7 @@ impl HyperHttp {
         };
 
         let authority = target.connect_authority();
-        let request = format!(
-            "CONNECT {authority} HTTP/1.1\r\nHost: {authority}\r\nUser-Agent: {USER_AGENT}\r\n\r\n"
-        );
-        let status = async {
-            use tokio::io::{AsyncReadExt, AsyncWriteExt};
-            // naked: bounded by the "proxy CONNECT" within() below
-            stream.write_all(request.as_bytes()).await?;
-            // Byte by byte up to the blank line, so nothing of what the
-            // target sends after the tunnel opens is taken here.
-            let mut head = Vec::new();
-            let mut byte = [0u8; 1];
-            while !head.ends_with(b"\r\n\r\n") {
-                // naked: bounded by the "proxy CONNECT" within() below
-                if head.len() > 8192 || stream.read(&mut byte).await? == 0 {
-                    return Err(std::io::Error::new(
-                        ErrorKind::InvalidData,
-                        "the proxy's answer ended early",
-                    ));
-                }
-                head.push(byte[0]);
-            }
-            Ok(connect_status(&head))
-        };
+        let status = proxy_connect(&mut stream, &authority);
         match self
             .heartbeat
             .within("proxy CONNECT", self.connect_timeout, status)

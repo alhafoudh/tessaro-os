@@ -116,6 +116,81 @@ pub fn send(
     }
 }
 
+/// `update fetch`, as it is typed.
+#[derive(clap::Args)]
+pub struct Fetch {
+    /// The image's URL, http or https: a .wic.zst (or .wic.bz2), with its
+    /// .wic.bmap beside it.
+    pub url: String,
+    /// The block map's URL, if it is not beside the image.
+    #[arg(long, value_name = "URL")]
+    pub bmap: Option<String>,
+    /// Write the whole disk, as `update send --repartition` does. Implies
+    /// --wipe-data once committed.
+    #[arg(long)]
+    pub repartition: bool,
+    /// Once it is ready, apply it at the next boot.
+    #[arg(long)]
+    pub commit: bool,
+    /// With --commit: also re-create /data, as `update send --wipe-data`.
+    #[arg(long, requires = "commit")]
+    pub wipe_data: bool,
+    /// With --commit: reboot into it at once.
+    #[arg(long, requires = "commit")]
+    pub reboot: bool,
+    /// Only start it, and leave it to the device: `update status` says how
+    /// far it got, `update cancel` stops it.
+    #[arg(long)]
+    pub no_wait: bool,
+    #[arg(long, short)]
+    pub yes: bool,
+}
+
+pub fn fetch(session: &mut Session, options: Fetch, json: bool) -> Result<(), String> {
+    let spec = protocol::FetchSpec {
+        url: options.url,
+        bmap: options.bmap,
+        repartition: options.repartition,
+        commit: options.commit,
+        wipe_data: options.wipe_data,
+        reboot: options.reboot,
+    };
+    let node = session.node.name.clone();
+    if spec.commit {
+        let plan = Plan {
+            image: PathBuf::from(&spec.url),
+            bmap: PathBuf::new(),
+            wipe_data: spec.wipe_data,
+            repartition: spec.repartition,
+            verify: false,
+            reboot: spec.reboot,
+        };
+        let name = spec.url.rsplit('/').next().unwrap_or(&spec.url).to_string();
+        match plan.warning(&name) {
+            Some(warning) => prompt::confirm_destructive(session, options.yes, &warning)?,
+            None => prompt::confirm(
+                options.yes,
+                &format!(
+                    "Fetch {name} onto {node} and apply it at the next boot{}?",
+                    if spec.reboot { ", rebooting now" } else { "" }
+                ),
+            )?,
+        }
+    }
+    if options.no_wait {
+        let started = session.send::<api::update::Fetch>(spec)?;
+        return crate::print(json, &started, || {
+            println!(
+                "fetching on {node} as job {}; {} says how far it got",
+                started.job,
+                style::paint(style::CMD, "tessaro-ctl update status")
+            )
+        });
+    }
+    let mut progress = Progress::new(json);
+    flow::fetch(session, spec, &|| false, &mut progress)
+}
+
 pub fn status(session: &mut Session, json: bool) -> Result<(), String> {
     let status = session.fetch::<api::update::Status>()?;
     crate::print(json, &status, || {

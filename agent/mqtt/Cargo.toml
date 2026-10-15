@@ -1,0 +1,18 @@
+[package]
+name = "tessaro-mqtt"
+description = "An MQTT v5 client session for Tessaro, with no I/O of its own"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# Linked by tessaro-agent (async, every wait under deadline::within) and by
+# tessaro-client (blocking, shared with tessaro-gui), so nothing here does
+# I/O or owns a runtime: each side moves the bytes and fires the timers its
+# own way. See docs/mqtt.md.
+[dependencies]
+# The MQTT v5 protocol as a state machine: packets in, events out. MIT. It
+# takes no stream, so the TLS (native-tls, pinned or not), the proxy tunnel
+# and the WebSocket stay ours.
+mqtt-protocol-core = { version = "0.7", default-features = false, features = ["std"] }

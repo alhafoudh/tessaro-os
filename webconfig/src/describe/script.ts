@@ -5,6 +5,7 @@
 import type { Schemas } from "../api/client";
 import { Line } from "../text/line";
 import { triggers } from "./cec";
+import { triggers as mqttTriggers } from "./mqtt";
 import { triggers as presenceTriggers } from "./presence";
 import { ANY as ANY_SCANNER, triggers as scannerTriggersOf } from "./scanner";
 import { duration, formatTimeout, outcome, parseTimeout, relative, runs, succeeded } from "./schedule";
@@ -30,6 +31,8 @@ export interface Typed {
   presence: string;
   /** The scanners whose scans it runs on, comma separated, `*` for every one, as `scanner.ts` reads them; empty for none. */
   scanner: string;
+  /** The MQTT topic filters it runs on, comma separated, as `mqtt.ts` reads them; empty for none. */
+  mqtt: string;
 }
 
 /** What a form shows for `spec`: saving it unchanged changes nothing. */
@@ -45,6 +48,7 @@ export function typedOf(spec: Schemas["ScriptSpec"]): Typed {
     cec: (spec.cec ?? []).join(", "),
     presence: (spec.presence ?? []).join(", "),
     scanner: (spec.scanner ?? []).join(", "),
+    mqtt: (spec.mqtt ?? []).join(", "),
   };
 }
 
@@ -81,6 +85,7 @@ export function specOf(typed: Typed): Schemas["ScriptSpec"] {
     cec: triggers(typed.cec),
     presence: presenceTriggers(typed.presence),
     scanner: scannerTriggersOf(typed.scanner),
+    mqtt: mqttTriggers(typed.mqtt),
   };
 }
 
@@ -97,6 +102,7 @@ export function changeOf(typed: Typed): Schemas["ScriptChange"] {
     cec: triggers(typed.cec),
     presence: presenceTriggers(typed.presence),
     scanner: scannerTriggersOf(typed.scanner),
+    mqtt: mqttTriggers(typed.mqtt),
   };
 }
 
@@ -212,5 +218,6 @@ export function behaviour(spec: Schemas["ScriptSpec"]): string {
   if (spec.cec && spec.cec.length > 0) words.push(`runs on ${spec.cec.join(" ")}`);
   if (spec.presence && spec.presence.length > 0) words.push(`runs on presence ${spec.presence.join(" ")}`);
   if (spec.scanner && spec.scanner.length > 0) words.push(`runs on ${scannerTriggers(spec.scanner)}`);
+  if (spec.mqtt && spec.mqtt.length > 0) words.push(`runs on MQTT ${spec.mqtt.join(" ")}`);
   return words.join(", ");
 }

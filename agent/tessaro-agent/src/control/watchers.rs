@@ -383,6 +383,9 @@ impl Control {
             let mut seen: Option<String> = None;
             let mut since = Instant::now();
             let mut checked = false;
+            // The hardware as it last settled: a screen or a touchscreen
+            // plugged in or out since is an event.
+            let mut settled: Option<String> = None;
             loop {
                 // naked: a timer and the shutdown signal, not the outside world
                 tokio::select! {
@@ -410,6 +413,10 @@ impl Control {
                     continue;
                 }
                 checked = true;
+                if settled.as_ref().is_some_and(|before| *before != now) {
+                    control.emit("display", "changed", serde_json::json!({}));
+                }
+                settled = Some(now.clone());
                 // naked: every wait in it is blocking()/Bus, under within()
                 control.reconcile_display(&now).await;
             }

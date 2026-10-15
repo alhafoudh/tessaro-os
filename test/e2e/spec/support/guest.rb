@@ -20,7 +20,8 @@ module AgentE2E
                      browser.debug.template audio.output audio.volume audio.mute audio.input
                      audio.input_volume network.proxy.url network.proxy.bypass printer.enable
                      browser.bridge.mode browser.url agent.cdp_ping camera.format camera.size
-                     camera.mirrors screen.vnc scanner.enable scanner.page scanner.scripts].freeze
+                     camera.mirrors screen.vnc scanner.enable scanner.page scanner.scripts mqtt.url
+                     mqtt.username mqtt.commands mqtt.keepalive mqtt.screenshot.interval].freeze
 
   class Failure < StandardError; end
 

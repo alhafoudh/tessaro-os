@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use protocol::api::{self, CommitBody};
-use protocol::{ImageUpload, UpdatePhase, UpdateStatus};
+use protocol::{FetchEvent, FetchSpec, ImageUpload, UpdatePhase, UpdateStatus};
 
 use crate::connect::Session;
 use crate::report::{clock, percent, step_line, Rate, Report};
@@ -214,6 +214,52 @@ pub fn wait_back(
     }
 }
 
+/// `update fetch`: the device downloads `spec.url` itself and prepares it,
+/// as a job; each step goes to `report`, the download as progress. `stop`
+/// is asked between looks, and cancels the job when it says so.
+pub fn fetch(
+    session: &mut Session,
+    spec: FetchSpec,
+    stop: &dyn Fn() -> bool,
+    report: &mut dyn Report,
+) -> Result<(), String> {
+    session.job::<api::update::Fetch, FetchEvent>(spec, stop, |step| match step {
+        Ok(event) if event.phase == "download" && event.message.is_none() => {
+            report.progress(fetch_line(&event), event.received, event.size.unwrap_or(0));
+        }
+        Ok(event) => report.line(fetch_line(&event)),
+        Err(other) => report.line(Line::plain(other.to_string())),
+    })
+}
+
+/// One step of `update fetch`, as a line: where the download or the
+/// checks after it are.
+pub fn fetch_line(event: &FetchEvent) -> Line {
+    let progress = || match event.size {
+        Some(size) if size > 0 => format!(
+            "{} of {} ({}%)",
+            mb(event.received),
+            mb(size),
+            percent(event.received, size)
+        ),
+        _ => mb(event.received),
+    };
+    let line = match event.phase.as_str() {
+        "bmap" => Line::of(Tone::Muted, "fetching the bmap"),
+        "download" => Line::of(Tone::Warn, "downloading").text(format!(" {}", progress())),
+        "verifying" => Line::of(Tone::Warn, "verifying"),
+        "preparing" => Line::of(Tone::Warn, "preparing"),
+        "ready" => Line::of(Tone::Ok, "ready"),
+        "committed" => Line::of(Tone::Ok, "committed"),
+        "done" => Line::of(Tone::Ok, "done"),
+        other => Line::plain(other),
+    };
+    match &event.message {
+        Some(message) => line.add(Tone::Muted, format!(": {message}")),
+        None => line,
+    }
+}
+
 /// `update status` as lines: where an update is, and how the last one went.
 pub fn status_lines(status: &UpdateStatus) -> Vec<Line> {
     let name = || Line::of(Tone::Heading, status.name.as_deref().unwrap_or(""));
@@ -229,6 +275,8 @@ pub fn status_lines(status: &UpdateStatus) -> Vec<Line> {
                 percent(status.received, status.size),
             ))
             .add(Tone::Cmd, "`update send`")
+            .text(" or ")
+            .add(Tone::Cmd, "`update fetch`")
             .text(" again to resume"),
         UpdatePhase::Verifying => Line::of(Tone::Warn, "verifying")
             .text(" ")

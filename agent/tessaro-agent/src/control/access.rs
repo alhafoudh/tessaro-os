@@ -90,6 +90,7 @@ impl Control {
         let name = auth::check_name(name)?;
         let issuer = match caller {
             Caller::Local => "local".to_string(),
+            Caller::Mqtt { .. } => "mqtt".to_string(),
             Caller::Token { id, .. } => id.clone(),
             Caller::Anonymous { .. } | Caller::Page => {
                 return Err("a token is needed to issue a token".to_string())
@@ -329,6 +330,9 @@ impl Control {
         if let Err(err) = self.drop_claim().await {
             return Reply::err(err);
         }
+        // The device forgets its broker: what it left retained there would
+        // stay forever.
+        self.mqtt.retire().await; // naked: retire bounds itself with within()
 
         let db = self.db.clone();
         if let Err(err) = blocking("clearing the settings", move || {

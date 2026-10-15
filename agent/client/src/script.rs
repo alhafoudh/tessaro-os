@@ -33,6 +33,9 @@ pub struct Typed {
     /// The scanners whose scans it runs on, comma separated, `*` for every
     /// one, as `protocol::scanner` reads them; empty for none.
     pub scanner: String,
+    /// The MQTT topic filters it runs on, comma separated, as
+    /// `protocol::mqtt::triggers` reads them; empty for none.
+    pub mqtt: String,
 }
 
 impl Typed {
@@ -49,6 +52,7 @@ impl Typed {
             cec: spec.cec.join(", "),
             presence: spec.presence.join(", "),
             scanner: spec.scanner.join(", "),
+            mqtt: spec.mqtt.join(", "),
         }
     }
 
@@ -66,6 +70,7 @@ impl Typed {
             cec: protocol::cec::triggers(&self.cec)?,
             presence: protocol::presence::triggers(&self.presence)?,
             scanner: protocol::scanner::triggers(&self.scanner)?,
+            mqtt: self.mqtt()?,
         })
     }
 
@@ -82,7 +87,19 @@ impl Typed {
             cec: Some(protocol::cec::triggers(&self.cec)?),
             presence: Some(protocol::presence::triggers(&self.presence)?),
             scanner: Some(protocol::scanner::triggers(&self.scanner)?),
+            mqtt: Some(self.mqtt()?),
         })
+    }
+
+    fn mqtt(&self) -> Result<Vec<String>, String> {
+        let filters: Vec<String> = self
+            .mqtt
+            .split(',')
+            .map(str::trim)
+            .filter(|filter| !filter.is_empty())
+            .map(str::to_string)
+            .collect();
+        protocol::mqtt::triggers(&filters)
     }
 
     fn on_error(&self) -> Result<OnError, String> {
@@ -286,6 +303,9 @@ pub fn behaviour(spec: &ScriptSpec) -> String {
     if !spec.scanner.is_empty() {
         words.push(format!("runs on {}", scanner_triggers(&spec.scanner)));
     }
+    if !spec.mqtt.is_empty() {
+        words.push(format!("runs on MQTT {}", spec.mqtt.join(" ")));
+    }
     words.join(", ")
 }
 
@@ -306,12 +326,15 @@ mod tests {
             cec: "tv-standby, Key:Red".into(),
             presence: "Arrived".into(),
             scanner: String::new(),
+            mqtt: "kiosk/+/dim, alarm/#".into(),
         };
         let spec = typed.spec().unwrap();
         assert_eq!(spec.name, "dim");
         assert_eq!(spec.cec, vec!["tv-standby", "key:red"]);
         assert_eq!(spec.presence, vec!["arrived"]);
-        assert!(behaviour(&spec).ends_with("runs on presence arrived"));
+        assert_eq!(spec.mqtt, vec!["kiosk/+/dim", "alarm/#"]);
+        assert!(behaviour(&spec)
+            .ends_with("runs on presence arrived, runs on MQTT kiosk/+/dim alarm/#"));
         assert_eq!(spec.timeout_s, Some(600));
         assert_eq!(spec.concurrency, Concurrency::Skip);
         assert_eq!(Typed::of(&spec).spec().unwrap(), spec);

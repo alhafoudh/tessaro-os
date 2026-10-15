@@ -35,15 +35,18 @@ mod debug;
 mod display;
 mod edid;
 mod error;
+mod events;
 mod files;
 mod hardware;
 mod hotplug;
 mod http;
 mod identity;
+mod jpeg;
 mod log;
 mod loopback;
 mod mdns;
 mod media;
+mod mqtt;
 mod net;
 mod nm;
 mod notify;
@@ -296,10 +299,11 @@ fn device(
     }
 }
 
-/// The control plane: the store, the socket, TLS, mDNS, and a probation
-/// timer if a guarded change is waiting. None of it is on the state
-/// machine's path, and none of it can stop the kiosk: every failure here is
-/// a journal line and a missing feature.
+/// The control plane: the store, the socket, TLS, mDNS, the MQTT link, and
+/// a probation timer if a guarded change is waiting. None of it is on the
+/// state machine's path, and none of it can stop the kiosk: every failure
+/// here is a journal line and a missing feature. Answers where the state
+/// machine tells the device's events.
 async fn start_control(
     device: Device,
     current: config::Publish,
@@ -308,7 +312,7 @@ async fn start_control(
     bridge: control::BridgeSetup,
     log: &Arc<Log>,
     stop: &Arc<watch::Sender<bool>>,
-) {
+) -> Arc<events::Events> {
     let bus = systemd::Bus::connect(log).await;
     let socket = device.paths.socket.clone();
     let control = control::Control::new(
@@ -332,6 +336,9 @@ async fn start_control(
     if let Err(err) = api::spawn_unix(Arc::clone(&server), socket.clone(), stop.subscribe()) {
         log.info(format!("api: cannot listen on {}: {err}", socket.display()));
     }
+    // The other way in, through the broker while mqtt.url is set; the same
+    // dispatch and jobs as the API's.
+    mqtt::spawn(Arc::clone(&control), server.dispatch(), stop.subscribe());
 
     let mut port = None;
     if let (Some(addr), Some(tls)) = (device.listen, device.tls.as_ref()) {
@@ -370,6 +377,7 @@ async fn start_control(
     // Before the agent's first navigation, so the page it opens already
     // runs the bridge and the injected script.
     control.start_bridge(bridge).await; // naked: blocking() reads and the session's own within()
+    control.event_sink()
 }
 
 async fn run(
@@ -450,7 +458,7 @@ async fn run(
     // settings as they are now and the device as it is then.
     let paths = device.paths.clone();
     let defaults = device.defaults.clone();
-    start_control(
+    let events = start_control(
         device,
         current,
         config.proxy,
@@ -487,6 +495,7 @@ async fn run(
         stop.subscribe(),
         heartbeat,
     )
+    .with_events(events)
     .run()
     .await;
 }

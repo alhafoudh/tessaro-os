@@ -1,13 +1,17 @@
-//! The network's passwords: the hotspot's and the WiFi client's.
+//! The device's passwords: the hotspot's and the WiFi client's, and what it
+//! gives the MQTT broker - a password and a client certificate's key.
 //!
 //! In the `secrets` table of `tessaro.db` (0600, like the rest of it), and
 //! never in `settings`: `get` and `keys` print every setting, and these must
-//! never be printed. They reach one other place, the 0600 keyfiles under
-//! `/run/NetworkManager/system-connections` that `nm::profiles` renders.
+//! never be printed. The network's reach one other place, the 0600 keyfiles
+//! under `/run/NetworkManager/system-connections` that `nm::profiles`
+//! renders; the broker's only ever go to the broker (`crate::mqtt`).
 //!
 //! The hotspot password follows the claim, like the root password: none
 //! while the device is unclaimed (an open hotspot), a random one from the
-//! claim on, none again after unclaim or a factory reset.
+//! claim on, none again after unclaim or a factory reset. The broker's stay
+//! through an unclaim - the link is configuration, not an owner - and go
+//! with a factory reset.
 
 use protocol::Secret;
 use tessaro_db::rusqlite::{params, Connection};
@@ -16,6 +20,9 @@ use crate::db::Stored;
 
 const HOTSPOT_PSK: &str = "hotspot_psk";
 const WIFI_PSK: &str = "wifi_psk";
+const MQTT_PASSWORD: &str = "mqtt_password";
+const MQTT_CLIENT_CERT: &str = "mqtt_client_cert";
+const MQTT_CLIENT_KEY: &str = "mqtt_client_key";
 
 /// Each password is a `Secret` from the command that brought it to the
 /// keyfile that uses it, so no `{:?}` on the way prints one.
@@ -23,10 +30,17 @@ const WIFI_PSK: &str = "wifi_psk";
 pub struct Secrets {
     pub hotspot_psk: Option<Secret>,
     pub wifi_psk: Option<Secret>,
+    /// The broker password, `mqtt.username`'s; `{key}` placeholders are
+    /// filled in when the link connects.
+    pub mqtt_password: Option<Secret>,
+    /// A client certificate for the broker, PEM; not secret itself, but
+    /// kept with its key.
+    pub mqtt_client_cert: Option<Secret>,
+    pub mqtt_client_key: Option<Secret>,
 }
 
 impl Stored for Secrets {
-    const WHAT: &'static str = "the network passwords";
+    const WHAT: &'static str = "the device's passwords";
 
     fn load(db: &Connection) -> tessaro_db::rusqlite::Result<Self> {
         let mut secrets = Self::default();
@@ -36,6 +50,9 @@ impl Stored for Secrets {
             match name.as_str() {
                 HOTSPOT_PSK => secrets.hotspot_psk = Some(Secret(value)),
                 WIFI_PSK => secrets.wifi_psk = Some(Secret(value)),
+                MQTT_PASSWORD => secrets.mqtt_password = Some(Secret(value)),
+                MQTT_CLIENT_CERT => secrets.mqtt_client_cert = Some(Secret(value)),
+                MQTT_CLIENT_KEY => secrets.mqtt_client_key = Some(Secret(value)),
                 _ => {}
             }
         }
@@ -45,7 +62,13 @@ impl Stored for Secrets {
     fn save(&self, db: &Connection) -> tessaro_db::rusqlite::Result<()> {
         db.execute("DELETE FROM secrets", [])?;
         let mut insert = db.prepare("INSERT INTO secrets (name, value) VALUES (?1, ?2)")?;
-        for (name, value) in [(HOTSPOT_PSK, &self.hotspot_psk), (WIFI_PSK, &self.wifi_psk)] {
+        for (name, value) in [
+            (HOTSPOT_PSK, &self.hotspot_psk),
+            (WIFI_PSK, &self.wifi_psk),
+            (MQTT_PASSWORD, &self.mqtt_password),
+            (MQTT_CLIENT_CERT, &self.mqtt_client_cert),
+            (MQTT_CLIENT_KEY, &self.mqtt_client_key),
+        ] {
             if let Some(value) = value {
                 insert.execute(params![name, value.expose()])?;
             }
@@ -87,6 +110,9 @@ mod tests {
         let saved = Secrets {
             hotspot_psk: Some(Secret("abcdefgh23456789".into())),
             wifi_psk: Some(Secret("hunter2hunter2".into())),
+            mqtt_password: Some(Secret("br0ker$\"pass".into())),
+            mqtt_client_cert: Some(Secret("-----BEGIN CERTIFICATE-----".into())),
+            mqtt_client_key: Some(Secret("-----BEGIN PRIVATE KEY-----".into())),
         };
         db.update(|secrets: &mut Secrets| {
             *secrets = saved.clone();
@@ -98,7 +124,10 @@ mod tests {
         assert_eq!(secrets, saved);
         let shown = format!("{secrets:?}");
         assert!(
-            !shown.contains("abcdefgh") && !shown.contains("hunter2"),
+            !shown.contains("abcdefgh")
+                && !shown.contains("hunter2")
+                && !shown.contains("br0ker")
+                && !shown.contains("PRIVATE"),
             "{shown}"
         );
     }

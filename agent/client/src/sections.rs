@@ -22,7 +22,7 @@ pub const GROUPS: &[(&str, &[&str])] = &[
     (KIOSK, &["screen", "browser", "files"]),
     (PLAYER, &["playlist"]),
     (PERIPHERALS, &["audio", "camera", "printer", "scanner"]),
-    (NETWORK, &["network"]),
+    (NETWORK, &["network", "mqtt"]),
     (AUTOMATION, &["script", "schedule"]),
     (SECURITY, &["access", "ssh"]),
     (SYSTEM, &["time", "storage", "update"]),

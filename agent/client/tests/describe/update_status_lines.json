@@ -48,6 +48,16 @@
       ],
       [
         "plain",
+        " or ",
+        0
+      ],
+      [
+        "cmd",
+        "`update fetch`",
+        0
+      ],
+      [
+        "plain",
         " again to resume",
         0
       ]

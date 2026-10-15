@@ -21,6 +21,7 @@ export type IconName =
   | "graphics"
   | "browser"
   | "playlist"
+  | "mqtt"
   | "back"
   | "home"
   | "next"
@@ -138,6 +139,13 @@ const PATHS: Record<IconName, ReactNode> = {
     <>
       <path d="M4 6h11M4 11h11M4 16h6" />
       <path d="M15 14.5v5l4-2.5z" />
+    </>
+  ),
+  mqtt: (
+    <>
+      <circle cx="12" cy="12" r="1.8" />
+      <path d="M8.2 15.8a5.4 5.4 0 0 1 0-7.6M15.8 8.2a5.4 5.4 0 0 1 0 7.6" />
+      <path d="M5.3 18.7a9.5 9.5 0 0 1 0-13.4M18.7 5.3a9.5 9.5 0 0 1 0 13.4" />
     </>
   ),
   back: <path d="M15 5 8 12l7 7" />,

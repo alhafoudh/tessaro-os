@@ -16,6 +16,7 @@ import * as script from "./script";
 import * as storage from "./storage";
 import * as device from "./device";
 import * as journal from "./journal";
+import * as mqtt from "./mqtt";
 import * as net from "./net";
 import * as ping from "./ping";
 import * as playlist from "./playlist";
@@ -63,6 +64,10 @@ export const renderers: Record<string, (input: any) => unknown> = {
     input.map((consumer: any) => ({ long: device.restarts(consumer), short: device.restartsShort(consumer) })),
   "audio::summary": (input) => spans(audio.summary(input)),
   "time::summary": (input) => spans(time.summary(input)),
+  // --- the MQTT link ---
+  "mqtt::status": (input) =>
+    input.map((one: any) => ({ summary: spans(mqtt.summary(one)), facts: facts(mqtt.facts(one)) })),
+  "mqtt::tested": (input) => input.map((one: any) => lines(mqtt.tested(one))),
   "ping::event_line": (input) => input.map((event: any) => spans(ping.eventLine(event))),
   "cec::triggers": (input) => ({
     events: cec.EVENTS,
@@ -225,6 +230,7 @@ export const renderers: Record<string, (input: any) => unknown> = {
   }),
   // --- access, ssh, files, update and log ---
   "update::status_lines": (input) => lines(update.statusLines(input)),
+  "update::fetch_line": (input) => input.map((event: any) => spans(update.fetchLine(event))),
   "update::warning": (input) => update.warning(input.name, input.wipe_data, input.repartition),
   "transfer::date": (input) => input.map((time: number) => transfer.date(time)),
   "files::summary_line": (input) => spans(transfer.summaryLine(input, input.verb)),

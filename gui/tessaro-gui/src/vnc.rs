@@ -102,11 +102,13 @@ fn start(spec: &Spec) -> ui::UnboundedReceiver<Event> {
     let (out, receive) = ui::unbounded();
     let node = spec.node.clone();
     std::thread::spawn(move || {
+        // Through a broker it is refused, and would be every round.
+        let refused = worker::broker_of(&node).is_some();
         while !out.is_closed() {
             let why = watch(&node, &out)
                 .err()
                 .unwrap_or_else(|| "closed".to_string());
-            if out.unbounded_send(Event::Lost(why)).is_err() {
+            if out.unbounded_send(Event::Lost(why)).is_err() || refused {
                 return;
             }
             std::thread::sleep(RETRY);
@@ -121,6 +123,7 @@ fn watch(node: &Node, out: &ui::UnboundedSender<Event>) -> Result<(), String> {
     };
     state("starting the mirror and opening the SSH tunnel");
     let (mut session, _) = worker::connect(node)?;
+    session.needs_ip("The VNC viewer")?;
     // The connection this viewer holds keeps the mirror going on the device;
     // a Weston restart drops it, and the next round starts the mirror again.
     let opened = vnc::open(&mut session, None, 0, Prompts::Never)?;

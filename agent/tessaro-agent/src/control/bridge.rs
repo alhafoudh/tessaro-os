@@ -69,6 +69,12 @@ const CEC_WINDOW: Duration = Duration::from_secs(10);
 const SCRIPT_BURST: usize = 10;
 const SCRIPT_WINDOW: Duration = Duration::from_secs(60);
 
+/// The most messages a page publishes in `MQTT_WINDOW`: enough for a page
+/// reporting what visitors do, too few to flood the broker for everyone
+/// else on it.
+const MQTT_BURST: usize = 60;
+const MQTT_WINDOW: Duration = Duration::from_secs(60);
+
 /// A public address this fresh is answered without asking again.
 const PUBLIC_IP_FRESH: Duration = Duration::from_secs(30);
 
@@ -98,6 +104,7 @@ const HIDDEN: &[&str] = &[
     "browser.device_origins",
     "browser.enforce_origin",
     "screen.vnc",
+    "mqtt.",
 ];
 
 /// Is `name` one of `HIDDEN`, or under one of its prefixes?
@@ -123,6 +130,7 @@ const READS: &[&str] = &[
     "presence.unwatch",
     "scanner.list",
     "scanner.listen",
+    "mqtt.status",
 ];
 
 /// The most frames `tessaro:scanner` goes to at once. The player shows one
@@ -185,6 +193,8 @@ pub(super) struct Bridge {
     script_runs: Mutex<Vec<Instant>>,
     /// When the page acted on the CEC bus, within the last `CEC_WINDOW`.
     cec_acts: Mutex<Vec<Instant>>,
+    /// When the page published over MQTT, within the last `MQTT_WINDOW`.
+    mqtt_publishes: Mutex<Vec<Instant>>,
     /// Held across a lookup, so calls at the same time share one request.
     public_ip: tokio::sync::Mutex<Option<(Instant, String)>>,
 }
@@ -215,6 +225,7 @@ impl Control {
             prints: Mutex::new(Vec::new()),
             script_runs: Mutex::new(Vec::new()),
             cec_acts: Mutex::new(Vec::new()),
+            mqtt_publishes: Mutex::new(Vec::new()),
             public_ip: tokio::sync::Mutex::new(None),
         });
         let _ = self.bridge.set(Arc::clone(&bridge));
@@ -276,6 +287,12 @@ impl Control {
     /// `tessaro:config`.
     pub(super) async fn bridge_cec(&self, detail: Value) {
         self.bridge_event("cec", detail, BridgeMode::Config).await;
+    }
+
+    /// A message below the device's `page/in/` at its MQTT broker, as a
+    /// `tessaro:mqtt` event on `window`, for a page in `config` mode or more.
+    pub(super) async fn bridge_mqtt(&self, detail: Value) {
+        self.bridge_event("mqtt", detail, BridgeMode::Config).await;
     }
 
     /// A message of the HDMI-CEC bus, as a `tessaro:cec` event with
@@ -1063,13 +1080,35 @@ impl Control {
                 }
                 (self.page_script_run(script).await, None)
             }
+            "mqtt.status" => plain(Ok(page_mqtt(&self.mqtt_status().await))),
+            "mqtt.publish" => {
+                let Some(topic) = arg(0).as_str().map(str::to_string) else {
+                    return plain(Err(
+                        "mqtt.publish takes a topic below page/out/, and a payload".to_string(),
+                    ));
+                };
+                let payload = match arg(1) {
+                    Value::String(text) => text.into_bytes(),
+                    Value::Null => Vec::new(),
+                    other => other.to_string().into_bytes(),
+                };
+                let retain = arg(2)["retain"].as_bool().unwrap_or(false);
+                if let Err(refused) = mqtt_allowed(bridge) {
+                    return (Err(refused), None);
+                }
+                plain(
+                    self.page_publish(&topic, payload, retain)
+                        .await
+                        .map(|done| json!(done)),
+                )
+            }
             _ => plain(Err(format!("tessaro has no {name}"))),
         }
     }
 
     /// `tessaro.scripts.run(name)`: the run to its end, its output and how
     /// it ended. Waited for `STREAM_LIMIT` at most; the run goes on after.
-    async fn page_script_run(&self, script: String) -> Answer {
+    async fn page_script_run(self: &Arc<Self>, script: String) -> Answer {
         let command = Command::ScriptRun { script };
         let Stream::Script { mut steps, .. } =
             self.stream(&Caller::Page, command).await.map_err(fail)?
@@ -1143,7 +1182,7 @@ impl Control {
     }
 
     /// A streamed command run to its end, every event in order.
-    async fn collect(&self, command: Command) -> Result<Value, String> {
+    async fn collect(self: &Arc<Self>, command: Command) -> Result<Value, String> {
         let events = async {
             let mut events = Vec::new();
             // naked: stream waits only through Control, whose reads are blocking() and the bus
@@ -1307,6 +1346,16 @@ fn cec_allowed(bridge: &Bridge) -> Result<(), Value> {
     })
 }
 
+/// One more message from the page to the broker, unless it published
+/// `MQTT_BURST` in the last `MQTT_WINDOW`.
+fn mqtt_allowed(bridge: &Bridge) -> Result<(), Value> {
+    burst(&bridge.mqtt_publishes, MQTT_BURST, MQTT_WINDOW).map_err(|window| {
+        fail(format!(
+            "refused: the page published {MQTT_BURST} messages in the last {window}s"
+        ))
+    })
+}
+
 /// One more script run from the page, unless it started `SCRIPT_BURST` in
 /// the last `SCRIPT_WINDOW`.
 fn script_run_allowed(bridge: &Bridge) -> Result<(), Value> {
@@ -1430,6 +1479,19 @@ fn page_status(status: &protocol::Status) -> Value {
         })).collect::<Vec<_>>(),
         "playlist": status.playlist.as_ref().map(page_playlist),
         "presence": status.presence,
+        "mqtt": status.mqtt.as_ref().map(page_mqtt),
+    })
+}
+
+/// The MQTT link as the page gets it: whether it is up, and where the
+/// page's own subtree is. Never the broker, the user name or the topics of
+/// anything but the page: those say who manages the device and how.
+fn page_mqtt(status: &protocol::mqtt::MqttStatus) -> Value {
+    json!({
+        "state": status.state,
+        "connected": status.state == protocol::mqtt::MqttState::Connected,
+        "pageIn": format!("{}/page/in/", status.topic),
+        "pageOut": format!("{}/page/out/", status.topic),
     })
 }
 
@@ -1690,6 +1752,7 @@ mod tests {
             prints: Mutex::new(Vec::new()),
             script_runs: Mutex::new(Vec::new()),
             cec_acts: Mutex::new(Vec::new()),
+            mqtt_publishes: Mutex::new(Vec::new()),
             public_ip: tokio::sync::Mutex::new(None),
         }
     }

@@ -11,7 +11,7 @@ use std::path::Path;
 
 use serde_json::{json, Value};
 use tessaro_client::describe::{
-    audio, browser, camera, cec, device, net, playlist, printer, scanner, screen, time,
+    audio, browser, camera, cec, device, mqtt, net, playlist, printer, scanner, screen, time,
 };
 use tessaro_client::ping;
 use tessaro_client::text::{Fact, Line};
@@ -107,6 +107,25 @@ fn render(function: &str, input: &Value) -> Value {
         }
         "audio::summary" => line(&audio::summary(&from(input))),
         "time::summary" => line(&time::summary(&from(input))),
+        // The MQTT link: its line, its facts, a test.
+        "mqtt::status" => {
+            let cases: Vec<protocol::mqtt::MqttStatus> = from(input);
+            Value::Array(
+                cases
+                    .iter()
+                    .map(|status| json!({ "summary": line(&mqtt::summary(status)), "facts": facts(&mqtt::facts(status)) }))
+                    .collect(),
+            )
+        }
+        "mqtt::tested" => {
+            let cases: Vec<protocol::mqtt::MqttTested> = from(input);
+            Value::Array(
+                cases
+                    .iter()
+                    .map(|tested| lines(&mqtt::tested(tested)))
+                    .collect(),
+            )
+        }
         "ping::event_line" => {
             let events: Vec<protocol::PingEvent> = from(input);
             Value::Array(
@@ -495,6 +514,15 @@ fn render(function: &str, input: &Value) -> Value {
         }
         // --- access, ssh, files, update and log ---
         "update::status_lines" => lines(&tessaro_client::update::status_lines(&from(input))),
+        "update::fetch_line" => {
+            let events: Vec<protocol::FetchEvent> = from(input);
+            Value::Array(
+                events
+                    .iter()
+                    .map(|event| line(&tessaro_client::update::fetch_line(event)))
+                    .collect(),
+            )
+        }
         "update::warning" => {
             let plan = tessaro_client::update::Plan {
                 image: input["name"].as_str().unwrap().into(),

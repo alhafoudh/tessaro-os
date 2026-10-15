@@ -78,6 +78,9 @@ pub struct Agent<'a> {
     held: bool,
     /// `agent.enable` is off and the loop is idling.
     parked: bool,
+    /// Where what happens to the browser and the site goes besides the
+    /// journal: the device's events (`crate::events`). None in tests.
+    events: Option<Arc<crate::events::Events>>,
 }
 
 impl<'a> Agent<'a> {
@@ -120,6 +123,19 @@ impl<'a> Agent<'a> {
             awaiting_landing: false,
             held: false,
             parked: false,
+            events: None,
+        }
+    }
+
+    /// Tell `events` what happens to the browser and the site.
+    pub fn with_events(mut self, events: Arc<crate::events::Events>) -> Self {
+        self.events = Some(events);
+        self
+    }
+
+    fn emit(&self, name: &str, detail: serde_json::Value) {
+        if let Some(events) = &self.events {
+            events.emit("browser", name, detail);
         }
     }
 
@@ -249,6 +265,7 @@ impl<'a> Agent<'a> {
                 self.log.info(
                     "a DevTools client is connected; leaving the browser alone until it disconnects",
                 );
+                self.emit("devtools-held", serde_json::json!({}));
             }
             return;
         }
@@ -260,6 +277,7 @@ impl<'a> Agent<'a> {
             self.ping_fails = 0;
             self.log
                 .info("the DevTools client disconnected; watching the browser again");
+            self.emit("devtools-released", serde_json::json!({}));
         }
 
         // Liveness first, so navigation failures below are attributed
@@ -272,6 +290,10 @@ impl<'a> Agent<'a> {
                     "chromium is answering again after {} failed checks",
                     self.ping_fails
                 ));
+                self.emit(
+                    "answering",
+                    serde_json::json!({ "failed_checks": self.ping_fails }),
+                );
             }
             self.ping_fails = 0;
             self.seen_alive = true;
@@ -281,6 +303,9 @@ impl<'a> Agent<'a> {
             self.ping_fails += 1;
             if self.ping_fails == 1 {
                 self.report_cdp_failure(format!("chromium is not answering on {}", config.cdp_url));
+                if self.seen_alive {
+                    self.emit("not-answering", serde_json::json!({}));
+                }
             }
         }
 
@@ -312,10 +337,12 @@ impl<'a> Agent<'a> {
             self.log.info(format!(
                 "chromium restarted (pid {main_pid}); will re-navigate"
             ));
+            self.emit("restarted", serde_json::json!({ "pid": main_pid }));
             self.nav_state = NavState::Unknown;
         } else if session_is_new {
             self.log
                 .info("chromium is showing a new page (restarted or crashed); will re-navigate");
+            self.emit("new-page", serde_json::json!({}));
             self.nav_state = NavState::Unknown;
         }
 
@@ -359,6 +386,12 @@ impl<'a> Agent<'a> {
                     config.probe_target(),
                     self.fails
                 ));
+                if self.fails >= config.fail_threshold {
+                    self.emit(
+                        "site-up",
+                        serde_json::json!({ "url": config.probe_target(), "failed_probes": self.fails }),
+                    );
+                }
                 self.fails = 0;
                 self.restart_done = false;
             }
@@ -392,6 +425,10 @@ impl<'a> Agent<'a> {
                     config.probe_target(),
                     result.reason
                 ));
+                self.emit(
+                    "site-down",
+                    serde_json::json!({ "url": config.probe_target(), "reason": result.reason }),
+                );
             }
 
             if self.fails >= config.fail_threshold
@@ -553,6 +590,7 @@ impl<'a> Agent<'a> {
                 // screen, and at the default refresh it costs one entry per
                 // ten minutes.
                 self.log.info(format!("navigated to {url}"));
+                self.emit("navigated", serde_json::json!({ "url": url }));
             }
             Err(err) => {
                 // Counts towards the CDP escalation: a browser that will not
@@ -617,6 +655,9 @@ impl<'a> Agent<'a> {
 
         match self.cdp.navigate(&uri).await {
             Ok(()) => {
+                if self.nav_state != NavState::Offline {
+                    self.emit("offline-page", serde_json::json!({ "url": uri }));
+                }
                 self.nav_state = NavState::Offline;
                 self.last_nav = now;
                 self.log
@@ -665,6 +706,7 @@ impl<'a> Agent<'a> {
         // backoff window rather than being retried every cycle.
         self.last_restart = now;
         self.log.info(format!("restarting {unit}: {reason}"));
+        self.emit("restarting", serde_json::json!({ "reason": reason }));
 
         match self.units.restart().await {
             Ok(()) => {

@@ -4,8 +4,9 @@
 Webconfig in a browser and anyone's own program all call the same
 endpoints, so none of them can do what the others cannot, and every change
 goes through the same validation, transactions and journal lines. The page
-bridge (`window.tessaro`, [bridge.md](bridge.md)) is the one other way in,
-and it maps its calls onto the same commands.
+bridge (`window.tessaro`, [bridge.md](bridge.md)) maps its calls onto the
+same commands, and the MQTT link takes the same endpoints from a broker
+(**MQTT** below).
 
 ## Endpoints are types
 
@@ -60,6 +61,20 @@ Webconfig's TypeScript types are generated from the OpenAPI document
 * **The same port serves Webconfig** at `/`, from
   `/usr/share/tessaro-webconfig` ([webconfig.md](webconfig.md)), and
   Swagger UI at `/api/docs/`. Nothing else is served on 7400.
+
+### MQTT
+
+**With `mqtt.url` set, every endpoint is also a command topic at the
+device's broker, run by the same code**: `api::Dispatch` (`api/mod.rs`)
+takes a route and its decoded request from either transport, so the
+answers, refusals, jobs and `After` work the same, and a new endpoint is a
+command topic with nothing to add. A request over MQTT is
+`Caller::Mqtt`, trusted like the socket - the broker's access rules are
+the lock, and `mqtt.commands` how much it gets. The topics, the envelope
+and the trust model are [mqtt.md](mqtt.md)'s; `agent/protocol/asyncapi.json`
+describes them for other languages, generated from the same types as the
+OpenAPI document and checked the same way
+(`UPDATE_ASYNCAPI=1 cargo test -p tessaro-agent asyncapi`).
 
 ## Trust and auth
 
