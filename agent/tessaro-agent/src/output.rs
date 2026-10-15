@@ -614,6 +614,21 @@ mod tests {
         let gone = pick(&screens, &[], "DP-1").unwrap();
         assert_eq!(gone.name, "HDMI-A-2");
         assert_eq!(gone.missing.as_deref(), Some("DP-1"));
+
+        // A named screen beats the one with a touchscreen, whose touch stays
+        // on its own screen.
+        let screens = [
+            screen("DSI-1", "800x480", Some((15, 9))),
+            screen("HDMI-A-1", "1920x1080", Some((120, 68))),
+        ];
+        let touches = [touch("raspberrypi-ts", 0x18, None)];
+        assert_eq!(pick(&screens, &touches, "auto").unwrap().name, "DSI-1");
+        let set = pick(&screens, &touches, "HDMI-A-1").unwrap();
+        assert_eq!(
+            (set.name.as_str(), set.reason),
+            ("HDMI-A-1", OutputReason::Set)
+        );
+        assert_eq!(set.touch[0].connector, "DSI-1");
     }
 
     #[test]

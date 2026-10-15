@@ -4,6 +4,13 @@ What changed in each Tessaro OS release. The images, clients and Try
 Tessaro of every version are on
 [GitHub Releases](https://github.com/alhafoudh/tessaro-os/releases).
 
+## 0.1.5
+
+### Features
+
+- Try Tessaro installs with Homebrew as the try-tessaro cask, which every release that builds it updates.
+- When several screens are connected, the kiosk and its touch show on one: the one `screen.output` names, or with `auto` the biggest with a touchscreen, else the biggest.
+
 ## 0.1.4
 
 ### Features
