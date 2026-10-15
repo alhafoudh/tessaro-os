@@ -31,16 +31,17 @@ connector will be called, the config is generated per boot:
   and why, keyboard and why - is one line there.
 * Scale is `screen.scale` (`KIOSK_SCALE`) if set, otherwise 2 at 3400px
   wide or more and 1 below - measured on the mode being set, if one is. `none` writes
-  no `scale=`.
+  no `scale=`. A set scale is the kiosk's screen's; the others get the auto
+  one (see **Which screen the kiosk uses**).
 * **Resolution is `screen.resolution` (`KIOSK_RESOLUTION`)**: `preferred`, or
-  a `WIDTHxHEIGHT` written as `mode=` into each connector's `[output]`. It
+  a `WIDTHxHEIGHT` written as `mode=` into the kiosk's screen's `[output]`. It
   can leave nobody able to see the screen, so it is guarded on every layer.
   The agent only accepts a mode some connected connector lists
   in `/sys/class/drm/*/modes` (`tessaro-ctl screen modes` prints them); the
-  generator writes it only for connectors that list it and leaves the rest on
-  their preferred mode; and the change is on **probation**.
-* **A guarded key's change is on probation**: `screen.resolution` and
-  `screen.rotation` (`guarded` in `keys.rs`). It reverts on its own unless
+  generator writes it only when the kiosk's connector lists it and leaves it
+  on its preferred mode otherwise; and the change is on **probation**.
+* **A guarded key's change is on probation**: `screen.resolution`,
+  `screen.rotation` and `screen.output` (`guarded` in `keys.rs`). It reverts on its own unless
   `tessaro-ctl screen confirm` arrives within 60s. Guarded keys changed by one
   `config set` are on probation together: one confirm keeps them all, and
   the timeout reverts them all, so a mode and a turn tried at once cannot
@@ -81,8 +82,8 @@ connector will be called, the config is generated per boot:
 
 ## Screen rotation
 
-**`screen.rotation` (`KIOSK_ROTATION`) is how far the screen is mounted
-turned clockwise, written as Weston's `[output] transform=` into every
+**`screen.rotation` (`KIOSK_ROTATION`) is how far the kiosk's screen is
+mounted turned clockwise, written as Weston's `[output] transform=` into its
 generated section**, so a portrait panel or one mounted upside down shows the
 page upright. `90` is `rotate-90`, `flipped` is `flipped` (mirrored, for a
 rear projection or a teleprompter glass) and `flipped-90` is
@@ -95,9 +96,9 @@ a wrong one can leave a touch screen with nothing anyone can hit.
 
 * **Touch turns with the output, with nothing to set.** Weston maps each
   touch through the transform of the output the touchscreen is bound to
-  (`libinput-device.c`), and with one screen that is the only output. With
-  several, a touchscreen goes to the first unless a udev `WL_OUTPUT`
-  property names its output. A digitizer mounted differently from its own
+  (`libinput-device.c`): the one its udev `WL_OUTPUT` names, which the agent
+  sets to the touchscreen's own screen (see **Which screen the kiosk uses**).
+  A digitizer mounted differently from its own
   panel is a calibration, `LIBINPUT_CALIBRATION_MATRIX`, not a rotation.
 * **The page gets the turned size.** Chromium is given the output's
   logical size, so a quarter turn swaps `innerWidth` and `innerHeight`, and
@@ -111,6 +112,58 @@ a wrong one can leave a touch screen with nothing anyone can hit.
   options are ignored like the rest of `hdmi_*`.
 * **The boot splash turns too, from the next boot** (see **Boot splash and
   wallpaper**).
+
+## Which screen the kiosk uses
+
+**With several screens, the kiosk and every touchscreen go to one, picked
+by `screen.output` (`KIOSK_OUTPUT`), and the others show the wallpaper.**
+Without a pick, desktop-shell puts the fullscreen browser on the output
+that has focus, else the first, and libinput binds every touchscreen to the
+first output: whichever connector the driver lists first.
+
+* **`auto` picks the biggest screen with a touchscreen, else the biggest.**
+  Size is the EDID's (`width_cm`/`height_cm`, the diagonal) when every
+  candidate reports one, else the pixels of the preferred mode: a projector
+  reports no size, and centimetres cannot be weighed against pixels. A tie
+  goes to the first connector by name, so the pick never flips between
+  boots. A connector set by name wins while it is connected; unplugged, the
+  pick falls back to `auto` and `screen show` says so. `config set` refuses
+  a connector that is not connected now.
+* **The agent picks** (`agent/tessaro-agent/src/output.rs`), in the render
+  at boot (`tessaro-config.service`, after udev's coldplug and before
+  Weston), at every settings change, and before each hotplug check. It
+  writes `/run/tessaro-kiosk/output.env`, which `tessaro-weston-config`
+  reads, and `/run/udev/rules.d/69-tessaro-touch-output.rules`.
+* **The browser goes there through `[shell] kiosk-output=`**, a key the
+  weston bbappend's desktop-shell patch adds: a window that goes fullscreen
+  or maximized without naming an output, and a new window, go to that
+  output while it is enabled. Weston 13 has no other way to place a window.
+* **A touchscreen is matched to a screen as mutter's
+  `meta-input-mapper.c` does it**, the first rule that hits: one not on USB
+  or Bluetooth is the built-in panel's (`DSI-*`, `eDP-*`, `LVDS-*`, `DPI-*`;
+  the Pi's ribbon screens); its size from its axes (`EVIOCGABS`, range over
+  resolution) is within a tenth of a screen's EDID size, either way round;
+  the screen's model or maker is in its name; it is the one touchscreen and
+  that the one screen. One nothing matches follows the kiosk. Many USB
+  panels report no resolution, so the size rule cannot see them. A
+  touchscreen `screen.input.touch` or a scanner rule ignores
+  (`LIBINPUT_IGNORE_DEVICE`) is none.
+* **Touch reaches its screen through udev's `WL_OUTPUT`**, one rule line
+  per touchscreen, matched by its `ID_PATH` (stable across a replug into the
+  same port), else its `eventN`. Weston reads it only when it opens a device,
+  so a binding that moves restarts Weston (see **Display hotplug**).
+* **`screen.resolution`, `screen.rotation` and a set `screen.scale` are the
+  kiosk's screen's.** A screen showing the wallpaper keeps its preferred
+  mode, no transform and the auto scale: it may be mounted the other way
+  round.
+* **The other screens cannot mirror the kiosk.** Weston 13.0.1's
+  `[output] same-as=` drives every head from one CRTC
+  (`drm_process_layoutput`: "independent-CRTC clone mode is not
+  implemented"), so both screens need the same mode and hardware that can
+  share a controller, which two HDMI ports with a controller each (the Pi's)
+  cannot.
+* **The VNC mirror shares every output**, the wallpaper ones too
+  ([remote-access.md](remote-access.md)).
 
 ## Display hotplug
 
@@ -131,11 +184,19 @@ restarted, taking the browser with it, only if one of these holds:
 * an `[output]` section would now be written differently: a different panel
   on the same connector;
 * the `[input-method]` section changed: `screen.osk=auto` saw a keyboard come
-  or go.
+  or go;
+* `[shell] kiosk-output` changed: the agent picked the kiosk's screen again
+  before the generator ran, and it moved;
+* a touchscreen is bound to another screen than Weston bound it to, or is
+  new: Weston reads `WL_OUTPUT` only when it opens a device. The generator
+  records the bindings in a `# tessaro-weston-config: touch ...` comment line.
 
-A connector going away is never a reason. Weston copes with a head
+A connector going away is no reason by itself. Weston copes with a head
 disappearing, and the running config keeps its section for when the screen
-comes back. So a monitor switched off and on restarts nothing. Every restart,
+comes back. So a monitor switched off and on restarts nothing. With several
+screens, the kiosk's going away moves the pick to another, and Weston is
+restarted onto it, and back when it returns: a TV that drops its hotplug
+signal in standby does that too. Every restart,
 and every refusal to restart for the same hardware, is one `display: ...` line
 in `journalctl -u tessaro-agent`; "the config still fits" and an
 operator-stopped Weston are logged only with `agent.debug=1`.
@@ -326,8 +387,9 @@ connector's EDID** (`/sys/class/drm/card0-HDMI-A-1/edid`, read by
 id and its name for the makers in `edid.rs`, the product code, the name the
 display gives itself, its serial, when it was made, its size, and from the
 HDMI vendor block of a CTA-861 extension its CEC physical address, which
-names the TV input it is plugged into. Only identity is parsed; modes stay
-DRM's. What a TV fills in varies: many give a placeholder serial
+names the TV input it is plugged into, and whether it shows the kiosk or the
+wallpaper and which touchscreens are its (see **Which screen the kiosk
+uses**). Only identity is parsed; modes stay DRM's. What a TV fills in varies: many give a placeholder serial
 (`0x01010101`, shown as none) and a generic name, rarely the model number on
 the sticker. Webconfig and `tessaro-gui` show the same on their Screen
 pages, and the page has it as `tessaro.screen.show()`; the HDMI-CEC part of

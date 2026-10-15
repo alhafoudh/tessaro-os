@@ -417,13 +417,24 @@ impl Control {
     }
 
     pub(super) async fn reconcile_display(&self, snapshot: &str) {
+        let setting = match self.output_setting().await {
+            Ok(setting) => setting,
+            Err(err) => {
+                self.log.info(format!("display: {err}"));
+                return;
+            }
+        };
         let paths = self.paths.clone();
+        let log = self.log.clone();
         let compared = blocking("regenerating the Weston config", move || {
             // A device whose Weston is not started through the drop-in, or a
             // host run: nothing to keep true.
             let Ok(running) = std::fs::read_to_string(&paths.weston_config) else {
                 return Ok(None);
             };
+            // The screens and touchscreens changed, so may the pick; the
+            // generator reads it from output.env.
+            crate::output::apply(&paths, &setting, &log)?;
             let candidate = hotplug::generate(
                 &paths.weston_generator,
                 &paths.weston_candidate(),
@@ -432,6 +443,7 @@ impl Control {
                     input: &paths.input,
                 },
                 &paths.generated_env(),
+                &paths.output_env(),
             )?;
             let restarted_for = std::fs::read_to_string(paths.display_reconciled()).ok();
             Ok(Some((

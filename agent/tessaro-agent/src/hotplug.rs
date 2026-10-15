@@ -21,10 +21,16 @@
 //! * an `[output]` section the generator would now write differently: a
 //!   different panel on the same connector.
 //! * the `[input-method]` section: the on-screen keyboard's verdict changed.
+//! * `[shell] kiosk-output`: the kiosk's screen (`crate::output`), which the
+//!   agent picks again before the generator runs.
+//! * a touchscreen whose screen is not the one Weston bound it to, or that
+//!   it has not seen: Weston reads `WL_OUTPUT` only when it opens a device.
+//!   The generator records the bindings in a comment line.
 //!
-//! A connector going away is never a reason. Weston copes with a head
+//! A connector going away is no reason by itself. Weston copes with a head
 //! disappearing on its own, and the section it had stays in the running
-//! config for when the screen comes back.
+//! config for when the screen comes back. Only when the kiosk's screen goes
+//! and another is left does the pick move, and with it the kiosk.
 
 use std::fs;
 use std::path::Path;
@@ -33,6 +39,10 @@ use std::process::Command;
 /// The comment line `tessaro-weston-config` writes: every connector that was
 /// connected when it ran, space separated, or `(none)`.
 const MARKER: &str = "# tessaro-weston-config: connected";
+
+/// The comment line with each touchscreen's screen, `id=connector` words
+/// from output.env's `KIOSK_OUTPUT_TOUCH`.
+const TOUCH: &str = "# tessaro-weston-config: touch";
 
 /// Where the connector and input device state is read from. Cheap - every
 /// file is a cached value the kernel keeps, and reading one probes nothing.
@@ -97,13 +107,15 @@ pub fn generate(
     out: &Path,
     sources: &Sources,
     override_env: &Path,
+    output_env: &Path,
 ) -> Result<String, String> {
     let output = crate::proc::run(
         Command::new(generator)
             .env("TESSARO_WESTON_CONFIG", out)
             .env("TESSARO_DRM_ROOT", sources.drm)
             .env("TESSARO_INPUT_ROOT", sources.input)
-            .env("TESSARO_OVERRIDE", override_env),
+            .env("TESSARO_OVERRIDE", override_env)
+            .env("TESSARO_OUTPUT", output_env),
         None,
     )?;
     if !output.status.success() {
@@ -157,6 +169,25 @@ pub fn verdict(running: &str, candidate: &str) -> Option<String> {
         });
     }
 
+    // With no screen at all there is no pick, and nothing to move to.
+    let kiosk = |ini: &Ini| {
+        ini.section("shell")
+            .and_then(|shell| shell.value("kiosk-output"))
+            .map(str::to_string)
+    };
+    if let Some(now) = kiosk(&after) {
+        if kiosk(&before).as_deref() != Some(now.as_str()) {
+            return Some(format!("the kiosk's screen is now {now}"));
+        }
+    }
+
+    for (id, connector) in &after.touch {
+        let was = before.touch.iter().find(|(old, _)| old == id);
+        if was.map(|(_, old)| old) != Some(connector) {
+            return Some(format!("touchscreen {id} belongs to {connector}"));
+        }
+    }
+
     None
 }
 
@@ -181,13 +212,25 @@ impl Section {
 struct Ini {
     sections: Vec<Section>,
     connected: Option<Vec<String>>,
+    /// Each touchscreen's id and connector, from the `TOUCH` line.
+    touch: Vec<(String, String)>,
 }
 
 impl Ini {
     fn parse(text: &str) -> Self {
         let mut sections: Vec<Section> = Vec::new();
         let mut connected = None;
+        let mut touch = Vec::new();
         for line in text.lines() {
+            if let Some(words) = line.strip_prefix(TOUCH) {
+                // The id is an ID_PATH, which has no `=`; the connector none.
+                touch = words
+                    .split_whitespace()
+                    .filter_map(|word| word.rsplit_once('='))
+                    .map(|(id, connector)| (id.to_string(), connector.to_string()))
+                    .collect();
+                continue;
+            }
             if let Some(names) = line.strip_prefix(MARKER) {
                 connected = Some(
                     names
@@ -214,6 +257,7 @@ impl Ini {
         Self {
             sections,
             connected,
+            touch,
         }
     }
 
@@ -302,6 +346,44 @@ mod tests {
             .contains("on-screen keyboard comes back"));
     }
 
+    fn kiosk(connected: &str, output: &str, touch: &str) -> String {
+        format!(
+            "[core]\nidle-time=0\n\n[shell]\npanel-position=none\nkiosk-output={output}\n\
+             \n{MARKER} {connected}\n{TOUCH} {touch}\n"
+        )
+    }
+
+    #[test]
+    fn the_kiosks_screen_moving_is() {
+        let running = kiosk("HDMI-A-1 HDMI-A-2", "HDMI-A-1", "");
+        let candidate = kiosk("HDMI-A-2", "HDMI-A-2", "");
+        assert_eq!(
+            verdict(&running, &candidate).as_deref(),
+            Some("the kiosk's screen is now HDMI-A-2")
+        );
+        assert_eq!(verdict(&running, &running), None);
+    }
+
+    #[test]
+    fn no_screen_left_is_not() {
+        let running = kiosk("HDMI-A-1", "HDMI-A-1", "");
+        let candidate = format!("{BASE}\n{MARKER} (none)\n{TOUCH} \n");
+        assert_eq!(verdict(&running, &candidate), None);
+    }
+
+    #[test]
+    fn a_touchscreen_new_or_moved_is_and_one_gone_is_not() {
+        let running = kiosk("DSI-1", "DSI-1", "platform-ts=DSI-1");
+        let added = kiosk("DSI-1", "DSI-1", "platform-ts=DSI-1 pci-usb-0:1=DSI-1");
+        assert_eq!(
+            verdict(&running, &added).as_deref(),
+            Some("touchscreen pci-usb-0:1 belongs to DSI-1")
+        );
+        let moved = kiosk("DSI-1", "DSI-1", "platform-ts=HDMI-A-1");
+        assert!(verdict(&running, &moved).is_some());
+        assert_eq!(verdict(&added, &running), None);
+    }
+
     #[test]
     fn comments_blanks_and_spacing_do_not_count() {
         let running = config("HDMI-A-1", "\n[output]\nname=HDMI-A-1\nscale=1\n");
@@ -361,6 +443,75 @@ mod tests {
         assert_eq!(snapshot(&sources), "");
     }
 
+    /// The image's own generator, on two screens: the kiosk's gets
+    /// `kiosk-output=` and the rotation, the other neither.
+    #[test]
+    fn the_real_generator_writes_the_kiosks_screen() {
+        let generator = Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../meta-tessaro-distro/recipes-graphics/wayland/files/tessaro-weston-config"
+        ));
+        let dir = tempfile::tempdir().unwrap();
+        let (drm, input) = (dir.path().join("drm"), dir.path().join("input"));
+        for name in ["HDMI-A-1", "HDMI-A-2"] {
+            let connector = drm.join(format!("card0-{name}"));
+            fs::create_dir_all(&connector).unwrap();
+            fs::write(connector.join("status"), "connected\n").unwrap();
+            fs::write(connector.join("modes"), "1920x1080\n1280x720\n").unwrap();
+        }
+        fs::create_dir_all(&input).unwrap();
+        let base = dir.path().join("base.ini");
+        fs::write(&base, BASE).unwrap();
+        let settings = dir.path().join("generated.env");
+        fs::write(
+            &settings,
+            "KIOSK_ROTATION=90\nKIOSK_RESOLUTION=1280x720\nKIOSK_VNC=off\n",
+        )
+        .unwrap();
+        let output = dir.path().join("output.env");
+        fs::write(
+            &output,
+            "KIOSK_OUTPUT_ACTIVE=HDMI-A-2\nKIOSK_OUTPUT_TOUCH=pci-usb-0:1=HDMI-A-2\n",
+        )
+        .unwrap();
+        let sources = Sources {
+            drm: &drm,
+            input: &input,
+        };
+
+        let out = dir.path().join("weston.ini");
+        let generated = Command::new("sh")
+            .arg(generator)
+            .env("TESSARO_WESTON_BASE", &base)
+            .env("TESSARO_WESTON_CONFIG", &out)
+            .env("TESSARO_DRM_ROOT", sources.drm)
+            .env("TESSARO_INPUT_ROOT", sources.input)
+            .env("TESSARO_OVERRIDE", &settings)
+            .env("TESSARO_OUTPUT", &output)
+            .status()
+            .unwrap();
+        assert!(generated.success());
+        let text = fs::read_to_string(&out).unwrap();
+        let ini = Ini::parse(&text);
+
+        assert_eq!(
+            ini.section("shell").unwrap().value("kiosk-output"),
+            Some("HDMI-A-2")
+        );
+        assert_eq!(
+            ini.touch,
+            vec![("pci-usb-0:1".to_string(), "HDMI-A-2".to_string())]
+        );
+        let kiosk = ini.output("HDMI-A-2").unwrap();
+        assert_eq!(kiosk.value("transform"), Some("rotate-90"));
+        assert_eq!(kiosk.value("mode"), Some("1280x720"));
+        let other = ini.output("HDMI-A-1").unwrap();
+        assert_eq!(
+            (other.value("transform"), other.value("mode")),
+            (None, None)
+        );
+    }
+
     #[test]
     fn generate_runs_the_generator_into_the_scratch_file() {
         use std::os::unix::fs::PermissionsExt;
@@ -379,11 +530,12 @@ mod tests {
             input: Path::new("/x/input"),
         };
 
-        let text = generate(&script, &out, &sources, Path::new("/x/generated.env")).unwrap();
+        let (generated, output) = (Path::new("/x/generated.env"), Path::new("/x/output.env"));
+        let text = generate(&script, &out, &sources, generated, output).unwrap();
         assert_eq!(text, "[core]\ndrm=/x/drm\n");
 
         fs::write(&script, "#!/bin/sh\necho broken >&2\nexit 3\n").unwrap();
-        let err = generate(&script, &out, &sources, Path::new("/x/generated.env")).unwrap_err();
+        let err = generate(&script, &out, &sources, generated, output).unwrap_err();
         assert!(err.contains("broken"), "{err}");
     }
 }

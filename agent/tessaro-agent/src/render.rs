@@ -462,6 +462,8 @@ pub fn all(
     let camera_changed = render_camera(paths, &effective)?;
     let vision_changed = render_vision(paths, &effective)?;
     let input_changed = render_input(paths, &effective, log)?;
+    // After the input rule: a touchscreen it ignores is no screen's.
+    crate::output::apply(paths, &output_setting(&effective), log)?;
 
     Ok(Rendered {
         env_changed,
@@ -624,10 +626,18 @@ fn render_input(paths: &Paths, effective: &state::Effective, log: &Log) -> Resul
     Ok(changed)
 }
 
+/// screen.output and screen.input.touch, for `crate::output`.
+fn output_setting(effective: &state::Effective) -> crate::output::Setting {
+    crate::output::Setting {
+        output: setting(effective, "KIOSK_OUTPUT", "auto"),
+        touch: effective.get("KIOSK_INPUT_TOUCH").as_deref() != Some("0"),
+    }
+}
+
 /// Reload the rules and replay the input devices through them, so the
 /// Weston restart that follows opens them with the new property. The
 /// settle is bounded well inside the render's own deadline.
-fn apply_input_rules(udevadm: &Path) -> Result<(), String> {
+pub fn apply_input_rules(udevadm: &Path) -> Result<(), String> {
     let steps: [&[&str]; 3] = [
         &["control", "--reload"],
         &["trigger", "--action=change", "--subsystem-match=input"],

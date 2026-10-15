@@ -78,6 +78,7 @@ or from [Webconfig](#webconfig) in any browser:
 - 🧩 **One image, a whole fleet**: `{placeholders}` and your own `data.*` keys give each screen its own playlist URL.
 - 📸 **See what every screen shows**: a screenshot or a live VNC view, from anywhere.
 - 🖼️ **Portrait displays and totems**: `screen.rotation` turns the picture for a panel mounted on its side or upside down, boot splash included, and reverts on its own unless you confirm it.
+- 🖥️ **Several screens, one kiosk**: the kiosk and its touch go to the biggest screen with a touchscreen, else the biggest, or the one `screen.output` names; the others show the wallpaper.
 - 🔊 **Sound and screen power, managed remotely.**
 - 📺 **TVs that really switch off**: over HDMI-CEC the TV goes to standby with the screen and wakes on its input, its remote's keys reach your page, and scripts run when someone switches the TV on, off or to another input. `tessaro-ctl screen cec`, the desktop app, Webconfig and your page can wake it, put it in standby, take its input, turn its volume, or send it any CEC message, and watch everything on the bus. `tessaro-ctl screen show` names the TV or monitor plugged in, from its EDID ([docs/cec.md](docs/cec.md)).
 
@@ -350,6 +351,7 @@ tessaro-ctl config set printer.enable=1   # window.print() now prints, silently
 ```sh
 tessaro-ctl config set screen.resolution=1920x1080 && tessaro-ctl screen confirm
 tessaro-ctl config set screen.rotation=90 && tessaro-ctl screen confirm   # a portrait screen
+tessaro-ctl config set screen.output=HDMI-A-2 && tessaro-ctl screen confirm   # the kiosk on that screen
 tessaro-ctl network wifi join Office
 tessaro-ctl network proxy set 'http://proxy.corp.test:8080' --bypass .corp.test
 tessaro-ctl time timezone Europe/Bratislava

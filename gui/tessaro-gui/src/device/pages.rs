@@ -277,6 +277,10 @@ pub enum Msg {
     PolicyMove(bool),
     // screen
     UseMode,
+    /// screen.output: the selected row's connector.
+    KioskHere,
+    /// screen.output back to auto.
+    AutoOutput,
     Rotation,
     ScreenPower(bool),
     Keyboard(bool),
@@ -2140,6 +2144,13 @@ impl Device {
                     self.set(&[("screen.resolution", &mode)]);
                 }
             }
+            Msg::KioskHere => {
+                if let Some(row) = self.selected("modes").cloned() {
+                    let name = row.split_once(' ').map_or(row.clone(), |(name, _)| name.to_string());
+                    self.set(&[(keys::OUTPUT, &name)]);
+                }
+            }
+            Msg::AutoOutput => self.set(&[(keys::OUTPUT, "auto")]),
             Msg::Rotation => {
                 let current = self
                     .setting(keys::ROTATION)
@@ -2152,7 +2163,7 @@ impl Device {
                     .unwrap_or("0");
                 self.form(
                     Form::new("Rotate the screen", "Rotate", Action::Rotation)
-                        .intro("How far the screen is mounted turned clockwise, on every screen; flipped mirrors the picture. The picture and touch turn to stay upright. It turns back on its own unless confirmed within a minute.")
+                        .intro("How far the kiosk's screen is mounted turned clockwise; flipped mirrors the picture. The picture and touch turn to stay upright. It turns back on its own unless confirmed within a minute.")
                         .field(Field::choice("Rotation", rotation, keys::ROTATIONS)),
                 );
             }
@@ -4663,6 +4674,19 @@ impl Device {
             theme::tool(
                 "Use this mode",
                 self.selected("modes").and_then(|_| self.when(Msg::UseMode))
+            ),
+            theme::tool(
+                "Kiosk here",
+                self.selected("modes")
+                    .and_then(|_| self.when(Msg::KioskHere))
+            ),
+            theme::tool(
+                "Auto screen",
+                self.when(Msg::AutoOutput).filter(|_| {
+                    self.setting(keys::OUTPUT)
+                        .and_then(|setting| setting.value.as_deref())
+                        .is_some_and(|value| !value.is_empty() && value != "auto")
+                })
             ),
             theme::tool("Rotate", self.when(Msg::Rotation)),
             theme::tool(

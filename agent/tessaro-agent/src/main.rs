@@ -48,6 +48,7 @@ mod net;
 mod nm;
 mod notify;
 mod offline;
+mod output;
 mod paths;
 mod ping;
 mod playlists;

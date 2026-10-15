@@ -1,0 +1,111 @@
+From: Ahmed Al Hafoudh <alhafoudh@freevision.sk>
+Date: Thu, 15 Oct 2026 12:00:00 +0200
+Subject: [PATCH] desktop-shell: put windows on the [shell] kiosk-output
+
+With several outputs, desktop-shell puts a window that goes fullscreen or
+maximized on the output that has focus, else the first, and a new window
+on the output under the pointer. A kiosk's browser names no output, so it
+lands on whichever screen the driver lists first or the pointer happens to
+be on, and nothing in weston.ini can say otherwise.
+
+Add [shell] kiosk-output=NAME. While that output is enabled, a window that
+goes fullscreen or maximized without naming an output, and a new window,
+go there. Without the key, or with the output gone, nothing changes.
+
+Upstream-Status: Inappropriate [Tessaro kiosk policy]
+---
+diff --git a/desktop-shell/shell.c b/desktop-shell/shell.c
+index 084e602..50cf139 100644
+--- a/desktop-shell/shell.c
++++ b/desktop-shell/shell.c
+@@ -531,6 +531,9 @@ shell_configuration(struct desktop_shell *shell)
+ 	free(client);
+ 	shell->client = s;
+
++	weston_config_section_get_string(section, "kiosk-output",
++					 &shell->kiosk_output, NULL);
++
+ 	weston_config_section_get_bool(section,
+ 				       "allow-zap", &allow_zap, true);
+ 	shell->allow_zap = allow_zap;
+@@ -1694,6 +1697,23 @@ notify_output_destroy(struct wl_listener *listener, void *data)
+ 	shsurf->output_destroy_listener.notify = NULL;
+ }
+
++/* The output [shell] kiosk-output names, while it is enabled. */
++static struct weston_output *
++get_kiosk_output(struct desktop_shell *shell)
++{
++	struct weston_output *output;
++
++	if (!shell->kiosk_output)
++		return NULL;
++
++	wl_list_for_each(output, &shell->compositor->output_list, link) {
++		if (output->name && strcmp(output->name, shell->kiosk_output) == 0)
++			return output;
++	}
++
++	return NULL;
++}
++
+ static void
+ shell_surface_set_output(struct shell_surface *shsurf,
+                          struct weston_output *output)
+@@ -2427,6 +2447,10 @@ set_fullscreen(struct shell_surface *shsurf, bool fullscreen,
+
+ 	weston_desktop_surface_set_fullscreen(desktop_surface, fullscreen);
+ 	if (fullscreen) {
++		/* A client that names no output goes to the kiosk's. */
++		if (output == NULL)
++			output = get_kiosk_output(shsurf->shell);
++
+ 		/* handle clients launching in fullscreen */
+ 		if (output == NULL && !weston_surface_is_mapped(surface)) {
+ 			/* Set the output to the one that has focus currently. */
+@@ -2579,9 +2603,10 @@ set_maximized(struct shell_surface *shsurf, bool maximized)
+ 	if (maximized) {
+ 		struct weston_output *output;
+
+-		if (!weston_surface_is_mapped(surface))
++		output = get_kiosk_output(shsurf->shell);
++		if (!output && !weston_surface_is_mapped(surface))
+ 			output = weston_shell_utils_get_focused_output(surface->compositor);
+-		else
++		else if (!output)
+ 			output = surface->output;
+
+ 		shell_surface_set_output(shsurf, output);
+@@ -4071,6 +4096,10 @@ weston_view_set_initial_position(struct weston_view *view,
+ 		}
+ 	}
+
++	/* The kiosk's output, wherever the pointer is. */
++	if (get_kiosk_output(shell))
++		target_output = get_kiosk_output(shell);
++
+ 	if (!target_output) {
+ 		pos.c = weston_coord(10 + random() % 400,
+ 				     10 + random() % 400);
+@@ -4792,6 +4821,7 @@ shell_destroy(struct wl_listener *listener, void *data)
+ 	desktop_shell_destroy_layer(&shell->fullscreen_layer);
+
+ 	free(shell->client);
++	free(shell->kiosk_output);
+ 	free(shell);
+ }
+
+diff --git a/desktop-shell/shell.h b/desktop-shell/shell.h
+index debb365..eef366e 100644
+--- a/desktop-shell/shell.h
++++ b/desktop-shell/shell.h
+@@ -158,6 +158,10 @@ struct desktop_shell {
+
+ 	char *client;
+
++	/* [shell] kiosk-output: the output a window goes fullscreen,
++	 * maximized or first appears on, by name; NULL for the default. */
++	char *kiosk_output;
++
+ 	struct timespec startup_time;
+ };

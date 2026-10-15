@@ -3,7 +3,8 @@
 //! mirror.
 
 use protocol::{
-    CecAdapter, CecDevice, CecPower, Connector, DisplayIdentity, ScreenShow, TvStatus, VncStatus,
+    CecAdapter, CecDevice, CecPower, Connector, DisplayIdentity, OutputPick, OutputReason,
+    ScreenShow, TouchMatch, TvStatus, VncStatus,
 };
 
 use crate::text::{Line, Tone};
@@ -107,6 +108,59 @@ pub fn connector(connector: &Connector) -> Vec<Line> {
             None => none(),
         }),
     );
+    lines
+}
+
+/// Why a screen is the kiosk's.
+pub fn reason(reason: OutputReason) -> &'static str {
+    match reason {
+        OutputReason::Set => "set in screen.output",
+        OutputReason::Touch => "the biggest screen with a touchscreen",
+        OutputReason::Biggest => "the biggest screen",
+        OutputReason::Only => "the only screen",
+    }
+}
+
+/// How a touchscreen was matched to its screen.
+pub fn touch_match(how: TouchMatch) -> &'static str {
+    match how {
+        TouchMatch::BuiltIn => "the built-in panel's",
+        TouchMatch::Size => "by its size",
+        TouchMatch::Name => "by the screen's name",
+        TouchMatch::Only => "the only screen",
+        TouchMatch::Kiosk => "not matched, follows the kiosk",
+    }
+}
+
+/// What connector `name` shows, the kiosk or the wallpaper, and the
+/// touchscreens whose touches land on it.
+pub fn output(name: &str, pick: &OutputPick) -> Vec<Line> {
+    let mut lines = vec![if pick.name == name {
+        field("shows")
+            .add(Tone::Ok, "the kiosk")
+            .text(" ")
+            .add(Tone::Muted, format!("- {}", reason(pick.reason)))
+    } else {
+        field("shows")
+            .text("the wallpaper")
+            .text(" ")
+            .add(Tone::Muted, "-")
+            .text(" ")
+            .add(
+                Tone::Cmd,
+                format!("tessaro-ctl config set screen.output={name}"),
+            )
+            .text(" ")
+            .add(Tone::Muted, "moves the kiosk here")
+    }];
+    for touch in pick.touch.iter().filter(|touch| touch.connector == name) {
+        lines.push(
+            field("touch")
+                .text(&touch.name)
+                .text(" ")
+                .add(Tone::Muted, format!("({})", touch_match(touch.how))),
+        );
+    }
     lines
 }
 
@@ -214,8 +268,22 @@ pub fn show(show: &ScreenShow) -> Vec<Line> {
     if show.connectors.is_empty() {
         lines.push(Line::of(Tone::Warn, "no display is connected"));
     }
+    if let Some(missing) = show.output.as_ref().and_then(|pick| pick.missing.as_ref()) {
+        lines.push(
+            Line::of(
+                Tone::Warn,
+                format!("screen.output is {missing}, which is not connected"),
+            )
+            .text(" ")
+            .add(Tone::Muted, "- the kiosk is on the screen auto picks"),
+        );
+        lines.push(Line::new());
+    }
     for one in &show.connectors {
         lines.extend(connector(one));
+        if let Some(pick) = &show.output {
+            lines.extend(output(&one.name, pick));
+        }
         lines.push(Line::new());
     }
     if !show.cec {

@@ -333,7 +333,7 @@
       "weston"
     ],
     "guarded": true,
-    "doc": "How far the screen is mounted turned clockwise, for every screen: 0, 90, 180, 270, or flipped (mirrored) and flipped-90/180/270. The picture and touch turn back to stay upright. Reverts unless confirmed with `tessaro-ctl screen confirm`.",
+    "doc": "How far the kiosk's screen (screen.output) is mounted turned clockwise: 0, 90, 180, 270, or flipped (mirrored) and flipped-90/180/270. The picture and touch turn back to stay upright. Reverts unless confirmed with `tessaro-ctl screen confirm`.",
     "values": "one of: 0, 90, 180, 270, flipped, flipped-90, flipped-180, flipped-270",
     "default": "0",
     "value": null,
@@ -349,6 +349,21 @@
         "flipped-180",
         "flipped-270"
       ]
+    }
+  },
+  {
+    "name": "screen.output",
+    "env": "KIOSK_OUTPUT",
+    "applies": [
+      "weston"
+    ],
+    "guarded": true,
+    "doc": "The screen the kiosk and every touchscreen use when several are connected: auto (the biggest with a touchscreen, else the biggest), or a connector from `tessaro-ctl screen show`. The others show the wallpaper. Reverts unless confirmed with `tessaro-ctl screen confirm`.",
+    "values": "auto, or a connector (HDMI-A-2) from `tessaro-ctl screen show`",
+    "default": "auto",
+    "value": null,
+    "input": {
+      "kind": "text"
     }
   },
   {

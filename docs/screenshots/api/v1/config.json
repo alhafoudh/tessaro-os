@@ -134,6 +134,12 @@
       "source": "default"
     },
     {
+      "key": "screen.output",
+      "env": "KIOSK_OUTPUT",
+      "value": "auto",
+      "source": "default"
+    },
+    {
       "key": "screen.osk",
       "env": "KIOSK_OSK",
       "value": "auto",

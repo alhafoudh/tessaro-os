@@ -1343,6 +1343,19 @@ impl Control {
         })
     }
 
+    /// screen.output and screen.input.touch as stored now, for
+    /// `crate::output`.
+    async fn output_setting(&self) -> Result<crate::output::Setting, String> {
+        let state = self.read_state().await?;
+        let setting = |key| state::setting(&state.settings, &self.defaults, key);
+        Ok(crate::output::Setting {
+            output: setting(keys::OUTPUT)
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| "auto".into()),
+            touch: setting(keys::INPUT_TOUCH).as_deref() != Some("0"),
+        })
+    }
+
     async fn modes(&self) -> Result<Vec<protocol::Connector>, String> {
         let drm = self.paths.drm.clone();
         blocking("reading DRM connectors", move || {

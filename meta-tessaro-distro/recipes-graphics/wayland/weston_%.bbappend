@@ -62,6 +62,12 @@
 # it when the viewer is gone; tessaro-weston-config writes
 # start-on-startup=false. It also takes an ended share out of screen-share's
 # list, which upstream leaves there freed. See docs/remote-access.md.
+#
+# The sixth adds [shell] kiosk-output= to desktop-shell: the output the
+# browser goes fullscreen on, whichever screen has focus, so a device with
+# several screens shows the kiosk on the one screen.output picks
+# (tessaro-weston-config writes it). See **Which screen the kiosk uses** in
+# docs/display.md.
 
 FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
 
@@ -71,6 +77,7 @@ SRC_URI += " \
     file://0003-vnc-offer-logins-for-viewers-without-TLS.patch \
     file://0004-vnc-keep-one-seat-for-every-client.patch \
     file://0005-screen-share-control-socket.patch \
+    file://0006-desktop-shell-kiosk-output.patch \
     file://weston-remote-access.pam \
     file://tessaro-vnc-auth \
 "

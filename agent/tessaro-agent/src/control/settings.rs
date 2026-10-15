@@ -61,6 +61,11 @@ impl Control {
                     return Reply::err(err);
                 }
             }
+            if let (keys::Kind::Output, Some(name)) = (key.kind, &value) {
+                if let Err(err) = self.check_output(name).await {
+                    return Reply::err(err);
+                }
+            }
             // A kind of output (`usb`) may be set before it is plugged in;
             // one output by name must be one the device has.
             if let Some(name) = &value {
@@ -532,6 +537,27 @@ impl Control {
             self.log
                 .info(format!("confirmed, but the splash did not follow: {err}"));
         }
+    }
+
+    /// A screen.output connector must be connected now: the change is on
+    /// probation, and whoever confirms it has to see the kiosk move there.
+    async fn check_output(&self, name: &str) -> Result<(), String> {
+        if name == "auto" {
+            return Ok(());
+        }
+        let connectors = self.modes().await?;
+        if connectors.iter().any(|c| c.name == name) {
+            return Ok(());
+        }
+        let names: Vec<&str> = connectors.iter().map(|c| c.name.as_str()).collect();
+        Err(format!(
+            "no display is connected to {name}; see `tessaro-ctl screen show` ({})",
+            if names.is_empty() {
+                "none is connected".to_string()
+            } else {
+                names.join(", ")
+            }
+        ))
     }
 
     async fn check_mode(&self, mode: &str) -> Result<(), String> {

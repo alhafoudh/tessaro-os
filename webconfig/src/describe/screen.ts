@@ -82,6 +82,67 @@ export function connector(connector: Schemas["Connector"]): Line[] {
   return lines;
 }
 
+/** Why a screen is the kiosk's. */
+export function reason(reason: Schemas["OutputReason"]): string {
+  switch (reason) {
+    case "set":
+      return "set in screen.output";
+    case "touch":
+      return "the biggest screen with a touchscreen";
+    case "biggest":
+      return "the biggest screen";
+    case "only":
+      return "the only screen";
+  }
+}
+
+/** How a touchscreen was matched to its screen. */
+export function touchMatch(how: Schemas["TouchMatch"]): string {
+  switch (how) {
+    case "built-in":
+      return "the built-in panel's";
+    case "size":
+      return "by its size";
+    case "name":
+      return "by the screen's name";
+    case "only":
+      return "the only screen";
+    case "kiosk":
+      return "not matched, follows the kiosk";
+  }
+}
+
+/**
+ * What connector `name` shows, the kiosk or the wallpaper, and the
+ * touchscreens whose touches land on it.
+ */
+export function output(name: string, pick: Schemas["OutputPick"]): Line[] {
+  const lines = [
+    pick.name === name
+      ? field("shows")
+          .add("ok", "the kiosk")
+          .text(" ")
+          .add("muted", `- ${reason(pick.reason)}`)
+      : field("shows")
+          .text("the wallpaper")
+          .text(" ")
+          .add("muted", "-")
+          .text(" ")
+          .add("cmd", `tessaro-ctl config set screen.output=${name}`)
+          .text(" ")
+          .add("muted", "moves the kiosk here"),
+  ];
+  for (const touch of (pick.touch ?? []).filter((touch) => touch.connector === name)) {
+    lines.push(
+      field("touch")
+        .text(touch.name)
+        .text(" ")
+        .add("muted", `(${touchMatch(touch.how)})`),
+    );
+  }
+  return lines;
+}
+
 /** A power state in words: `turning on` for `turning-on`. */
 function powerName(power: CecPower): string {
   return power.replace("-", " ");
@@ -174,8 +235,18 @@ export function show(show: Schemas["ScreenShow"]): Line[] {
   const lines: Line[] = [];
   const adapters = show.adapters ?? [];
   if (show.connectors.length === 0) lines.push(Line.of("warn", "no display is connected"));
+  const pick = show.output ?? null;
+  if (pick?.missing != null) {
+    lines.push(
+      Line.of("warn", `screen.output is ${pick.missing}, which is not connected`)
+        .text(" ")
+        .add("muted", "- the kiosk is on the screen auto picks"),
+    );
+    lines.push(new Line());
+  }
   for (const one of show.connectors) {
     lines.push(...connector(one));
+    if (pick !== null) lines.push(...output(one.name, pick));
     lines.push(new Line());
   }
   if (!show.cec) {

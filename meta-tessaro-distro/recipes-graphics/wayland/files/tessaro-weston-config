@@ -53,6 +53,10 @@ DEFAULTS=/usr/lib/tessaro-kiosk/tessaro-kiosk.env
 # /data/tessaro/tessaro.db (tessaro-config.service runs before weston.service).
 # Change a key with tessaro-ctl, never here.
 OVERRIDE="${TESSARO_OVERRIDE:-/run/tessaro-kiosk/generated.env}"
+# The screen the kiosk shows on and each touchscreen's, picked by
+# tessaro-agent from screen.output and what is plugged in
+# (agent/tessaro-agent/src/output.rs).
+OUTPUT_ENV="${TESSARO_OUTPUT:-/run/tessaro-kiosk/output.env}"
 
 # Where the VNC screen share listens, and the certificate it needs. Loopback
 # only: the way in is an SSH tunnel, which is what actually authenticates the
@@ -111,6 +115,14 @@ case $rotation in
         transform=
         ;;
 esac
+
+# The kiosk's connector, or empty with no screen (or no agent): then every
+# screen is treated alike, as on a device with one. It goes into weston.ini,
+# so anything that is not a connector name is dropped.
+kiosk=$(read_key "$OUTPUT_ENV" KIOSK_OUTPUT_ACTIVE)
+case $kiosk in *[!A-Za-z0-9-]*) kiosk= ;; esac
+touch_bindings=$(read_key "$OUTPUT_ENV" KIOSK_OUTPUT_TOUCH)
+case $touch_bindings in *[!A-Za-z0-9:._+=\ -]*) touch_bindings= ;; esac
 
 osk=$(read_key "$DEFAULTS" KIOSK_OSK)
 o=$(read_key "$OVERRIDE" KIOSK_OSK)
@@ -255,6 +267,27 @@ for dev in "$DRM_ROOT"/card*-*; do
 done
 printf '\n# tessaro-weston-config: connected%s\n' "${connected:- (none)}" >> "$OUT"
 
+# Each touchscreen's screen, as udev's WL_OUTPUT gives it to Weston from the
+# agent's rule. Weston reads that only when it opens a device, so the agent
+# compares this line too and restarts Weston when a binding moved. Keep the
+# exact prefix.
+printf '# tessaro-weston-config: touch %s\n' "$touch_bindings" >> "$OUT"
+
+# The screen the browser goes fullscreen on, whichever has focus: [shell]
+# kiosk-output= is the weston bbappend's desktop-shell patch. Every other
+# screen shows the wallpaper. Mirroring is not possible here: Weston 13's
+# same-as= drives every head from one CRTC ("independent-CRTC clone mode is
+# not implemented"), which two HDMI ports with a controller each cannot do.
+# A kiosk-output= set by hand in the base wins.
+if [ -n "$kiosk" ] && ! grep -q '^[[:space:]]*kiosk-output[[:space:]]*=' "$OUT"; then
+    if grep -q '^[[:space:]]*\[shell\][[:space:]]*$' "$OUT"; then
+        sed -i "/^[[:space:]]*\[shell\][[:space:]]*$/a kiosk-output=$kiosk" "$OUT"
+    else
+        printf '\n[shell]\nkiosk-output=%s\n' "$kiosk" >> "$OUT"
+    fi
+    echo "tessaro-weston-config: the kiosk shows on $kiosk"
+fi
+
 # The on-screen keyboard, before the scale, so that KIOSK_SCALE=none below
 # still leaves it configured.
 #
@@ -398,22 +431,34 @@ for dev in "$DRM_ROOT"/card*-*; do
         continue
     fi
 
+    # screen.resolution, screen.rotation and a set scale are the kiosk's
+    # screen's. A screen showing the wallpaper keeps its preferred mode, no
+    # transform and the auto scale: it may be mounted the other way round.
+    own_resolution=$resolution
+    own_transform=$transform
+    own_scale=$scale_override
+    if [ -n "$kiosk" ] && [ "$name" != "$kiosk" ]; then
+        own_resolution=preferred
+        own_transform=
+        [ "$scale_override" = none ] || own_scale=
+    fi
+
     # The mode, only if this connector lists it. A display that does not is
     # left on its preferred mode rather than driven out of range.
     mode=
-    if [ "$resolution" != preferred ]; then
-        if grep -qx "$resolution" "$dev/modes" 2>/dev/null; then
-            mode=$resolution
+    if [ "$own_resolution" != preferred ]; then
+        if grep -qx "$own_resolution" "$dev/modes" 2>/dev/null; then
+            mode=$own_resolution
         else
-            echo "tessaro-weston-config: $name does not offer $resolution, keeping its preferred mode" >&2
+            echo "tessaro-weston-config: $name does not offer $own_resolution, keeping its preferred mode" >&2
         fi
     fi
 
-    if [ "$scale_override" = none ]; then
+    if [ "$own_scale" = none ]; then
         scale=
         why="KIOSK_SCALE=none"
-    elif [ -n "$scale_override" ]; then
-        scale=$scale_override
+    elif [ -n "$own_scale" ]; then
+        scale=$own_scale
         why="KIOSK_SCALE"
     else
         # The mode being set, or else the first line of modes, which is the
@@ -447,8 +492,8 @@ for dev in "$DRM_ROOT"/card*-*; do
     fi
     # Only when turned, so an unrotated device keeps the config it had and a
     # hotplug check sees no difference.
-    if [ -n "$transform" ]; then
-        printf 'transform=%s\n' "$transform" >> "$OUT"
+    if [ -n "$own_transform" ]; then
+        printf 'transform=%s\n' "$own_transform" >> "$OUT"
     fi
-    echo "tessaro-weston-config: $name scale=${scale:-default} mode=${mode:-preferred} transform=${transform:-normal} ($why)"
+    echo "tessaro-weston-config: $name scale=${scale:-default} mode=${mode:-preferred} transform=${own_transform:-normal} ($why)"
 done

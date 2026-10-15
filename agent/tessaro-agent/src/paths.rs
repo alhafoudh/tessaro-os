@@ -158,6 +158,16 @@ pub struct Paths {
     /// rendered from screen.input.*; absent while every kind is used. In
     /// `/run`, so it is rendered from the settings at every boot.
     pub input_rules: PathBuf,
+    /// The udev rule that binds each touchscreen to its screen with
+    /// `WL_OUTPUT` (`crate::output`); absent without a touchscreen. Next to
+    /// `input_rules`, and after udev's own `60-*`, whose `ID_PATH` it reads.
+    pub touch_rules: PathBuf,
+    /// udev's database, `c<major>:<minor>` per device node: the properties
+    /// its rules gave each input device.
+    pub udev_data: PathBuf,
+    /// `/dev/input`, where an input device's `eventN` node is opened to ask
+    /// its size.
+    pub dev_input: PathBuf,
     /// Run to apply a changed rule to the devices already present; empty
     /// leaves them alone (tests).
     pub udevadm: PathBuf,
@@ -304,6 +314,12 @@ impl Paths {
                 "KIOSK_INPUT_RULES",
                 "/run/udev/rules.d/69-tessaro-input.rules",
             ),
+            touch_rules: path(
+                "KIOSK_TOUCH_RULES",
+                "/run/udev/rules.d/69-tessaro-touch-output.rules",
+            ),
+            udev_data: path("KIOSK_UDEV_DATA", "/run/udev/data"),
+            dev_input: path("KIOSK_DEV_INPUT", "/dev/input"),
             udevadm: path("KIOSK_UDEVADM", "udevadm"),
             scanner_rules: path(
                 "KIOSK_SCANNER_RULES",
@@ -341,6 +357,12 @@ impl Paths {
 
     pub fn generated_env(&self) -> PathBuf {
         self.run_dir.join("generated.env")
+    }
+
+    /// The screen the kiosk shows on and the touchscreens' screens, for
+    /// tessaro-weston-config (`crate::output`).
+    pub fn output_env(&self) -> PathBuf {
+        self.run_dir.join("output.env")
     }
 
     /// The last public address found, written by the agent's refresher.

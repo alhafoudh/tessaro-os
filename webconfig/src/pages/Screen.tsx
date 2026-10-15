@@ -76,6 +76,10 @@ export function Screen({ info }: { info: PageInfo }) {
     void set({ "screen.resolution": mode }).catch(() => undefined);
   };
 
+  // screen.output: the selected row's connector, or back to auto.
+  const output = settings?.settings.find((setting) => setting.key === "screen.output")?.value || "auto";
+  const applyOutput = (value: string) => void set({ "screen.output": value }).catch(() => undefined);
+
   const done = async (pending: Promise<{ message: string }>) => {
     try {
       log((await pending).message, "ok");
@@ -130,6 +134,15 @@ export function Screen({ info }: { info: PageInfo }) {
         <>
           <Button disabled={!online || !selected} onClick={() => applyMode(selected)}>
             Use this mode
+          </Button>
+          <Button
+            disabled={!online || !selected}
+            onClick={() => selected && applyOutput(selected.slice(0, selected.indexOf(" ")))}
+          >
+            Kiosk here
+          </Button>
+          <Button disabled={!online || output === "auto"} onClick={() => applyOutput("auto")}>
+            Auto screen
           </Button>
           <Button disabled={!online} onClick={() => setRotating(true)}>
             Rotate

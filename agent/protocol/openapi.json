@@ -7718,6 +7718,18 @@
             },
             "description": "The HDMI-CEC adapters in use; empty with `cec` off.",
             "default": []
+          },
+          "output": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OutputPick"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The screen the kiosk shows on, and where each touchscreen's touches\nland. `None` with no display connected, and from a device that\npredates it.",
+            "default": null
           }
         },
         "required": [
@@ -7985,6 +7997,116 @@
           "kind"
         ],
         "description": "A device on the HDMI-CEC bus."
+      },
+      "OutputPick": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The connector: `HDMI-A-2`."
+          },
+          "reason": {
+            "$ref": "#/components/schemas/OutputReason"
+          },
+          "missing": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The connector screen.output names when it is not connected, and the\npick fell back to auto's.",
+            "default": null
+          },
+          "touch": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TouchBinding"
+            },
+            "description": "Each touchscreen, and the screen its touches land on.",
+            "default": []
+          }
+        },
+        "required": [
+          "name",
+          "reason"
+        ],
+        "description": "The screen the kiosk shows on (screen.output), as the device last picked\nit. Every other connected screen shows the wallpaper."
+      },
+      "OutputReason": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "set",
+            "description": "screen.output names it."
+          },
+          {
+            "type": "string",
+            "const": "touch",
+            "description": "The biggest screen with a touchscreen on it."
+          },
+          {
+            "type": "string",
+            "const": "biggest",
+            "description": "The biggest screen, none having a touchscreen."
+          },
+          {
+            "type": "string",
+            "const": "only",
+            "description": "The one screen connected."
+          }
+        ],
+        "description": "Why a screen is the kiosk's."
+      },
+      "TouchBinding": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The input device's name: `ILITEK ILITEK-TP`."
+          },
+          "connector": {
+            "type": "string",
+            "description": "The connector its touches land on."
+          },
+          "how": {
+            "$ref": "#/components/schemas/TouchMatch"
+          }
+        },
+        "required": [
+          "name",
+          "connector",
+          "how"
+        ],
+        "description": "A touchscreen and the screen it belongs to."
+      },
+      "TouchMatch": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "built-in",
+            "description": "A touchscreen not on USB or Bluetooth, and a built-in panel (DSI,\neDP, LVDS)."
+          },
+          {
+            "type": "string",
+            "const": "size",
+            "description": "Its size is the screen's, within a tenth."
+          },
+          {
+            "type": "string",
+            "const": "name",
+            "description": "The screen's name or maker is in the touchscreen's name."
+          },
+          {
+            "type": "string",
+            "const": "only",
+            "description": "One touchscreen and one screen."
+          },
+          {
+            "type": "string",
+            "const": "kiosk",
+            "description": "Nothing matched: it follows the kiosk."
+          }
+        ],
+        "description": "How a touchscreen was matched to its screen."
       },
       "Blob": {
         "type": "string",

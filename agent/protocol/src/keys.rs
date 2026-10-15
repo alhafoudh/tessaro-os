@@ -114,6 +114,9 @@ pub enum Kind {
     Scale,
     /// Output mode: `preferred`, or `WIDTHxHEIGHT`.
     Resolution,
+    /// The screen the kiosk shows on: `auto`, or a DRM connector name
+    /// (`HDMI-A-2`). Whether it is connected is the device's check.
+    Output,
     /// A camera frame size: `auto`, or `WIDTHxHEIGHT`. Whether a camera has
     /// it is the camera's: one without it falls back to `auto`.
     CameraSize,
@@ -216,6 +219,9 @@ impl Kind {
             Kind::Scale => "auto, none, or 1 to 4".to_string(),
             Kind::Resolution => {
                 "preferred, or WIDTHxHEIGHT from `tessaro-ctl screen modes`".to_string()
+            }
+            Kind::Output => {
+                "auto, or a connector (HDMI-A-2) from `tessaro-ctl screen show`".to_string()
             }
             Kind::CameraSize => {
                 "auto, or WIDTHxHEIGHT from `tessaro-ctl camera list`".to_string()
@@ -413,7 +419,12 @@ pub static KEYS: &[Key] = &[
     Key {
         guarded: true,
         ..key(ROTATION, "KIOSK_ROTATION", Kind::Choice(ROTATIONS), WESTON,
-            "How far the screen is mounted turned clockwise, for every screen: 0, 90, 180, 270, or flipped (mirrored) and flipped-90/180/270. The picture and touch turn back to stay upright. Reverts unless confirmed with `tessaro-ctl screen confirm`.")
+            "How far the kiosk's screen (screen.output) is mounted turned clockwise: 0, 90, 180, 270, or flipped (mirrored) and flipped-90/180/270. The picture and touch turn back to stay upright. Reverts unless confirmed with `tessaro-ctl screen confirm`.")
+    },
+    Key {
+        guarded: true,
+        ..key(OUTPUT, "KIOSK_OUTPUT", Kind::Output, WESTON,
+            "The screen the kiosk and every touchscreen use when several are connected: auto (the biggest with a touchscreen, else the biggest), or a connector from `tessaro-ctl screen show`. The others show the wallpaper. Reverts unless confirmed with `tessaro-ctl screen confirm`.")
     },
     key(OSK, "KIOSK_OSK", Kind::Choice(&["auto", "always", "never"]), WESTON,
         "On-screen keyboard: auto shows it only without a USB/Bluetooth keyboard."),
@@ -658,6 +669,7 @@ pub const INPUT_TOUCH: &str = "screen.input.touch";
 pub const VNC: &str = "screen.vnc";
 pub const RESOLUTION: &str = "screen.resolution";
 pub const ROTATION: &str = "screen.rotation";
+pub const OUTPUT: &str = "screen.output";
 pub const CEC_ENABLE: &str = "screen.cec.enable";
 pub const CEC_SOURCE: &str = "screen.cec.source";
 pub const CEC_NAME: &str = "screen.cec.name";
@@ -1141,6 +1153,16 @@ pub fn validate(key: &Key, value: &str) -> Result<String, String> {
                 None => fail("must be preferred or WIDTHxHEIGHT, e.g. 1920x1080"),
             },
         },
+        Kind::Output => {
+            if value.is_empty() || value.eq_ignore_ascii_case("auto") {
+                return Ok("auto".to_string());
+            }
+            if is_connector(value) {
+                Ok(value.to_string())
+            } else {
+                fail("must be auto or a connector name, e.g. HDMI-A-2")
+            }
+        }
         Kind::CameraSize => match value.to_ascii_lowercase().as_str() {
             "" | "auto" => Ok("auto".to_string()),
             size => match parse_camera_size(size) {
@@ -1602,6 +1624,25 @@ pub fn is_audio_device(value: &str) -> bool {
     !AUDIO_OUTPUTS.contains(&value) && !AUDIO_INPUTS.contains(&value)
 }
 
+/// A name the kernel gives a DRM connector: its type, dashes and a number
+/// (`HDMI-A-2`, `DSI-1`, `eDP-1`, `Virtual-1`), as `/sys/class/drm` shows it
+/// after the `cardN-` prefix. It goes into weston.ini and a udev rule, so
+/// nothing else is let through.
+pub fn is_connector(name: &str) -> bool {
+    let Some((kind, number)) = name.rsplit_once('-') else {
+        return false;
+    };
+    name.len() <= 32
+        && !kind.is_empty()
+        && kind.starts_with(|ch: char| ch.is_ascii_alphabetic())
+        && kind
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-')
+        && !kind.ends_with('-')
+        && !number.is_empty()
+        && number.chars().all(|ch| ch.is_ascii_digit())
+}
+
 /// A name the kernel could give an interface: `IFNAMSIZ` less the NUL. No
 /// `:` - an old-style alias like `eth0:1` is not an interface NetworkManager
 /// or `SO_BINDTODEVICE` would take.
@@ -1913,6 +1954,26 @@ mod tests {
         assert!(check(ROTATION, "45").is_err());
         assert!(check(ROTATION, "rotate-90").is_err());
         assert!(find(ROTATION).unwrap().guarded);
+    }
+
+    #[test]
+    fn output_is_auto_or_a_connector() {
+        assert_eq!(check(OUTPUT, "").unwrap(), "auto");
+        assert_eq!(check(OUTPUT, "AUTO").unwrap(), "auto");
+        for name in ["HDMI-A-2", "DSI-1", "eDP-1", "Virtual-1", "DP-10"] {
+            assert_eq!(check(OUTPUT, name).unwrap(), name);
+        }
+        for name in [
+            "HDMI",
+            "HDMI-A-",
+            "-1",
+            "HDMI--1",
+            "card0 HDMI-A-1",
+            "HDMI-A-x",
+        ] {
+            assert!(check(OUTPUT, name).is_err(), "{name}");
+        }
+        assert!(find(OUTPUT).unwrap().guarded);
     }
 
     #[test]

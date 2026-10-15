@@ -90,6 +90,7 @@ const HELP_STYLES: Styles = Styles::styled()
         \x20 tessaro-ctl config set 'browser.url=https://{device.name}.menu.test/'  any setting is a placeholder too\n\
         \x20 tessaro-ctl screen modes && tessaro-ctl config set screen.resolution=1920x1080 && tessaro-ctl screen confirm\n\
         \x20 tessaro-ctl config set screen.rotation=90 && tessaro-ctl screen confirm  a portrait screen\n\
+        \x20 tessaro-ctl config set screen.output=HDMI-A-2 && tessaro-ctl screen confirm  the kiosk on that screen\n\
         \x20 tessaro-ctl network show                       address, gateway, DNS, interfaces\n\
         \x20 tessaro-ctl network interfaces                 every interface in detail\n\
         \x20 tessaro-ctl network profiles list              NetworkManager's profiles\n\

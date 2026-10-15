@@ -1581,6 +1581,68 @@ pub struct ScreenShow {
     /// The HDMI-CEC adapters in use; empty with `cec` off.
     #[serde(default)]
     pub adapters: Vec<CecAdapter>,
+    /// The screen the kiosk shows on, and where each touchscreen's touches
+    /// land. `None` with no display connected, and from a device that
+    /// predates it.
+    #[serde(default)]
+    pub output: Option<OutputPick>,
+}
+
+/// The screen the kiosk shows on (screen.output), as the device last picked
+/// it. Every other connected screen shows the wallpaper.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct OutputPick {
+    /// The connector: `HDMI-A-2`.
+    pub name: String,
+    pub reason: OutputReason,
+    /// The connector screen.output names when it is not connected, and the
+    /// pick fell back to auto's.
+    #[serde(default)]
+    pub missing: Option<String>,
+    /// Each touchscreen, and the screen its touches land on.
+    #[serde(default)]
+    pub touch: Vec<TouchBinding>,
+}
+
+/// Why a screen is the kiosk's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum OutputReason {
+    /// screen.output names it.
+    Set,
+    /// The biggest screen with a touchscreen on it.
+    Touch,
+    /// The biggest screen, none having a touchscreen.
+    Biggest,
+    /// The one screen connected.
+    Only,
+}
+
+/// A touchscreen and the screen it belongs to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct TouchBinding {
+    /// The input device's name: `ILITEK ILITEK-TP`.
+    pub name: String,
+    /// The connector its touches land on.
+    pub connector: String,
+    pub how: TouchMatch,
+}
+
+/// How a touchscreen was matched to its screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum TouchMatch {
+    /// A touchscreen not on USB or Bluetooth, and a built-in panel (DSI,
+    /// eDP, LVDS).
+    BuiltIn,
+    /// Its size is the screen's, within a tenth.
+    Size,
+    /// The screen's name or maker is in the touchscreen's name.
+    Name,
+    /// One touchscreen and one screen.
+    Only,
+    /// Nothing matched: it follows the kiosk.
+    Kiosk,
 }
 
 /// The TV in `device status`.

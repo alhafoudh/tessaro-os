@@ -132,7 +132,7 @@ answers everything:
 | `device.status()` | config | `device status`, without the node's fingerprint and claim, whether remote DevTools or the VNC mirror is open (either tells a page it is watched and can be driven) and the settings revision (`tessaro:config` says when they change): its `name`, its `tags` (device.tags, never the `unclaimed` a client adds, which would tell the claim), the hardware and its serial, memory, `cpuPercent`, the temperatures in °C (`cpuTemperature`, and `temperatures`: each a `sensor`, `label`, `celsius`, `max` and `crit`), the clock (`time`), the TV over HDMI-CEC (`tv`: `power`, `showing`, `name`), the changes on probation (`pending`: `changes`, each a `key`, `value` and `previous`, and `secondsLeft`) and why the injected script is not in the page (`bridge.scriptProblem`) included |
 | `network.status()` | config | `network show`, without the public address |
 | `audio.status()` | config | `audio show` |
-| `screen.show()` | config | `screen show`: the connected displays with their EDID identity, and the HDMI-CEC bus |
+| `screen.show()` | config | `screen show`: the connected displays with their EDID identity, which shows the kiosk and which touchscreens are whose (`output`), and the HDMI-CEC bus |
 | `printer.list()` | config | `printer list`, without each printer's URI |
 | `printer.jobs(printer)` | config | `printer jobs`: every printer's, or the one named |
 | `scripts.list()` | config | `script list`, only the scripts with `--bridge`, without their bodies: name, description, concurrency, runs going, the last run |
@@ -188,7 +188,9 @@ page must not lift, and each change restarts Weston and the browser
 `tessaro.config` too: a turn waits for `tessaro-ctl screen confirm` from
 someone who can see the screen, and a page that wants to know its shape
 has CSS media queries and `screen.orientation` (**Screen rotation** in
-docs/display.md).
+docs/display.md). Nor is `screen.output`, for the same confirm: moving the
+kiosk to another screen moves the page away from whoever asked for it
+(**Which screen the kiosk uses** in docs/display.md).
 
 The other commands no call mirrors are the operator's too:
 

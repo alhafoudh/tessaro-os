@@ -550,6 +550,31 @@ module AgentE2E
       screen_back_to_default("screen.rotation", "screen.resolution")
     end
 
+    # qemu has one screen, so auto has nothing to choose: what is checked is
+    # that the pick reaches weston.ini and screen show, and that a connector
+    # set by name is refused unplugged and on probation plugged in.
+    it "output: the one screen is the kiosk's, an unplugged connector is refused, and a set one waits for confirm", :reconfigure do
+      show = JSON.parse(guest.run("tessaro-ctl --json screen show"))
+      name = show.dig("output", "name")
+      expect(name).to eq(show["connectors"].first["name"])
+      expect(show.dig("output", "reason")).to eq("only")
+      expect(guest.run("cat /run/weston/weston.ini")).to include("kiosk-output=#{name}")
+      expect(guest.run("tessaro-ctl screen show")).to include("the kiosk - the only screen")
+
+      refused = guest.run("tessaro-ctl config set screen.output=HDMI-A-9 2>&1", allow_failure: true)
+      expect(refused).to include("no display is connected to HDMI-A-9")
+
+      guest.run("tessaro-ctl config set screen.output=#{name}")
+      step "wait up to 60s for tessaro-ctl device status to say on probation"
+      deadline = Time.now + 60
+      sleep 2 until quietly { guest.run("tessaro-ctl device status 2>/dev/null", allow_failure: true) }
+                    .include?("on probation screen.output=#{name}") || Time.now > deadline
+      expect(JSON.parse(guest.run("tessaro-ctl --json screen show")).dig("output", "reason")).to eq("set")
+      expect(guest.run("tessaro-ctl screen confirm")).to include("kept screen.output=#{name}")
+    ensure
+      screen_back_to_default("screen.output")
+    end
+
     # Unset guarded screen keys from whatever a case left: a change still on
     # probation refuses the unset, so it is kept first, and the unset is on
     # probation too, so it is kept after. Otherwise the next case is refused,

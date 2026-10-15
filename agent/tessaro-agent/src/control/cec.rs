@@ -69,12 +69,19 @@ impl Control {
     /// `screen show`: the connected displays and the CEC bus.
     pub(super) async fn screen_show(&self) -> Result<ScreenShow, String> {
         let connectors = self.modes().await?;
+        let setting = self.output_setting().await?;
+        let paths = self.paths.clone();
+        let output = blocking("reading the touchscreens", move || {
+            Ok(crate::output::current(&paths, &setting).0)
+        })
+        .await?;
         let cec = self.current.borrow().config.cec.enable;
         let adapters = lock(&self.cec_adapters).values().cloned().collect();
         Ok(ScreenShow {
             connectors,
             cec,
             adapters,
+            output,
         })
     }
 

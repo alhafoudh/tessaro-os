@@ -348,7 +348,7 @@ applies and stays, Default unsets.**
 | Page | Covers |
 | --- | --- |
 | Overview | `device status` and `id`, systemd units, `device ping`, `device tags` (Tags: one comma-separated field, `device.tags`), `device factory-reset` |
-| Screen | `screen show` above the modes table (each display's EDID identity, and the HDMI-CEC bus: the adapter, the TV's power and whether it shows the device, the rest of the bus, or how to switch CEC on), from the same `GET /api/v1/screen` answer as the table; `screen modes` with "use this mode", "Rotate" (`screen.rotation`), `screen screenshot` with a 3s live refresh and Save, `screen power`, `screen keyboard`, `screen vnc` ("VNC tunnel", a job holding the tunnel until Cancel) with the mirror's state from `device status`; the TV over HDMI-CEC, while CEC is on and an adapter is there: `screen cec wake`, `standby`, `source` ("This input"), `key` volume-down, volume-up and mute, `scan`, each answer in Messages, and the CEC console |
+| Screen | `screen show` above the modes table (each display's EDID identity, and the HDMI-CEC bus: the adapter, the TV's power and whether it shows the device, the rest of the bus, or how to switch CEC on), from the same `GET /api/v1/screen` answer as the table; `screen modes` with "use this mode", "Kiosk here" (the row's connector as `screen.output`) and "Auto screen" (back to `auto`), "Rotate" (`screen.rotation`), `screen screenshot` with a 3s live refresh and Save, `screen power`, `screen keyboard`, `screen vnc` ("VNC tunnel", a job holding the tunnel until Cancel) with the mirror's state from `device status`; the TV over HDMI-CEC, while CEC is on and an adapter is there: `screen cec wake`, `standby`, `source` ("This input"), `key` volume-down, volume-up and mute, `scan`, each answer in Messages, and the CEC console |
 | Browser | what the browser shows, `browser navigate`, `reload`, `clear-cache`, `maintenance`, `debug`, `zoom`, `devtools` (a job holding the tunnel until Cancel), `inject`, `bridge`, `eval` (results in Messages) |
 | Policies | `browser policies list` in priority order with its `#` column, `set` and `edit` in one wide editor (from the template, a file, or the stored text, checked as you type, saved against the revision it opened), `move` as Move up and Move down (the moved row stays selected), `show` (the effective policy), `remove` |
 | Playlists | `playlist status` as facts above the lists, `playlist list` with "Make default" and "Clear default" (`playlist.default`), `create` and `set` in one dialog (name, transition and its length), `remove`; the selected playlist's items (`playlist show`) beside `items add` and `items set` in one dialog (an edit opens filled in, and what the chosen kind cannot carry is left out), `items move` as Move up and Move down (the moved item stays selected), `items remove` |
@@ -378,8 +378,8 @@ for, so no page or settings window has a Refresh of its own. The status bar
 shows the device's `Status`, and a guarded change's countdown on every page.
 **The one Confirm is a green button in the Screen page's toolbar**, shown
 only while a change waits, with the seconds left in its label: every guarded
-key is a `screen.*` one, whether it came from "Use this mode", "Rotate" or
-from a setting, and one confirm keeps every change that waits.
+key is a `screen.*` one, whether it came from "Use this mode", "Kiosk
+here", "Rotate" or from a setting, and one confirm keeps every change that waits.
 
 **Dialogs are one generic form** (`pages::Form`), confirmed with Enter. A
 destructive one - factory reset, unclaim, growing `/data`, an update that

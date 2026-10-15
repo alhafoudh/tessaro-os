@@ -126,8 +126,9 @@ are on WiFi, not Network), and only where the scope has settings.
   already shows.
 * **Dialogs keep what is typed** while data refreshes underneath, focus
   their first useful field, and show the device's refusal beside the
-  fields. A change on probation, a mode from "Use this mode" or a turn
-  from "Rotate" (`screen.rotation`), shows the green Confirm (Ns) button on
+  fields. A change on probation, a mode from "Use this mode", a screen
+  from "Kiosk here" (`screen.output`) or a turn from "Rotate"
+  (`screen.rotation`), shows the green Confirm (Ns) button on
   the Screen page and counts down in the status bar; one Confirm keeps every
   change that waits.
 * **The status is polled every 2 s, every second while a change is on

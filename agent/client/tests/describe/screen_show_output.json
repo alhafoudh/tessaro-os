@@ -1,0 +1,764 @@
+{
+  "function": "screen::show",
+  "input": [
+    {
+      "adapters": [],
+      "cec": false,
+      "connectors": [
+        {
+          "display": {
+            "height_cm": 9,
+            "model": "DSI Panel",
+            "product_code": 1,
+            "vendor_id": "RPI",
+            "width_cm": 15
+          },
+          "modes": [
+            "800x480"
+          ],
+          "name": "DSI-1"
+        },
+        {
+          "display": {
+            "height_cm": 68,
+            "model": "SAMSUNG",
+            "product_code": 29554,
+            "vendor": "Samsung",
+            "vendor_id": "SAM",
+            "width_cm": 121
+          },
+          "modes": [
+            "1920x1080"
+          ],
+          "name": "HDMI-A-1"
+        }
+      ],
+      "output": {
+        "name": "DSI-1",
+        "reason": "touch",
+        "touch": [
+          {
+            "connector": "DSI-1",
+            "how": "built-in",
+            "name": "raspberrypi-ts"
+          },
+          {
+            "connector": "DSI-1",
+            "how": "kiosk",
+            "name": "Generic Touch"
+          }
+        ]
+      }
+    },
+    {
+      "adapters": [],
+      "cec": false,
+      "connectors": [
+        {
+          "modes": [
+            "3840x2160"
+          ],
+          "name": "HDMI-A-1"
+        },
+        {
+          "modes": [
+            "1920x1080"
+          ],
+          "name": "HDMI-A-2"
+        }
+      ],
+      "output": {
+        "missing": "DP-1",
+        "name": "HDMI-A-1",
+        "reason": "biggest",
+        "touch": []
+      }
+    }
+  ],
+  "output": [
+    [
+      [
+        [
+          "heading",
+          "DSI-1",
+          0
+        ]
+      ],
+      [
+        [
+          "plain",
+          "    ",
+          0
+        ],
+        [
+          "label",
+          "display",
+          9
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "plain",
+          "RPI DSI Panel",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "(RPI 0001)",
+          0
+        ]
+      ],
+      [
+        [
+          "plain",
+          "    ",
+          0
+        ],
+        [
+          "label",
+          "serial",
+          9
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "(none)",
+          0
+        ]
+      ],
+      [
+        [
+          "plain",
+          "    ",
+          0
+        ],
+        [
+          "label",
+          "size",
+          9
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "plain",
+          "15 x 9 cm",
+          0
+        ]
+      ],
+      [
+        [
+          "plain",
+          "    ",
+          0
+        ],
+        [
+          "label",
+          "modes",
+          9
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "plain",
+          "1, preferred 800x480",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "- tessaro-ctl screen modes lists them",
+          0
+        ]
+      ],
+      [
+        [
+          "plain",
+          "    ",
+          0
+        ],
+        [
+          "label",
+          "shows",
+          9
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "ok",
+          "the kiosk",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "- the biggest screen with a touchscreen",
+          0
+        ]
+      ],
+      [
+        [
+          "plain",
+          "    ",
+          0
+        ],
+        [
+          "label",
+          "touch",
+          9
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "plain",
+          "raspberrypi-ts",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "(the built-in panel's)",
+          0
+        ]
+      ],
+      [
+        [
+          "plain",
+          "    ",
+          0
+        ],
+        [
+          "label",
+          "touch",
+          9
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "plain",
+          "Generic Touch",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "(not matched, follows the kiosk)",
+          0
+        ]
+      ],
+      [],
+      [
+        [
+          "heading",
+          "HDMI-A-1",
+          0
+        ]
+      ],
+      [
+        [
+          "plain",
+          "    ",
+          0
+        ],
+        [
+          "label",
+          "display",
+          9
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "plain",
+          "Samsung SAMSUNG",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "(SAM 7372)",
+          0
+        ]
+      ],
+      [
+        [
+          "plain",
+          "    ",
+          0
+        ],
+        [
+          "label",
+          "serial",
+          9
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "(none)",
+          0
+        ]
+      ],
+      [
+        [
+          "plain",
+          "    ",
+          0
+        ],
+        [
+          "label",
+          "size",
+          9
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "plain",
+          "121 x 68 cm",
+          0
+        ]
+      ],
+      [
+        [
+          "plain",
+          "    ",
+          0
+        ],
+        [
+          "label",
+          "modes",
+          9
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "plain",
+          "1, preferred 1920x1080",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "- tessaro-ctl screen modes lists them",
+          0
+        ]
+      ],
+      [
+        [
+          "plain",
+          "    ",
+          0
+        ],
+        [
+          "label",
+          "shows",
+          9
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "plain",
+          "the wallpaper",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "-",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "cmd",
+          "tessaro-ctl config set screen.output=HDMI-A-1",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "moves the kiosk here",
+          0
+        ]
+      ],
+      [],
+      [
+        [
+          "heading",
+          "HDMI-CEC",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "off -",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "cmd",
+          "tessaro-ctl config set screen.cec.enable=1",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "talks to the TV",
+          0
+        ]
+      ]
+    ],
+    [
+      [
+        [
+          "warn",
+          "screen.output is DP-1, which is not connected",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "- the kiosk is on the screen auto picks",
+          0
+        ]
+      ],
+      [],
+      [
+        [
+          "heading",
+          "HDMI-A-1",
+          0
+        ]
+      ],
+      [
+        [
+          "plain",
+          "    ",
+          0
+        ],
+        [
+          "label",
+          "display",
+          9
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "(it does not say what it is)",
+          0
+        ]
+      ],
+      [
+        [
+          "plain",
+          "    ",
+          0
+        ],
+        [
+          "label",
+          "modes",
+          9
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "plain",
+          "1, preferred 3840x2160",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "- tessaro-ctl screen modes lists them",
+          0
+        ]
+      ],
+      [
+        [
+          "plain",
+          "    ",
+          0
+        ],
+        [
+          "label",
+          "shows",
+          9
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "ok",
+          "the kiosk",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "- the biggest screen",
+          0
+        ]
+      ],
+      [],
+      [
+        [
+          "heading",
+          "HDMI-A-2",
+          0
+        ]
+      ],
+      [
+        [
+          "plain",
+          "    ",
+          0
+        ],
+        [
+          "label",
+          "display",
+          9
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "(it does not say what it is)",
+          0
+        ]
+      ],
+      [
+        [
+          "plain",
+          "    ",
+          0
+        ],
+        [
+          "label",
+          "modes",
+          9
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "plain",
+          "1, preferred 1920x1080",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "- tessaro-ctl screen modes lists them",
+          0
+        ]
+      ],
+      [
+        [
+          "plain",
+          "    ",
+          0
+        ],
+        [
+          "label",
+          "shows",
+          9
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "plain",
+          "the wallpaper",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "-",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "cmd",
+          "tessaro-ctl config set screen.output=HDMI-A-2",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "moves the kiosk here",
+          0
+        ]
+      ],
+      [],
+      [
+        [
+          "heading",
+          "HDMI-CEC",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "off -",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "cmd",
+          "tessaro-ctl config set screen.cec.enable=1",
+          0
+        ],
+        [
+          "plain",
+          " ",
+          0
+        ],
+        [
+          "muted",
+          "talks to the TV",
+          0
+        ]
+      ]
+    ]
+  ]
+}
