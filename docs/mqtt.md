@@ -201,7 +201,8 @@ way to the fleet. `mqtt.page=0` takes the subtree away. The calls are in
 ## Scripts
 
 **A script runs on every message to its topic filters**
-(`script create|set --mqtt 'acme/doors/+/open'`), `+` and `#` allowed, any
+(`script create|set --mqtt-topics 'acme/doors/+/open'`; not `--mqtt`,
+which names the broker a command goes through), `+` and `#` allowed, any
 topic on the broker, while `mqtt.scripts` is on. The run gets
 `TESSARO_TRIGGER=mqtt`, the topic in `TESSARO_MQTT_TOPIC` and the payload,
 whatever it is, in the file `TESSARO_MQTT_PAYLOAD` names

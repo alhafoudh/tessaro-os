@@ -87,7 +87,7 @@ records), `control/scripts.rs` (the commands and following a run) and
   minutes. `scanner.scripts=0` starts none; the scans are
   [scanners.md](scanners.md)'s.
 * **A script runs on the MQTT messages its `mqtt` topic filters match**
-  (`script create|set --mqtt`): any topic on the device's broker, `+` and
+  (`script create|set --mqtt-topics`): any topic on the device's broker, `+` and
   `#` allowed, at most 16 filters (`protocol::mqtt::triggers`). The link
   subscribes to every script's filters with no-local, so what the device
   publishes itself never starts a run, and a filter as wide as `#` cannot

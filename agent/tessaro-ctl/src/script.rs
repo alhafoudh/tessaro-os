@@ -39,7 +39,7 @@ pub enum ScriptCmd {
     ///   tessaro-ctl script create back-off --body 'tessaro-ctl screen power off' --cec key:red
     ///   tessaro-ctl script create greet --body 'tessaro-ctl screen power on' --presence arrived
     ///   tessaro-ctl script create ticket --body 'logger "$TESSARO_SCAN_TEXT"' --scanner front
-    ///   tessaro-ctl script create open --body 'logger "$TESSARO_MQTT_TOPIC"' --mqtt 'acme/doors/+/open'
+    ///   tessaro-ctl script create open --body 'logger "$TESSARO_MQTT_TOPIC"' --mqtt-topics 'acme/doors/+/open'
     Create {
         /// Lower-case letters, digits and -.
         name: String,
@@ -139,8 +139,10 @@ pub struct Fields {
     /// Run it on every message to these MQTT topic filters, comma
     /// separated, + and # allowed; empty for none. The topic is in
     /// $TESSARO_MQTT_TOPIC, the payload in the file $TESSARO_MQTT_PAYLOAD
-    /// names. Needs mqtt.url.
-    #[arg(long, value_name = "FILTERS", value_parser = mqtt_filters)]
+    /// names. Needs mqtt.url. Not `--mqtt`, and not the id `mqtt`: that is
+    /// the global broker every command can go through, and clap would hand
+    /// this the broker's value.
+    #[arg(id = "mqtt_topics", long = "mqtt-topics", value_name = "FILTERS", value_parser = mqtt_filters)]
     mqtt: Option<String>,
 }
 

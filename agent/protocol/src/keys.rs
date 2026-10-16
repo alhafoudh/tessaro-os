@@ -667,7 +667,7 @@ pub static KEYS: &[Key] = &[
     key(MQTT_PAGE, "KIOSK_MQTT_PAGE", Kind::Flag, AGENT,
         "Let the page publish below <prefix>/<device.id>/page/out/ and hear what arrives below page/in/, as tessaro:mqtt events. Needs browser.bridge.mode actions to publish, config to listen."),
     key(MQTT_SCRIPTS, "KIOSK_MQTT_SCRIPTS", Kind::Flag, AGENT,
-        "Run the scripts that run on MQTT messages (`tessaro-ctl script set --mqtt`). 0 runs none of them."),
+        "Run the scripts that run on MQTT messages (`tessaro-ctl script set --mqtt-topics`). 0 runs none of them."),
     key(MQTT_LOGS, "KIOSK_MQTT_LOGS", Kind::Choice(crate::mqtt::LOG_LEVELS), AGENT,
         "Publish the journal to <prefix>/<device.id>/logs from this priority up: err, warning, notice, info or debug; off, the default, publishes none."),
     seconds(MQTT_SCREENSHOT_INTERVAL, "KIOSK_MQTT_SCREENSHOT_INTERVAL", 0, 86400,

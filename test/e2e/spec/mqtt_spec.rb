@@ -67,10 +67,12 @@ module AgentE2E
       expect(broker.retained(topic("state/device"))).to include(%("id":"#{@id}"))
 
       # Killed, not stopped: no goodbye, so the broker publishes the will
-      # once the keep-alive runs out.
+      # once the keep-alive runs out. The restarted agent's connect is the
+      # one to wait for, not the line from before the kill.
+      restarted = Journal.new(guest)
       offline = broker.during(topic("status"), count: 2, wait: 60) { guest.run("systemctl kill -s KILL tessaro-agent") }
       expect(offline.map { JSON.parse(_2)["online"] }).to include(false)
-      journal.wait_for(/mqtt: connected to/, timeout: 90)
+      restarted.wait_for(/mqtt: connected to/, timeout: 90)
     end
 
     it "mqtt-commands: a command on the device's topic answers to the response topic, " \
@@ -116,11 +118,11 @@ module AgentE2E
       guest.run("tessaro-ctl device tags remove e2e-mqtt", allow_failure: true)
     end
 
-    it "mqtt-script: a script with --mqtt runs on a matching message with its topic and payload" do
+    it "mqtt-script: a script with --mqtt-topics runs on a matching message with its topic and payload" do
       guest.run("rm -f #{MQTT_MARKER}")
       body = %(printf '%s|' "$TESSARO_TRIGGER" "$TESSARO_MQTT_TOPIC" > #{MQTT_MARKER}; cat "$TESSARO_MQTT_PAYLOAD" >> #{MQTT_MARKER}\n)
       guest.run("cat > #{MQTT_BODY}", input: body)
-      guest.run("tessaro-ctl script create e2e-mqtt --file #{MQTT_BODY} --mqtt 'e2e/+/go'")
+      guest.run("tessaro-ctl script create e2e-mqtt --file #{MQTT_BODY} --mqtt-topics 'e2e/+/go'")
       wait_until("the device subscribes to the script's filter", timeout: 30) do
         guest.run("tessaro-ctl mqtt status").include?("e2e/+/go")
       end
@@ -172,7 +174,7 @@ module AgentE2E
       tested = guest.run("tessaro-ctl mqtt test")
       expect(tested).to include("the broker took the connection")
     ensure
-      guest.run("tessaro-ctl config set mqtt.url=#{broker.url} --no-apply", allow_failure: true)
+      guest.run("tessaro-ctl config set mqtt.url=#{broker.url}", allow_failure: true)
       guest.run("tessaro-ctl config unset mqtt.username", allow_failure: true)
     end
 

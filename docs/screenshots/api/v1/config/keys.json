@@ -1788,7 +1788,7 @@
       "agent"
     ],
     "guarded": false,
-    "doc": "Run the scripts that run on MQTT messages (`tessaro-ctl script set --mqtt`). 0 runs none of them.",
+    "doc": "Run the scripts that run on MQTT messages (`tessaro-ctl script set --mqtt-topics`). 0 runs none of them.",
     "values": "1 or 0 (on/off, true/false, yes/no)",
     "default": "1",
     "value": null,

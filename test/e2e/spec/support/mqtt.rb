@@ -24,14 +24,19 @@ module AgentE2E
     # The broker as the guest reaches it.
     def url(scheme = "mqtt", port = plain) = "#{scheme}://10.0.2.2:#{port}"
 
+    # Where this worker's broker keeps its dev CA and certificate: a
+    # directory of its own, so workers starting together do not race to
+    # make one.
+    def dir = File.join(ROOT, "build", "mqtt", "e2e-#{Ports.worker}")
+
     # The dev CA the TLS listeners' certificate is signed by.
-    def ca = File.join(ROOT, "build", "mqtt", "ca.pem")
+    def ca = File.join(dir, "ca.pem")
 
     def start
       FileUtils.mkdir_p(LOG_DIR)
       File.write(@log, "")
       system("docker", "rm", "-f", @name, out: File::NULL, err: File::NULL)
-      @pid = Process.spawn("ruby", SCRIPT, "--name", @name, "--plain", plain.to_s, "--tls", tls.to_s,
+      @pid = Process.spawn("ruby", SCRIPT, "--name", @name, "--dir", dir, "--plain", plain.to_s, "--tls", tls.to_s,
                            "--ws", ws.to_s, "--wss", wss.to_s,
                            in: File::NULL, out: @log, err: @log, pgroup: true)
       AgentE2E.step("wait up to 120s for the broker on 127.0.0.1:#{plain}")
