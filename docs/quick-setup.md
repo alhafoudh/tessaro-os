@@ -93,6 +93,11 @@ device; claiming is on the Access page, or `tessaro-ctl access claim`.
   (`10-tessaro-selftest.conf`) names `127.0.0.1:80` exactly, which keeps the
   kiosk's own pages on it. Everything outside the hotspot's subnet gets a
   403. A typed `http://10.42.0.1/` is sent to the page as a probe is.
+* **The subnet check is a `geo` and a `return 403` at the top of the
+  server, never `allow`/`deny`**: those run in nginx's access phase, after
+  the rewrite phase where every `return 302` of the portal is answered, so
+  with them the whole LAN of a device on a WiFi client or on Ethernet gets
+  the redirect to Quick Setup.
 * **The flag's directory is root:www 0750 from tmpfiles**, so nginx's
   workers can read it and only root writes. The agent never makes it:
   without it there is no captive portal.

@@ -287,6 +287,20 @@ module AgentE2E
       guest.run("ip addr add 10.42.0.1/24 dev lo")
 
       expect(guest.run(probe, allow_failure: true)).to match(setup)
+
+      # From outside the hotspot - the guest's uplink address, as the LAN of
+      # a device on Ethernet or a WiFi client reaches it - neither a probe
+      # nor a typed address gets the portal: a 403, before any redirect.
+      net = JSON.parse(guest.run("tessaro-ctl --json network show"))
+      uplink = net["interfaces"].find { _1["name"] == net["interface"] }["addresses"]
+                                .find { _1["family"] == "ipv4" }["address"]
+      [probe.sub("http://10.42.0.1/", "http://#{uplink}/"),
+       "wget -S -O /dev/null http://#{uplink}/ 2>&1"].each do |outside|
+        answer = guest.run(outside, allow_failure: true)
+        expect(answer).to include("403 Forbidden"), "#{outside}:\n#{answer}"
+        expect(answer).not_to match(setup)
+      end
+
       page = api.get("/")
       expect(page.status).to eq(200)
       expect(page.body).to include("<title>Tessaro Webconfig</title>")
