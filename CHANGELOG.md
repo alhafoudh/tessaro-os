@@ -4,6 +4,12 @@ What changed in each Tessaro OS release. The images, clients and Try
 Tessaro of every version are on
 [GitHub Releases](https://github.com/alhafoudh/tessaro-os/releases).
 
+## 0.2.0
+
+### Features
+
+- Devices can be managed over MQTT: every setting, command, event and screenshot goes through a broker, from `tessaro-ctl`, `tessaro-gui`, Webconfig and the page.
+
 ## 0.1.5
 
 ### Features

@@ -2,7 +2,7 @@
   "asyncapi": "3.0.0",
   "info": {
     "title": "Tessaro device over MQTT",
-    "version": "0.1.5",
+    "version": "0.2.0",
     "description": "What a Tessaro device publishes to its MQTT broker and what it takes from it, once mqtt.url is set (docs/mqtt.md). MQTT v5: a request names its response topic and correlation data. The broker is trusted: whoever may publish to a device's command topics has as much of it as mqtt.commands gives."
   },
   "defaultContentType": "application/json",

@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Tessaro device API",
-    "version": "0.1.5",
+    "version": "0.2.0",
     "description": "The API of one Tessaro device, over HTTPS on port 7400 with the device's own self-signed certificate: pin its SHA-256 fingerprint (`/api/v1/device/id`, the mDNS `fp` record). An unclaimed device answers everything without a token; once claimed, everything but identification, the claim and signing in needs `Authorization: Bearer <token>`, or a Webconfig browser session's cookie."
   },
   "tags": [
