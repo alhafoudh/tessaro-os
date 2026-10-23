@@ -23,6 +23,9 @@ module AgentE2E
         %w[tessaro-ethernet-dhcp tessaro-ethernet-static tessaro-wifi-hotspot].each do |id|
           expect(listing).to include("600 #{profiles_dir}/#{id}.nmconnection")
         end
+        %w[tessaro-ethernet-dhcp tessaro-ethernet-static].each do |id|
+          expect(keyfile(guest, id)).to include("autoconnect-retries=0\n"), "#{id} is not retried forever"
+        end
         hotspot = keyfile(guest, "tessaro-wifi-hotspot")
         expect(hotspot).not_to include("interface-name"), "auto binds the hotspot to one name"
         expect(hotspot).to include("type=wifi")
@@ -45,6 +48,26 @@ module AgentE2E
         expect(guest.run("readlink -f /etc/resolv.conf", allow_failure: true).strip)
           .to start_with("/run/systemd/resolve/"), "/etc/resolv.conf is no longer resolved's"
       end
+    end
+
+    # A profile taken down by hand is blocked from autoconnecting, the way a
+    # timed-out WiFi handshake blocks the client: only the agent's guard
+    # brings it back (guard_network, docs/networking.md). This takes the
+    # case's own SSH away, so the down runs detached.
+    it "ethernet-guard: the managed Ethernet profile taken down is brought back up by the agent" do
+      _, before = uplink(guest)
+      guest.run_detached("net-guard", "sleep 2; nmcli connection down tessaro-ethernet-dhcp")
+      pause 5, "let the profile go down"
+      wait_for_ssh(guest, timeout: 120, what: "the Ethernet profile going down")
+
+      journal.wait_for(/^network: Ethernet tessaro-ethernet-dhcp is down and NetworkManager stopped trying/,
+                       timeout: 10)
+      journal.wait_for(/^network: Ethernet tessaro-ethernet-dhcp is back up$/, timeout: 60)
+      profile, address = uplink(guest)
+      expect(profile["name"]).to eq("tessaro-ethernet-dhcp")
+      expect(address).to eq(before)
+    ensure
+      guest.run("systemctl reset-failed e2e-net-guard", allow_failure: true)
     end
 
     it "ethernet-static: set network.ethernet.mode=static is verified and committed; dhcp brings it back" do

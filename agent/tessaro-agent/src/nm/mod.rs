@@ -74,6 +74,17 @@ fn interfaces(paths: &Paths) -> Vec<(String, String)> {
         .collect()
 }
 
+/// What [`Network::guard_client`] and [`Network::guard_ethernet`] found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Guard {
+    /// The profile is up.
+    Up,
+    /// Nothing was on the device; the profile was asked up again.
+    Retried,
+    /// Something else is under way there, or a change runs.
+    Left,
+}
+
 pub struct Network {
     log: Arc<Log>,
     paths: Paths,
@@ -649,6 +660,87 @@ impl Network {
             return false;
         };
         nm_call("an active connection's state", CALL, proxy.state()).await == Ok(proxy::ACTIVATED)
+    }
+
+    /// Bring the managed client up on the WiFi device (`interface`, or the
+    /// one there is for `auto`) when nothing at all is on it: the client
+    /// dropped and NetworkManager stopped trying, which a handshake that
+    /// timed out does for good (it reads as a wrong password and blocks
+    /// autoconnect until the profile changes). See [`Network::guard`].
+    pub async fn guard_client(&self, interface: Option<&str>) -> Result<Guard, String> {
+        let wifi = self
+            .wifi_device(interface)
+            .await
+            .ok_or("there is no WiFi device")?;
+        self.guard(vec![wifi], profiles::WIFI_CLIENT).await
+    }
+
+    /// Bring the managed Ethernet profile up when it is up nowhere and a port
+    /// with a cable in has nothing on it: `interface`, or for `auto` the
+    /// first such Ethernet port by name. A port without carrier is left to
+    /// NetworkManager, which tries again when the cable comes back. See
+    /// [`Network::guard`].
+    pub async fn guard_ethernet(
+        &self,
+        interface: Option<&str>,
+        profile: Profile,
+    ) -> Result<Guard, String> {
+        let paths = self.paths.clone();
+        let wanted = interface.map(str::to_string);
+        let ports = blocking("reading the network", move || {
+            let mut ports: Vec<String> = crate::net::snapshot(&paths)
+                .interfaces
+                .into_iter()
+                .filter(|iface| iface.kind == "ethernet" && iface.carrier == Some(true))
+                .filter(|iface| wanted.as_deref().is_none_or(|name| name == iface.name))
+                .map(|iface| iface.name)
+                .collect();
+            ports.sort();
+            Ok(ports)
+        })
+        .await?;
+        self.guard(ports, profile).await
+    }
+
+    /// `profile` up on the first of `ports` with nothing on it, unless it is
+    /// already on one of them. Anything else on a port is left alone - the
+    /// profile coming up, a hotspot, a hand-made profile - and so is
+    /// everything while a change runs. Returns once NetworkManager has the
+    /// request; the next call sees whether it came up.
+    async fn guard(&self, ports: Vec<String>, profile: Profile) -> Result<Guard, String> {
+        if self.busy() {
+            return Ok(Guard::Left);
+        }
+        let live = self.live().await?;
+        let mut free = None;
+        for port in ports {
+            let device = live.device_path(&port).await?;
+            match live.active_on(device.as_str()).await {
+                None => {
+                    free.get_or_insert(port);
+                }
+                Some((active, uuid)) if uuid == profile.uuid => {
+                    let active = live.active(active.as_str()).await?;
+                    let state =
+                        nm_call("an active connection's state", CALL, active.state()).await?;
+                    return Ok(if state == proxy::ACTIVATED {
+                        Guard::Up
+                    } else {
+                        Guard::Left
+                    });
+                }
+                Some(_) => {}
+            }
+        }
+        let Some(port) = free else {
+            return Ok(Guard::Left);
+        };
+        live.activate(&Up {
+            profile,
+            device: Some(port),
+        })
+        .await?;
+        Ok(Guard::Retried)
     }
 
     /// Give the WiFi device to the hotspot in place of a client that did not

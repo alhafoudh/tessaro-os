@@ -194,6 +194,28 @@ in [mqtt.md](mqtt.md)).
   alone (Ethernet, `device.name`) keeps the fallback; `network wifi join` or
   a change to the mode, the interface or the client network ends it once it
   commits. `network wifi status` shows it.
+* **The managed Ethernet profile and the WiFi client are kept up**, so a
+  kiosk whose router, DHCP server or access point went away is back on it
+  as soon as it returns, without a reboot. Their keyfiles have
+  `autoconnect-retries=0` (NetworkManager retries forever instead of 4
+  times and then 5 minutes off), and the client has `powersave=2` (power
+  saving off: drivers in it, brcmfmac above all, miss beacons and drop or
+  stall the link). Behind that, the agent's `guard_network`
+  (`control/watchers.rs`) checks every 30s and asks a profile up
+  (`Network::guard_ethernet`, `Network::guard_client`) when it is up
+  nowhere and its device has nothing at all on it, because NetworkManager
+  can stop for good: after a WiFi handshake that timed out it takes that
+  for a wrong password and blocks autoconnect until the profile changes.
+  Ethernet is guarded on the named port, or for `auto` on the first port
+  with a cable in; a port without carrier is NetworkManager's, which tries
+  again when the cable is back. The client is guarded once it has been up
+  (`/run/tessaro-kiosk/wifi-client-seen`), where the fallback ends, and not
+  while the hotspot stands in for it. A device with anything on it (the
+  profile coming up, the hotspot, a hand-made profile) is left alone, and
+  so is everything while a change runs. The journal says when a guard
+  starts bringing a link back and when it is back, once each. So `nmcli
+  connection down` on a managed profile lasts 30s at most: switch WiFi off
+  with `network.wifi.mode=off` instead.
 * **An agent that dies half way is rolled back at its next start** (`recover`,
   from `start_control`, retrying for a minute while NetworkManager comes up),
   onto what the settings render. That covers SIGTERM too: the transaction is

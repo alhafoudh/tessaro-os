@@ -319,6 +319,24 @@ pub fn fallback_watch(value: &dyn Fn(&str) -> String) -> Option<FallbackWatch> {
     })
 }
 
+/// The client the guard keeps up, as its interface (`None` for `auto`) and
+/// SSID: `None` unless WiFi is a client with a network to join.
+pub fn guarded_client(value: &dyn Fn(&str) -> String) -> Option<(Option<String>, String)> {
+    let config = NetConfig::from_settings(value, None, None, "");
+    if config.wifi_profile() != Some(WIFI_CLIENT) {
+        return None;
+    }
+    Some((config.wifi.interface, config.wifi.client?.ssid))
+}
+
+/// The Ethernet profile the guard keeps up, and the port it is bound to
+/// (`None` for `auto`).
+pub fn guarded_ethernet(value: &dyn Fn(&str) -> String) -> (Option<String>, Profile) {
+    let config = NetConfig::from_settings(value, None, None, "");
+    let profile = config.ethernet_profile();
+    (config.ethernet.interface, profile)
+}
+
 /// A key's value as `settings` has it, else the image default for its env
 /// name, else empty - what `NetConfig::from_settings` and
 /// `keys::check_network` take.
@@ -468,6 +486,9 @@ fn ethernet(
     fixed: Option<&StaticIp>,
 ) -> Keyfile {
     let mut body = connection(profile, "ethernet", autoconnect, interface);
+    // Retried forever, as the WiFi client is: a DHCP server that is down
+    // for a while must not cost the port its lease until the cable moves.
+    body.push_str("autoconnect-retries=0\n");
     body.push_str("\n[ethernet]\n");
     body.push_str(&ipv4(fixed.filter(|ip| !ip.address.is_empty())));
     body.push_str("\n[ipv6]\nmethod=auto\n");
@@ -508,8 +529,13 @@ fn hotspot(wifi: &Wifi) -> Keyfile {
 fn wifi_client(wifi: &Wifi, client: &Client) -> Keyfile {
     let autoconnect = wifi.mode == WifiMode::Client;
     let mut body = connection(WIFI_CLIENT, "wifi", autoconnect, wifi.interface.as_deref());
+    // Retried forever, not NetworkManager's 4 times and then 5 minutes off:
+    // a kiosk's network that is gone for a while must be joined the moment
+    // it is back. Power saving off: in it, drivers (brcmfmac above all) miss
+    // beacons and drop or stall the link, and the screen is on mains anyway.
+    body.push_str("autoconnect-retries=0\n");
     body.push_str(&format!(
-        "\n[wifi]\nmode=infrastructure\nssid={}\n",
+        "\n[wifi]\nmode=infrastructure\nssid={}\npowersave=2\n",
         ssid_value(&client.ssid)
     ));
     if client.hidden {
@@ -579,6 +605,7 @@ mod tests {
         let dhcp = file(&files, ETHERNET_DHCP);
         assert!(dhcp.contains("autoconnect=true\n"));
         assert!(dhcp.contains("autoconnect-priority=100\n"));
+        assert!(dhcp.contains("autoconnect-retries=0\n"), "retried forever");
         assert!(!dhcp.contains("interface-name"), "auto binds no interface");
         assert!(dhcp.contains("[ipv4]\nmethod=auto\n"));
         assert!(file(&files, ETHERNET_STATIC).contains("autoconnect=false\n"));
@@ -760,6 +787,36 @@ mod tests {
     }
 
     #[test]
+    fn only_a_client_with_a_network_is_guarded() {
+        let guarded = |pairs: &[(&str, &str)]| {
+            let pairs: HashMap<String, String> = pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect();
+            guarded_client(&move |name: &str| pairs.get(name).cloned().unwrap_or_default())
+        };
+        let client = [
+            ("network.wifi.mode", "client"),
+            ("network.wifi.ssid", "Office"),
+            (keys::WIFI_FALLBACK_AFTER, "0"),
+        ];
+        assert_eq!(
+            guarded(&client),
+            Some((None, "Office".to_string())),
+            "with the fallback off too"
+        );
+        let mut named = client.to_vec();
+        named.push(("network.wifi.interface", "wlan1"));
+        assert_eq!(guarded(&named).unwrap().0.as_deref(), Some("wlan1"));
+        assert_eq!(guarded(&[("network.wifi.mode", "client")]), None);
+        assert_eq!(
+            guarded(&[("network.wifi.ssid", "Office")]),
+            None,
+            "the hotspot"
+        );
+    }
+
+    #[test]
     fn a_client_takes_over_from_the_hotspot() {
         let config = config(
             &[
@@ -775,6 +832,15 @@ mod tests {
         assert!(file(&files, WIFI_HOTSPOT).contains("autoconnect=false\n"));
         let client = file(&files, WIFI_CLIENT);
         assert!(client.contains("autoconnect=true\n"));
+        assert!(
+            client.contains("autoconnect-retries=0\n"),
+            "retried forever"
+        );
+        assert!(client.contains("powersave=2\n"), "no power saving");
+        assert!(
+            client.find("autoconnect-retries").unwrap() < client.find("[wifi]").unwrap(),
+            "a [connection] key"
+        );
         assert!(client.contains("mode=infrastructure\n"));
         assert!(
             client.contains("ssid=79;102;102;105;99;101;59;32;50;\n"),

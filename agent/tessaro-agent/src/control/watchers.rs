@@ -1,7 +1,7 @@
 //! What the control plane keeps true on its own, with nobody asking: the
 //! URL a read-only key moves, the public address, Weston's config against
 //! the screens and keyboards plugged in, the WiFi client's fallback to the
-//! hotspot after boot, the sound server against the audio.* settings, the
+//! hotspot after boot, Ethernet and the WiFi client up after that, the sound server against the audio.* settings, the
 //! clock against the time.* settings, the welcome page's `welcome.json`, and
 //! the CPU use `status` reports.
 
@@ -18,7 +18,7 @@ use crate::audio;
 use crate::deadline::blocking;
 use crate::hardware;
 use crate::hotplug;
-use crate::nm::profiles;
+use crate::nm::{self, profiles};
 use crate::state;
 use crate::sync::lock;
 use crate::time;
@@ -534,7 +534,7 @@ impl Control {
     /// Boot only: once the client has been up, or has fallen back, this is
     /// over until the next boot, which renders the client again (the markers
     /// are in `/run`). A network that drops later is NetworkManager's to
-    /// retry. The clock starts again while a network change runs, and while
+    /// retry, with `guard_network` behind it. The clock starts again while a network change runs, and while
     /// WiFi is not a client with a network to join.
     pub fn watch_wifi(self: &Arc<Self>) {
         const POLL: Duration = Duration::from_secs(5);
@@ -569,6 +569,64 @@ impl Control {
                     // naked: blocking() and Network, every wait under within()
                     control.fall_back_wifi(&watch).await;
                     return;
+                }
+            }
+        });
+    }
+
+    /// Keeps the managed Ethernet profile and the WiFi client up once each
+    /// has been up this boot - the client where `watch_wifi` stops.
+    /// NetworkManager retries both by itself (`autoconnect-retries=0`), but
+    /// not after a WiFi handshake that timed out: it takes that for a wrong
+    /// password and blocks the profile until it changes, and whatever else
+    /// blocks a profile would leave the kiosk offline until a reboot just
+    /// the same. So every `POLL`, a profile that is up nowhere while its
+    /// device has nothing on it is asked up again. One journal line when
+    /// that starts and one when it is back, not one per try.
+    pub fn guard_network(self: &Arc<Self>) {
+        const POLL: Duration = Duration::from_secs(30);
+
+        let control = Arc::clone(self);
+        let mut shutdown = self.shutdown.clone();
+        tokio::spawn(async move {
+            let mut ethernet = Kept::default();
+            let mut wifi = Kept::default();
+            loop {
+                // naked: a timer and the shutdown signal, not the outside world
+                tokio::select! {
+                    _ = tokio::time::sleep(POLL) => {}
+                    _ = shutdown.changed() => return,
+                }
+                // naked: a disk read under blocking()'s within()
+                let Ok(state) = control.read_state().await else {
+                    continue;
+                };
+                let value = profiles::value_of(&state.settings, &control.defaults);
+
+                let (port, profile) = profiles::guarded_ethernet(&value);
+                // naked: Network bounds every NetworkManager call with within()
+                let outcome = control
+                    .network
+                    .guard_ethernet(port.as_deref(), profile)
+                    .await;
+                ethernet.note(
+                    &control.log,
+                    &format!("Ethernet {}", profile.id),
+                    outcome,
+                    POLL,
+                );
+
+                // naked: marker reads under blocking()'s within()
+                let fallen = control.wifi_fallback().await.is_some();
+                // naked: as above
+                let seen = control.wifi_client_seen().await;
+                match profiles::guarded_client(&value).filter(|_| seen && !fallen) {
+                    Some((interface, ssid)) => {
+                        // naked: Network bounds every NetworkManager call with within()
+                        let outcome = control.network.guard_client(interface.as_deref()).await;
+                        wifi.note(&control.log, &format!("WiFi client {ssid}"), outcome, POLL);
+                    }
+                    None => wifi = Kept::default(),
                 }
             }
         });
@@ -837,6 +895,56 @@ impl Control {
 
 /// Is this browser.url template the welcome page? The page is `index.html`
 /// at the local pages' origin, however the URL names it.
+/// What `guard_network` knows of one link between its passes.
+#[derive(Default)]
+struct Kept {
+    /// Up once since the agent started. Until then an error is not logged:
+    /// at boot, NetworkManager starting is not an outage.
+    seen: bool,
+    /// Being brought back.
+    down: bool,
+    /// The last error logged, so a retry is not one line each.
+    reported: Option<String>,
+}
+
+impl Kept {
+    fn note(
+        &mut self,
+        log: &crate::log::Log,
+        what: &str,
+        outcome: Result<nm::Guard, String>,
+        every: Duration,
+    ) {
+        match outcome {
+            Ok(nm::Guard::Up) => {
+                self.seen = true;
+                self.reported = None;
+                if std::mem::take(&mut self.down) {
+                    log.info(format!("network: {what} is back up"));
+                }
+            }
+            Ok(nm::Guard::Retried) => {
+                self.reported = None;
+                if !self.down {
+                    log.info(format!(
+                        "network: {what} is down and NetworkManager stopped trying; \
+                         bringing it up every {}s until it is back",
+                        every.as_secs()
+                    ));
+                }
+                self.down = true;
+            }
+            Ok(nm::Guard::Left) => {}
+            Err(err) => {
+                if self.seen && self.reported.as_deref() != Some(err.as_str()) {
+                    log.info(format!("network: keeping {what} up: {err}"));
+                    self.reported = Some(err);
+                }
+            }
+        }
+    }
+}
+
 fn is_welcome(template: &str, origin: &str) -> bool {
     let origin = origin.trim_end_matches('/');
     template
